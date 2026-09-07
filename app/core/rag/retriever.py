@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from app.core.contract_data_chunks import (
     filled_particulars_rows,
@@ -4729,6 +4729,145 @@ def answer_states_rate_only(text: str) -> bool:
     if _RATE_ONLY_RE.search(blob):
         return True
     return bool(re.search(r"(?i)\bno amount\b", blob))
+
+
+# WAVE 2 B4: after #542 election the priced D599.5 row is in the
+# excerpts, but synthesis can still hang empty (question echo /
+# search promise / chrome) and never write quantity + amount.
+# Compose from the isolated CESMM window only. Do not invent.
+# Kill-switch: COMPOSE_PRICED_BOQ_ROW=0 restores the empty hang.
+_PRICED_BOQ_TRIPLE_RE = re.compile(
+    r"(?i)(?P<qty>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+    r"\s+"
+    r"(?P<unit>m[2²³3]|sq\.?\s*m|lin\.?\s*m|nr|no\.?|item|sum|ls|m)\b"
+    r"\s*[@]?\s*"
+    r"(?P<rate>\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+    r"\s*[=]?\s*"
+    r"(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d{2}|\d{4,})"
+)
+
+
+def priced_boq_compose_enabled() -> bool:
+    """ON by default. ``COMPOSE_PRICED_BOQ_ROW=0`` restores the B4 empty hang."""
+    return _env_flag_on("COMPOSE_PRICED_BOQ_ROW")
+
+
+def _plain_boq_number(value: float) -> str:
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _fmt_boq_qty(value: float) -> str:
+    if abs(value - round(value)) < 1e-9:
+        return f"{int(round(value)):,}"
+    return f"{value:,.2f}"
+
+
+def _parse_boq_number(raw: str) -> Optional[float]:
+    tok = (raw or "").replace(",", "").strip()
+    if not tok:
+        return None
+    try:
+        return float(tok)
+    except ValueError:
+        return None
+
+
+def _parse_priced_cesmm_window(window: str, code: str) -> Optional[Dict[str, Any]]:
+    """Qty / unit / rate / amount from one isolated CESMM row. None if Rate Only."""
+    if not window or _RATE_ONLY_RE.search(window):
+        return None
+    blob = _normalize_retrieval_ws((window or "").replace("|", " "))
+    match = _PRICED_BOQ_TRIPLE_RE.search(blob)
+    if not match:
+        return None
+    qty = _parse_boq_number(match.group("qty"))
+    rate = _parse_boq_number(match.group("rate"))
+    amount = _parse_boq_number(match.group("amount"))
+    if qty is None or rate is None or amount is None:
+        return None
+    if qty <= 0 or rate <= 0 or amount <= 0:
+        return None
+    product = qty * rate
+    tol = max(1.0, 0.015 * amount)
+    if abs(product - amount) > tol:
+        return None
+    unit = _normalize_retrieval_ws(match.group("unit") or "")
+    pretty = f"{code[0].upper()}{code[1:]}" if code and code[0].isalpha() else code
+    letter, rest = (code[0], code[1:]) if code else ("", "")
+    item_re = re.compile(
+        rf"(?i)(?<![A-Za-z0-9]){re.escape(letter)}\s*{re.escape(rest)}"
+        r"(?![A-Za-z0-9])",
+    )
+    code_m = item_re.search(blob)
+    start = code_m.end() if code_m else 0
+    desc = _normalize_retrieval_ws(blob[start:match.start()]).strip(" :-–—")
+    return {
+        "code": pretty,
+        "description": desc,
+        "qty": qty,
+        "unit": unit,
+        "rate": rate,
+        "amount": amount,
+    }
+
+
+def compose_priced_boq_row(query: str, excerpt: str) -> Optional[Dict[str, Any]]:
+    """Parse the asked CESMM row's quantity + amount from excerpts.
+
+    Rate Only (G4) and Excluded culvert mentions are not this. Does not
+    invent: qty × rate must already equal the printed amount.
+    """
+    if not priced_boq_compose_enabled():
+        return None
+    codes = extract_asked_cesmm_codes(query)
+    if not codes or not excerpt:
+        return None
+    if chunk_states_rate_only_item(excerpt, codes):
+        return None
+    qlow = (query or "").lower()
+    candidates: List[Dict[str, Any]] = []
+    for code in codes:
+        for window in _cesmm_row_windows(excerpt, code):
+            parsed = _parse_priced_cesmm_window(window, code)
+            if parsed:
+                candidates.append(parsed)
+    if not candidates:
+        return None
+
+    def _score(parsed: Dict[str, Any]) -> int:
+        desc = (parsed.get("description") or "").lower()
+        return sum(1 for w in desc.split() if len(w) > 3 and w in qlow)
+
+    candidates.sort(key=_score, reverse=True)
+    return candidates[0]
+
+
+def format_priced_boq_line(parsed: Dict[str, Any]) -> str:
+    """User-facing priced-row sentence. Does not invent a currency."""
+    if not parsed:
+        return ""
+    code = parsed.get("code") or "the item"
+    desc = (parsed.get("description") or "").strip()
+    head = f"{code} {desc}".strip() if desc else str(code)
+    unit = (parsed.get("unit") or "").strip()
+    qty_s = _fmt_boq_qty(float(parsed["qty"]))
+    rate_s = f"{float(parsed['rate']):,.2f}"
+    amt_s = _fmt_boq_qty(float(parsed["amount"]))
+    unit_bit = f" {unit}" if unit else ""
+    return f"{head}: quantity {qty_s}{unit_bit} @ {rate_s} = {amt_s}."
+
+
+def answer_states_priced_boq(text: str, parsed: Dict[str, Any]) -> bool:
+    """True when ``text`` already names the elected quantity and amount."""
+    if not text or not parsed:
+        return False
+    blob = (text or "").replace(",", "").replace(" ", "")
+    return (
+        _plain_boq_number(float(parsed["qty"])) in blob
+        and _plain_boq_number(float(parsed["amount"])) in blob
+    )
 
 
 def _apply_rate_only_boost(

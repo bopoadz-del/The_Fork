@@ -253,8 +253,10 @@ def format_chunks_as_system_message(
         chunk_states_rate_only_item,
         chunk_states_schedule_not_used,
         chunk_states_time_for_completion,
+        compose_priced_boq_row,
         extract_asked_cesmm_codes,
         extract_contract_doc_ids,
+        priced_boq_compose_enabled,
         query_asks_delay_damages_daily_amount,
         query_asks_for_aca_including_vat,
         query_asks_for_boq_item_amount,
@@ -290,6 +292,33 @@ def format_chunks_as_system_message(
                 "item is Rate Only. That IS the answer. State Rate Only "
                 "and that no amount exists. Do not invent a money total, "
                 "and do not give a generic acknowledgement.\n"
+            )
+
+    # WAVE 2 B4: priced D599.5 is already in the excerpts. Without
+    # this the model echoed the ask / promised to search and never
+    # wrote quantity + amount. G4 Rate Only stays on the block above.
+    if (
+        query
+        and priced_boq_compose_enabled()
+        and query_asks_for_boq_item_amount(query)
+    ):
+        _pb_codes = extract_asked_cesmm_codes(query)
+        if (
+            _pb_codes
+            and not any(
+                chunk_states_rate_only_item(c.text or "", _pb_codes)
+                for c in chunks
+            )
+            and compose_priced_boq_row(
+                query, "\n".join(c.text or "" for c in chunks),
+            )
+        ):
+            header += (
+                "PRICED BOQ ROW — an excerpt below states the asked "
+                "item's quantity, rate, and amount. That IS the answer. "
+                "State the quantity and the amount. Do not search "
+                "further, do not call a BOQ parser, and do not give a "
+                "generic acknowledgement.\n"
             )
 
     if query and query_asks_for_aca_including_vat(query):
