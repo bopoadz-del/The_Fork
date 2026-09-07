@@ -196,6 +196,9 @@ def test_inject_does_not_fire_rate_only_header_on_b4_or_b5_soup():
     assert "RATE ONLY" not in b4
     assert "RATE ONLY" not in b5
     assert "RATE ONLY" in g4
+    assert "PRICED BOQ ROW" in b4
+    assert "PRICED BOQ ROW" in b5
+    assert "PRICED BOQ ROW" not in g4
     assert B4_QTY in b4
     assert B5_AMT in b5
 

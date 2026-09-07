@@ -5359,6 +5359,136 @@ def _graft_rate_only_item(
         return text
 
 
+def _answer_echoes_ask(text: str, user: str) -> bool:
+    """True when synthesis only repeated the operator ask (live B4 chrome)."""
+    raw = re.sub(r"\s+", " ", (text or "").strip().lower())
+    ask = re.sub(r"\s+", " ", (user or "").strip().lower())
+    if not raw or not ask:
+        return False
+    if raw.rstrip("?.") == ask.rstrip("?."):
+        return True
+    if ask in raw and len(raw) <= len(ask) + 120:
+        return True
+    tail = ask[-48:] if len(ask) > 48 else ask
+    return bool(tail and tail in raw and len(raw) < 280)
+
+
+def _graft_priced_boq_item(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """WAVE 2 B4/B5: write qty + amount when synthesis hung empty.
+
+    Live Master Corpus on 2ceef76 (#545) echoed the D599.5 ask, cited
+    nothing, and waited ~212s. #542 already elected the priced row over
+    storm-water Rate Only — compose those figures from the excerpt.
+    Kill-switch: COMPOSE_PRICED_BOQ_ROW=0. G4 Rate Only is not this path.
+    """
+    try:
+        from app.core.rag.retriever import (
+            answer_states_priced_boq,
+            chunk_states_rate_only_item,
+            compose_priced_boq_row,
+            extract_asked_cesmm_codes,
+            format_priced_boq_line,
+            priced_boq_compose_enabled,
+            query_asks_for_boq_item_amount,
+        )
+        if not priced_boq_compose_enabled():
+            return text
+        user = _latest_operator_ask(messages)
+        if not query_asks_for_boq_item_amount(user):
+            return text
+        codes = extract_asked_cesmm_codes(user)
+        if not codes:
+            return text
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        if chunk_states_rate_only_item(rag, codes):
+            return text
+        parsed = compose_priced_boq_row(user, rag)
+        if not parsed:
+            return text
+        line = format_priced_boq_line(parsed)
+        if not line:
+            return text
+        payload = json.dumps({
+            "priced_boq_row": {
+                "code": parsed.get("code"),
+                "qty": parsed.get("qty"),
+                "unit": parsed.get("unit"),
+                "rate": parsed.get("rate"),
+                "amount": parsed.get("amount"),
+                "note": line,
+            }
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "priced_boq_row" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        raw = text or ""
+        if answer_states_priced_boq(raw, parsed):
+            return text
+        body = raw.strip()
+        storm_misroute = bool(
+            re.search(r"(?i)storm\s+water", body)
+            and not re.search(r"(?i)storm\s+water", parsed.get("description") or "")
+        )
+        if (
+            not body
+            or body == _CG_REFUSAL
+            or body == _EMPTY_RESPONSE_FALLBACK
+            or _GENERIC_ACK_RE.search(body)
+            or _looks_like_search_preamble(body)
+            or _MISSING_PARTICULAR_RE.search(body)
+            or _answer_echoes_ask(body, user)
+            or storm_misroute
+        ):
+            return line
+        if len(body) < 500 and not answer_states_priced_boq(body, parsed):
+            return line
+        return f"{line}\n\n{body}"
+    except Exception:  # noqa: BLE001 — compose must never break a turn
+        _LOG.exception("priced-boq compose failed; passing answer through")
+        return text
+
+
+def _compose_priced_boq_instead_of_retry(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Priced CESMM qty+amount from RAG, or '' when compose cannot fill.
+
+    Live WAVE 2 B4 hung ~212s on forced retry after empty / question-echo
+    / search-promise synthesis. The elected D599.5 figures were already
+    in the excerpts — compose them instead of another LLM hop.
+    """
+    try:
+        from app.core.rag.retriever import (
+            answer_states_priced_boq,
+            compose_priced_boq_row,
+            priced_boq_compose_enabled,
+        )
+        if not priced_boq_compose_enabled():
+            return ""
+        user = _latest_operator_ask(messages)
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        parsed = compose_priced_boq_row(user, rag)
+        if not parsed:
+            return ""
+        grafted = _graft_priced_boq_item(text or "", rag_sys_msg, messages)
+        if grafted and answer_states_priced_boq(grafted, parsed):
+            return grafted
+        return ""
+    except Exception:  # noqa: BLE001 — retry skip must never break a turn
+        _LOG.exception("priced-boq retry skip failed; continuing retry path")
+        return ""
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -5413,6 +5543,9 @@ def _postprocess_answer(
     # says so. The live FAIL greeted ("I'm ready to help…") and never
     # named D529.3 / Rate Only. Do not invent a money total.
     text = _graft_rate_only_item(text, rag_sys_msg, messages)
+    # WAVE 2 B4/B5: compose qty + amount from the elected priced row
+    # when synthesis hung empty / echoed the ask / promised to search.
+    text = _graft_priced_boq_item(text, rag_sys_msg, messages)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     # Citation provenance: an attribution no evidence record backs is removed
     # and the answer flagged. Sibling of the cost gate above -- that one
@@ -8143,6 +8276,11 @@ class Agent:
                 excluded_tools |= _conflicting_tools_after_predispatch(
                     str(_hit.get("name") or "")
                 )
+        # WAVE 2 B4: priced D599.5 is already in RAG. Offering
+        # boq_processor here starts a 28 MB scan and never writes
+        # quantity + amount (live 2ceef76 empty hang).
+        if _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages):
+            excluded_tools.add("boq_processor")
         error_nudges = 0
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
 
@@ -8244,19 +8382,25 @@ class Agent:
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
                     if _final_text_needs_forced_retry(final_text, user_message=user_message):
-                        if final_text == _TOOL_FORMAT_FALLBACK:
-                            messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
-                        elif _looks_like_search_preamble(final_text):
-                            messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
-                        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
-                        if forced_resp.get("status") == "error":
-                            final_text = _EMPTY_RESPONSE_FALLBACK
+                        priced = _compose_priced_boq_instead_of_retry(
+                            final_text, _rag_sys_msg, messages,
+                        )
+                        if priced:
+                            final_text = priced
                         else:
-                            forced_msg = forced_resp["choice"].get("message") or {}
-                            final_text = _sanitize_final_text(
-                                forced_msg.get("content") or "",
-                                messages=messages, tool_results=tool_calls_made,
-                            )
+                            if final_text == _TOOL_FORMAT_FALLBACK:
+                                messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
+                            elif _looks_like_search_preamble(final_text):
+                                messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
+                            forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
+                            if forced_resp.get("status") == "error":
+                                final_text = _EMPTY_RESPONSE_FALLBACK
+                            else:
+                                forced_msg = forced_resp["choice"].get("message") or {}
+                                final_text = _sanitize_final_text(
+                                    forced_msg.get("content") or "",
+                                    messages=messages, tool_results=tool_calls_made,
+                                )
                             if _final_text_needs_forced_retry(final_text, user_message=user_message):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
@@ -8366,22 +8510,26 @@ class Agent:
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
-        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
-        if forced_resp.get("status") == "error":
-            # Even the forced call failed; fall back to the original error shape.
-            return {
-                "status": "error",
-                "error": f"Agent exceeded {MAX_TOOL_ITERATIONS} tool iterations without a final answer.",
-                "tool_calls": tool_calls_made,
-                "messages": messages,
-            }
-        forced_msg = forced_resp["choice"].get("message") or {}
-        final_text = _sanitize_final_text(
-            forced_msg.get("content") or "",
-            messages=messages, tool_results=tool_calls_made,
-        )
-        if _final_text_needs_forced_retry(final_text, user_message=user_message):
-            final_text = _EMPTY_RESPONSE_FALLBACK
+        priced_cap = _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages)
+        if priced_cap:
+            final_text = priced_cap
+        else:
+            forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
+            if forced_resp.get("status") == "error":
+                # Even the forced call failed; fall back to the original error shape.
+                return {
+                    "status": "error",
+                    "error": f"Agent exceeded {MAX_TOOL_ITERATIONS} tool iterations without a final answer.",
+                    "tool_calls": tool_calls_made,
+                    "messages": messages,
+                }
+            forced_msg = forced_resp["choice"].get("message") or {}
+            final_text = _sanitize_final_text(
+                forced_msg.get("content") or "",
+                messages=messages, tool_results=tool_calls_made,
+            )
+            if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
         final_text, _fetched_for = await self._fetch_named_missing_input(
             final_text, messages, user_message=user_message,
@@ -9051,6 +9199,11 @@ class Agent:
                 excluded_tools |= _conflicting_tools_after_predispatch(
                     str(_hit.get("name") or "")
                 )
+        # WAVE 2 B4: priced D599.5 is already in RAG. Offering
+        # boq_processor here starts a 28 MB scan and never writes
+        # quantity + amount (live 2ceef76 empty hang).
+        if _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages):
+            excluded_tools.add("boq_processor")
         error_nudges = 0
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
         # True token streaming for the FINAL synthesis call only. Gated to:
@@ -9278,6 +9431,42 @@ class Agent:
                         # detector. Ordering the other way would send the model
                         # "stop promising to search" for a turn where it never
                         # promised anything.
+                        priced = _compose_priced_boq_instead_of_retry(
+                            final_text, _rag_sys_msg, messages,
+                        )
+                        if priced:
+                            final_text = priced
+                            final_text = _sanitize_inline_paths(
+                                _sanitize_citation_labels(final_text)
+                            )
+                            final_text = _postprocess_answer(
+                                final_text, _rag_sys_msg, messages,
+                                fallback_used=bool(_rag_audit.get("fallback_used")),
+                                agent_name=self.name,
+                                project_id=project_id,
+                                audit_rec=_rag_audit,
+                            )
+                            for chunk in _chunks(final_text, 80):
+                                yield {"type": "token", "content": chunk}
+                            if conversation_id:
+                                from app.core import agent_memory
+                                agent_memory.append_message(
+                                    conversation_id, "assistant", final_text,
+                                )
+                            yield {
+                                "type": "end",
+                                "content": final_text,
+                                "iterations": iteration + 1,
+                                "model": served_model,
+                                "tools": list(tools_invoked),
+                                "sources": _build_sources_from_audit(
+                                    _rag_audit, final_text,
+                                ),
+                                "exports": _build_exports_from_audit(
+                                    _rag_audit, final_text, stream_tool_results,
+                                ),
+                            }
+                            return
                         if leak_hold:
                             messages.append(
                                 {"role": "user", "content": _CONTEXT_LEAK_RETRY_NUDGE}
@@ -9452,59 +9641,65 @@ class Agent:
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
                     if _final_text_needs_forced_retry(final_text, user_message=user_message):
-                        _left = _remaining_budget()
-                        _need = _forced_retry_min_seconds()
-                        if _left is not None and _left < _need:
-                            # Not enough turn left to finish another LLM call.
-                            # Starting one anyway is exactly how 43e40b3a-e8f
-                            # spent its last 113s and still ended on a timeout
-                            # banner. Deliver the fallback NOW instead: same
-                            # text, ~2 minutes sooner, no error banner. The
-                            # unusable text itself is never streamed -- that is
-                            # the defect #454 closed and it stays closed.
-                            _LOG.warning(
-                                "chat_stream: skipping forced retry — %.1fs of "
-                                "the turn left, need %.1fs",
-                                _left, _need,
-                            )
-                            if _timing:
-                                _LOG.warning(
-                                    "TIMING chat_stream FORCED-RETRY-SKIPPED "
-                                    "raw=%dc left=%.1fs cum=%.1fs",
-                                    len(raw_content), _left,
-                                    time.monotonic() - _turn_t0,
-                                )
-                            final_text = _EMPTY_RESPONSE_FALLBACK
+                        priced = _compose_priced_boq_instead_of_retry(
+                            final_text, _rag_sys_msg, messages,
+                        )
+                        if priced:
+                            final_text = priced
                         else:
-                            _LOG.info("chat_stream: unusable final_text, forcing no-tools retry")
-                            if _timing:
-                                _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
-                                             len(raw_content), time.monotonic() - _turn_t0)
-                            if final_text == _TOOL_FORMAT_FALLBACK:
-                                messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
-                            elif _looks_like_search_preamble(final_text):
-                                messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
-                            _fr_t0 = time.monotonic()
-                            _set_phase("forced-retry")
-                            forced_resp = await self._call_llm(
-                                messages, api_key, project_id=project_id,
-                                with_tools=False, user_id=user_id,
-                                deadline=_llm_deadline(),
-                            )
-                            if _timing:
-                                _LOG.warning("TIMING chat_stream forced-retry call=%.1fs status=%s cum=%.1fs",
-                                             time.monotonic() - _fr_t0, forced_resp.get("status"), time.monotonic() - _turn_t0)
-                            if forced_resp.get("status") == "error":
+                            _left = _remaining_budget()
+                            _need = _forced_retry_min_seconds()
+                            if _left is not None and _left < _need:
+                                # Not enough turn left to finish another LLM call.
+                                # Starting one anyway is exactly how 43e40b3a-e8f
+                                # spent its last 113s and still ended on a timeout
+                                # banner. Deliver the fallback NOW instead: same
+                                # text, ~2 minutes sooner, no error banner. The
+                                # unusable text itself is never streamed -- that is
+                                # the defect #454 closed and it stays closed.
+                                _LOG.warning(
+                                    "chat_stream: skipping forced retry — %.1fs of "
+                                    "the turn left, need %.1fs",
+                                    _left, _need,
+                                )
+                                if _timing:
+                                    _LOG.warning(
+                                        "TIMING chat_stream FORCED-RETRY-SKIPPED "
+                                        "raw=%dc left=%.1fs cum=%.1fs",
+                                        len(raw_content), _left,
+                                        time.monotonic() - _turn_t0,
+                                    )
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                             else:
-                                served_model = (forced_resp.get("raw") or {}).get("model") or served_model
-                                forced_msg = forced_resp["choice"].get("message") or {}
-                                final_text = _sanitize_final_text(
-                                    forced_msg.get("content") or "",
-                                    messages=messages, tool_results=stream_tool_results,
+                                _LOG.info("chat_stream: unusable final_text, forcing no-tools retry")
+                                if _timing:
+                                    _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
+                                                 len(raw_content), time.monotonic() - _turn_t0)
+                                if final_text == _TOOL_FORMAT_FALLBACK:
+                                    messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
+                                elif _looks_like_search_preamble(final_text):
+                                    messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
+                                _fr_t0 = time.monotonic()
+                                _set_phase("forced-retry")
+                                forced_resp = await self._call_llm(
+                                    messages, api_key, project_id=project_id,
+                                    with_tools=False, user_id=user_id,
+                                    deadline=_llm_deadline(),
                                 )
-                                if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                                if _timing:
+                                    _LOG.warning("TIMING chat_stream forced-retry call=%.1fs status=%s cum=%.1fs",
+                                                 time.monotonic() - _fr_t0, forced_resp.get("status"), time.monotonic() - _turn_t0)
+                                if forced_resp.get("status") == "error":
                                     final_text = _EMPTY_RESPONSE_FALLBACK
+                                else:
+                                    served_model = (forced_resp.get("raw") or {}).get("model") or served_model
+                                    forced_msg = forced_resp["choice"].get("message") or {}
+                                    final_text = _sanitize_final_text(
+                                        forced_msg.get("content") or "",
+                                        messages=messages, tool_results=stream_tool_results,
+                                    )
+                                    if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                                        final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
                     if _timing:
@@ -9639,28 +9834,32 @@ class Agent:
             messages.extend(pending_nudges)
 
         # Hit the cap without a final answer — force one more call with tools disabled.
-        _LOG.warning("chat_stream: hit MAX_TOOL_ITERATIONS=%d, forcing no-tools retry",
-                     MAX_TOOL_ITERATIONS)
-        _set_phase("forced-retry (iteration cap)")
-        forced_resp = await self._call_llm(
-            messages, api_key, project_id=project_id, with_tools=False,
-            user_id=user_id, deadline=_llm_deadline(),
-        )
-        if forced_resp.get("status") == "error":
-            _persist_failed_turn(conversation_id)
-            yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
-            return
-        served_model = (forced_resp.get("raw") or {}).get("model") or served_model
-        forced_msg = forced_resp["choice"].get("message") or {}
-        final_text = _sanitize_final_text(
-            forced_msg.get("content") or "",
-            messages=messages, tool_results=stream_tool_results,
-        )
-        if _final_text_needs_forced_retry(final_text, user_message=user_message):
-            # Forced retry returned empty or raw tool JSON — substitute the
-            # user-safe fallback so the UI never renders an empty bubble.
-            _LOG.warning("chat_stream: forced final unusable, using fallback")
-            final_text = _EMPTY_RESPONSE_FALLBACK
+        priced_cap = _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages)
+        if priced_cap:
+            final_text = priced_cap
+        else:
+            _LOG.warning("chat_stream: hit MAX_TOOL_ITERATIONS=%d, forcing no-tools retry",
+                         MAX_TOOL_ITERATIONS)
+            _set_phase("forced-retry (iteration cap)")
+            forced_resp = await self._call_llm(
+                messages, api_key, project_id=project_id, with_tools=False,
+                user_id=user_id, deadline=_llm_deadline(),
+            )
+            if forced_resp.get("status") == "error":
+                _persist_failed_turn(conversation_id)
+                yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
+                return
+            served_model = (forced_resp.get("raw") or {}).get("model") or served_model
+            forced_msg = forced_resp["choice"].get("message") or {}
+            final_text = _sanitize_final_text(
+                forced_msg.get("content") or "",
+                messages=messages, tool_results=stream_tool_results,
+            )
+            if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                # Forced retry returned empty or raw tool JSON — substitute the
+                # user-safe fallback so the UI never renders an empty bubble.
+                _LOG.warning("chat_stream: forced final unusable, using fallback")
+                final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
         final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
         for chunk in _chunks(final_text, 80):
