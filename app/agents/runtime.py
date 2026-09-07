@@ -4707,7 +4707,9 @@ def gate_cost_answer(
         text = _graft_composed_delay_damages_daily(
             text, rag_sys_msg, messages, project_id=project_id,
         )
-        text = _graft_asked_contract_particular(text, rag_sys_msg, messages)
+        text = _graft_asked_contract_particular(
+            text, rag_sys_msg, messages, project_id=project_id,
+        )
         return _cost_grounding_gate(text, rag_sys_msg, messages)
     except Exception:  # noqa: BLE001 — a gate must never break an answer
         _LOG.exception("gate_cost_answer failed; passing answer through")
@@ -4858,6 +4860,7 @@ def _graft_asked_contract_particular(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
+    project_id: str | None = None,
 ) -> str:
     """Wave-1 A2/A3/A6/A9: state the asked Contract Data row from excerpts.
 
@@ -4865,24 +4868,27 @@ def _graft_asked_contract_particular(
     ACA ask) or reported the particular absent after retrieving permit
     trackers / CoC 1.3–1.8. Compose nothing — only fire when the excerpt
     already states the asked value. Kill-switch: GRAFT_ASKED_CONTRACT_PARTICULAR=0.
+    ``project_id`` lets A2 last-chance-scan the loaded CD volume when
+    top-k is a delay-damages chunk #0 (live 9ad62cc).
     """
     try:
         if not _graft_asked_contract_particular_enabled():
             return text
         from app.core.rag.retriever import (
+            a2_including_vat_excerpts_from_loaded_cd_volume,
             extract_aca_including_vat,
             extract_defects_notification_period,
             extract_engineer_identity,
             extract_time_for_completion_days,
             query_asks_delay_damages_daily_amount,
-            query_asks_for_aca_including_vat,
             query_asks_for_defects_notification_period,
             query_asks_for_time_for_completion,
             query_asks_who_the_engineer_is,
+            query_is_aca_including_vat_particular,
         )
         user = _latest_user_text(messages)
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
-        if not user or not rag:
+        if not user:
             return text
         # Live leftover E1: compose already owns rate × ACA. The A2
         # including-VAT election must not replace a daily figure (or a
@@ -4890,9 +4896,20 @@ def _graft_asked_contract_particular(
         if query_asks_delay_damages_daily_amount(user):
             return text
         line = ""
-        if query_asks_for_aca_including_vat(user):
+        if query_is_aca_including_vat_particular(user):
             parsed = extract_aca_including_vat(rag)
-            if not parsed:
+            if not parsed and project_id:
+                # Live Wave-1 A2 on 9ad62cc: top-k was Contract Data
+                # chunk #0 (delay damages × a partial ACA). Scan the
+                # loaded CD volume for the filled including-VAT row —
+                # do not invent a figure.
+                extra = a2_including_vat_excerpts_from_loaded_cd_volume(
+                    user, project_id, rag_context=rag,
+                )
+                if extra:
+                    rag = f"{rag}\n\n{extra}" if rag else extra
+                    parsed = extract_aca_including_vat(rag)
+            if not parsed or not rag:
                 return text
             amount, currency = parsed
             line = (
@@ -5026,6 +5043,17 @@ def _graft_composed_delay_damages_daily(
         )
         user = _latest_user_text(messages)
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        try:
+            from app.core.rag.retriever import (
+                query_is_aca_including_vat_particular,
+            )
+            # Live Wave-1 A2 on 9ad62cc: do not compose SAR/day for an
+            # including-VAT particular, even when chunk #0 is delay
+            # damages × a partial ACA. Combined E1+A2 wording stays E1.
+            if query_is_aca_including_vat_particular(user):
+                return text
+        except Exception:  # noqa: BLE001 — ask-class fence must never break
+            _LOG.debug("A2 compose fence failed; keeping E1 ask check", exc_info=True)
         composed = compose_delay_damages_daily_from_excerpts(user, rag)
         if not composed:
             # Live leftover E1 after #536: top-k is refuse-prone Contract
@@ -5193,7 +5221,9 @@ def _postprocess_answer(
     )
     # Wave-1 DeepSeek: A2 answered delay damages, A3/A9 said the
     # particular was absent. Graft the asked row from excerpts only.
-    text = _graft_asked_contract_particular(text, rag_sys_msg, messages)
+    text = _graft_asked_contract_particular(
+        text, rag_sys_msg, messages, project_id=pid,
+    )
     # OLD-pack G4: state Rate Only when the retrieved BOQ row already
     # says so. The live FAIL greeted ("I'm ready to help…") and never
     # named D529.3 / Rate Only. Do not invent a money total.
