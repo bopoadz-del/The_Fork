@@ -2522,8 +2522,11 @@ _E1_REAL_ACA_DOC_SCAN = 400
 _E1_REAL_ACA_TEXT_K = 80
 _E1_REAL_ACA_PAIR_WINDOW = 3
 _E1_REAL_ACA_TEXT_NEEDLES = (
-    ("accepted contract amount", "excluding"),
-    ("1.1.1", "accepted contract amount"),
+    # Scanned 1.1.1 rows split "Accepted\\nContract\\nAmount" — a
+    # contiguous "accepted contract amount" LIKE misses. Clause +
+    # excl-VAT tokens still hit the filled appendix and skip 8.8 toys.
+    ("1.1.1", "excluding"),
+    ("1.1.1", "accepted"),
 )
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
