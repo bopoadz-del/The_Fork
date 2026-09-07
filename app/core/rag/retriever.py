@@ -4795,24 +4795,33 @@ def answer_states_rate_only(text: str) -> bool:
     return bool(re.search(r"(?i)\bno amount\b", blob))
 
 
-# WAVE 2 B4: after #542 election the priced D599.5 row is in the
+# WAVE 2 B4/B5: after #542 election the priced CESMM row is in the
 # excerpts, but synthesis can still hang empty (question echo /
 # search promise / chrome) and never write quantity + amount.
-# Compose from the isolated CESMM window only. Do not invent.
-# Kill-switch: COMPOSE_PRICED_BOQ_ROW=0 restores the empty hang.
+# Live B5 OCR prints ``3,504 m @ SAR 80.00 = SAR 280,320.00`` — a
+# currency token between @/= and the figure. B4 is often bare
+# ``340904 m2 31.00 10568024``. Compose from the isolated window
+# only. Do not invent: qty × rate must already equal the printed
+# amount. Kill-switch: COMPOSE_PRICED_BOQ_ROW=0 restores the hang.
+_BOQ_CURRENCY_ATOM = (
+    r"(?:SAR|SR|AED|USD|EUR|GBP|QAR|BHD|KWD|OMR|EGP|CNY|INR|JPY|riyal[s]?)"
+)
+_BOQ_CURRENCY_PREFIX = rf"(?:{_BOQ_CURRENCY_ATOM}\s+)?"
 _PRICED_BOQ_TRIPLE_RE = re.compile(
     r"(?i)(?P<qty>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
     r"\s+"
     r"(?P<unit>m[2²³3]|sq\.?\s*m|lin\.?\s*m|nr|no\.?|item|sum|ls|m)\b"
     r"\s*[@]?\s*"
-    r"(?P<rate>\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
-    r"\s*[=]?\s*"
-    r"(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d{2}|\d{4,})"
+    + _BOQ_CURRENCY_PREFIX
+    + r"(?P<rate>\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+    + r"\s*[=]?\s*"
+    + _BOQ_CURRENCY_PREFIX
+    + r"(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d{2}|\d{4,})"
 )
 
 
 def priced_boq_compose_enabled() -> bool:
-    """ON by default. ``COMPOSE_PRICED_BOQ_ROW=0`` restores the B4 empty hang."""
+    """ON by default. ``COMPOSE_PRICED_BOQ_ROW=0`` restores the B4/B5 empty hang."""
     return _env_flag_on("COMPOSE_PRICED_BOQ_ROW")
 
 
