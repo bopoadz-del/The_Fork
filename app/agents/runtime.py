@@ -3790,6 +3790,20 @@ def _latest_user_text(messages: list[dict[str, Any]] | None) -> str:
     return ""
 
 
+def _latest_operator_ask(messages: list[dict[str, Any]] | None) -> str:
+    """Operator question, unwrapped from a RAG-folded user bubble.
+
+    Live Wave-1 A2 on 396cc7b: ``_apply_rag_context`` folds Contract Data
+    chunk #0 (Delay Damages × a partial ACA) plus the lookup directive
+    ("…or compute it…") into the last user turn. Ask-class detectors
+    that read that bubble then see leftover-E1 (delay-damages + compute
+    + SAR) and compose SAR/day. Unwrap so A2 stays the including-VAT
+    particular. Combined "calculate delay damages … including VAT"
+    stays E1 — the operator text still has the delay-damages token.
+    """
+    return _unwrap_rag_folded_operator_text(_latest_user_text(messages))
+
+
 def _is_document_deliverable_request(user_message: str | None) -> bool:
     if not user_message:
         return False
@@ -4618,7 +4632,7 @@ def _cost_grounding_gate(
         figs = _cg_money_values(text)
         if not figs:
             return text  # not a cost/rate answer — leave it alone
-        user = _latest_user_text(messages)
+        user = _latest_operator_ask(messages)
         if _is_document_deliverable_request(user):
             return text
         if _is_contract_data_fact_lookup(user):
@@ -4861,6 +4875,7 @@ def _graft_asked_contract_particular(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
     project_id: str | None = None,
+    extra_project_ids: list[str] | None = None,
 ) -> str:
     """Wave-1 A2/A3/A6/A9: state the asked Contract Data row from excerpts.
 
@@ -4886,7 +4901,7 @@ def _graft_asked_contract_particular(
             query_asks_who_the_engineer_is,
             query_is_aca_including_vat_particular,
         )
-        user = _latest_user_text(messages)
+        user = _latest_operator_ask(messages)
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         if not user:
             return text
@@ -4898,13 +4913,15 @@ def _graft_asked_contract_particular(
         line = ""
         if query_is_aca_including_vat_particular(user):
             parsed = extract_aca_including_vat(rag)
-            if not parsed and project_id:
-                # Live Wave-1 A2 on 9ad62cc: top-k was Contract Data
-                # chunk #0 (delay damages × a partial ACA). Scan the
-                # loaded CD volume for the filled including-VAT row —
-                # do not invent a figure.
+            if not parsed and (project_id or extra_project_ids):
+                # Live Wave-1 A2 on 9ad62cc / 396cc7b: top-k was
+                # Contract Data chunk #0 (delay damages × a partial
+                # ACA). Scan the loaded CD volume — including cited
+                # chunk owners, not only the UI project id — for the
+                # filled including-VAT row. Do not invent a figure.
                 extra = a2_including_vat_excerpts_from_loaded_cd_volume(
-                    user, project_id, rag_context=rag,
+                    user, project_id or "", rag_context=rag,
+                    extra_pids=extra_project_ids,
                 )
                 if extra:
                     rag = f"{rag}\n\n{extra}" if rag else extra
@@ -5042,15 +5059,18 @@ def _graft_composed_delay_damages_daily(
             compose_delay_damages_daily_from_excerpts,
             format_delay_damages_daily_line,
         )
-        user = _latest_user_text(messages)
+        user = _latest_operator_ask(messages)
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         try:
             from app.core.rag.retriever import (
                 query_is_aca_including_vat_particular,
             )
-            # Live Wave-1 A2 on 9ad62cc: do not compose SAR/day for an
-            # including-VAT particular, even when chunk #0 is delay
-            # damages × a partial ACA. Combined E1+A2 wording stays E1.
+            # Live Wave-1 A2 on 9ad62cc / 396cc7b: do not compose
+            # SAR/day for an including-VAT particular, even when
+            # chunk #0 is delay damages × a partial ACA. Combined
+            # E1+A2 wording stays E1. Classify the unwrapped
+            # operator ask — the RAG-folded bubble contains
+            # "Delay Damages" + "compute" and looks like E1.
             if query_is_aca_including_vat_particular(user):
                 return text
         except Exception:  # noqa: BLE001 — ask-class fence must never break
@@ -5169,7 +5189,7 @@ def _graft_rate_only_item(
         )
         if not rate_only_rescue_enabled():
             return text
-        user = _latest_user_text(messages)
+        user = _latest_operator_ask(messages)
         if not query_asks_for_boq_item_amount(user):
             return text
         codes = extract_asked_cesmm_codes(user)
@@ -5238,6 +5258,7 @@ def _postprocess_answer(
     # particular was absent. Graft the asked row from excerpts only.
     text = _graft_asked_contract_particular(
         text, rag_sys_msg, messages, project_id=pid,
+        extra_project_ids=extra_pids or None,
     )
     # OLD-pack G4: state Rate Only when the retrieved BOQ row already
     # says so. The live FAIL greeted ("I'm ready to help…") and never
