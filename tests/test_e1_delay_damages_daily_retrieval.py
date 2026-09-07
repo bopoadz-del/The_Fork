@@ -1877,7 +1877,7 @@ def test_e1_fetch_does_not_early_exit_when_all_rows_is_ignored():
     """First-N 0.015%+ACA is not enough — walk until both operands exist."""
     from app.core.rag.retriever import _e1_fetch_late_aca_chunks
 
-    all_chunks, lookalikes, rate, aca = _015_early_exit_all_chunks()
+    all_chunks, _lookalikes, rate, aca = _015_early_exit_all_chunks()
     extra = _e1_fetch_late_aca_chunks(
         _ignore_all_rows_store(all_chunks), ACTIVE, [GC_DOC],
     )
