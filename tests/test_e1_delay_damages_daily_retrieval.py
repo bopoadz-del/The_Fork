@@ -2262,3 +2262,268 @@ def test_e1_graft_last_chance_composes_from_cited_rag_when_ui_pid_empty(
     assert "upload your priced BOQ" not in posted.lower()
     assert "263,175.67" not in posted
     assert "0.015%" not in posted.split("\n", 1)[0]
+
+
+# Live leftover E1 after #541 (tip 2ceef76 / cold ×3 on d1adadc):
+# the store ignored all_rows AND capped k_per_doc at 400 (k=1_000_000
+# still first-400). Prefix 400 + last 400 miss chunk 500 of a 1200-row
+# volume. Needles empty. Without a mid-window offset walk, last-chance
+# compose stayed empty → cost-grounding refuse or CoC 0.015%.
+_E1_STORE_K_CAP = 400
+
+
+def _capped_k_store(all_chunks, owner_pid=None, k_cap=_E1_STORE_K_CAP):
+    """Ignore all_rows; cap k_per_doc; honor offset. Needles empty."""
+
+    class _Store:
+        def chunks_for_docs(
+            self, project_id, doc_ids, k_per_doc=12, from_end=False,
+            all_rows=False, offset=0,
+        ):
+            if owner_pid is not None and project_id != owner_pid:
+                return []
+            rows = sorted(
+                [c for c in all_chunks if c.doc_id in (doc_ids or [])],
+                key=lambda c: c.chunk_index,
+            )
+            n = min(max(1, int(k_per_doc or 12)), k_cap)
+            off = max(0, int(offset or 0))
+            if from_end:
+                end = len(rows) - off
+                if end <= 0:
+                    return []
+                start = max(0, end - n)
+                return rows[start:end]
+            return rows[off:off + n]
+
+        def chunks_containing_all(self, project_id, needles, k=20, doc_ids=None):
+            return []
+
+    return _Store()
+
+
+def test_e1_cap_noise_is_pointer_or_015_not_operands():
+    from app.core.rag.retriever import _e1_is_cap_noise
+
+    assert _e1_is_cap_noise(REFUSE_PRONE_8_8)
+    assert _e1_is_cap_noise(COC_015_WITH_ACA)
+    assert not _e1_is_cap_noise(CD_POINT_ONE_RATE)
+    assert not _e1_is_cap_noise(LIVE_SCANNED_EXCL_ACA)
+    assert not _e1_is_cap_noise(SCANNED_RATE)
+
+
+def test_e1_capped_k_prefix_tail_miss_middle_operands():
+    """#541 hole: k-cap 400 + ignore all_rows misses chunk 500 of 1200."""
+    from app.core.rag.retriever import _E1_REAL_ACA_DOC_SCAN
+
+    all_chunks, _windows, rate, aca = _refuse_prone_volume_chunks()
+    store = _capped_k_store(all_chunks)
+    prefix = store.chunks_for_docs(
+        ACTIVE, [GC_DOC], k_per_doc=1_000_000, from_end=False,
+    )
+    tail = store.chunks_for_docs(
+        ACTIVE, [GC_DOC], k_per_doc=_E1_REAL_ACA_DOC_SCAN, from_end=True,
+    )
+    assert all(c.chunk_index != MIDDLE_ACA_INDEX for c in prefix)
+    assert all(c.chunk_index != CD_RATE_INDEX for c in prefix)
+    assert all(c.chunk_index != MIDDLE_ACA_INDEX for c in tail)
+    assert all(c.chunk_index != CD_RATE_INDEX for c in tail)
+    mid = store.chunks_for_docs(
+        ACTIVE, [GC_DOC], k_per_doc=_E1_REAL_ACA_DOC_SCAN, offset=400,
+    )
+    assert any(c.chunk_id == rate.chunk_id for c in mid)
+    assert any(c.chunk_id == aca.chunk_id for c in mid)
+
+
+def test_e1_fetch_mid_window_recovers_when_k_is_capped():
+    """Refuse-prone 9–11 + k-cap 400 must still surface 0.1% and excl-VAT."""
+    from app.core.rag.retriever import _e1_fetch_late_aca_chunks
+
+    all_chunks, _windows, rate, aca = _refuse_prone_volume_chunks()
+    extra = _e1_fetch_late_aca_chunks(
+        _capped_k_store(all_chunks), ACTIVE, [GC_DOC],
+    )
+    texts = [c.text or "" for c in extra]
+    assert any(c.chunk_id == rate.chunk_id for c in extra)
+    assert any(c.chunk_id == aca.chunk_id for c in extra)
+    assert CD_POINT_ONE_RATE in texts
+    assert LIVE_SCANNED_EXCL_ACA in texts
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, "\n\n".join(texts))
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["contract_amount"] == NET_ACA
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+
+
+def test_e1_fetch_mid_window_recovers_015_top_k_when_k_is_capped():
+    """CoC 0.015% 9–11 + k-cap 400 must still compose 0.1%, not 263175.67."""
+    from app.core.rag.retriever import _e1_fetch_late_aca_chunks
+
+    all_chunks, _windows, rate, aca = _015_early_exit_all_chunks()
+    extra = _e1_fetch_late_aca_chunks(
+        _capped_k_store(all_chunks), ACTIVE, [GC_DOC],
+    )
+    excerpts = "\n\n".join(c.text or "" for c in extra)
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+    assert any(c.chunk_id == rate.chunk_id for c in extra)
+    assert any(c.chunk_id == aca.chunk_id for c in extra)
+
+
+def test_e1_loaded_volume_composes_when_k_is_capped(monkeypatch):
+    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
+
+    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    extra = e1_compose_excerpts_from_loaded_cd_volume(
+        LIVE_E1, ACTIVE, _capped_k_store(all_chunks),
+        rag_context=_live_refuse_sys(*windows)["content"],
+        doc_ids=[GC_DOC],
+    )
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, extra)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+
+
+def test_e1_mid_window_scan_respects_daily_rescue_kill_switch(monkeypatch):
+    from app.core.rag.retriever import (
+        _e1_fetch_late_aca_chunks,
+        e1_compose_excerpts_from_loaded_cd_volume,
+    )
+
+    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
+    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
+    extra = e1_compose_excerpts_from_loaded_cd_volume(
+        LIVE_E1, ACTIVE, _capped_k_store(all_chunks),
+        rag_context=_live_refuse_sys(*windows)["content"],
+        doc_ids=[GC_DOC],
+    )
+    assert extra == ""
+    # Direct fetch is the store walk (no kill-switch of its own); the
+    # public helper above is the gated path. Confirm the walk still
+    # finds rows so a missing kill-switch on fetch is not the product.
+    found = _e1_fetch_late_aca_chunks(
+        _capped_k_store(all_chunks), ACTIVE, [GC_DOC],
+    )
+    assert found
+
+
+def test_e1_token_cap_force_keeps_huge_operand_over_leftover_cap(monkeypatch):
+    """A 0.1% scanned page larger than leftover cap must still be kept."""
+    from app.core.rag.inject import apply_token_cap
+
+    huge_rate = _chunk(
+        "cdrate", GC_DOC, 0.0,
+        CD_POINT_ONE_RATE + ("x" * 9000),
+        chunk_index=480,
+    )
+    aca = _chunk("aca500", GC_DOC, 0.0, LIVE_SCANNED_EXCL_ACA, chunk_index=500)
+    pointers = [
+        _chunk(
+            f"gc{i}", GC_DOC, 0.95 - i * 0.01,
+            REFUSE_PRONE_8_8 + ("y" * 4000),
+            chunk_index=9 + i,
+        )
+        for i in range(3)
+    ]
+    monkeypatch.setenv("MAX_RAG_TOKENS", "2000")
+    kept, _ = apply_token_cap(list(pointers) + [huge_rate, aca], query=LIVE_E1)
+    kept_ids = {c.chunk_id for c in kept}
+    assert "cdrate" in kept_ids
+    assert "aca500" in kept_ids
+    out = compose_delay_damages_daily_from_excerpts(
+        LIVE_E1, "\n\n".join(c.text or "" for c in kept),
+    )
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+
+
+def test_e1_token_cap_evicts_015_windows_when_operands_are_protected(monkeypatch):
+    """HIGH 0.015% 9–11 must not stay once 0.1% + excl-VAT are protected."""
+    from app.core.rag.inject import apply_token_cap
+
+    lookalikes = [
+        _chunk(
+            f"gc{i}", GC_DOC, 0.95 - i * 0.01, COC_015_WITH_ACA, chunk_index=9 + i,
+        )
+        for i in range(3)
+    ]
+    rate = _chunk("cdrate", GC_DOC, 0.0, CD_POINT_ONE_RATE, chunk_index=480)
+    aca = _chunk("aca500", GC_DOC, 0.0, LIVE_SCANNED_EXCL_ACA, chunk_index=500)
+    monkeypatch.setenv("MAX_RAG_TOKENS", "6000")
+    kept, _ = apply_token_cap(list(lookalikes) + [rate, aca], query=LIVE_E1)
+    blob = "\n".join(c.text or "" for c in kept)
+    assert CD_POINT_ONE_RATE in blob
+    assert LIVE_SCANNED_EXCL_ACA in blob
+    assert "0.015%" not in blob
+    assert "263,175.67" not in blob
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, blob)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+
+
+def test_e1_token_cap_protect_survives_one_bad_chunk(monkeypatch):
+    """One preference exception must not wipe the other operand's protect."""
+    from app.core.rag import inject as inj
+    from app.core.rag import retriever as ret
+
+    rate = _chunk("cdrate", GC_DOC, 0.0, CD_POINT_ONE_RATE, chunk_index=480)
+    aca = _chunk("aca500", GC_DOC, 0.0, LIVE_SCANNED_EXCL_ACA, chunk_index=500)
+    junk = _chunk("junk", GC_DOC, 0.99, "not a rate window", chunk_index=1)
+    orig = ret._e1_rate_preference
+
+    def _boom(text):
+        if "not a rate window" in (text or ""):
+            raise RuntimeError("preference boom")
+        return orig(text)
+
+    monkeypatch.setattr(ret, "_e1_rate_preference", _boom)
+    monkeypatch.setenv("MAX_RAG_TOKENS", "2000")
+    pad = "x" * 4000
+    pointers = [
+        _chunk(
+            f"gc{i}", GC_DOC, 0.95,
+            REFUSE_PRONE_8_8 + pad, chunk_index=9 + i,
+        )
+        for i in range(3)
+    ]
+    kept, _ = inj.apply_token_cap(
+        [junk] + list(pointers) + [rate, aca], query=LIVE_E1,
+    )
+    kept_ids = {c.chunk_id for c in kept}
+    assert "cdrate" in kept_ids
+    assert "aca500" in kept_ids
+
+
+def test_e1_token_cap_protect_respects_daily_rescue_kill_switch(monkeypatch):
+    from app.core.rag.inject import apply_token_cap
+
+    pad = "x" * (4000 - len(REFUSE_PRONE_8_8))
+    pointers = [
+        _chunk(
+            f"gc{i}", GC_DOC, 0.95 - i * 0.01,
+            REFUSE_PRONE_8_8 + pad, chunk_index=9 + i,
+        )
+        for i in range(3)
+    ]
+    rate = _chunk("cdrate", GC_DOC, 0.0, CD_POINT_ONE_RATE, chunk_index=480)
+    aca = _chunk("aca500", GC_DOC, 0.0, LIVE_SCANNED_EXCL_ACA, chunk_index=500)
+    monkeypatch.setenv("MAX_RAG_TOKENS", "2000")
+    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
+    kept, _ = apply_token_cap(list(pointers) + [rate, aca], query=LIVE_E1)
+    kept_ids = {c.chunk_id for c in kept}
+    assert "cdrate" not in kept_ids
+    assert "aca500" not in kept_ids
+    assert compose_delay_damages_daily_from_excerpts(
+        LIVE_E1, "\n\n".join(c.text or "" for c in kept),
+    ) is None

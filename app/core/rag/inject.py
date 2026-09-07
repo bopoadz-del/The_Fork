@@ -77,6 +77,13 @@ def apply_token_cap(
     scored them 0.0. Live 396cc7b: sources stayed on chunks 9–11 because
     the cap admitted the three HIGH pointer windows and dropped the
     rescued mid-volume rows.
+
+    After #541 the same cold New-chat still flaked: a huge 9–11 window
+    that also parsed as an operand filled the leftover cap, the 0.0
+    sibling was skipped, and the model either refused or elected CoC
+    0.015%. Force-keep every protected operand and evict pointer /
+    lookalike windows once both operands are in hand. Kill-switch
+    ``RAG_DELAY_DAMAGES_DAILY_RESCUE=0`` disables the protect.
     """
     # Default sized for the CURRENT chunker output. Live failure 2026-08-15
     # (F20): doc-reindex emits ~3,000-char chunks (~750-950 est. tokens), so
@@ -87,31 +94,57 @@ def apply_token_cap(
     # headroom while still bounding a runaway injection.
     cap = int(os.getenv("MAX_RAG_TOKENS", "6000"))
     protect_ids: set[str] = set()
+    e1_ask = False
     if query:
         try:
             from app.core.rag.retriever import (
                 _e1_has_standalone_excl_vat,
                 _e1_rate_preference,
+                delay_damages_daily_rescue_enabled,
                 query_asks_delay_damages_daily_amount,
             )
-            if query_asks_delay_damages_daily_amount(query):
+            if (
+                delay_damages_daily_rescue_enabled()
+                and query_asks_delay_damages_daily_amount(query)
+            ):
+                e1_ask = True
                 for chunk in chunks:
-                    text = chunk.text or ""
-                    if (
-                        _e1_rate_preference(text) >= 2
-                        or _e1_has_standalone_excl_vat(text)
-                    ):
-                        protect_ids.add(chunk.chunk_id)
+                    try:
+                        text = chunk.text or ""
+                        if (
+                            _e1_rate_preference(text) >= 2
+                            or _e1_has_standalone_excl_vat(text)
+                        ):
+                            protect_ids.add(chunk.chunk_id)
+                    except Exception:  # noqa: BLE001 — one bad row
+                        continue
         except Exception:  # noqa: BLE001 — cap must never break injection
             protect_ids = set()
+            e1_ask = False
     protected = [c for c in chunks if c.chunk_id in protect_ids]
     rest = [c for c in chunks if c.chunk_id not in protect_ids]
+    if e1_ask and protect_ids:
+        try:
+            from app.core.rag.retriever import _e1_is_cap_noise
+            rest = [c for c in rest if not _e1_is_cap_noise(c.text or "")]
+        except Exception:  # noqa: BLE001 — keep rest if noise class fails
+            _LOG.debug(
+                "e1 token-cap noise filter failed; keeping rest",
+                exc_info=True,
+            )
     protected.sort(key=lambda c: -(c.score or 0))
     rest.sort(key=lambda c: -(c.score or 0))
-    ordered = protected + rest
-    total = 0
     kept: List[Chunk] = []
-    for c in ordered:
+    total = 0
+    # Always keep E1 operands — even when a single scanned page exceeds
+    # the leftover cap. Refusing to inject 0.1% / excl-VAT is the
+    # leftover E1 flake (refuse or CoC 0.015%). Non-E1: protected is
+    # empty and this loop is a no-op.
+    for c in protected:
+        t = _estimate_tokens(c.text)
+        kept.append(c)
+        total += t
+    for c in rest:
         t = _estimate_tokens(c.text)
         if total + t > cap:
             continue
