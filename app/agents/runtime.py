@@ -422,7 +422,7 @@ _SEARCH_PREAMBLE_RE = re.compile(
     r"give me a moment|one moment|hold on)"
     r"[^.!?]{0,120}?"
     r"\b(?:search|searching|look(?:ing)?\s+up|pull(?:ing)?|check(?:ing)?|"
-    r"run(?:ning)?|re-?run|fetch(?:ing)?|retriev(?:e|ing))\b",
+    r"run(?:ning)?|re-?run|fetch(?:ing)?|retriev(?:e|ing)|validat(?:e|ing))\b",
     re.IGNORECASE,
 )
 _SEARCH_PROMISE_TAIL_RE = re.compile(
@@ -430,7 +430,8 @@ _SEARCH_PROMISE_TAIL_RE = re.compile(
     r"\b(?:i\s+am|i'?m|i\s+will|i'?ll|let me|i\s+need\s+to)\b"
     r"[^.!?]{0,160}?"
     r"\b(?:search|searching|run(?:ning)?|pull(?:ing)?|look(?:ing)?\s+up|"
-    r"fetch(?:ing)?|retriev(?:e|ing)|check(?:ing)?)\b[^.!?]{0,160}[.!?]?\s*$",
+    r"fetch(?:ing)?|retriev(?:e|ing)|check(?:ing)?|validat(?:e|ing))\b"
+    r"[^.!?]{0,160}[.!?]?\s*$",
     re.IGNORECASE,
 )
 _SEARCH_PREAMBLE_RETRY_NUDGE = (
@@ -465,7 +466,7 @@ _CONTEXT_LEAK_RETRY_NUDGE = (
 _PROGRESS_NARRATION_RE = re.compile(
     r"(?:continuing|resuming|reading|re-?reading|fetching|retrieving|"
     r"searching|pulling|checking|loading|processing|extracting|scanning|"
-    r"analy[sz]ing|looking)\b[^.!?\n]*[.!?\u2026]*\s*$",
+    r"analy[sz]ing|looking|validating)\b[^.!?\n]*[.!?\u2026]*\s*$",
     re.IGNORECASE,
 )
 
@@ -1806,7 +1807,82 @@ def _tool_process_payload(tool_result: Any) -> dict[str, Any]:
     return inner
 
 
-def _should_force_synthesis(tool_result: Any) -> bool:
+def _e4_ask_text(user_message: str | None = None, messages: list | None = None) -> str:
+    """Unwrapped operator ask for leftover E4 compose."""
+    raw = user_message or ""
+    if not raw and messages:
+        raw = _latest_operator_ask(messages) or _operator_user_text(messages)
+    return _unwrap_rag_folded_operator_text(raw)
+
+
+def _e4_ask_can_compose(user_message: str | None = None, messages: list | None = None) -> bool:
+    """True when the ask carries its own raft/concrete L×W×T (E4)."""
+    try:
+        from app.lib.construction_formulas_quantities import (
+            looks_like_concrete_volume_ask,
+            parse_lwt_metres,
+        )
+        ask = _e4_ask_text(user_message, messages)
+        return bool(looks_like_concrete_volume_ask(ask) and parse_lwt_metres(ask))
+    except Exception:  # noqa: BLE001 — compose fence must never break a turn
+        return False
+
+
+def _composed_e4_waste_line(
+    user_message: str | None = None,
+    messages: list | None = None,
+) -> str | None:
+    """Deterministic E4 line from the ask. None when the ask is not E4."""
+    try:
+        from app.lib.construction_formulas_quantities import (
+            compose_documented_waste_volume,
+            format_documented_waste_volume_line,
+        )
+        composed = compose_documented_waste_volume(
+            _e4_ask_text(user_message, messages)
+        )
+        if not composed:
+            return None
+        return format_documented_waste_volume_line(composed)
+    except Exception:  # noqa: BLE001 — compose must never break a turn
+        _LOG.debug("E4 waste-volume compose failed", exc_info=True)
+        return None
+
+
+def _graft_composed_e4_waste_volume(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+    user_message: str | None = None,
+) -> str:
+    """OLD-pack E4: state 945 m³ when the ask already has L×W×T + waste.
+
+    Live leftover E4 on ``907f6cd`` hung on ``Let me validate…`` after
+    #492 already computed the with-waste figure. Compose from the ask
+    and replace a dangling validate/search promise (or a missing 945).
+    """
+    try:
+        from app.lib.construction_formulas_quantities import (
+            answer_states_waste_volume,
+            compose_documented_waste_volume,
+            format_documented_waste_volume_line,
+        )
+        ask = _e4_ask_text(user_message, messages)
+        composed = compose_documented_waste_volume(ask)
+        if not composed:
+            return text
+        line = format_documented_waste_volume_line(composed)
+        if answer_states_waste_volume(text or "", composed["volume_m3"]):
+            return text
+        return line
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        _LOG.exception("E4 waste-volume graft failed; passing answer through")
+        return text
+
+
+def _should_force_synthesis(
+    tool_result: Any,
+    user_message: str | None = None,
+) -> bool:
     """True when this tool round produced the artifact the user asked for.
 
     Empty sympy_reasoning (no variances, no evaluated expression) is NOT a
@@ -1814,6 +1890,11 @@ def _should_force_synthesis(tool_result: Any) -> bool:
     boq/drawing payload, got formula metadata, then force_synthesis disarmed
     formula_executor_v2 so the turn ended on "I will dispatch to the
     construction formula executor instead" with no 2.4 / 6840.
+
+    Live leftover E4: ``validation_pipeline`` is not the artifact for a
+    concrete/raft L×W×T ask. Treating it as a deliverable disarmed
+    ``construction_calc`` and the turn hung on ``Let me validate…``.
+    Leftover L4 (beam claim, Stay on validation) is unchanged.
     """
     if not isinstance(tool_result, dict):
         return False
@@ -1821,6 +1902,8 @@ def _should_force_synthesis(tool_result: Any) -> bool:
         return False
     name = tool_result.get("name")
     if name in _NON_DELIVERABLE_TOOLS:
+        return False
+    if name == "validation_pipeline" and _e4_ask_can_compose(user_message):
         return False
     if name == "sympy_reasoning":
         payload = _tool_process_payload(tool_result)
@@ -5233,6 +5316,10 @@ def _postprocess_answer(
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
     text = _graft_operator_claim_facts(text, _operator_user_text(messages))
+    # Live leftover E4: a dangling "Let me validate…" is not 945 m³.
+    # Compose from the ask's own L×W×T + documented waste before the
+    # cost gate. Leftover L6 earthwork does not match and is untouched.
+    text = _graft_composed_e4_waste_volume(text, messages)
     # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
     # text before the cost gate. A percentage-only excerpt still cannot
     # invent a daily figure; both operands must be in the excerpts or
@@ -8095,21 +8182,27 @@ class Agent:
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
                     if _final_text_needs_forced_retry(final_text, user_message=user_message):
-                        if final_text == _TOOL_FORMAT_FALLBACK:
-                            messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
-                        elif _looks_like_search_preamble(final_text):
-                            messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
-                        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
-                        if forced_resp.get("status") == "error":
-                            final_text = _EMPTY_RESPONSE_FALLBACK
+                        # Leftover E4: compose 945 from the ask. A second
+                        # LLM hop is how "Let me validate…" hung forever.
+                        e4_line = _composed_e4_waste_line(user_message, messages)
+                        if e4_line:
+                            final_text = e4_line
                         else:
-                            forced_msg = forced_resp["choice"].get("message") or {}
-                            final_text = _sanitize_final_text(
-                                forced_msg.get("content") or "",
-                                messages=messages, tool_results=tool_calls_made,
-                            )
-                            if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                            if final_text == _TOOL_FORMAT_FALLBACK:
+                                messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
+                            elif _looks_like_search_preamble(final_text):
+                                messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
+                            forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
+                            if forced_resp.get("status") == "error":
                                 final_text = _EMPTY_RESPONSE_FALLBACK
+                            else:
+                                forced_msg = forced_resp["choice"].get("message") or {}
+                                final_text = _sanitize_final_text(
+                                    forced_msg.get("content") or "",
+                                    messages=messages, tool_results=tool_calls_made,
+                                )
+                                if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                                    final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     # An answer that names its own missing input gets ONE
                     # bounded retrieval for it before it is final (F-E1-2).
@@ -8188,7 +8281,7 @@ class Agent:
                 # window with tools already disarmed.
                 if (
                     _force_synth_enabled and ok
-                    and _should_force_synthesis(tool_result)
+                    and _should_force_synthesis(tool_result, user_message)
                     and not _has_unread_windows(_tool_content)
                 ):
                     force_synthesis = True
@@ -9129,41 +9222,51 @@ class Agent:
                         # detector. Ordering the other way would send the model
                         # "stop promising to search" for a turn where it never
                         # promised anything.
-                        if leak_hold:
-                            messages.append(
-                                {"role": "user", "content": _CONTEXT_LEAK_RETRY_NUDGE}
-                            )
-                        elif promise_hold:
-                            messages.append(
-                                {"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE}
-                            )
-                        _set_phase("forced-retry (streamed-synth)")
-                        forced_resp = await self._call_llm(
-                            messages, api_key, project_id=project_id,
-                            with_tools=False, user_id=user_id,
-                            deadline=_llm_deadline(),
+                        # Leftover E4: a validate promise already has the
+                        # 945 m³ operands in the ask. Do not start another
+                        # LLM hop — that is the live hang on 907f6cd.
+                        e4_line = (
+                            None if leak_hold
+                            else _composed_e4_waste_line(user_message, messages)
                         )
-                        if forced_resp.get("status") == "error":
-                            final_text = _EMPTY_RESPONSE_FALLBACK
+                        if e4_line:
+                            final_text = e4_line
                         else:
-                            served_model = (forced_resp.get("raw") or {}).get("model") or served_model
-                            _fm = forced_resp["choice"].get("message") or {}
-                            final_text = _sanitize_final_text(
-                                _fm.get("content") or "",
-                                messages=messages, tool_results=stream_tool_results,
+                            if leak_hold:
+                                messages.append(
+                                    {"role": "user", "content": _CONTEXT_LEAK_RETRY_NUDGE}
+                                )
+                            elif promise_hold:
+                                messages.append(
+                                    {"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE}
+                                )
+                            _set_phase("forced-retry (streamed-synth)")
+                            forced_resp = await self._call_llm(
+                                messages, api_key, project_id=project_id,
+                                with_tools=False, user_id=user_id,
+                                deadline=_llm_deadline(),
                             )
-                            # No leak check on final_text here: the
-                            # _sanitize_final_text call two lines up has
-                            # already turned any leak into
-                            # _TOOL_FORMAT_FALLBACK, which this condition
-                            # catches. Repeating it reads like a second guard
-                            # and is one no test can kill. Pinned instead by
-                            # test_a_retry_that_leaks_again_is_refused_too,
-                            # which asserts the OUTCOME rather than the line.
-                            if not final_text.strip() or _final_text_needs_forced_retry(
-                                final_text, user_message=user_message
-                            ):
+                            if forced_resp.get("status") == "error":
                                 final_text = _EMPTY_RESPONSE_FALLBACK
+                            else:
+                                served_model = (forced_resp.get("raw") or {}).get("model") or served_model
+                                _fm = forced_resp["choice"].get("message") or {}
+                                final_text = _sanitize_final_text(
+                                    _fm.get("content") or "",
+                                    messages=messages, tool_results=stream_tool_results,
+                                )
+                                # No leak check on final_text here: the
+                                # _sanitize_final_text call two lines up has
+                                # already turned any leak into
+                                # _TOOL_FORMAT_FALLBACK, which this condition
+                                # catches. Repeating it reads like a second guard
+                                # and is one no test can kill. Pinned instead by
+                                # test_a_retry_that_leaks_again_is_refused_too,
+                                # which asserts the OUTCOME rather than the line.
+                                if not final_text.strip() or _final_text_needs_forced_retry(
+                                    final_text, user_message=user_message
+                                ):
+                                    final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                         final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
                         for chunk in _chunks(final_text, 80):
@@ -9327,35 +9430,43 @@ class Agent:
                                 )
                             final_text = _EMPTY_RESPONSE_FALLBACK
                         else:
-                            _LOG.info("chat_stream: unusable final_text, forcing no-tools retry")
-                            if _timing:
-                                _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
-                                             len(raw_content), time.monotonic() - _turn_t0)
-                            if final_text == _TOOL_FORMAT_FALLBACK:
-                                messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
-                            elif _looks_like_search_preamble(final_text):
-                                messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
-                            _fr_t0 = time.monotonic()
-                            _set_phase("forced-retry")
-                            forced_resp = await self._call_llm(
-                                messages, api_key, project_id=project_id,
-                                with_tools=False, user_id=user_id,
-                                deadline=_llm_deadline(),
-                            )
-                            if _timing:
-                                _LOG.warning("TIMING chat_stream forced-retry call=%.1fs status=%s cum=%.1fs",
-                                             time.monotonic() - _fr_t0, forced_resp.get("status"), time.monotonic() - _turn_t0)
-                            if forced_resp.get("status") == "error":
-                                final_text = _EMPTY_RESPONSE_FALLBACK
-                            else:
-                                served_model = (forced_resp.get("raw") or {}).get("model") or served_model
-                                forced_msg = forced_resp["choice"].get("message") or {}
-                                final_text = _sanitize_final_text(
-                                    forced_msg.get("content") or "",
-                                    messages=messages, tool_results=stream_tool_results,
+                            e4_line = _composed_e4_waste_line(user_message, messages)
+                            if e4_line:
+                                _LOG.info(
+                                    "chat_stream: leftover E4 compose skipped "
+                                    "forced retry (validate hang)"
                                 )
-                                if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                                final_text = e4_line
+                            else:
+                                _LOG.info("chat_stream: unusable final_text, forcing no-tools retry")
+                                if _timing:
+                                    _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
+                                                 len(raw_content), time.monotonic() - _turn_t0)
+                                if final_text == _TOOL_FORMAT_FALLBACK:
+                                    messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
+                                elif _looks_like_search_preamble(final_text):
+                                    messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
+                                _fr_t0 = time.monotonic()
+                                _set_phase("forced-retry")
+                                forced_resp = await self._call_llm(
+                                    messages, api_key, project_id=project_id,
+                                    with_tools=False, user_id=user_id,
+                                    deadline=_llm_deadline(),
+                                )
+                                if _timing:
+                                    _LOG.warning("TIMING chat_stream forced-retry call=%.1fs status=%s cum=%.1fs",
+                                                 time.monotonic() - _fr_t0, forced_resp.get("status"), time.monotonic() - _turn_t0)
+                                if forced_resp.get("status") == "error":
                                     final_text = _EMPTY_RESPONSE_FALLBACK
+                                else:
+                                    served_model = (forced_resp.get("raw") or {}).get("model") or served_model
+                                    forced_msg = forced_resp["choice"].get("message") or {}
+                                    final_text = _sanitize_final_text(
+                                        forced_msg.get("content") or "",
+                                        messages=messages, tool_results=stream_tool_results,
+                                    )
+                                    if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                                        final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
                     if _timing:
@@ -9459,7 +9570,7 @@ class Agent:
                 if (
                     _force_synth_enabled
                     and tool_result.get("ok", True)
-                    and _should_force_synthesis(tool_result)
+                    and _should_force_synthesis(tool_result, user_message)
                     and not _has_unread_windows(_tool_content)
                 ):
                     force_synthesis = True

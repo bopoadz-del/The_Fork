@@ -165,6 +165,68 @@ def concrete_volume(
     }
 
 
+def compose_documented_waste_volume(text: str) -> dict | None:
+    """E4: compose with-waste volume from the ask's own L×W×T.
+
+    The calculator already returns 945 (#492). Live leftover E4 on
+    ``907f6cd`` never surfaced it: cold New-chat hung on
+    ``Let me validate…`` instead. Compose from the operator ask so the
+    answer does not wait on a validation hop. Leftover L6 earthwork
+    (no concrete/raft/waste words) returns None. Kill-switch
+    ``APPLY_DOCUMENTED_WASTE=0`` still zeros the factor (net 900).
+    """
+    blob = text or ""
+    if not looks_like_concrete_volume_ask(blob):
+        return None
+    if not parse_lwt_metres(blob):
+        return None
+    _calc, params = resolve_concrete_volume_calc("concrete_volume", {}, blob)
+    kwargs = {
+        key: params[key]
+        for key in ("length_m", "width_m", "thickness_m", "waste_factor")
+        if key in params
+    }
+    if not all(k in kwargs for k in ("length_m", "width_m", "thickness_m")):
+        return None
+    result = concrete_volume(**kwargs)
+    return {
+        "volume_m3": result["volume_m3"],
+        "net_volume_m3": result["net_volume_m3"],
+        "waste_factor": result["waste_factor"],
+        "length_m": float(kwargs["length_m"]),
+        "width_m": float(kwargs["width_m"]),
+        "thickness_m": float(kwargs["thickness_m"]),
+        "note": result.get("note") or "",
+    }
+
+
+def format_documented_waste_volume_line(composed: dict) -> str:
+    """User-facing E4 line: with-waste headline + documented factor."""
+    vol = float(composed["volume_m3"])
+    net = float(composed["net_volume_m3"])
+    factor = float(composed.get("waste_factor") or 0.0)
+    if factor > 0:
+        pct = factor * 100.0
+        return (
+            f"Concrete volume including the documented {pct:g}% waste factor "
+            f"is {vol:g} m³ (net {net:g} m³ × {1.0 + factor:g})."
+        )
+    return (
+        f"Concrete volume is {vol:g} m³ "
+        f"(documented waste factor disabled; net {net:g} m³)."
+    )
+
+
+def answer_states_waste_volume(text: str, volume: float) -> bool:
+    """True when ``text`` already states the headline with-waste volume."""
+    raw = text or ""
+    if not raw.strip():
+        return False
+    headline = float(volume)
+    whole = f"{headline:.0f}" if headline == int(headline) else f"{headline:g}"
+    return bool(re.search(rf"\b{re.escape(whole)}(?:\.0+)?\b", raw))
+
+
 def rebar_weight(
     bar_diameter_mm: float,
     total_length_m: float,

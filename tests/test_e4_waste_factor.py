@@ -22,12 +22,21 @@ from pathlib import Path
 
 import pytest
 
-from app.agents.runtime import _looks_like_self_contained_calculation
+from app.agents.runtime import (
+    _graft_composed_e4_waste_volume,
+    _looks_like_self_contained_calculation,
+    _looks_like_search_preamble,
+    _postprocess_answer,
+    _should_force_synthesis,
+)
 from app.containers.construction import ConstructionContainer
 from app.lib import construction_formulas as _cf
 from app.lib.construction_formulas_quantities import (
     DOCUMENTED_CONCRETE_WASTE_FACTOR,
+    answer_states_waste_volume,
+    compose_documented_waste_volume,
     documented_waste_enabled,
+    format_documented_waste_volume_line,
     looks_like_concrete_volume_ask,
     parse_lwt_metres,
     resolve_concrete_volume_calc,
@@ -281,3 +290,90 @@ async def test_orchestrator_routes_e4_to_construction_calc():
     r = await SmartOrchestratorBlock().process({"user_message": E4_ASK_ASCII})
     assert r["status"] == "success"
     assert "construction_calc" in (r.get("action_queue") or []), r
+
+
+# ── leftover E4: "Let me validate…" is not 945 ────────────────────────────
+
+
+LIVE_VALIDATE = "Let me validate…"
+L4_BEAM = (
+    "Stay on validation. Validate this office floor beam forty metres long "
+    "on a fifty millimetre steel I-section carrying eight hundred kilonewtons "
+    "per metre. Report Physical and Tier."
+)
+E1_ASK = "Calculate the delay damages per calendar day in SAR for the whole of the Works."
+
+
+def test_compose_from_the_e4_ask_is_945():
+    composed = compose_documented_waste_volume(E4_ASK_ASCII)
+    assert composed is not None
+    assert composed["volume_m3"] == pytest.approx(945.0)
+    assert composed["net_volume_m3"] == pytest.approx(900.0)
+    assert composed["waste_factor"] == pytest.approx(DOCUMENTED_CONCRETE_WASTE_FACTOR)
+    line = format_documented_waste_volume_line(composed)
+    assert "945" in line
+    assert "waste" in line.lower()
+
+
+def test_compose_is_none_for_leftover_l6_and_e1():
+    assert compose_documented_waste_volume(L6_ASK) is None
+    assert compose_documented_waste_volume(E1_ASK) is None
+    assert compose_documented_waste_volume(L4_BEAM) is None
+
+
+def test_let_me_validate_is_a_dangling_promise():
+    """Live leftover E4 on 907f6cd. #454 caught search, not validate."""
+    assert _looks_like_search_preamble(LIVE_VALIDATE)
+    assert _looks_like_search_preamble("Let me validate the waste factor.")
+    assert _looks_like_search_preamble("I'll validate this volume against the pipeline.")
+
+
+def test_graft_replaces_validate_promise_with_945():
+    msgs = [{"role": "user", "content": E4_ASK_UNICODE}]
+    out = _graft_composed_e4_waste_volume(LIVE_VALIDATE, msgs)
+    assert "945" in out
+    assert "Let me validate" not in out
+    assert "waste" in out.lower()
+
+
+def test_graft_replaces_net_900_without_waste():
+    msgs = [{"role": "user", "content": E4_ASK_ASCII}]
+    out = _graft_composed_e4_waste_volume("The raft is 900 m³.", msgs)
+    assert "945" in out
+    assert not answer_states_waste_volume("The raft is 900 m³.", 945.0)
+
+
+def test_graft_keeps_an_answer_that_already_states_945():
+    msgs = [{"role": "user", "content": E4_ASK_ASCII}]
+    already = "Concrete volume including documented waste is 945 m³ (119 trucks)."
+    assert _graft_composed_e4_waste_volume(already, msgs) == already
+
+
+def test_graft_is_a_no_op_for_leftover_l6():
+    msgs = [{"role": "user", "content": L6_ASK}]
+    assert _graft_composed_e4_waste_volume(LIVE_VALIDATE, msgs) == LIVE_VALIDATE
+
+
+def test_validation_pipeline_does_not_force_synth_on_e4():
+    rec = {"name": "validation_pipeline", "ok": True, "result": {"overall": "pass"}}
+    assert _should_force_synthesis(rec, E4_ASK_ASCII) is False
+    assert _should_force_synthesis(rec, L4_BEAM) is True
+    assert _should_force_synthesis(rec) is True
+
+
+def test_kill_switch_compose_is_900_not_a_hang(monkeypatch):
+    monkeypatch.setenv("APPLY_DOCUMENTED_WASTE", "0")
+    composed = compose_documented_waste_volume(E4_ASK_ASCII)
+    assert composed is not None
+    assert composed["volume_m3"] == pytest.approx(900.0)
+    assert composed["waste_factor"] == pytest.approx(0.0)
+    line = format_documented_waste_volume_line(composed)
+    assert "900" in line
+    assert "945" not in line
+
+
+def test_postprocess_grafts_945_over_validate_promise():
+    msgs = [{"role": "user", "content": E4_ASK_ASCII}]
+    out = _postprocess_answer(LIVE_VALIDATE, None, msgs)
+    assert "945" in out
+    assert "Let me validate" not in out
