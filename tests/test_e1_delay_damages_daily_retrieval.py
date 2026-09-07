@@ -42,7 +42,9 @@ A3_ASK = CATALOG["cases"]["A3"]["ask"]
 A5_ASK = CATALOG["cases"]["A5"]["ask"]
 A6_ASK = CATALOG["cases"]["A6"]["ask"]
 A9_ASK = CATALOG["cases"]["A9"]["ask"]
+C1_ASK = CATALOG["cases"]["C1"]["ask"]
 E1_ASK = CATALOG["cases"]["E1"]["ask"]
+F1_ASK = CATALOG["cases"]["F1"]["ask"]
 LIVE_PREFIX = "Answer only from the client project documents. "
 LIVE_E1 = LIVE_PREFIX + (
     "Calculate the delay damages per calendar day in SAR for the "
@@ -1586,3 +1588,243 @@ def test_e1_loaded_cd_rows_kill_refuse_even_when_top_k_is_toys():
     assert "1,754,504.46" in posted
     assert posted != _CG_REFUSAL
     assert "upload your priced BOQ" not in posted.lower()
+
+
+# Live leftover E1 after #536: top-k is pointer-only Contract Data
+# chunks 9–11 (no parseable 0.1% and no excl-VAT ACA). The CoC 0.015%
+# path did not fire. Loaded CD volume still has both operands.
+REFUSE_PRONE_8_8 = (
+    "Volume 1 - Conditions of Contract. Sub-Clause 8.8 Delay Damages. "
+    "The Contractor shall pay delay damages for the whole of the Works "
+    "at the rate stated in the Contract Data for every calendar day."
+)
+
+
+def _refuse_prone_volume_chunks():
+    windows = [
+        _chunk(
+            f"gc{i}", GC_DOC, 0.95 - i * 0.01, REFUSE_PRONE_8_8, chunk_index=9 + i,
+        )
+        for i in range(3)
+    ]
+    dummies = [
+        _chunk(f"pre{i}", GC_DOC, 0.10, GC_8_8, chunk_index=i)
+        for i in range(MIDDLE_DOC_LEN)
+        if i not in (9, 10, 11, CD_RATE_INDEX, MIDDLE_ACA_INDEX)
+    ]
+    rate = _chunk(
+        "cdrate", GC_DOC, 0.20, CD_POINT_ONE_RATE, chunk_index=CD_RATE_INDEX,
+    )
+    aca = _chunk(
+        "aca500", GC_DOC, 0.21, LIVE_SCANNED_EXCL_ACA, chunk_index=MIDDLE_ACA_INDEX,
+    )
+    return list(dummies) + list(windows) + [rate, aca], windows, rate, aca
+
+
+def _refuse_store(all_chunks):
+    class _Store:
+        def chunks_for_docs(
+            self, project_id, doc_ids, k_per_doc=12, from_end=False,
+            all_rows=False,
+        ):
+            rows = sorted(
+                [c for c in all_chunks if c.doc_id in (doc_ids or [])],
+                key=lambda c: c.chunk_index,
+            )
+            if all_rows:
+                return rows
+            n = max(1, int(k_per_doc or 12))
+            return rows[-n:] if from_end else rows[:n]
+
+        def chunks_containing_all(self, project_id, needles, k=20, doc_ids=None):
+            return []
+
+    return _Store()
+
+
+def test_e1_loaded_cd_volume_helper_composes_when_top_k_is_refuse_prone(
+    monkeypatch,
+):
+    """Even if excerpts are chunks 9–11, the loaded volume supplies both."""
+    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
+
+    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_title_phrase",
+        lambda pid, phrase, limit=8: [
+            {"id": GC_DOC, "original_name": CD_SCANNED_NAME},
+        ] if "contract" in (phrase or "").lower() else [],
+    )
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    rag = _sys(*(c.text for c in windows))
+    extra = e1_compose_excerpts_from_loaded_cd_volume(
+        LIVE_E1, ACTIVE, _refuse_store(all_chunks),
+        rag_context=rag["content"],
+        doc_ids=[GC_DOC],
+    )
+    assert RATE in extra
+    assert NET_ACA_TXT in extra
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, extra)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["contract_amount"] == NET_ACA
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+
+
+def test_e1_loaded_cd_volume_helper_respects_kill_switch(monkeypatch):
+    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
+
+    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
+    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
+    extra = e1_compose_excerpts_from_loaded_cd_volume(
+        LIVE_E1, ACTIVE, _refuse_store(all_chunks),
+        rag_context=_sys(*(c.text for c in windows))["content"],
+        doc_ids=[GC_DOC],
+    )
+    assert extra == ""
+
+
+def test_e1_loaded_cd_volume_helper_does_not_steal_neighbor_asks(monkeypatch):
+    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
+
+    all_chunks, _windows, _rate, _aca = _refuse_prone_volume_chunks()
+    store = _refuse_store(all_chunks)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    for ask in (A2_ASK, A3_ASK, A5_ASK, A6_ASK, A9_ASK, C1_ASK, F1_ASK):
+        assert e1_compose_excerpts_from_loaded_cd_volume(
+            ask, ACTIVE, store, doc_ids=[GC_DOC],
+        ) == ""
+
+
+def test_e1_loaded_cd_volume_helper_keeps_015_reject(monkeypatch):
+    """Lookalike-only volume must not become 263,175.67."""
+    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
+
+    lookalikes = [
+        _chunk(
+            f"gc{i}", GC_DOC, 0.95, COC_015_WITH_ACA, chunk_index=9 + i,
+        )
+        for i in range(3)
+    ]
+    aca = _chunk(
+        "aca500", GC_DOC, 0.21, LIVE_SCANNED_EXCL_ACA, chunk_index=MIDDLE_ACA_INDEX,
+    )
+    all_chunks = list(lookalikes) + [aca]
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    extra = e1_compose_excerpts_from_loaded_cd_volume(
+        LIVE_E1, ACTIVE, _refuse_store(all_chunks),
+        doc_ids=[GC_DOC],
+    )
+    assert extra == ""
+    assert compose_delay_damages_daily_from_excerpts(
+        LIVE_E1, "\n\n".join(c.text for c in all_chunks),
+    ) is None
+
+
+def test_ensure_e1_kept_can_compose_replaces_refuse_prone_windows():
+    from app.core.rag.retriever import ensure_e1_kept_can_compose
+
+    all_chunks, windows, rate, aca = _refuse_prone_volume_chunks()
+    kept = list(windows)
+    ranked = list(windows) + [rate, aca]
+    assert ensure_e1_kept_can_compose(LIVE_E1, kept, ranked) is True
+    excerpts = "\n\n".join(c.text or "" for c in kept)
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+
+
+def test_e1_retrieve_refuse_prone_9_11_still_composes_point_one(monkeypatch):
+    """Live fdd60275: sources only chunks 9–11 (pointer). Must still compose."""
+    from app.core.rag import retriever as ret
+
+    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
+    names = {GC_DOC: CD_SCANNED_NAME}
+    seeded = [
+        {"id": GC_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+    ]
+
+    def fake_search(self, project_id, qvec, k, query_text=None):
+        return [c for c in windows if c.project_id == project_id][:k]
+
+    def fake_id_search(self, project_id, identifiers, k=20):
+        return list(windows)[:k]
+
+    def fake_chunks_for_docs(
+        self, project_id, doc_ids, k_per_doc=12, from_end=False, all_rows=False,
+    ):
+        by_doc: dict[str, list] = {}
+        for chunk in all_chunks:
+            if chunk.doc_id in (doc_ids or []):
+                by_doc.setdefault(chunk.doc_id, []).append(chunk)
+        out = []
+        for did in doc_ids or []:
+            rows = sorted(by_doc.get(did, []), key=lambda c: c.chunk_index)
+            if all_rows:
+                out.extend(rows)
+                continue
+            n = max(1, int(k_per_doc or 12))
+            out.extend(rows[-n:] if from_end else rows[:n])
+        return out
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.identifier_search", fake_id_search,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_for_docs",
+        fake_chunks_for_docs,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_containing_all",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.count", lambda self, pid=None: 4,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore._verify_embedding_identity",
+        lambda self: None,
+    )
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda did: names.get(did, ""),
+                        raising=False)
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_title_phrase",
+        lambda pid, phrase, limit=8: (
+            list(seeded) if "contract data" in (phrase or "").lower() else []
+        ),
+    )
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_filename_terms",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_LAYERED", raising=False)
+
+    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=3)
+    excerpts = "\n\n".join(c.text or "" for c in chunks)
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["contract_amount"] == NET_ACA
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+    rag = _sys(*(c.text or "" for c in chunks))
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(_CG_REFUSAL, rag, msgs, project_id=ACTIVE)
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
+    assert "263,175.67" not in posted
+    assert "0.015%" not in posted.split("\n", 1)[0]
