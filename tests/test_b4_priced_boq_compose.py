@@ -16,7 +16,10 @@ Kill-switch: COMPOSE_PRICED_BOQ_ROW=0 restores the empty hang.
 """
 from __future__ import annotations
 
+import pytest
+
 from app.agents.runtime import (
+    Agent,
     _CG_REFUSAL,
     _EMPTY_RESPONSE_FALLBACK,
     _compose_priced_boq_instead_of_retry,
@@ -24,6 +27,7 @@ from app.agents.runtime import (
     _graft_priced_boq_item,
     _graft_rate_only_item,
     _postprocess_answer,
+    _should_short_circuit_priced_boq,
 )
 from app.core.rag.inject import format_chunks_as_system_message
 from app.core.rag.retriever import (
@@ -257,3 +261,129 @@ def test_rate_only_graft_still_wins_for_g4_on_soup():
     assert "Rate Only" in out
     priced = _graft_priced_boq_item(out, rag, _msgs(LIVE_G4))
     assert priced == out
+
+
+def test_short_circuit_skips_provider_when_priced_row_is_in_rag():
+    rag = _sys(SOUP)
+    out = _should_short_circuit_priced_boq(
+        rag, _msgs(LIVE_B4), has_predispatch=False,
+    )
+    assert _has_b4_figures(out)
+    assert STORM_WATER not in out.lower()
+    assert _should_short_circuit_priced_boq(
+        rag, _msgs(LIVE_B4), has_predispatch=True,
+    ) == ""
+    assert _should_short_circuit_priced_boq(
+        rag, _msgs(LIVE_G4), has_predispatch=False,
+    ) == ""
+
+
+def test_short_circuit_kill_switch_restores_provider_hop(monkeypatch):
+    monkeypatch.setenv("COMPOSE_PRICED_BOQ_ROW", "0")
+    rag = _sys(SOUP)
+    assert _should_short_circuit_priced_boq(
+        rag, _msgs(LIVE_B4), has_predispatch=False,
+    ) == ""
+
+
+@pytest.mark.asyncio
+async def test_chat_short_circuits_b4_without_calling_llm(monkeypatch):
+    """Live 2ceef76 retest: provider died with the unavailable banner.
+
+    When RAG already has priced D599.5, do not call the LLM. Health can
+    stay 49/49 while OpenRouter is owner-gated — compose from excerpts.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("KIMI_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(
+        "app.agents.runtime.project_is_rag_ready", lambda _pid: True,
+    )
+    calls = {"n": 0}
+
+    async def fake_call_llm(*_a, **_k):
+        calls["n"] += 1
+        return {
+            "status": "error",
+            "error": "connection refused",
+        }
+
+    rag = _sys(SOUP)
+    audit = {
+        "project_id": "p_master",
+        "chunks": [
+            {
+                "doc_id": "soup",
+                "chunk_index": 0,
+                "chunk_id": "p_master:soup:0",
+                "score": 0.90,
+            }
+        ],
+    }
+
+    def fake_rag_inject(**_k):
+        return rag, audit
+
+    agent = Agent(
+        name="test-agent",
+        description="test",
+        system_prompt="You are a test assistant.",
+        allowed_blocks=[],
+    )
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+    monkeypatch.setattr("app.agents.runtime.rag_inject", fake_rag_inject)
+
+    result = await agent.chat(LIVE_B4, project_id="p_master")
+    assert calls["n"] == 0
+    assert result["status"] == "success"
+    assert _has_b4_figures(result["answer"])
+    assert STORM_WATER not in result["answer"].lower()
+    assert result["iterations"] == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_short_circuits_b4_without_calling_llm(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("KIMI_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(
+        "app.agents.runtime.project_is_rag_ready", lambda _pid: True,
+    )
+    calls = {"n": 0}
+
+    async def fake_call_llm(*_a, **_k):
+        calls["n"] += 1
+        raise ConnectionError("connection refused")
+
+    rag = _sys(SOUP)
+    audit = {
+        "project_id": "p_master",
+        "chunks": [
+            {
+                "doc_id": "soup",
+                "chunk_index": 0,
+                "chunk_id": "p_master:soup:0",
+                "score": 0.90,
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "app.agents.runtime.rag_inject",
+        lambda **_k: (rag, audit),
+    )
+    agent = Agent(
+        name="test-agent",
+        description="test",
+        system_prompt="You are a test assistant.",
+        allowed_blocks=[],
+    )
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+
+    events = []
+    async for evt in agent.chat_stream(LIVE_B4, project_id="p_master"):
+        events.append(evt)
+    assert calls["n"] == 0
+    tokens = "".join(
+        e.get("content") or "" for e in events if e.get("type") == "token"
+    )
+    end = next(e for e in events if e.get("type") == "end")
+    assert _has_b4_figures(tokens) or _has_b4_figures(end.get("content") or "")
+    assert not any(e.get("type") == "error" for e in events)

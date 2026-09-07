@@ -5489,6 +5489,24 @@ def _compose_priced_boq_instead_of_retry(
         return ""
 
 
+def _should_short_circuit_priced_boq(
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+    *,
+    has_predispatch: bool,
+) -> str:
+    """Composed priced-row answer, or '' if the LLM hop must still run.
+
+    Live WAVE 2 B4 on 2ceef76: when synthesis/provider died the UI showed
+    the unavailable banner and no citations. The elected D599.5 figures
+    were already in the excerpts — do not wait on OpenRouter. Predispatch
+    deliverables keep the LLM path.
+    """
+    if has_predispatch:
+        return ""
+    return _compose_priced_boq_instead_of_retry("", rag_sys_msg, messages)
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -8258,6 +8276,35 @@ class Agent:
                 "messages": messages + [{"role": "assistant", "content": answer}],
                 "sources": [],
             }
+        # WAVE 2 B4: priced D599.5 is already in the excerpts. Skip the
+        # provider hop so a transient OpenRouter / unavailable banner
+        # cannot empty the turn. Predispatch deliverables keep the LLM.
+        _priced_fast = _should_short_circuit_priced_boq(
+            _rag_sys_msg, messages,
+            has_predispatch=bool(
+                _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
+            ),
+        )
+        if _priced_fast:
+            answer = _postprocess_answer(
+                _priced_fast, _rag_sys_msg, messages,
+                fallback_used=bool(_rag_audit.get("fallback_used")),
+                agent_name=self.name,
+                project_id=project_id,
+                audit_rec=_rag_audit,
+            )
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": messages + [{"role": "assistant", "content": answer}],
+                "sources": _build_sources_from_audit(_rag_audit, answer),
+            }
         # Root fix for the tool-loop (mirrors chat_stream): cap explicit
         # search_project_documents calls, then stop offering the tool so the
         # model answers from injected context instead of grinding to the cap.
@@ -9174,6 +9221,35 @@ class Agent:
                 yield {"type": "token", "content": chunk}
             yield {"type": "end", "iterations": 0, "sources": [],
                    "tools": list(tools_invoked)}
+            return
+        # WAVE 2 B4: priced row already in excerpts — skip the provider
+        # hop so a transient unavailable banner cannot empty the turn.
+        _priced_fast = _should_short_circuit_priced_boq(
+            _rag_sys_msg, messages,
+            has_predispatch=bool(
+                _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
+            ),
+        )
+        if _priced_fast:
+            answer = _postprocess_answer(
+                _priced_fast, _rag_sys_msg, messages,
+                fallback_used=bool(_rag_audit.get("fallback_used")),
+                agent_name=self.name,
+                project_id=project_id,
+                audit_rec=_rag_audit,
+            )
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {
+                "type": "end",
+                "content": answer,
+                "iterations": 0,
+                "sources": _build_sources_from_audit(_rag_audit, answer),
+                "tools": list(tools_invoked),
+            }
             return
         # Root fix for the tool-loop: RAG context is injected pre-loop, yet the
         # model keeps re-calling search_project_documents when an exact value
