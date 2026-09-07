@@ -920,6 +920,7 @@ class VectorStore:
         *,
         k_per_doc: int = 12,
         from_end: bool = False,
+        all_rows: bool = False,
     ) -> List[Chunk]:
         """Return indexed chunks for specific documents, ordered by chunk_index.
 
@@ -932,6 +933,11 @@ class VectorStore:
         ``from_end=True`` takes the last ``k_per_doc`` rows per file
         (Contract Data appendix after a long Conditions body). Default
         stays first-N so existing callers are unchanged.
+
+        ``all_rows=True`` returns every chunk of those docs (the SQL
+        already loads them). Leftover E1: a filled 1.1.1 excl-VAT row
+        can sit in the middle of a combined volume, past first-400 and
+        before last-400, so prefix+tail still miss.
         """
         if not project_id or not doc_ids:
             return []
@@ -978,6 +984,8 @@ class VectorStore:
                 authority=getattr(r, "authority", None),
             )
 
+        if all_rows:
+            return [_as_chunk(r) for r in rows]
         if from_end:
             by_doc: Dict[str, List] = {}
             for r in rows:

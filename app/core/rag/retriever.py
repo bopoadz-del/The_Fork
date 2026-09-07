@@ -588,7 +588,9 @@ class _ContractScope:
                     chunk_states_delay_damages_rate(text) for _n, text in docs
                 )
                 has_aca = any(
-                    chunk_states_accepted_contract_amount(text) for _n, text in docs
+                    _chunk_is_e1_compose_operand(text)
+                    and not chunk_states_delay_damages_rate(text)
+                    for _n, text in docs
                 )
                 # Only fence when both operands are reachable. A
                 # rate-only fence would delete the ACA (live E1).
@@ -2515,8 +2517,9 @@ _ACA_BASE_RESCUE_PHRASES = (
 # Combined GC+Contract Data volumes put Sub-Clause 8.8 at chunks 9–11
 # and the filled 1.1.1 excl-VAT row in a later appendix. identifier_search
 # LIMIT and first-N chunks_for_docs stay on the 8.8 toy windows.
-# #532 scanned only the first 400 by index — live appendix sits past
-# that prefix. Text-match + tail (last-N) recover it. Kill-switch:
+# #532/#533 prefix-400 + last-400 + ``1.1.1``+``excluding`` needles still
+# miss a middle-of-volume scanned row (live 77a96ac: top-k stayed on
+# chunks 9–11). Walk every chunk of those docs. Kill-switch:
 # RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
 _E1_REAL_ACA_DOC_SCAN = 400
 _E1_REAL_ACA_TEXT_K = 80
@@ -2527,6 +2530,8 @@ _E1_REAL_ACA_TEXT_NEEDLES = (
     # excl-VAT tokens still hit the filled appendix and skip 8.8 toys.
     ("1.1.1", "excluding"),
     ("1.1.1", "accepted"),
+    ("excl", "vat"),
+    ("accepted", "vat"),
 )
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
@@ -2790,10 +2795,17 @@ def chunk_states_accepted_contract_amount(text: str) -> bool:
 
 def _chunk_is_e1_compose_operand(text: str) -> bool:
     """Rate row or ACA money row — the two E1 multiply operands."""
-    return (
-        chunk_states_delay_damages_rate(text)
-        or chunk_states_accepted_contract_amount(text)
-    )
+    if chunk_states_delay_damages_rate(text):
+        return True
+    if chunk_states_accepted_contract_amount(text):
+        return True
+    try:
+        from app.lib.construction_formulas_commercial import (
+            chunk_has_real_accepted_contract_amount,
+        )
+        return chunk_has_real_accepted_contract_amount(text)
+    except Exception:  # noqa: BLE001 — rate-only window is not ACA
+        return False
 
 
 def _chunk_keeps_for_e1_daily(filename: str, text: str) -> bool:
@@ -2827,13 +2839,21 @@ def _e1_aca_preference(text: str) -> int:
     try:
         from app.lib.construction_formulas_commercial import (
             chunk_accepted_contract_amount_is_only_toy,
+            chunk_has_real_accepted_contract_amount,
         )
         if chunk_accepted_contract_amount_is_only_toy(text):
             return -1
+        # Live leftover E1: a scanned excl-VAT row can fail
+        # chunk_states_accepted_contract_amount (line-split / excl. VAT)
+        # while still being the real money operand. Do not rank it -1
+        # or reservation leaves top-k on 8.8 toys.
+        states = chunk_states_accepted_contract_amount(text)
+        if not states and not chunk_has_real_accepted_contract_amount(text):
+            return -1
     except Exception:  # noqa: BLE001 — unlabeled ACA still ranks above none
         logger.debug("toy-ACA preference test failed", exc_info=True)
-    if not chunk_states_accepted_contract_amount(text):
-        return -1
+        if not chunk_states_accepted_contract_amount(text):
+            return -1
     try:
         from app.lib.construction_formulas_commercial import (
             _EXCL_VAT_RE,
@@ -3506,40 +3526,53 @@ def _e1_pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
 
 
 def _e1_fetch_late_aca_chunks(store, project_id: str, doc_ids: List[str]) -> List[Chunk]:
-    """Text-match + prefix + tail. First-N alone misses the CD appendix.
+    """Every chunk of the rate-window docs, then text-match / prefix / tail.
 
-    #532 used only ``chunks_for_docs(..., k_per_doc=400)`` (prefix).
-    Live leftover E1 on eb278c0 still cited chunks 9–11: the filled
-    1.1.1 excl-VAT row sits later in the same complete volume.
+    Live leftover E1 on 77a96ac (#533): top-k stayed on Contract Data
+    8.8 chunks 9–11. Prefix-400 + last-400 miss a middle appendix;
+    ``1.1.1``+``excluding`` LIKE misses ``excl. VAT`` without a clause
+    number. ``chunks_for_docs`` already loads the file — keep every row.
     """
     by_id: Dict[str, Chunk] = {}
     allowed = set(doc_ids)
-
-    containing = getattr(store, "chunks_containing_all", None)
-    if callable(containing):
-        for needles in _E1_REAL_ACA_TEXT_NEEDLES:
-            try:
-                try:
-                    hits = containing(
-                        project_id, list(needles),
-                        k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
-                    )
-                except TypeError:
-                    hits = containing(
-                        project_id, list(needles), k=_E1_REAL_ACA_TEXT_K,
-                    )
-            except Exception as exc:  # noqa: BLE001 — extras must not break
-                logger.warning(
-                    "e1 late-ACA text scan for %s failed: %s", project_id, exc,
-                )
-                hits = []
-            for chunk in hits or []:
-                if chunk.doc_id and chunk.doc_id not in allowed:
-                    continue
-                by_id.setdefault(chunk.chunk_id, chunk)
-
     fetch = getattr(store, "chunks_for_docs", None)
     if callable(fetch):
+        extra = []
+        try:
+            extra = fetch(project_id, doc_ids, all_rows=True)
+        except TypeError:
+            try:
+                extra = fetch(project_id, doc_ids, k_per_doc=1_000_000)
+            except TypeError:
+                extra = []
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "e1 late-ACA full scan for %s failed: %s", project_id, exc,
+                )
+                extra = []
+        except Exception as exc:  # noqa: BLE001 — extras must not break
+            logger.warning(
+                "e1 late-ACA full scan for %s failed: %s", project_id, exc,
+            )
+            extra = []
+        for chunk in extra or []:
+            if chunk.doc_id and chunk.doc_id not in allowed:
+                continue
+            by_id.setdefault(chunk.chunk_id, chunk)
+        # Only skip prefix/tail/needles when the full scan already
+        # holds a real ACA. A store that accepts all_rows but still
+        # returns first-N (ignored kwarg) must fall through — that
+        # was the live 77a96ac shape: toys in hand, filled row not.
+        try:
+            from app.lib.construction_formulas_commercial import (
+                chunk_has_real_accepted_contract_amount as _has_real_aca,
+            )
+            if any(
+                _has_real_aca(c.text or "") for c in by_id.values()
+            ):
+                return list(by_id.values())
+        except Exception:  # noqa: BLE001 — keep the rows; try other scans
+            logger.debug("e1 full-scan ACA test failed", exc_info=True)
         for from_end in (False, True):
             try:
                 try:
@@ -3563,6 +3596,29 @@ def _e1_fetch_late_aca_chunks(store, project_id: str, doc_ids: List[str]) -> Lis
                 )
                 extra = []
             for chunk in extra or []:
+                by_id.setdefault(chunk.chunk_id, chunk)
+
+    containing = getattr(store, "chunks_containing_all", None)
+    if callable(containing):
+        for needles in _E1_REAL_ACA_TEXT_NEEDLES:
+            try:
+                try:
+                    hits = containing(
+                        project_id, list(needles),
+                        k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                    )
+                except TypeError:
+                    hits = containing(
+                        project_id, list(needles), k=_E1_REAL_ACA_TEXT_K,
+                    )
+            except Exception as exc:  # noqa: BLE001 — extras must not break
+                logger.warning(
+                    "e1 late-ACA text scan for %s failed: %s", project_id, exc,
+                )
+                hits = []
+            for chunk in hits or []:
+                if chunk.doc_id and chunk.doc_id not in allowed:
+                    continue
                 by_id.setdefault(chunk.chunk_id, chunk)
     return list(by_id.values())
 

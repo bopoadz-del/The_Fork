@@ -242,6 +242,7 @@ def _install_e1_corpus(monkeypatch, *, semantic, rescue_hits, names, seeded=None
 
     def fake_chunks_for_docs(
         self, project_id, doc_ids, k_per_doc=12, from_end=False,
+        all_rows=False,
     ):
         hits = []
         for chunk in rescue_hits:
@@ -709,6 +710,16 @@ def test_e1_surfaces_insert_stained_excl_vat_when_toy_windows_fill_k(
 # skipped the toy 10M and the cost-grounding gate refused.
 # 450 > #532's 400-prefix cap so a prefix-only scan still misses.
 LATE_ACA_INDEX = 450
+# Live 77a96ac after #533: filled row sits in the MIDDLE of a long
+# combined volume (past first-400 AND before last-400). Scanned text
+# is "excl. VAT" without a 1.1.1 clause — #533 needles miss.
+MIDDLE_ACA_INDEX = 500
+MIDDLE_DOC_LEN = 1200
+LIVE_SCANNED_EXCL_ACA = (
+    "CONTRACT DATA\n"
+    "Accepted\nContract\nAmount (excl. VAT)\n"
+    f"{NET_ACA_TXT}\n"
+)
 
 
 def _install_live_e1_late_aca_corpus(monkeypatch):
@@ -756,6 +767,7 @@ def _install_live_e1_late_aca_corpus(monkeypatch):
 
     def fake_chunks_for_docs(
         self, project_id, doc_ids, k_per_doc=12, from_end=False,
+        all_rows=False,
     ):
         by_doc: dict[str, list] = {}
         for chunk in all_chunks:
@@ -764,6 +776,9 @@ def _install_live_e1_late_aca_corpus(monkeypatch):
         out = []
         for did in doc_ids or []:
             rows = sorted(by_doc.get(did, []), key=lambda c: c.chunk_index)
+            if all_rows:
+                out.extend(rows)
+                continue
             n = max(1, int(k_per_doc or 12))
             out.extend(rows[-n:] if from_end else rows[:n])
         return out
@@ -898,11 +913,14 @@ def test_e1_late_aca_helper_scans_past_first_n_on_rate_docs():
     class _Store:
         def chunks_for_docs(
             self, project_id, doc_ids, k_per_doc=12, from_end=False,
+            all_rows=False,
         ):
             rows = sorted(
                 [c for c in all_chunks if c.doc_id in (doc_ids or [])],
                 key=lambda c: c.chunk_index,
             )
+            if all_rows:
+                return rows
             n = max(1, int(k_per_doc or 12))
             return rows[-n:] if from_end else rows[:n]
 
@@ -973,9 +991,12 @@ def test_e1_late_aca_text_match_recovers_when_prefix_and_tail_miss():
     all_chunks, toys, _aca = _late_aca_all_chunks()
 
     class _TextOnly:
-        def chunks_for_docs(self, project_id, doc_ids, k_per_doc=12, from_end=False):
+        def chunks_for_docs(
+            self, project_id, doc_ids, k_per_doc=12, from_end=False,
+            all_rows=False,
+        ):
             # Live #532 shape: prefix only, never the appendix.
-            if from_end:
+            if all_rows or from_end:
                 return []
             rows = sorted(
                 [c for c in all_chunks if c.doc_id in (doc_ids or [])],
@@ -1018,7 +1039,12 @@ def test_e1_late_aca_tail_recovers_when_text_match_is_absent():
     all_chunks, toys, _aca = _late_aca_all_chunks()
 
     class _TailOnly:
-        def chunks_for_docs(self, project_id, doc_ids, k_per_doc=12, from_end=False):
+        def chunks_for_docs(
+            self, project_id, doc_ids, k_per_doc=12, from_end=False,
+            all_rows=False,
+        ):
+            if all_rows:
+                return []
             rows = sorted(
                 [c for c in all_chunks if c.doc_id in (doc_ids or [])],
                 key=lambda c: c.chunk_index,
@@ -1039,3 +1065,284 @@ def test_e1_late_aca_tail_recovers_when_text_match_is_absent():
         chunk_has_real_accepted_contract_amount(c.text or "")
         for c, _s, _b in fused.values()
     )
+
+
+def _middle_aca_all_chunks():
+    """Toys at 9–11; filled excl. VAT at 500; volume length 1200."""
+    toys = [
+        _chunk(f"gc{i}", GC_DOC, 0.95 - i * 0.01, COC_8_8_TOY_ACA, chunk_index=9 + i)
+        for i in range(3)
+    ]
+    dummies = [
+        _chunk(f"pre{i}", GC_DOC, 0.10, GC_8_8, chunk_index=i)
+        for i in range(MIDDLE_DOC_LEN)
+        if i not in (9, 10, 11, MIDDLE_ACA_INDEX)
+    ]
+    aca = _chunk(
+        "aca500", GC_DOC, 0.21, LIVE_SCANNED_EXCL_ACA, chunk_index=MIDDLE_ACA_INDEX,
+    )
+    return list(dummies) + list(toys) + [aca], toys, aca
+
+
+def test_live_scanned_excl_vat_is_a_real_e1_money_operand():
+    from app.core.rag.retriever import chunk_states_accepted_contract_amount
+    from app.lib.construction_formulas_commercial import (
+        chunk_has_real_accepted_contract_amount,
+        parse_accepted_contract_amount,
+    )
+
+    assert "1.1.1" not in LIVE_SCANNED_EXCL_ACA
+    assert "excluding" not in LIVE_SCANNED_EXCL_ACA.lower()
+    assert chunk_has_real_accepted_contract_amount(LIVE_SCANNED_EXCL_ACA)
+    assert parse_accepted_contract_amount(LIVE_SCANNED_EXCL_ACA) == (NET_ACA, "SAR")
+    assert chunk_states_accepted_contract_amount(LIVE_SCANNED_EXCL_ACA)
+
+
+def test_e1_533_prefix_tail_needles_miss_middle_excl_vat():
+    """#533 hole: first-400, last-400, and 1.1.1+excluding all miss."""
+    from app.core.rag.retriever import _E1_REAL_ACA_DOC_SCAN
+
+    all_chunks, _toys, aca = _middle_aca_all_chunks()
+    rows = sorted(
+        [c for c in all_chunks if c.doc_id == GC_DOC],
+        key=lambda c: c.chunk_index,
+    )
+    prefix = rows[:_E1_REAL_ACA_DOC_SCAN]
+    tail = rows[-_E1_REAL_ACA_DOC_SCAN:]
+    assert all(c.chunk_index != MIDDLE_ACA_INDEX for c in prefix)
+    assert all(c.chunk_index != MIDDLE_ACA_INDEX for c in tail)
+    assert aca.chunk_index == MIDDLE_ACA_INDEX
+    text_l = (aca.text or "").lower()
+    assert "1.1.1" not in text_l
+    assert "excluding" not in text_l
+
+
+def test_e1_full_doc_scan_surfaces_middle_excl_vat_when_533_misses():
+    """Walk every chunk of the 8.8 doc — not prefix, tail, or 1.1.1 LIKE."""
+    from app.core.rag.retriever import _rescue_e1_real_aca_from_pool_docs
+    from app.lib.construction_formulas_commercial import (
+        chunk_has_real_accepted_contract_amount,
+    )
+
+    all_chunks, toys, _aca = _middle_aca_all_chunks()
+
+    class _Live533Hole:
+        def chunks_for_docs(
+            self, project_id, doc_ids, k_per_doc=12, from_end=False,
+            all_rows=False,
+        ):
+            rows = sorted(
+                [c for c in all_chunks if c.doc_id in (doc_ids or [])],
+                key=lambda c: c.chunk_index,
+            )
+            if all_rows:
+                return rows
+            n = max(1, int(k_per_doc or 12))
+            return rows[-n:] if from_end else rows[:n]
+
+        def chunks_containing_all(self, project_id, needles, k=20, doc_ids=None):
+            needles_l = [str(n).lower() for n in (needles or [])]
+            if "1.1.1" in needles_l or "excluding" in needles_l:
+                return []
+            out = []
+            for chunk in all_chunks:
+                if doc_ids and chunk.doc_id not in doc_ids:
+                    continue
+                text_l = (chunk.text or "").lower()
+                if needles_l and all(n in text_l for n in needles_l):
+                    out.append(chunk)
+            return out[: max(1, int(k or 20))]
+
+    fused = {c.chunk_id: (c, c.score or 0.0, 0.0) for c in toys}
+    recovered = _rescue_e1_real_aca_from_pool_docs(
+        LIVE_E1, ACTIVE, fused, _Live533Hole(),
+    )
+    assert recovered >= 1
+    assert any(
+        chunk_has_real_accepted_contract_amount(c.text or "")
+        for c, _s, _b in fused.values()
+    )
+    excerpts = "\n\n".join(c.text or "" for c, _s, _b in fused.values())
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["contract_amount"] == NET_ACA
+    assert out["daily_amount"] != 10_000.0
+    assert out["daily_amount"] != 263_175.67
+
+
+def test_e1_excl_vat_needles_recover_when_all_rows_and_prefix_tail_miss():
+    """#533 needles required 1.1.1+excluding. Live scanned excl. VAT has neither.
+
+    When all_rows is absent (TypeError / empty), excl+vat LIKE must
+    still surface the middle row so compose can state SAR/day.
+    """
+    from app.core.rag.retriever import _rescue_e1_real_aca_from_pool_docs
+    from app.lib.construction_formulas_commercial import (
+        chunk_has_real_accepted_contract_amount,
+    )
+
+    all_chunks, toys, _aca = _middle_aca_all_chunks()
+
+    class _NeedlesOnly:
+        def chunks_for_docs(
+            self, project_id, doc_ids, k_per_doc=12, from_end=False,
+            all_rows=False,
+        ):
+            if all_rows:
+                return []
+            rows = sorted(
+                [c for c in all_chunks if c.doc_id in (doc_ids or [])],
+                key=lambda c: c.chunk_index,
+            )
+            n = max(1, int(k_per_doc or 12))
+            return rows[-n:] if from_end else rows[:n]
+
+        def chunks_containing_all(self, project_id, needles, k=20, doc_ids=None):
+            needles_l = [str(n).lower() for n in (needles or [])]
+            if "1.1.1" in needles_l or "excluding" in needles_l:
+                return []
+            out = []
+            for chunk in all_chunks:
+                if doc_ids and chunk.doc_id not in doc_ids:
+                    continue
+                text_l = (chunk.text or "").lower()
+                if needles_l and all(n in text_l for n in needles_l):
+                    out.append(chunk)
+            return out[: max(1, int(k or 20))]
+
+    fused = {c.chunk_id: (c, c.score or 0.0, 0.0) for c in toys}
+    recovered = _rescue_e1_real_aca_from_pool_docs(
+        LIVE_E1, ACTIVE, fused, _NeedlesOnly(),
+    )
+    assert recovered >= 1
+    assert any(
+        chunk_has_real_accepted_contract_amount(c.text or "")
+        for c, _s, _b in fused.values()
+    )
+    excerpts = "\n\n".join(c.text or "" for c, _s, _b in fused.values())
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+
+
+def test_e1_retrieve_middle_excl_vat_when_top_k_is_only_chunks_9_11(monkeypatch):
+    """Live 77a96ac: sources were only 8.8 chunks 9–11. Must still compose."""
+    from app.core.rag import retriever as ret
+    from app.core.rag.retriever import chunk_states_delay_damages_rate
+
+    all_chunks, toys, _aca = _middle_aca_all_chunks()
+    names = {GC_DOC: CD_SCANNED_NAME}
+    seeded = [
+        {"id": GC_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+    ]
+
+    def fake_search(self, project_id, qvec, k, query_text=None):
+        return [c for c in toys if c.project_id == project_id][:k]
+
+    def fake_id_search(self, project_id, identifiers, k=20):
+        blob = " ".join(identifiers or []).lower()
+        out = []
+        for chunk in toys:
+            text_l = (chunk.text or "").lower()
+            if "delay" in blob and "damages" in blob and "0.1%" in text_l:
+                out.append(chunk)
+            elif "accepted contract" in blob and chunk_states_delay_damages_rate(
+                chunk.text or "",
+            ):
+                out.append(chunk)
+        return out[:k]
+
+    def fake_chunks_for_docs(
+        self, project_id, doc_ids, k_per_doc=12, from_end=False, all_rows=False,
+    ):
+        by_doc: dict[str, list] = {}
+        for chunk in all_chunks:
+            if chunk.doc_id in (doc_ids or []):
+                by_doc.setdefault(chunk.doc_id, []).append(chunk)
+        out = []
+        for did in doc_ids or []:
+            rows = sorted(by_doc.get(did, []), key=lambda c: c.chunk_index)
+            if all_rows:
+                out.extend(rows)
+                continue
+            n = max(1, int(k_per_doc or 12))
+            out.extend(rows[-n:] if from_end else rows[:n])
+        return out
+
+    def fake_containing_all(self, project_id, needles, k=20, doc_ids=None):
+        needles_l = [str(n).lower() for n in (needles or [])]
+        if "1.1.1" in needles_l or "excluding" in needles_l:
+            return []
+        out = []
+        for chunk in all_chunks:
+            if doc_ids and chunk.doc_id not in doc_ids:
+                continue
+            text_l = (chunk.text or "").lower()
+            if needles_l and all(n in text_l for n in needles_l):
+                out.append(chunk)
+        return out[: max(1, int(k or 20))]
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.identifier_search", fake_id_search,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_for_docs",
+        fake_chunks_for_docs,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_containing_all",
+        fake_containing_all,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.count", lambda self, pid=None: 4,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore._verify_embedding_identity",
+        lambda self: None,
+    )
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda did: names.get(did, ""),
+                        raising=False)
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_title_phrase",
+        lambda pid, phrase, limit=8: (
+            list(seeded) if "contract data" in (phrase or "").lower() else []
+        ),
+    )
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_filename_terms",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_LAYERED", raising=False)
+
+    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=3)
+    blob = " ".join(c.text for c in chunks)
+    assert RATE in blob
+    assert NET_ACA_TXT in blob
+    excerpts = "\n\n".join(c.text or "" for c in chunks)
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+    assert out["rate_percent"] == 0.1
+    rag = _sys(*(c.text or "" for c in chunks))
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(_CG_REFUSAL, rag, msgs)
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
+    assert "10,000.00" not in posted.split("\n", 1)[0]
+    assert "0.015%" not in posted
+    assert "263,175.67" not in posted
