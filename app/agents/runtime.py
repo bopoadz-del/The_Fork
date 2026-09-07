@@ -422,7 +422,7 @@ _SEARCH_PREAMBLE_RE = re.compile(
     r"give me a moment|one moment|hold on)"
     r"[^.!?]{0,120}?"
     r"\b(?:search|searching|look(?:ing)?\s+up|pull(?:ing)?|check(?:ing)?|"
-    r"run(?:ning)?|re-?run|fetch(?:ing)?|retriev(?:e|ing))\b",
+    r"run(?:ning)?|re-?run|fetch(?:ing)?|retriev(?:e|ing)|validat(?:e|ing))\b",
     re.IGNORECASE,
 )
 _SEARCH_PROMISE_TAIL_RE = re.compile(
@@ -430,7 +430,8 @@ _SEARCH_PROMISE_TAIL_RE = re.compile(
     r"\b(?:i\s+am|i'?m|i\s+will|i'?ll|let me|i\s+need\s+to)\b"
     r"[^.!?]{0,160}?"
     r"\b(?:search|searching|run(?:ning)?|pull(?:ing)?|look(?:ing)?\s+up|"
-    r"fetch(?:ing)?|retriev(?:e|ing)|check(?:ing)?)\b[^.!?]{0,160}[.!?]?\s*$",
+    r"fetch(?:ing)?|retriev(?:e|ing)|check(?:ing)?|validat(?:e|ing))\b"
+    r"[^.!?]{0,160}[.!?]?\s*$",
     re.IGNORECASE,
 )
 _SEARCH_PREAMBLE_RETRY_NUDGE = (
@@ -465,7 +466,7 @@ _CONTEXT_LEAK_RETRY_NUDGE = (
 _PROGRESS_NARRATION_RE = re.compile(
     r"(?:continuing|resuming|reading|re-?reading|fetching|retrieving|"
     r"searching|pulling|checking|loading|processing|extracting|scanning|"
-    r"analy[sz]ing|looking)\b[^.!?\n]*[.!?\u2026]*\s*$",
+    r"analy[sz]ing|looking|validating)\b[^.!?\n]*[.!?\u2026]*\s*$",
     re.IGNORECASE,
 )
 
@@ -1827,6 +1828,16 @@ def _should_force_synthesis(tool_result: Any) -> bool:
         has_expr = payload.get("value") is not None and payload.get("expression")
         has_var = bool(payload.get("variances") or payload.get("cost_impacts"))
         if not has_expr and not has_var:
+            return False
+    # Leftover E4: validation_pipeline on a self-contained volume claim is
+    # a checker, not the deliverable. Forcing synthesis here disarmed
+    # construction_calc and the turn hung on "Let me validate…" with no
+    # 945 m³. Leftover L4 ("Stay on validation. Validate this beam…")
+    # has no calc verb and still forces synthesis.
+    if name == "validation_pipeline":
+        payload = _as_validation_payload(tool_result) or _tool_process_payload(tool_result)
+        claim = str((payload or {}).get("claim") or "")
+        if _looks_like_self_contained_calculation(claim):
             return False
     return True
 
@@ -3975,6 +3986,11 @@ def _text_needs_tool_recovery(text: str) -> bool:
         return True
     if re.search(r"HTTP 413|tokens per minute|\bTPM\b", t):
         return True
+    # Leftover E4: "Let me validate…" is not an answer. Recover the
+    # construction_calc volume (or any other deliverable already in the
+    # thread) instead of shipping the promise.
+    if _looks_like_search_preamble(t):
+        return True
     return False
 
 
@@ -4372,7 +4388,137 @@ def _recover_answer_from_tool_messages(
             return _format_wbs_result(inner)
         if inner.get("planned_m3") is not None and inner.get("poured_m3") is not None:
             return _format_as_built_note(inner)
+        formatted = _format_construction_calc(inner)
+        if formatted:
+            return formatted
     return text
+
+
+def _unwrap_construction_calc_inner(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the calculator result dict that carries ``volume_m3``."""
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("volume_m3") is not None or payload.get("volume_with_waste_m3") is not None:
+        return payload
+    inner = payload.get("result")
+    if isinstance(inner, dict):
+        found = _unwrap_construction_calc_inner(inner)
+        if found:
+            return found
+    return None
+
+
+def _format_construction_calc(payload: dict[str, Any]) -> str:
+    """User-facing volume line from a successful ``construction_calc`` tool."""
+    from app.lib.construction_formulas_quantities import format_concrete_volume_line
+
+    inner = _unwrap_construction_calc_inner(payload)
+    if not inner:
+        return ""
+    calc = str(payload.get("calculation") or "")
+    if calc and calc != "concrete_volume":
+        return ""
+    if calc != "concrete_volume" and not inner.get("waste_factor") and inner.get("net_volume_m3") is None:
+        # Leftover L6 excavation (bank only) is not an E4 compose target.
+        if "bank_volume_m3" in inner and "volume_with_waste_m3" not in inner:
+            return ""
+    return format_concrete_volume_line(inner)
+
+
+def _construction_calc_from_messages(
+    messages: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Most recent ``construction_calc`` concrete-volume envelope in the turn."""
+    last: dict[str, Any] | None = None
+    for m in messages or []:
+        if m.get("role") != "tool":
+            continue
+        raw = m.get("content")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        if not isinstance(raw, dict):
+            continue
+        inner = _unwrap_construction_calc_inner(raw)
+        if not inner:
+            continue
+        if inner.get("volume_m3") is None and inner.get("volume_with_waste_m3") is None:
+            continue
+        last = inner
+    return last
+
+
+def _graft_composed_concrete_volume(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Leftover E4: write 945 m³ when the model hung on validate.
+
+    Live FAIL: construction-pm streamed "Let me validate…" after (or
+    instead of) ``construction_calc`` and never composed the with-waste
+    volume. Numbers are in the question; compose from the existing
+    calculator. Kill-switch ``COMPOSE_CONCRETE_VOLUME=0`` restores the
+    hang. Leftover L6 / E1 / L4 asks are not concrete-volume and pass
+    through.
+    """
+    try:
+        from app.lib.construction_formulas_quantities import (
+            answer_states_volume,
+            compose_concrete_volume_from_ask,
+            format_concrete_volume_line,
+        )
+        user = _latest_operator_ask(messages)
+        composed = compose_concrete_volume_from_ask(user)
+        if not composed:
+            return text
+        tool_inner = _construction_calc_from_messages(messages)
+        if tool_inner and tool_inner.get("volume_m3") is not None:
+            line = format_concrete_volume_line(tool_inner)
+            volume = tool_inner.get("volume_m3")
+        else:
+            line = composed["line"]
+            volume = composed["volume_m3"]
+        if not line:
+            return text
+        payload = json.dumps({
+            "calculation": "concrete_volume",
+            "volume_m3": volume,
+            "net_volume_m3": (
+                (tool_inner or composed).get("net_volume_m3")
+                if isinstance(tool_inner, dict)
+                else composed.get("net_volume_m3")
+            ),
+            "waste_factor": (
+                (tool_inner or composed).get("waste_factor")
+                if isinstance(tool_inner, dict)
+                else composed.get("waste_factor")
+            ),
+            "note": line,
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "concrete_volume" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        raw = text or ""
+        if answer_states_volume(raw, float(volume)):
+            return text
+        if (
+            not raw.strip()
+            or raw.strip() == _CG_REFUSAL
+            or _looks_like_search_preamble(raw)
+            or _GENERIC_ACK_RE.search(raw)
+            or _MISSING_PARTICULAR_RE.search(raw)
+        ):
+            return line
+        return f"{line}\n\n{raw.strip()}"
+    except Exception:  # noqa: BLE001 — compose must never break a turn
+        _LOG.exception("concrete-volume compose failed; passing answer through")
+        return text
 
 
 def _construction_calc_tool_schema() -> dict[str, Any]:
@@ -5233,6 +5379,9 @@ def _postprocess_answer(
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
     text = _graft_operator_claim_facts(text, _operator_user_text(messages))
+    # Leftover E4: compose raft volume + documented waste when the model
+    # hung on "Let me validate…" and never wrote 945 m³.
+    text = _graft_composed_concrete_volume(text, messages)
     # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
     # text before the cost gate. A percentage-only excerpt still cannot
     # invent a daily figure; both operands must be in the excerpts or

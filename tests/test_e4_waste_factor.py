@@ -22,12 +22,25 @@ from pathlib import Path
 
 import pytest
 
-from app.agents.runtime import _looks_like_self_contained_calculation
+from app.agents.runtime import (
+    _final_text_needs_forced_retry,
+    _graft_composed_concrete_volume,
+    _looks_like_search_preamble,
+    _looks_like_self_contained_calculation,
+    _postprocess_answer,
+    _recover_answer_from_tool_messages,
+    _should_force_synthesis,
+    _text_needs_tool_recovery,
+)
 from app.containers.construction import ConstructionContainer
 from app.lib import construction_formulas as _cf
 from app.lib.construction_formulas_quantities import (
     DOCUMENTED_CONCRETE_WASTE_FACTOR,
+    answer_states_volume,
+    compose_concrete_volume_enabled,
+    compose_concrete_volume_from_ask,
     documented_waste_enabled,
+    format_concrete_volume_line,
     looks_like_concrete_volume_ask,
     parse_lwt_metres,
     resolve_concrete_volume_calc,
@@ -281,3 +294,188 @@ async def test_orchestrator_routes_e4_to_construction_calc():
     r = await SmartOrchestratorBlock().process({"user_message": E4_ASK_ASCII})
     assert r["status"] == "success"
     assert "construction_calc" in (r.get("action_queue") or []), r
+
+
+# ── leftover E4 hang: validate preamble / never compose 945 ────────────────
+
+
+E4_VALIDATE_PREAMBLE = "Let me validate…"
+E4_VALIDATE_SENTENCE = (
+    "Let me validate the volume against the documented waste factor."
+)
+E4_VALIDATING_STATUS = "Validating the calculation..."
+E1_ASK = (
+    "Calculate the delay damages per calendar day in SAR for the "
+    "whole of the Works."
+)
+L4_CLAIM = (
+    "office floor beam forty metres long on a fifty millimetre steel "
+    "I-section carrying eight hundred kilonewtons per metre"
+)
+
+
+def _e4_msgs(ask: str = E4_ASK_UNICODE, extra: list | None = None) -> list:
+    out = [{"role": "user", "content": ask}]
+    if extra:
+        out.extend(extra)
+    return out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [E4_VALIDATE_PREAMBLE, E4_VALIDATE_SENTENCE, E4_VALIDATING_STATUS],
+)
+def test_e4_validate_preamble_is_not_an_answer(text):
+    """Live leftover E4 hung on this promise and never wrote 945."""
+    assert _looks_like_search_preamble(text), text
+    assert _final_text_needs_forced_retry(text, user_message=E4_ASK_UNICODE)
+    assert _text_needs_tool_recovery(text)
+
+
+def test_compose_from_the_ask_is_945():
+    composed = compose_concrete_volume_from_ask(E4_ASK_UNICODE)
+    assert composed is not None
+    assert composed["volume_m3"] == pytest.approx(945.0)
+    assert composed["net_volume_m3"] == pytest.approx(900.0)
+    assert "945" in composed["line"]
+    assert "waste" in composed["line"].lower()
+    assert answer_states_volume(composed["line"], 945.0)
+
+
+def test_graft_replaces_validate_preamble_with_945():
+    out = _graft_composed_concrete_volume(
+        E4_VALIDATE_PREAMBLE, _e4_msgs(),
+    )
+    assert "945" in out
+    assert "900" in out
+    assert "Let me validate" not in out
+
+
+def test_graft_replaces_validate_sentence_with_945():
+    out = _graft_composed_concrete_volume(
+        E4_VALIDATE_SENTENCE, _e4_msgs(E4_ASK_ASCII),
+    )
+    assert "945" in out
+    assert _looks_like_search_preamble(out) is False
+
+
+def test_already_composed_945_is_left_alone():
+    already = (
+        "Concrete volume including documented 5% waste: 945 m³ "
+        "(net 900 × 1.05)."
+    )
+    assert _graft_composed_concrete_volume(already, _e4_msgs()) == already
+
+
+def test_postprocess_cannot_hang_on_validate_preamble():
+    """The live path: sanitize left the promise, postprocess must compose."""
+    out = _postprocess_answer(
+        E4_VALIDATE_PREAMBLE,
+        None,
+        _e4_msgs(),
+    )
+    assert "945" in out
+    assert "Let me validate" not in out
+
+
+def test_recover_construction_calc_tool_when_validate_hangs():
+    envelope = {
+        "status": "success",
+        "calculation": "concrete_volume",
+        "result": {
+            "volume_m3": 945.0,
+            "net_volume_m3": 900.0,
+            "waste_factor": 0.05,
+            "note": "Net = 30*20*1.5 = 900.000 m3; +5% waste = 945.000 m3.",
+        },
+    }
+    msgs = _e4_msgs(extra=[
+        {"role": "tool", "name": "construction_calc", "content": json.dumps(envelope)},
+    ])
+    recovered = _recover_answer_from_tool_messages(E4_VALIDATE_PREAMBLE, msgs)
+    assert "945" in recovered
+    assert "Let me validate" not in recovered
+
+
+def test_leftover_l6_is_not_composed_as_concrete():
+    msgs = _e4_msgs(L6_ASK)
+    assert compose_concrete_volume_from_ask(L6_ASK) is None
+    assert _graft_composed_concrete_volume("Let me validate…", msgs) == (
+        "Let me validate…"
+    )
+
+
+def test_leftover_e1_is_not_stolen_as_concrete_volume():
+    msgs = [{"role": "user", "content": E1_ASK}]
+    text = "Delay Damages are 0.1% of the Contract Price per calendar day."
+    assert compose_concrete_volume_from_ask(E1_ASK) is None
+    assert _graft_composed_concrete_volume(text, msgs) == text
+
+
+def test_e4_validation_claim_does_not_force_synthesis():
+    """Checker on the raft ask must not disarm construction_calc."""
+    rec = {
+        "name": "validation_pipeline",
+        "ok": True,
+        "result": {
+            "status": "success",
+            "overall": "pass",
+            "stages": {"syntactic": {"pass": True, "reason": "ok"}},
+            "claim": E4_ASK_UNICODE,
+        },
+    }
+    assert _should_force_synthesis(rec) is False
+
+
+def test_leftover_l4_validation_still_forces_synthesis():
+    rec = {
+        "name": "validation_pipeline",
+        "ok": True,
+        "result": {
+            "status": "success",
+            "overall": "fail",
+            "first_failure": "physical",
+            "tier": 4,
+            "stages": {
+                "syntactic": {"pass": True, "reason": "ok"},
+                "physical": {"pass": False, "reason": "implausible"},
+            },
+            "claim": L4_CLAIM,
+        },
+    }
+    assert _should_force_synthesis(rec) is True
+
+
+def test_construction_calc_success_still_forces_synthesis():
+    rec = {
+        "name": "construction_calc",
+        "ok": True,
+        "result": {
+            "status": "success",
+            "calculation": "concrete_volume",
+            "result": {"volume_m3": 945.0, "net_volume_m3": 900.0},
+        },
+    }
+    assert _should_force_synthesis(rec) is True
+
+
+def test_compose_kill_switch_restores_the_validate_hang(monkeypatch):
+    monkeypatch.setenv("COMPOSE_CONCRETE_VOLUME", "0")
+    assert not compose_concrete_volume_enabled()
+    assert compose_concrete_volume_from_ask(E4_ASK_UNICODE) is None
+    out = _graft_composed_concrete_volume(
+        E4_VALIDATE_PREAMBLE, _e4_msgs(),
+    )
+    assert out == E4_VALIDATE_PREAMBLE
+    assert "945" not in out
+
+
+def test_format_line_names_waste_and_945():
+    line = format_concrete_volume_line({
+        "volume_m3": 945.0,
+        "net_volume_m3": 900.0,
+        "waste_factor": 0.05,
+    })
+    assert "945" in line
+    assert "900" in line
+    assert "5%" in line or "1.05" in line

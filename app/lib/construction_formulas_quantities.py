@@ -19,6 +19,10 @@ _STEEL_DENSITY = 7850.0  # kg/m^3
 # Leftover L6 aliased unnamed L×W×D to excavation_volume (bank only, no
 # waste). A concrete/raft ask must pin concrete_volume and this factor.
 # Kill switch: APPLY_DOCUMENTED_WASTE=0 restores the FAIL (net 900).
+# Compose kill-switch: COMPOSE_CONCRETE_VOLUME=0 restores the leftover-E4
+# hang (validate preamble ships, no 945). The calculator still returns 945;
+# only the postprocess graft that writes the volume when the model stalls
+# is disabled.
 DOCUMENTED_CONCRETE_WASTE_FACTOR = 0.05
 
 _CONCRETE_VOLUME_ASK_RE = re.compile(
@@ -42,6 +46,88 @@ def documented_waste_enabled() -> bool:
     """ON by default. ``APPLY_DOCUMENTED_WASTE=0/false/no/off`` is the kill-switch."""
     raw = (os.getenv("APPLY_DOCUMENTED_WASTE", "1") or "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
+
+
+def compose_concrete_volume_enabled() -> bool:
+    """ON by default. ``COMPOSE_CONCRETE_VOLUME=0`` restores the validate hang."""
+    raw = (os.getenv("COMPOSE_CONCRETE_VOLUME", "1") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _format_volume_figure(value: float) -> str:
+    number = float(value)
+    if number == int(number):
+        return str(int(number))
+    return f"{number:g}"
+
+
+def answer_states_volume(text: str, volume: float) -> bool:
+    """True when ``text`` already names the headline cubic-metre figure."""
+    if not text:
+        return False
+    needle = _format_volume_figure(volume)
+    compact = (text or "").replace(",", "")
+    return needle in compact
+
+
+def format_concrete_volume_line(inner: dict) -> str:
+    """User-facing E4 line from a ``concrete_volume`` result dict."""
+    if not isinstance(inner, dict):
+        return ""
+    volume = inner.get("volume_m3", inner.get("volume_with_waste_m3"))
+    if volume is None:
+        return ""
+    net = inner.get("net_volume_m3")
+    try:
+        waste = float(inner.get("waste_factor") or 0.0)
+    except (TypeError, ValueError):
+        waste = 0.0
+    vol_s = _format_volume_figure(volume)
+    if waste > 0 and net is not None:
+        pct = waste * 100.0
+        factor = 1.0 + waste
+        net_s = _format_volume_figure(net)
+        return (
+            f"Concrete volume including documented {pct:.0f}% waste: "
+            f"{vol_s} m³ (net {net_s} × {factor:g})."
+        )
+    return f"Concrete volume: {vol_s} m³."
+
+
+def compose_concrete_volume_from_ask(text: str) -> dict | None:
+    """Run the documented-waste concrete calculator from the operator ask.
+
+    Numbers live in the question (E4: 30×20×1.5). Leftover L6 earthwork is
+    not a concrete/raft ask and returns None. Kill-switch
+    ``COMPOSE_CONCRETE_VOLUME=0`` returns None (hang / no graft).
+    """
+    if not compose_concrete_volume_enabled():
+        return None
+    if not looks_like_concrete_volume_ask(text):
+        return None
+    if not parse_lwt_metres(text):
+        return None
+    from app.lib import construction_formulas as _cf
+    result = _cf.run_calculation(None, {"text": text})
+    if not isinstance(result, dict) or result.get("status") != "success":
+        return None
+    if result.get("calculation") != "concrete_volume":
+        return None
+    inner = result.get("result") if isinstance(result.get("result"), dict) else {}
+    volume = inner.get("volume_m3")
+    if volume is None:
+        return None
+    line = format_concrete_volume_line(inner)
+    if not line:
+        return None
+    return {
+        "volume_m3": volume,
+        "net_volume_m3": inner.get("net_volume_m3"),
+        "waste_factor": inner.get("waste_factor"),
+        "note": inner.get("note") or "",
+        "line": line,
+        "envelope": result,
+    }
 
 
 def documented_concrete_waste_factor() -> float:
