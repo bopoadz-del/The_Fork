@@ -1582,7 +1582,10 @@ def filename_looks_like_e1_rate_volume(filename: str) -> bool:
     blob = (filename or "").replace("_", " ")
     return bool(re.search(
         r"(?i)contract\s+data|conditions?\s+of\s+contract|"
-        r"particular\s+conditions",
+        r"particular\s+conditions|"
+        # Live Sources truncate to ``Vol 1.0_Con…`` / ``Cond of Contract``.
+        r"cond(?:itions?)?\s+of\s+con|"
+        r"vol\.?\s*\d[\d.]*\s+con",
         blob,
     ))
 
@@ -2545,6 +2548,11 @@ _ACA_BASE_RESCUE_PHRASES = (
 _E1_REAL_ACA_DOC_SCAN = 400
 _E1_REAL_ACA_TEXT_K = 400
 _E1_REAL_ACA_PAIR_WINDOW = 3
+# Pin rescued 0.1% / excl-VAT rows above Cosine 9–11 (~0.95) so
+# apply_token_cap cannot drop them. Live leftover E1 after #538: sources
+# stayed on chunks 9–11 (3 HIGH) because late-scan operands entered
+# fused at score 0.0 and the cap kept the refuse-prone windows.
+_E1_OPERAND_PIN_SCORE = 2.4
 _E1_REAL_ACA_TEXT_NEEDLES = (
     # Scanned 1.1.1 rows split "Accepted\\nContract\\nAmount" — a
     # contiguous "accepted contract amount" LIKE misses. Clause +
@@ -3676,6 +3684,11 @@ def _e1_scan_project_ids(
         _add(_master_corpus_fallback_id() or "")
     except Exception:  # noqa: BLE001 — extras are optional
         logger.debug("e1 master-corpus source pid unavailable", exc_info=True)
+    try:
+        from app.core.projects import _master_corpus_source
+        _add(_master_corpus_source(project_id) or "")
+    except Exception:  # noqa: BLE001 — alias remap is optional
+        logger.debug("e1 master-corpus alias remap unavailable", exc_info=True)
     for pid in extra_pids or []:
         _add(pid)
     if fused:
@@ -3713,7 +3726,47 @@ def _e1_pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
             continue
         seen.add(chunk.doc_id)
         doc_ids.append(chunk.doc_id)
+    if doc_ids:
+        return doc_ids
+    # Live leftover E1 after #538: Cosine 9–11 may be OCR that fails
+    # pointer / 8.8 / filename qualify (Sources: ``Vol 1.0_Con…``).
+    # Still scan those docs — compose only keeps real operands.
+    for entry in fused.values():
+        chunk = _fused_chunk(entry)
+        if chunk is None or not chunk.doc_id or chunk.doc_id in seen:
+            continue
+        seen.add(chunk.doc_id)
+        doc_ids.append(chunk.doc_id)
+        if len(doc_ids) >= 8:
+            break
     return doc_ids
+
+
+def _e1_doc_owner_project_ids(doc_ids: List[str]) -> List[str]:
+    """Project ids that actually own the cited documents.
+
+    Live Master Corpus leftover E1: UI / remap pid can miss the row
+    owner. ``chunks_for_docs`` is exact-pid, so resolve from the
+    document row when the cited ``doc_id`` is known.
+    """
+    out: List[str] = []
+    seen: Set[str] = set()
+    try:
+        from app.core.projects import get_document
+    except Exception:  # noqa: BLE001 — listing is optional
+        return out
+    for did in doc_ids or []:
+        if not did:
+            continue
+        try:
+            doc = get_document(did) or {}
+        except Exception:  # noqa: BLE001 — one miss must not skip the rest
+            continue
+        pid = str(doc.get("project_id") or "").strip()
+        if pid and pid not in seen:
+            seen.add(pid)
+            out.append(pid)
+    return out
 
 
 def _e1_fetch_late_aca_chunks(
@@ -3741,6 +3794,9 @@ def _e1_fetch_late_aca_chunks(
     allowed = set(doc_ids)
     fetch = getattr(store, "chunks_for_docs", None)
     pids = _e1_scan_project_ids(project_id, extra_pids, fused)
+    for pid in _e1_doc_owner_project_ids(doc_ids):
+        if pid not in pids:
+            pids.append(pid)
     if not pids and project_id:
         pids = [project_id]
 
@@ -3879,7 +3935,6 @@ def e1_compose_excerpts_from_loaded_cd_volume(
     if not (
         delay_damages_daily_rescue_enabled()
         and query_asks_delay_damages_daily_amount(query)
-        and (pids or project_id)
     ):
         return ""
     ids: List[str] = []
@@ -3890,32 +3945,15 @@ def e1_compose_excerpts_from_loaded_cd_volume(
             seen.add(did)
             ids.append(did)
 
+    # Cited RAG doc_ids first (live Sources 9–11 of one volume). Do not
+    # all_rows-scan every "conditions of contract" hit on a 3k-doc corpus
+    # — that timed out and left last-chance empty 4/5 New-chat attempts.
     for did in doc_ids or []:
         _add(did)
     for did in e1_doc_ids_from_rag_context(rag_context):
         _add(did)
+    cited = list(ids)
 
-    try:
-        from app.core.projects import documents_matching_title_phrase
-        for pid in pids or [project_id]:
-            if not pid:
-                continue
-            for phrase in ("contract data", "conditions of contract"):
-                try:
-                    matches = documents_matching_title_phrase(pid, phrase) or []
-                except Exception:  # noqa: BLE001 — listing is optional
-                    logger.debug(
-                        "e1 loaded-volume title listing failed for %r",
-                        phrase, exc_info=True,
-                    )
-                    matches = []
-                for doc in matches:
-                    _add(doc.get("id") or "")
-    except Exception:  # noqa: BLE001 — rag doc_ids may still be enough
-        logger.debug("e1 loaded-volume projects import failed", exc_info=True)
-
-    if not ids:
-        return ""
     if store is None:
         try:
             store = get_lexical_store()
@@ -3923,10 +3961,44 @@ def e1_compose_excerpts_from_loaded_cd_volume(
             logger.debug("e1 loaded-volume store open failed", exc_info=True)
             return ""
 
-    extra = _e1_fetch_late_aca_chunks(
-        store, project_id or (pids[0] if pids else ""), ids,
-        extra_pids=pids,
-    )
+    extra: List[Chunk] = []
+    if cited:
+        extra = _e1_fetch_late_aca_chunks(
+            store, project_id or (pids[0] if pids else ""), cited,
+            extra_pids=pids,
+        )
+        if _e1_chunks_have_both_operands(extra):
+            ids = cited
+        else:
+            extra = extra or []
+    if not _e1_chunks_have_both_operands(extra):
+        try:
+            from app.core.projects import documents_matching_title_phrase
+            for pid in pids or [project_id]:
+                if not pid:
+                    continue
+                for phrase in ("contract data", "conditions of contract"):
+                    try:
+                        matches = documents_matching_title_phrase(pid, phrase) or []
+                    except Exception:  # noqa: BLE001 — listing is optional
+                        logger.debug(
+                            "e1 loaded-volume title listing failed for %r",
+                            phrase, exc_info=True,
+                        )
+                        matches = []
+                    for doc in matches:
+                        _add(doc.get("id") or "")
+        except Exception:  # noqa: BLE001 — rag doc_ids may still be enough
+            logger.debug("e1 loaded-volume projects import failed", exc_info=True)
+        added = [did for did in ids if did not in set(cited)]
+        if added:
+            extra = list(extra or []) + _e1_fetch_late_aca_chunks(
+                store, project_id or (pids[0] if pids else ""), added[:2],
+                extra_pids=pids,
+            )
+
+    if not ids:
+        return ""
     rate_parts: List[str] = []
     aca_parts: List[str] = []
 
@@ -4368,7 +4440,7 @@ def _rescue_e1_real_aca_from_pool_docs(
             if chunk_states_delay_damages_rate(chunk.text or ""):
                 # Rate-base ACA is not the 1.1.1 row. Keep looking.
                 continue
-            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            fused[chunk.chunk_id] = (chunk, _E1_OPERAND_PIN_SCORE, 0.0)
             recovered += 1
     if not has_preferred_rate:
         for chunk in extra or []:
@@ -4376,7 +4448,7 @@ def _rescue_e1_real_aca_from_pool_docs(
                 continue
             if _e1_rate_preference(chunk.text or "") < 2:
                 continue
-            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            fused[chunk.chunk_id] = (chunk, _E1_OPERAND_PIN_SCORE, 0.0)
             recovered += 1
     if recovered:
         logger.info(
@@ -5301,6 +5373,7 @@ def ensure_e1_kept_can_compose(
         kept[idx] = rate
         present.add(rate.chunk_id)
         changed = True
+    rate.score = max(float(rate.score or 0.0), _E1_OPERAND_PIN_SCORE)
     if aca.chunk_id not in present:
         idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
         if idx is None:
@@ -5320,6 +5393,7 @@ def ensure_e1_kept_can_compose(
             idx = 0 if idx != 0 else 1
         kept[idx] = aca
         changed = True
+    aca.score = max(float(aca.score or 0.0), _E1_OPERAND_PIN_SCORE)
     return changed
 
 
