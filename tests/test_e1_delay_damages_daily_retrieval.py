@@ -606,3 +606,78 @@ def test_e1_surfaces_excl_vat_when_coc_chunks_carry_toy_ten_million(monkeypatch)
     assert posted != live_fail
     assert posted != _CG_REFUSAL
     assert "10,000,000.00" not in posted.split("\n", 1)[0]
+
+
+# Live leftover E1 after #529: the filled excl-VAT row still carried the
+# Contract Data "[insert amount]" template cue. Toy-reject stained that
+# figure, rescue dropped it, top-k stayed on chunks 9–11, and compose
+# fell through to the cost-grounding refusal.
+INSERT_STAINED_NET_ACA = (
+    "CONTRACT DATA\n1.1.1\nAccepted\nContract\nAmount (excluding VAT)\n"
+    f"[insert amount] {NET_ACA_TXT}\n"
+)
+
+
+def test_insert_stained_excl_vat_is_still_an_e1_money_operand():
+    from app.core.rag.retriever import chunk_states_accepted_contract_amount
+    from app.lib.construction_formulas_commercial import (
+        chunk_has_real_accepted_contract_amount,
+    )
+
+    assert chunk_has_real_accepted_contract_amount(INSERT_STAINED_NET_ACA)
+    assert chunk_states_accepted_contract_amount(INSERT_STAINED_NET_ACA)
+    assert not chunk_states_accepted_contract_amount(COC_8_8_TOY_ACA)
+
+
+def test_e1_surfaces_insert_stained_excl_vat_when_toy_windows_fill_k(
+    monkeypatch,
+):
+    """Live after #529: 8.8 chunks 9–11 occupy every slot as rate windows.
+
+    Toy reject cleared them as the money operand. The filled excl-VAT
+    row sat next to ``[insert amount]`` and was stained as a toy, so
+    it never entered top-k. Compose then had no rate base and the
+    cost-grounding gate refused.
+    """
+    toys = [
+        _chunk(f"gc{i}", GC_DOC, 0.95 - i * 0.01, COC_8_8_TOY_ACA)
+        for i in range(5)
+    ]
+    rate = _chunk("rate", RATE_DOC, 0.22, SCANNED_RATE)
+    aca = _chunk("aca", ACA_DOC, 0.21, INSERT_STAINED_NET_ACA)
+    names = {
+        GC_DOC: CD_SCANNED_NAME,
+        RATE_DOC: CD_SCANNED_NAME,
+        ACA_DOC: CD_SCANNED_NAME,
+    }
+    seeded = [
+        {"id": RATE_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+        {"id": ACA_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+        {"id": GC_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+    ]
+    ret = _install_e1_corpus(
+        monkeypatch,
+        semantic=toys,
+        rescue_hits=[rate, aca],
+        names=names,
+        seeded=seeded,
+    )
+    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=5)
+    blob = " ".join(c.text for c in chunks)
+    assert RATE in blob
+    assert NET_ACA_TXT in blob
+    excerpts = "\n\n".join(c.text or "" for c in chunks)
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+    assert out["currency"] == "SAR"
+    assert out["contract_amount"] != 10_000_000.0
+
+    rag = _sys(*(c.text or "" for c in chunks))
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(_CG_REFUSAL, rag, msgs)
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
+    assert "10,000,000.00" not in posted.split("\n", 1)[0]

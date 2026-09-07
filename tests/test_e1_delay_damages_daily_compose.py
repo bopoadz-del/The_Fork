@@ -27,6 +27,7 @@ from app.agents.runtime import (
 from app.lib.construction_formulas_commercial import (
     aca_amount_is_toy_example,
     answer_states_daily_amount,
+    chunk_has_real_accepted_contract_amount,
     compose_delay_damages_daily_from_excerpts,
     delay_damages_daily,
     parse_accepted_contract_amount,
@@ -424,3 +425,61 @@ def test_toy_aca_kill_switch_restores_electing_ten_million(monkeypatch):
     # Example language is ignored; 10M is first in the excl-VAT bucket.
     both = "\n\n".join((TOY_EXAMPLE_WINDOW, NET_ACA_ROW))
     assert parse_accepted_contract_amount(both) == (TOY_ACA, "SAR")
+
+
+# Live leftover E1 after #529: Contract Data template "insert" / a
+# neighboring "for example" 8.8 window stained the filled excl-VAT
+# ACA as a toy. Rescue then dropped it, compose had no money operand,
+# and the cost-grounding gate refused.
+INSERT_STAINED_NET_ACA = (
+    "CONTRACT DATA particulars — filled-in amount / duration / percentage.\n"
+    "1.1.1 insert Accepted Contract Amount excluding VAT | "
+    f"SAR {NET_ACA:,.2f}"
+)
+SCANNED_INSERT_NET_ACA = (
+    "CONTRACT DATA\n1.1.1\nAccepted\nContract\nAmount (excluding VAT)\n"
+    f"[insert amount] SAR {NET_ACA:,.2f}\n"
+)
+
+
+def test_insert_template_cue_does_not_stain_the_filled_excl_vat_aca():
+    """Non-10M excl-VAT is never the FIDIC worked example."""
+    assert not aca_amount_is_toy_example(
+        NET_ACA,
+        "1.1.1 insert Accepted Contract Amount excluding VAT | "
+        f"SAR {NET_ACA:,.2f}",
+    )
+    assert not aca_amount_is_toy_example(
+        NET_ACA,
+        "For example, if the Accepted Contract Amount excluding VAT is "
+        f"SAR {NET_ACA:,.2f}",
+    )
+    assert chunk_has_real_accepted_contract_amount(INSERT_STAINED_NET_ACA)
+    assert chunk_has_real_accepted_contract_amount(SCANNED_INSERT_NET_ACA)
+    assert parse_accepted_contract_amount(INSERT_STAINED_NET_ACA) == (
+        NET_ACA, "SAR",
+    )
+    assert parse_accepted_contract_amount(SCANNED_INSERT_NET_ACA) == (
+        NET_ACA, "SAR",
+    )
+
+
+def test_compose_does_not_elect_toy_ten_million_when_it_is_the_only_aca():
+    """#529 leftover: toy-only excerpts must not emit SAR 10,000/day."""
+    excerpts = "\n\n".join((RATE_ROW, TOY_EXAMPLE_WINDOW, TOY_ACA_ROW))
+    assert parse_accepted_contract_amount(excerpts) is None
+    assert compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts) is None
+
+
+def test_compose_and_graft_from_insert_stained_excl_vat():
+    excerpts = "\n\n".join((RATE_ROW, TOY_EXAMPLE_WINDOW, INSERT_STAINED_NET_ACA))
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+    rag = _sys(RATE_ROW, TOY_EXAMPLE_WINDOW, INSERT_STAINED_NET_ACA)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(_CG_REFUSAL, rag, msgs)
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
