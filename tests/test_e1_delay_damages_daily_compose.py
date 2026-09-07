@@ -483,3 +483,27 @@ def test_compose_and_graft_from_insert_stained_excl_vat():
     assert "1,754,504.46" in posted
     assert posted != _CG_REFUSAL
     assert "upload your priced BOQ" not in posted.lower()
+
+
+def test_graft_replaces_cost_refusal_when_late_excl_vat_is_present():
+    """Live 0a0ee76: model/gate emitted the BOQ refusal over 8.8 chunks 9–11.
+
+    When the filled excl-VAT row is in the excerpts (after the late-doc
+    scan), graft must state SAR 1,754,504.46/day and must not keep the
+    refusal or the toy 10,000/day product.
+    """
+    excerpts = "\n\n".join(
+        (TOY_EXAMPLE_WINDOW, TOY_EXAMPLE_WINDOW, TOY_EXAMPLE_WINDOW, NET_ACA_ROW),
+    )
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+    assert out["daily_amount"] != TOY_DAILY
+    rag = _sys(TOY_EXAMPLE_WINDOW, TOY_EXAMPLE_WINDOW, TOY_EXAMPLE_WINDOW, NET_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(_CG_REFUSAL, rag, msgs)
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
+    assert "10,000.00" not in posted.split("\n", 1)[0]

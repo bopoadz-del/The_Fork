@@ -2512,6 +2512,10 @@ _ACA_BASE_RESCUE_PHRASES = (
     "accepted contract amount excluding vat",
     "accepted contract amount",
 )
+# Combined GC+Contract Data volumes put Sub-Clause 8.8 at chunks 9–11
+# and the filled 1.1.1 excl-VAT row in a later appendix. identifier_search
+# LIMIT and first-N chunks_for_docs stay on the 8.8 toy windows.
+_E1_REAL_ACA_DOC_SCAN = 400
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
     "engineer limited",
@@ -3437,6 +3441,90 @@ def _rescue_chunks_matching(
         recovered += 1
     if recovered:
         logger.info("%s rescue recovered %d chunk(s)", label, recovered)
+    return recovered
+
+
+def _rescue_e1_real_aca_from_pool_docs(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+) -> int:
+    """Surface a filled excl-VAT ACA that sits past first-N on an 8.8 doc.
+
+    Live leftover E1 after #530: identifier_search for ``accepted contract
+    amount excluding vat`` matches the 8.8 worked-example windows (chunks
+    9–11) and LIMIT returns those first. ``chunks_for_docs`` then takes
+    the first 24/40 by index — still the Conditions body — so the filled
+    1.1.1 row never enters fused. Compose skips the toy 10M and the cost
+    gate refuses. Scan rate-window docs already in-pool past that prefix
+    for a non-toy ACA. Kill-switch: RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
+    """
+    if not (
+        delay_damages_daily_rescue_enabled()
+        and query_asks_delay_damages_daily_amount(query)
+    ):
+        return 0
+    try:
+        from app.lib.construction_formulas_commercial import (
+            chunk_has_real_accepted_contract_amount,
+        )
+    except Exception:  # noqa: BLE001 — never break a turn over an import
+        logger.debug("e1 late-ACA import failed", exc_info=True)
+        return 0
+
+    def _fused_chunk(entry) -> Optional[Chunk]:
+        if isinstance(entry, tuple) and entry:
+            chunk = entry[0]
+        else:
+            chunk = entry
+        return chunk if isinstance(chunk, Chunk) else None
+
+    if any(
+        chunk_has_real_accepted_contract_amount((c.text or ""))
+        for c in (_fused_chunk(e) for e in fused.values())
+        if c is not None
+    ):
+        return 0
+    doc_ids: List[str] = []
+    seen: Set[str] = set()
+    for entry in fused.values():
+        chunk = _fused_chunk(entry)
+        if chunk is None or not chunk.doc_id:
+            continue
+        if not chunk_states_delay_damages_rate(chunk.text or ""):
+            continue
+        if chunk.doc_id in seen:
+            continue
+        seen.add(chunk.doc_id)
+        doc_ids.append(chunk.doc_id)
+    if not doc_ids:
+        return 0
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return 0
+    try:
+        extra = fetch(project_id, doc_ids, k_per_doc=_E1_REAL_ACA_DOC_SCAN)
+    except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+        logger.warning(
+            "e1 late-ACA scan for %s failed: %s", project_id, exc,
+        )
+        return 0
+    recovered = 0
+    for chunk in _pair_adjacent_keep_text(
+        extra or [], chunk_states_accepted_contract_amount,
+    ):
+        if chunk.chunk_id in fused:
+            continue
+        if not chunk_has_real_accepted_contract_amount(chunk.text or ""):
+            continue
+        fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+        recovered += 1
+    if recovered:
+        logger.info(
+            "e1 late-ACA scan recovered %d chunk(s) past first-N 8.8 windows",
+            recovered,
+        )
     return recovered
 
 
@@ -4541,6 +4629,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _rescue_asked_particular_value_chunks(
         query, project_id, fused_lex, store,
     )
+    _rescue_e1_real_aca_from_pool_docs(
+        query, project_id, fused_lex, store,
+    )
     _rescue_schedule_register_chunks(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
@@ -5051,6 +5142,7 @@ def retrieve_with_filter(
     # unprefixed chunk cosine never fetched. Rescue is project-only so
     # the FIDIC note's illustrative 0.05% cannot impersonate the rate.
     _rescue_asked_particular_value_chunks(query, project_id, fused, store)
+    _rescue_e1_real_aca_from_pool_docs(query, project_id, fused, store)
     _rescue_schedule_register_chunks(
         query,
         project_id,
