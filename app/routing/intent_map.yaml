@@ -68,6 +68,11 @@ rows:
   # the kit is vendored through the Store like every other kit; no kit code
   # lives in this repo.
   #
+  # Vendored ref: Cerebrum-Blocks main @ d7cff230453efd273388491e1cbf1d18f3ebefd5
+  # (PR #108, the full 7-block kit). #512 landed while the kit was still on
+  # branch docs/mep-inventory; a hat vendored from a branch breaks on the next
+  # rebase, so the ref is recorded here against main and nothing else.
+  #
   # Deliberately does NOT capture "extract quantities from this IFC": that is
   # bim_extractor's job. The two are easy to confuse because both take an IFC,
   # and routing a quantities ask to the clash judge returns a clash report to
