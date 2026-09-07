@@ -196,13 +196,19 @@ def test_a2_a3_a9_predicates():
         extract_aca_including_vat,
         extract_engineer_identity,
         extract_time_for_completion_days,
+        query_asks_delay_damages_daily_amount,
         query_asks_for_aca_including_vat,
         query_asks_for_time_for_completion,
         query_asks_who_the_engineer_is,
+        query_is_aca_including_vat_particular,
     )
 
     assert query_asks_for_aca_including_vat(A2_ASK)
     assert query_asks_for_aca_including_vat(LIVE_A2)
+    assert query_is_aca_including_vat_particular(A2_ASK)
+    assert query_is_aca_including_vat_particular(LIVE_A2)
+    assert not query_asks_delay_damages_daily_amount(A2_ASK)
+    assert not query_asks_delay_damages_daily_amount(LIVE_A2)
     assert not query_asks_for_aca_including_vat(
         "What is the Accepted Contract Amount, excluding VAT?"
     )
@@ -285,12 +291,17 @@ def _install(monkeypatch, *, semantic, rescue_hits, names, seeded=None):
                 out.append(chunk)
         return out[:k]
 
-    def fake_chunks_for_docs(self, project_id, doc_ids, k_per_doc=12):
+    def fake_chunks_for_docs(
+        self, project_id, doc_ids, k_per_doc=12, from_end=False, all_rows=False,
+    ):
         out = []
         for chunk in rescue_hits:
             if chunk.doc_id in (doc_ids or []):
                 out.append(chunk)
-        return out[: max(1, int(k_per_doc or 12))]
+        if all_rows:
+            return out
+        n = max(1, int(k_per_doc or 12))
+        return out[-n:] if from_end else out[:n]
 
     seeded = seeded or []
 
