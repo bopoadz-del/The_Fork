@@ -62,12 +62,21 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def apply_token_cap(chunks: List[Chunk]) -> Tuple[List[Chunk], int]:
+def apply_token_cap(
+    chunks: List[Chunk],
+    query: str = "",
+) -> Tuple[List[Chunk], int]:
     """Drop whole chunks from the bottom (lowest score) until total
     estimated tokens are <= MAX_RAG_TOKENS.
 
     Never truncates mid-chunk; a chunk is included or excluded whole.
     Returns ``(kept_chunks, total_estimated_tokens)``.
+
+    Leftover E1: when ``query`` is a daily delay-damages ask, keep the
+    Contract Data 0.1% and standalone excl-VAT operands even if Cosine
+    scored them 0.0. Live 396cc7b: sources stayed on chunks 9–11 because
+    the cap admitted the three HIGH pointer windows and dropped the
+    rescued mid-volume rows.
     """
     # Default sized for the CURRENT chunker output. Live failure 2026-08-15
     # (F20): doc-reindex emits ~3,000-char chunks (~750-950 est. tokens), so
@@ -77,8 +86,29 @@ def apply_token_cap(chunks: List[Chunk]) -> Tuple[List[Chunk], int]:
     # cap dropped it whole. 6000 fits a full k=5 of today's chunks with
     # headroom while still bounding a runaway injection.
     cap = int(os.getenv("MAX_RAG_TOKENS", "6000"))
-    # Sort by score desc so we drop the weakest matches first when over cap.
-    ordered = sorted(chunks, key=lambda c: -(c.score or 0))
+    protect_ids: set[str] = set()
+    if query:
+        try:
+            from app.core.rag.retriever import (
+                _e1_has_standalone_excl_vat,
+                _e1_rate_preference,
+                query_asks_delay_damages_daily_amount,
+            )
+            if query_asks_delay_damages_daily_amount(query):
+                for chunk in chunks:
+                    text = chunk.text or ""
+                    if (
+                        _e1_rate_preference(text) >= 2
+                        or _e1_has_standalone_excl_vat(text)
+                    ):
+                        protect_ids.add(chunk.chunk_id)
+        except Exception:  # noqa: BLE001 — cap must never break injection
+            protect_ids = set()
+    protected = [c for c in chunks if c.chunk_id in protect_ids]
+    rest = [c for c in chunks if c.chunk_id not in protect_ids]
+    protected.sort(key=lambda c: -(c.score or 0))
+    rest.sort(key=lambda c: -(c.score or 0))
+    ordered = protected + rest
     total = 0
     kept: List[Chunk] = []
     for c in ordered:
@@ -606,7 +636,7 @@ def rag_inject(
         _audit.write(audit_rec)
         return None, audit_rec
 
-    kept, total_tokens = apply_token_cap(chunks)
+    kept, total_tokens = apply_token_cap(chunks, query=user_message or "")
     sys_msg = format_chunks_as_system_message(
         kept, total_candidates=len(chunks), query=user_message or "",
     )
