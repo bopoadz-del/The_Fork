@@ -921,6 +921,7 @@ class VectorStore:
         k_per_doc: int = 12,
         from_end: bool = False,
         all_rows: bool = False,
+        offset: int = 0,
     ) -> List[Chunk]:
         """Return indexed chunks for specific documents, ordered by chunk_index.
 
@@ -938,6 +939,12 @@ class VectorStore:
         already loads them). Leftover E1: a filled 1.1.1 excl-VAT row
         can sit in the middle of a combined volume, past first-400 and
         before last-400, so prefix+tail still miss.
+
+        ``offset`` skips that many rows per file (from the start, or
+        from the end when ``from_end``). Leftover E1 after #541: a
+        store that ignores ``all_rows`` and caps ``k_per_doc`` at 400
+        still misses chunk 500 of a 1200-row volume; windowed offsets
+        walk the middle.
         """
         if not project_id or not doc_ids:
             return []
@@ -950,6 +957,7 @@ class VectorStore:
         if not unique:
             return []
         per = max(1, int(k_per_doc or 12))
+        off = max(0, int(offset or 0))
         try:
             with self._lock:
                 with self._session_factory()() as session:
@@ -993,11 +1001,20 @@ class VectorStore:
             out: List[Chunk] = []
             for did in unique:
                 group = by_doc.get(did, [])
-                out.extend(_as_chunk(r) for r in group[-per:])
+                end = len(group) - off
+                if end <= 0:
+                    continue
+                start = max(0, end - per)
+                out.extend(_as_chunk(r) for r in group[start:end])
             return out
+        skipped: Dict[str, int] = {}
         taken: Dict[str, int] = {}
         out = []
         for r in rows:
+            sk = skipped.get(r.doc_id, 0)
+            if sk < off:
+                skipped[r.doc_id] = sk + 1
+                continue
             n = taken.get(r.doc_id, 0)
             if n >= per:
                 continue
