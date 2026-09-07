@@ -3079,9 +3079,23 @@ def _aca_row_is_including_vat(key: str, val: str) -> bool:
         return False
     if _EXCL_VAT_RE.search(joined) and not _INCL_VAT_RE.search(k):
         return False
-    return bool(_INCL_VAT_RE.search(k) or (
-        _INCL_VAT_RE.search(joined) and not _EXCL_VAT_RE.search(joined)
-    ))
+    if _INCL_VAT_RE.search(k):
+        return True
+    # Live Wave-1 A2 on 9ad62cc: filled_particulars_rows glued chunk #0
+    # (delay damages × SAR 39,098,392.98) onto the later including-VAT
+    # label. Including-VAT in the value must precede the first figure —
+    # otherwise the partial ACA is peeled as the including-VAT amount.
+    incl = _INCL_VAT_RE.search(v)
+    if not incl:
+        return False
+    try:
+        from app.lib.construction_formulas_commercial import _MONEY_RE
+        first_money = _MONEY_RE.search(v)
+    except Exception:  # noqa: BLE001
+        first_money = None
+    if first_money is not None and first_money.start() < incl.start():
+        return False
+    return not (_EXCL_VAT_RE.search(v) and not _INCL_VAT_RE.search(v[:incl.end()]))
 
 
 def _aca_nearest_vat_is_including(lead: str) -> bool:
@@ -3521,6 +3535,18 @@ def _pair_adjacent_keep_text(
             for width in range(2, span + 1):
                 if i + width - 1 >= len(group):
                     break
+                idxs = [
+                    int(getattr(group[i + j], "chunk_index", 0) or 0)
+                    for j in range(width)
+                ]
+                # Sparse fetches (chunk #0 + appendix 80) must not glue
+                # a delay-damages window onto the including-VAT row.
+                # Equal indexes (tests that omit chunk_index) keep the
+                # old list-adjacency pairing.
+                if len(set(idxs)) > 1 and any(
+                    idxs[j] != idxs[0] + j for j in range(width)
+                ):
+                    continue
                 combined = "\n".join(
                     (group[i + j].text or "") for j in range(width)
                 )

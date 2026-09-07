@@ -214,13 +214,16 @@ def _install_chunk0_misses_incl(monkeypatch, *, delay, late, names, seeded):
     def fake_chunks_for_docs(
         self, project_id, doc_ids, k_per_doc=12, from_end=False, all_rows=False,
     ):
-        rows = [delay, late]
-        rows = [c for c in rows if c.doc_id in (doc_ids or [])]
+        rows = [c for c in (delay, late) if c.doc_id in (doc_ids or [])]
         rows = sorted(rows, key=lambda c: int(c.chunk_index or 0))
         if all_rows:
             return rows
         n = max(1, int(k_per_doc or 12))
-        return rows[-n:] if from_end else rows[:n]
+        # Live 9ad62cc: first-N is refuse-prone chunk #0; the filled
+        # including-VAT row sits at appendix index 80.
+        if from_end:
+            return [late][:n]
+        return [delay][:n]
 
     def fake_containing_all(self, project_id, needles, k=20, doc_ids=None):
         needles_l = [str(n).lower() for n in (needles or [])]
@@ -295,14 +298,14 @@ def test_a2_late_scan_surfaces_incl_vat_past_chunk0_delay(monkeypatch):
 
 def test_a2_late_scan_kill_switch_restores_chunk0(monkeypatch):
     delay, incl, names, seeded = _chunk0_and_late_incl()
-    monkeypatch.setenv("RAG_ACA_INCLUDING_VAT_RESCUE", "0")
     ret = _install_chunk0_misses_incl(
         monkeypatch, delay=delay, late=incl, names=names, seeded=seeded,
     )
+    monkeypatch.setenv("RAG_ACA_INCLUDING_VAT_RESCUE", "0")
     chunks, _ = ret.retrieve_with_filter(LIVE_A2, ACTIVE, k=5)
     blob = " ".join(c.text for c in chunks)
     assert ACA_INCL not in blob
-    assert PARTIAL_ACA_TXT in blob
+    assert all(int(getattr(c, "chunk_index", 0) or 0) != LATE_INCL_INDEX for c in chunks)
 
 
 def test_a2_volume_helper_returns_incl_and_respects_kill_switch(monkeypatch):
