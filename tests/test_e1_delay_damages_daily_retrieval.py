@@ -1828,3 +1828,216 @@ def test_e1_retrieve_refuse_prone_9_11_still_composes_point_one(monkeypatch):
     assert "upload your priced BOQ" not in posted.lower()
     assert "263,175.67" not in posted
     assert "0.015%" not in posted.split("\n", 1)[0]
+
+
+def _ignore_all_rows_store(all_chunks, owner_pid=None):
+    """Live #537 miss: accepts all_rows but still returns first-N / last-N."""
+
+    class _Store:
+        def chunks_for_docs(
+            self, project_id, doc_ids, k_per_doc=12, from_end=False,
+            all_rows=False,
+        ):
+            if owner_pid is not None and project_id != owner_pid:
+                return []
+            rows = sorted(
+                [c for c in all_chunks if c.doc_id in (doc_ids or [])],
+                key=lambda c: c.chunk_index,
+            )
+            n = max(1, int(k_per_doc or 12))
+            return rows[-n:] if from_end else rows[:n]
+
+        def chunks_containing_all(self, project_id, needles, k=20, doc_ids=None):
+            return []
+
+    return _Store()
+
+
+def _live_refuse_sys(*chunks):
+    """Inject markers the live Sources panel uses (class=project_corpus)."""
+    src = "DD-2023-118_DG2 Infra P1_Vol 1.0_Con..."
+    body = "\n\n".join(
+        f"[doc_id={c.doc_id} chunk={c.chunk_index} "
+        f"score={c.score:.3f} class=project_corpus src={src}] {c.text}"
+        for c in chunks
+    )
+    return {"role": "system", "content": "Reference context:\n" + body}
+
+
+def test_e1_pointer_window_qualifies_doc_without_filename():
+    """Truncated Sources name must not hide the bound 8.8 volume."""
+    from app.core.rag.retriever import _e1_doc_qualifies_for_late_scan
+
+    assert _e1_doc_qualifies_for_late_scan(REFUSE_PRONE_8_8, "")
+    assert _e1_doc_qualifies_for_late_scan(REFUSE_PRONE_8_8, "Vol 1.0_Con...")
+    assert not _e1_doc_qualifies_for_late_scan(SPEC_TOC, "")
+
+
+def test_e1_fetch_does_not_early_exit_when_all_rows_is_ignored():
+    """First-N 0.015%+ACA is not enough — walk until both operands exist."""
+    from app.core.rag.retriever import _e1_fetch_late_aca_chunks
+
+    all_chunks, lookalikes, rate, aca = _015_early_exit_all_chunks()
+    extra = _e1_fetch_late_aca_chunks(
+        _ignore_all_rows_store(all_chunks), ACTIVE, [GC_DOC],
+    )
+    texts = [c.text or "" for c in extra]
+    assert any(c.chunk_id == rate.chunk_id for c in extra)
+    assert any(c.chunk_id == aca.chunk_id for c in extra)
+    assert CD_POINT_ONE_RATE in texts
+    assert LIVE_SCANNED_EXCL_ACA in texts
+
+
+def test_e1_loaded_volume_composes_when_all_rows_ignored_and_operands_mid_doc(
+    monkeypatch,
+):
+    """Live 9ad62cc refuse window: 9–11 + BOQ refuse; operands mid-volume."""
+    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
+
+    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    rag = _live_refuse_sys(*windows)
+    extra = e1_compose_excerpts_from_loaded_cd_volume(
+        LIVE_E1, ACTIVE, _ignore_all_rows_store(all_chunks),
+        rag_context=rag["content"],
+        doc_ids=[GC_DOC],
+    )
+    assert RATE in extra
+    assert NET_ACA_TXT in extra
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, extra)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["contract_amount"] == NET_ACA
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+
+
+def test_e1_loaded_volume_composes_from_015_windows_when_all_rows_ignored(
+    monkeypatch,
+):
+    """#536 lookalike 9–11 still compose 0.1% when the volume has it."""
+    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
+
+    all_chunks, windows, _rate, _aca = _015_early_exit_all_chunks()
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    extra = e1_compose_excerpts_from_loaded_cd_volume(
+        LIVE_E1, ACTIVE, _ignore_all_rows_store(all_chunks),
+        rag_context=_live_refuse_sys(*windows)["content"],
+        doc_ids=[GC_DOC],
+    )
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, extra)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+
+
+def test_e1_loaded_volume_uses_cited_chunk_project_id(monkeypatch):
+    """UI Master Corpus id is empty at the store; cited chunk owner has the rows."""
+    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
+
+    source = "p_source"
+    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
+    for chunk in all_chunks:
+        chunk.project_id = source
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    extra = e1_compose_excerpts_from_loaded_cd_volume(
+        LIVE_E1, ACTIVE, _ignore_all_rows_store(all_chunks, owner_pid=source),
+        rag_context=_live_refuse_sys(*windows)["content"],
+        doc_ids=[GC_DOC],
+        extra_pids=[source],
+    )
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, extra)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+
+
+def test_e1_retrieve_ignore_all_rows_refuse_window_still_composes(monkeypatch):
+    """Live 9ad62cc: Cosine 9–11 only; store ignores all_rows. Must still compose."""
+    from app.core.rag import retriever as ret
+
+    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
+    names = {GC_DOC: "DD-2023-118_DG2 Infra P1_Vol 1.0_Con..."}
+    seeded = [
+        {"id": GC_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+    ]
+
+    def fake_search(self, project_id, qvec, k, query_text=None):
+        return [c for c in windows if c.project_id == project_id][:k]
+
+    def fake_id_search(self, project_id, identifiers, k=20):
+        return list(windows)[:k]
+
+    store = _ignore_all_rows_store(all_chunks)
+
+    def fake_chunks_for_docs(
+        self, project_id, doc_ids, k_per_doc=12, from_end=False, all_rows=False,
+    ):
+        return store.chunks_for_docs(
+            project_id, doc_ids, k_per_doc=k_per_doc,
+            from_end=from_end, all_rows=all_rows,
+        )
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.identifier_search", fake_id_search,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_for_docs",
+        fake_chunks_for_docs,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_containing_all",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.count", lambda self, pid=None: 4,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore._verify_embedding_identity",
+        lambda self: None,
+    )
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda did: names.get(did, ""),
+                        raising=False)
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_title_phrase",
+        lambda pid, phrase, limit=8: (
+            list(seeded) if "contract data" in (phrase or "").lower() else []
+        ),
+    )
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_filename_terms",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_LAYERED", raising=False)
+
+    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=3)
+    excerpts = "\n\n".join(c.text or "" for c in chunks)
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["contract_amount"] == NET_ACA
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+    rag = _live_refuse_sys(*chunks)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(
+        _CG_REFUSAL, rag, msgs,
+        audit_rec={"project_id": ACTIVE, "chunks": [
+            {"project_id": ACTIVE, "doc_id": GC_DOC, "chunk_index": 9},
+        ]},
+    )
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
+    assert "263,175.67" not in posted

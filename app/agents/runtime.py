@@ -5005,6 +5005,7 @@ def _graft_composed_delay_damages_daily(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
     project_id: str | None = None,
+    extra_project_ids: list[str] | None = None,
 ) -> str:
     """OLD-pack E1: state rate × ACA as a daily figure when both are in docs.
 
@@ -5039,6 +5040,7 @@ def _graft_composed_delay_damages_daily(
                 )
                 extra = e1_compose_excerpts_from_loaded_cd_volume(
                     user, project_id or "", rag_context=rag,
+                    extra_pids=extra_project_ids,
                 )
                 if extra:
                     composed = compose_delay_damages_daily_from_excerpts(
@@ -5188,8 +5190,21 @@ def _postprocess_answer(
     # invent a daily figure; both operands must be in the excerpts or
     # the loaded CD volume (last-chance after refuse-prone top-k).
     pid = project_id or (audit_rec or {}).get("project_id")
+    extra_pids: list[str] = []
+    seen_pids: set[str] = set()
+    if pid:
+        extra_pids.append(str(pid))
+        seen_pids.add(str(pid))
+    for ch in (audit_rec or {}).get("chunks") or []:
+        if not isinstance(ch, dict):
+            continue
+        cp = str(ch.get("project_id") or "").strip()
+        if cp and cp not in seen_pids:
+            seen_pids.add(cp)
+            extra_pids.append(cp)
     text = _graft_composed_delay_damages_daily(
         text, rag_sys_msg, messages, project_id=pid,
+        extra_project_ids=extra_pids or None,
     )
     # Wave-1 DeepSeek: A2 answered delay damages, A3/A9 said the
     # particular was absent. Graft the asked row from excerpts only.
@@ -7949,6 +7964,7 @@ class Agent:
                         final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
+                        project_id=project_id,
                         audit_rec=_rag_audit,
                     )
                     messages.append({"role": "assistant", "content": final_text})
@@ -8050,7 +8066,7 @@ class Agent:
                         final_text, messages, user_message=user_message,
                         project_id=project_id, api_key=api_key, user_id=user_id,
                     )
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -8171,7 +8187,7 @@ class Agent:
             final_text, messages, user_message=user_message,
             project_id=project_id, api_key=api_key, user_id=user_id,
         )
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -9044,6 +9060,7 @@ class Agent:
                             final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
+                            project_id=project_id,
                             audit_rec=_rag_audit,
                         )
                         for chunk in _chunks(final_text, 80):
@@ -9097,7 +9114,7 @@ class Agent:
                             ):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
+                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     else:
@@ -9105,6 +9122,7 @@ class Agent:
                             final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
+                            project_id=project_id,
                             audit_rec=_rag_audit,
                         )
                     if _timing:
@@ -9147,6 +9165,7 @@ class Agent:
                         final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
+                        project_id=project_id,
                         audit_rec=_rag_audit,
                     )
                     _LOG.warning(
@@ -9287,7 +9306,7 @@ class Agent:
                                 if _final_text_needs_forced_retry(final_text, user_message=user_message):
                                     final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -9443,7 +9462,7 @@ class Agent:
             _LOG.warning("chat_stream: forced final unusable, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:
