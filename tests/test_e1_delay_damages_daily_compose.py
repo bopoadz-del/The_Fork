@@ -30,6 +30,7 @@ from app.lib.construction_formulas_commercial import (
     chunk_has_real_accepted_contract_amount,
     compose_delay_damages_daily_from_excerpts,
     delay_damages_daily,
+    delay_damages_rate_is_coc_lookalike,
     parse_accepted_contract_amount,
     parse_delay_damages_rate_percent,
     query_asks_delay_damages_daily_amount,
@@ -509,3 +510,80 @@ def test_graft_replaces_cost_refusal_when_late_excl_vat_is_present():
     assert "10,000.00" not in posted.split("\n", 1)[0]
     assert "0.015%" not in posted
     assert "263,175.67" not in posted
+
+
+# Live leftover E1 after #535 (4242b86): compose first-matched CoC 8.7/8.8
+# 0.015% of the excl-VAT ACA → SAR 263,175.67/day. Contract Data 8.8 is
+# 0.1% of the Contract Price. Sources stayed on chunks 9–11.
+COC_015_WINDOW = (
+    "Volume 1 - Conditions of Contract. Sub-Clause 8.7 Delay Damages. "
+    "Delay damages for the whole of the Works are 0.015% of the "
+    f"Accepted Contract Amount SAR {NET_ACA:,.2f} per calendar day."
+)
+LIVE_E1_015_ANSWER = (
+    "Delay damages for the whole of the Works are "
+    "SAR 263,175.67 per calendar day "
+    f"(0.015% of Accepted Contract Amount SAR {NET_ACA:,.2f})."
+)
+LOOKALIKE_DAILY = 263_175.67
+
+
+def test_point_zero_one_five_of_aca_is_a_coc_lookalike():
+    assert delay_damages_rate_is_coc_lookalike(0.015, COC_015_WINDOW)
+    assert not delay_damages_rate_is_coc_lookalike(0.1, RATE_ROW)
+    assert not delay_damages_rate_is_coc_lookalike(0.2, DEMO_RATE_ROW)
+
+
+def test_rate_parser_prefers_contract_data_point_one_over_coc_015():
+    """First-match used to return 0.015% when the CoC window led."""
+    both = "\n\n".join((COC_015_WINDOW, RATE_ROW, NET_ACA_ROW))
+    assert parse_delay_damages_rate_percent(COC_015_WINDOW) is None
+    assert parse_delay_damages_rate_percent(RATE_ROW) == 0.1
+    assert parse_delay_damages_rate_percent(both) == 0.1
+    led_by_015 = "\n\n".join((COC_015_WINDOW, COC_015_WINDOW, RATE_ROW))
+    assert parse_delay_damages_rate_percent(led_by_015) == 0.1
+
+
+def test_compose_does_not_elect_015_when_excl_vat_aca_is_present():
+    """(b) 0.015% × excl-VAT ACA must not become 263,175.67."""
+    lookalike_only = "\n\n".join((COC_015_WINDOW, NET_ACA_ROW))
+    assert compose_delay_damages_daily_from_excerpts(LIVE_E1, lookalike_only) is None
+    both = "\n\n".join((COC_015_WINDOW, RATE_ROW, NET_ACA_ROW))
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, both)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["contract_amount"] == NET_ACA
+    assert out["daily_amount"] != LOOKALIKE_DAILY
+
+
+def test_graft_replaces_the_live_015_per_day_fail():
+    rag = _sys(COC_015_WINDOW, RATE_ROW, NET_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    out = _graft_composed_delay_damages_daily(LIVE_E1_015_ANSWER, rag, msgs)
+    assert "1,754,504.46" in out
+    assert "263,175.67" not in out.split("\n", 1)[0]
+    assert "0.015%" not in out.split("\n", 1)[0]
+
+
+def test_postprocess_e1_cannot_answer_with_015_when_cd_rate_is_present():
+    """(a) refuse is replaced when excl-VAT ACA is in the loaded rows."""
+    rag = _sys(COC_015_WINDOW, RATE_ROW, NET_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(_CG_REFUSAL, rag, msgs)
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
+    assert "263,175.67" not in posted
+    assert "0.015%" not in posted.split("\n", 1)[0]
+
+
+def test_lookalike_rate_kill_switch_restores_electing_015(monkeypatch):
+    monkeypatch.setenv("COMPOSE_REJECT_E1_LOOKALIKE_RATE", "0")
+    assert parse_delay_damages_rate_percent(COC_015_WINDOW) == 0.015
+    out = compose_delay_damages_daily_from_excerpts(
+        LIVE_E1, "\n\n".join((COC_015_WINDOW, NET_ACA_ROW)),
+    )
+    assert out is not None
+    assert out["rate_percent"] == 0.015
+    assert out["daily_amount"] == LOOKALIKE_DAILY

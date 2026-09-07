@@ -1571,6 +1571,22 @@ def filename_looks_like_contract_data(filename: str) -> bool:
     return bool(re.search(r"(?i)contract\s+data", blob))
 
 
+def filename_looks_like_e1_rate_volume(filename: str) -> bool:
+    """True for the bound CoC / Contract Data volume leftover E1 scans.
+
+    Live sources cite ``DD-2023-118_…_Cond…`` — a complete Conditions
+    volume whose 8.8 windows occupy top-k. Requiring only
+    ``contract data`` in the name left ``_e1_pool_doc_ids`` empty when
+    those chunks were pointer-only, so the all-chunk scan never ran.
+    """
+    blob = (filename or "").replace("_", " ")
+    return bool(re.search(
+        r"(?i)contract\s+data|conditions?\s+of\s+contract|"
+        r"particular\s+conditions",
+        blob,
+    ))
+
+
 def contract_data_chunk_states_aca(filename: str, text: str, query: str) -> bool:
     """True when a Contract Data file's chunk states the asked ACA figure.
 
@@ -2522,7 +2538,7 @@ _ACA_BASE_RESCUE_PHRASES = (
 # chunks 9–11). Walk every chunk of those docs. Kill-switch:
 # RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
 _E1_REAL_ACA_DOC_SCAN = 400
-_E1_REAL_ACA_TEXT_K = 80
+_E1_REAL_ACA_TEXT_K = 400
 _E1_REAL_ACA_PAIR_WINDOW = 3
 _E1_REAL_ACA_TEXT_NEEDLES = (
     # Scanned 1.1.1 rows split "Accepted\\nContract\\nAmount" — a
@@ -2532,6 +2548,11 @@ _E1_REAL_ACA_TEXT_NEEDLES = (
     ("1.1.1", "accepted"),
     ("excl", "vat"),
     ("accepted", "vat"),
+    # Live leftover E1 after #535: recover Contract Data 0.1% of
+    # Contract Price when top-k is the CoC 0.015%-of-ACA restatement.
+    # "%" is stripped by chunks_containing_all — use price tokens.
+    ("damages", "price"),
+    ("delay", "price"),
 )
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
@@ -2832,6 +2853,45 @@ def _chunk_keeps_for_e1_daily(filename: str, text: str) -> bool:
         _CD_HEADING_IN_CHUNK_RE.search(t)
         and not contract_data_mention_is_only_a_cross_reference(t)
     )
+
+
+def _e1_has_standalone_excl_vat(text: str) -> bool:
+    """True for a 1.1.1 / excl-VAT money row, not a rate window that cites ACA.
+
+    Live leftover E1 after #535: CoC chunks 9–11 state 0.015% of the
+    filled excl-VAT ACA. ``chunk_has_real_accepted_contract_amount``
+    is True, so the all-chunk scan early-exited and compose used 0.015%.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            chunk_has_real_accepted_contract_amount,
+        )
+    except Exception:  # noqa: BLE001 — treat as missing; keep scanning
+        return False
+    if not chunk_has_real_accepted_contract_amount(text or ""):
+        return False
+    if chunk_states_delay_damages_rate(text or ""):
+        return False
+    return _e1_aca_preference(text) >= 2
+
+
+def _e1_rate_preference(text: str) -> int:
+    """Higher wins for E1's daily rate. Contract Data 0.1% beats CoC 0.015%."""
+    t = text or ""
+    if not chunk_states_delay_damages_rate(t):
+        return -1
+    try:
+        from app.lib.construction_formulas_commercial import (
+            delay_damages_rate_preference_score,
+            parse_delay_damages_rate_percent,
+        )
+        pct = parse_delay_damages_rate_percent(t)
+        if pct is None:
+            return 0
+        return delay_damages_rate_preference_score(pct, t)
+    except Exception:  # noqa: BLE001 — a rate window still outranks none
+        logger.debug("e1 rate preference failed", exc_info=True)
+        return 1
 
 
 def _e1_aca_preference(text: str) -> int:
@@ -3517,7 +3577,7 @@ def _e1_pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
                 name = ""
         if not (
             chunk_states_delay_damages_rate(text)
-            or filename_looks_like_contract_data(name)
+            or filename_looks_like_e1_rate_volume(name)
         ):
             continue
         seen.add(chunk.doc_id)
@@ -3661,31 +3721,50 @@ def _rescue_e1_real_aca_from_pool_docs(
             chunk = entry
         return chunk if isinstance(chunk, Chunk) else None
 
-    if any(
-        chunk_has_real_accepted_contract_amount((c.text or ""))
-        for c in (_fused_chunk(e) for e in fused.values())
-        if c is not None
-    ):
+    fused_chunks = [
+        c for c in (_fused_chunk(e) for e in fused.values()) if c is not None
+    ]
+    has_standalone_aca = any(
+        _e1_has_standalone_excl_vat(c.text or "") for c in fused_chunks
+    )
+    has_preferred_rate = any(
+        _e1_rate_preference(c.text or "") >= 2 for c in fused_chunks
+    )
+    # Do not skip when the only "real ACA" sits inside a 0.015% CoC
+    # rate window — that is the live #535 flake (263,175.67/day).
+    if has_standalone_aca and has_preferred_rate:
         return 0
     doc_ids = _e1_pool_doc_ids_for_late_aca(fused)
     if not doc_ids:
         return 0
     extra = _e1_fetch_late_aca_chunks(store, project_id, doc_ids)
     recovered = 0
-    for chunk in _pair_adjacent_keep_text(
-        extra or [],
-        chunk_states_accepted_contract_amount,
-        window=_E1_REAL_ACA_PAIR_WINDOW,
-    ):
-        if chunk.chunk_id in fused:
-            continue
-        if not chunk_has_real_accepted_contract_amount(chunk.text or ""):
-            continue
-        fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
-        recovered += 1
+    if not has_standalone_aca:
+        for chunk in _pair_adjacent_keep_text(
+            extra or [],
+            chunk_states_accepted_contract_amount,
+            window=_E1_REAL_ACA_PAIR_WINDOW,
+        ):
+            if chunk.chunk_id in fused:
+                continue
+            if not chunk_has_real_accepted_contract_amount(chunk.text or ""):
+                continue
+            if chunk_states_delay_damages_rate(chunk.text or ""):
+                # Rate-base ACA is not the 1.1.1 row. Keep looking.
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            recovered += 1
+    if not has_preferred_rate:
+        for chunk in extra or []:
+            if chunk.chunk_id in fused:
+                continue
+            if _e1_rate_preference(chunk.text or "") < 2:
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            recovered += 1
     if recovered:
         logger.info(
-            "e1 late-ACA scan recovered %d chunk(s) past first-N 8.8 windows",
+            "e1 late-operand scan recovered %d chunk(s) past first-N 8.8 windows",
             recovered,
         )
     return recovered
@@ -4463,6 +4542,39 @@ def reserve_e1_compose_operands(
                 present.add(chunk.chunk_id)
                 changed = True
                 break
+
+    # Live leftover E1 after #535: 0.015% CoC windows already satisfy
+    # chunk_states_delay_damages_rate, so the 0.1% Contract Data row
+    # never replaced them. Upgrade when a better rate is in ranked.
+    best_rate: Optional[Chunk] = None
+    best_rate_rank = -1
+    for chunk in ranked:
+        if allow is not None and not allow(chunk):
+            continue
+        rank = _e1_rate_preference(chunk.text or "")
+        if rank > best_rate_rank:
+            best_rate_rank = rank
+            best_rate = chunk
+    kept_rate = max(
+        (_e1_rate_preference(c.text or "") for c in kept), default=-1,
+    )
+    if (
+        best_rate is not None
+        and best_rate_rank > kept_rate
+        and best_rate.chunk_id not in {c.chunk_id for c in kept}
+    ):
+        rate_idxs = [
+            i for i, chunk in enumerate(kept)
+            if chunk_states_delay_damages_rate(chunk.text or "")
+            and _e1_rate_preference(chunk.text or "") < best_rate_rank
+        ]
+        idx = rate_idxs[-1] if rate_idxs else _e1_non_operand_index(
+            kept, protect_rate=True, protect_aca=True,
+        )
+        if idx is not None:
+            kept[idx] = best_rate
+            present.add(best_rate.chunk_id)
+            changed = True
 
     best_chunk: Optional[Chunk] = None
     best_rank = -1
