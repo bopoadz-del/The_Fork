@@ -2111,7 +2111,9 @@ def test_e1_token_cap_keeps_zero_score_operands_on_live_ask(monkeypatch):
     """Live 396cc7b: 3 HIGH 9–11 fill the cap; 0.0 operands drop without query."""
     from app.core.rag.inject import apply_token_cap
 
-    pad = " padding clause text" * 200
+    # 4000 chars ≈ 1000 tokens. Two HIGH pointers fill a 2000-token cap
+    # with no leftover for 0.0 operands — the live 396cc7b drop.
+    pad = "x" * (4000 - len(REFUSE_PRONE_8_8))
     pointers = [
         _chunk(
             f"gc{i}", GC_DOC, 0.95 - i * 0.01,
@@ -2123,7 +2125,7 @@ def test_e1_token_cap_keeps_zero_score_operands_on_live_ask(monkeypatch):
     rate = _chunk("cdrate", GC_DOC, 0.0, CD_POINT_ONE_RATE, chunk_index=480)
     aca = _chunk("aca500", GC_DOC, 0.0, LIVE_SCANNED_EXCL_ACA, chunk_index=500)
     chunks = list(pointers) + [rate, aca]
-    monkeypatch.setenv("MAX_RAG_TOKENS", "2200")
+    monkeypatch.setenv("MAX_RAG_TOKENS", "2000")
 
     dropped, _ = apply_token_cap(chunks)
     dropped_ids = {c.chunk_id for c in dropped}
