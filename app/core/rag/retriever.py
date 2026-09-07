@@ -2515,7 +2515,16 @@ _ACA_BASE_RESCUE_PHRASES = (
 # Combined GC+Contract Data volumes put Sub-Clause 8.8 at chunks 9–11
 # and the filled 1.1.1 excl-VAT row in a later appendix. identifier_search
 # LIMIT and first-N chunks_for_docs stay on the 8.8 toy windows.
+# #532 scanned only the first 400 by index — live appendix sits past
+# that prefix. Text-match + tail (last-N) recover it. Kill-switch:
+# RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
 _E1_REAL_ACA_DOC_SCAN = 400
+_E1_REAL_ACA_TEXT_K = 80
+_E1_REAL_ACA_PAIR_WINDOW = 3
+_E1_REAL_ACA_TEXT_NEEDLES = (
+    ("accepted contract amount", "excluding"),
+    ("1.1.1", "accepted contract amount"),
+)
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
     "engineer limited",
@@ -3366,13 +3375,21 @@ def query_wants_contract_data_file(query: str) -> bool:
     )
 
 
-def _pair_adjacent_keep_text(hits: List[Chunk], keep) -> List[Chunk]:
+def _pair_adjacent_keep_text(
+    hits: List[Chunk],
+    keep,
+    *,
+    window: int = 2,
+) -> List[Chunk]:
     """Scanned Contract Data often splits a label and its value.
 
     Live A9: ``Engineer`` on chunk N, ``JACOBS (CH2M Saudi Limited)`` on
     N+1. Identifier keep() then fails on both. Pair consecutive same-doc
     chunks so the appointment / TfC / including-VAT row is visible.
+    ``window`` > 2 also joins N+2 (live E1 excl-VAT amount one row
+    past the 1.1.1 label). Default 2 keeps A9/A2 pairing unchanged.
     """
+    span = max(2, int(window or 2))
     by_doc: Dict[str, List[Chunk]] = {}
     for chunk in hits:
         by_doc.setdefault(chunk.doc_id, []).append(chunk)
@@ -3387,14 +3404,22 @@ def _pair_adjacent_keep_text(hits: List[Chunk], keep) -> List[Chunk]:
                     out.append(chunk)
                     seen.add(chunk.chunk_id)
                 continue
-            if i + 1 >= len(group):
+            paired_hit = False
+            for width in range(2, span + 1):
+                if i + width - 1 >= len(group):
+                    break
+                combined = "\n".join(
+                    (group[i + j].text or "") for j in range(width)
+                )
+                if keep(combined):
+                    paired = replace(chunk, text=combined)
+                    if paired.chunk_id not in seen:
+                        out.append(paired)
+                        seen.add(paired.chunk_id)
+                    paired_hit = True
+                    break
+            if paired_hit:
                 continue
-            combined = f"{text}\n{group[i + 1].text or ''}"
-            if keep(combined):
-                paired = replace(chunk, text=combined)
-                if paired.chunk_id not in seen:
-                    out.append(paired)
-                    seen.add(paired.chunk_id)
     return out
 
 
@@ -3444,6 +3469,101 @@ def _rescue_chunks_matching(
     return recovered
 
 
+def _e1_pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
+    """Rate-window docs already in fused, plus any Contract Data filename."""
+    doc_ids: List[str] = []
+    seen: Set[str] = set()
+
+    def _fused_chunk(entry) -> Optional[Chunk]:
+        if isinstance(entry, tuple) and entry:
+            chunk = entry[0]
+        else:
+            chunk = entry
+        return chunk if isinstance(chunk, Chunk) else None
+
+    for entry in fused.values():
+        chunk = _fused_chunk(entry)
+        if chunk is None or not chunk.doc_id or chunk.doc_id in seen:
+            continue
+        text = chunk.text or ""
+        name = getattr(chunk, "source_name", "") or ""
+        if not name:
+            try:
+                name = _doc_name_for_id(chunk.doc_id) or ""
+            except Exception:  # noqa: BLE001 — filename is optional
+                name = ""
+        if not (
+            chunk_states_delay_damages_rate(text)
+            or filename_looks_like_contract_data(name)
+        ):
+            continue
+        seen.add(chunk.doc_id)
+        doc_ids.append(chunk.doc_id)
+    return doc_ids
+
+
+def _e1_fetch_late_aca_chunks(store, project_id: str, doc_ids: List[str]) -> List[Chunk]:
+    """Text-match + prefix + tail. First-N alone misses the CD appendix.
+
+    #532 used only ``chunks_for_docs(..., k_per_doc=400)`` (prefix).
+    Live leftover E1 on eb278c0 still cited chunks 9–11: the filled
+    1.1.1 excl-VAT row sits later in the same complete volume.
+    """
+    by_id: Dict[str, Chunk] = {}
+    allowed = set(doc_ids)
+
+    containing = getattr(store, "chunks_containing_all", None)
+    if callable(containing):
+        for needles in _E1_REAL_ACA_TEXT_NEEDLES:
+            try:
+                try:
+                    hits = containing(
+                        project_id, list(needles),
+                        k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                    )
+                except TypeError:
+                    hits = containing(
+                        project_id, list(needles), k=_E1_REAL_ACA_TEXT_K,
+                    )
+            except Exception as exc:  # noqa: BLE001 — extras must not break
+                logger.warning(
+                    "e1 late-ACA text scan for %s failed: %s", project_id, exc,
+                )
+                hits = []
+            for chunk in hits or []:
+                if chunk.doc_id and chunk.doc_id not in allowed:
+                    continue
+                by_id.setdefault(chunk.chunk_id, chunk)
+
+    fetch = getattr(store, "chunks_for_docs", None)
+    if callable(fetch):
+        for from_end in (False, True):
+            try:
+                try:
+                    extra = fetch(
+                        project_id, doc_ids,
+                        k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                        from_end=from_end,
+                    )
+                except TypeError:
+                    extra = (
+                        [] if from_end
+                        else fetch(
+                            project_id, doc_ids,
+                            k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001 — extras must not break
+                logger.warning(
+                    "e1 late-ACA %s scan for %s failed: %s",
+                    "tail" if from_end else "prefix", project_id, exc,
+                )
+                extra = []
+            for chunk in extra or []:
+                by_id.setdefault(chunk.chunk_id, chunk)
+    return list(by_id.values())
+
+
 def _rescue_e1_real_aca_from_pool_docs(
     query: str,
     project_id: str,
@@ -3457,8 +3577,10 @@ def _rescue_e1_real_aca_from_pool_docs(
     9–11) and LIMIT returns those first. ``chunks_for_docs`` then takes
     the first 24/40 by index — still the Conditions body — so the filled
     1.1.1 row never enters fused. Compose skips the toy 10M and the cost
-    gate refuses. Scan rate-window docs already in-pool past that prefix
-    for a non-toy ACA. Kill-switch: RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
+    gate refuses. #532 scanned the first 400 of those docs; live still
+    missed an appendix past that prefix. Text-match + last-N tail on
+    rate-window / Contract Data docs already in-pool. Kill-switch:
+    RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
     """
     if not (
         delay_damages_daily_rescue_enabled()
@@ -3486,33 +3608,15 @@ def _rescue_e1_real_aca_from_pool_docs(
         if c is not None
     ):
         return 0
-    doc_ids: List[str] = []
-    seen: Set[str] = set()
-    for entry in fused.values():
-        chunk = _fused_chunk(entry)
-        if chunk is None or not chunk.doc_id:
-            continue
-        if not chunk_states_delay_damages_rate(chunk.text or ""):
-            continue
-        if chunk.doc_id in seen:
-            continue
-        seen.add(chunk.doc_id)
-        doc_ids.append(chunk.doc_id)
+    doc_ids = _e1_pool_doc_ids_for_late_aca(fused)
     if not doc_ids:
         return 0
-    fetch = getattr(store, "chunks_for_docs", None)
-    if not callable(fetch):
-        return 0
-    try:
-        extra = fetch(project_id, doc_ids, k_per_doc=_E1_REAL_ACA_DOC_SCAN)
-    except Exception as exc:  # noqa: BLE001 — extras must not break the turn
-        logger.warning(
-            "e1 late-ACA scan for %s failed: %s", project_id, exc,
-        )
-        return 0
+    extra = _e1_fetch_late_aca_chunks(store, project_id, doc_ids)
     recovered = 0
     for chunk in _pair_adjacent_keep_text(
-        extra or [], chunk_states_accepted_contract_amount,
+        extra or [],
+        chunk_states_accepted_contract_amount,
+        window=_E1_REAL_ACA_PAIR_WINDOW,
     ):
         if chunk.chunk_id in fused:
             continue
