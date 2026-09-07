@@ -2802,7 +2802,7 @@ def _e1_aca_preference(text: str) -> int:
         if chunk_accepted_contract_amount_is_only_toy(text):
             return -1
     except Exception:  # noqa: BLE001 — unlabeled ACA still ranks above none
-        pass
+        logger.debug("toy-ACA preference test failed", exc_info=True)
     if not chunk_states_accepted_contract_amount(text):
         return -1
     try:
