@@ -3608,6 +3608,82 @@ def _rescue_chunks_matching(
     return recovered
 
 
+def _e1_chunks_have_both_operands(chunks: Iterable) -> bool:
+    """True when loaded rows already have Contract Data 0.1% and excl-VAT ACA."""
+    has_rate = False
+    has_aca = False
+    for chunk in chunks or []:
+        text = getattr(chunk, "text", None)
+        if text is None and isinstance(chunk, str):
+            text = chunk
+        text = text or ""
+        if not has_rate and _e1_rate_preference(text) >= 2:
+            has_rate = True
+        if not has_aca and _e1_has_standalone_excl_vat(text):
+            has_aca = True
+        if has_rate and has_aca:
+            return True
+    return False
+
+
+def _e1_doc_qualifies_for_late_scan(text: str, name: str) -> bool:
+    """True for a fused row whose document may still hold E1 operands.
+
+    Live leftover E1 after #537: Cosine kept pointer-only Contract Data
+    8.8 chunks 9–11. ``chunk_states_delay_damages_rate`` is false on a
+    pointer, and a truncated Sources filename (``…Vol 1.0_Con…``) misses
+    ``filename_looks_like_e1_rate_volume``. The bound volume still has
+    0.1% + excl-VAT later — qualify the doc from the 8.8 pointer too.
+    """
+    if filename_looks_like_e1_rate_volume(name):
+        return True
+    if chunk_states_delay_damages_rate(text):
+        return True
+    t = text or ""
+    if _DELAY_RATE_POINTER_RE.search(t):
+        return True
+    return bool(
+        re.search(r"(?i)(?:sub[- ]?clause\s+)?8\.8\b", t)
+        and _DELAY_RATE_KEY_RE.search(t)
+    )
+
+
+def _e1_scan_project_ids(
+    project_id: str,
+    extra_pids: Optional[Iterable[str]] = None,
+    fused: Optional[Dict[str, Tuple]] = None,
+) -> List[str]:
+    """UI project + cited-chunk owners + Master Corpus source.
+
+    Live Master Corpus leftover E1: retrieve may surface chunks whose
+    ``project_id`` is the source corpus, while graft / late-scan were
+    keyed only on the UI id. ``chunks_for_docs`` then returned empty
+    and the cost-grounding gate refused.
+    """
+    out: List[str] = []
+    seen: Set[str] = set()
+
+    def _add(pid: str) -> None:
+        p = (pid or "").strip()
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+
+    _add(project_id)
+    try:
+        _add(_master_corpus_fallback_id() or "")
+    except Exception:  # noqa: BLE001 — extras are optional
+        logger.debug("e1 master-corpus source pid unavailable", exc_info=True)
+    for pid in extra_pids or []:
+        _add(pid)
+    if fused:
+        for entry in fused.values():
+            chunk = entry[0] if isinstance(entry, tuple) and entry else entry
+            if isinstance(chunk, Chunk):
+                _add(getattr(chunk, "project_id", "") or "")
+    return out
+
+
 def _e1_pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
     """Rate-window docs already in fused, plus any Contract Data filename."""
     doc_ids: List[str] = []
@@ -3631,111 +3707,136 @@ def _e1_pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
                 name = _doc_name_for_id(chunk.doc_id) or ""
             except Exception:  # noqa: BLE001 — filename is optional
                 name = ""
-        if not (
-            chunk_states_delay_damages_rate(text)
-            or filename_looks_like_e1_rate_volume(name)
-        ):
+        if not _e1_doc_qualifies_for_late_scan(text, name):
             continue
         seen.add(chunk.doc_id)
         doc_ids.append(chunk.doc_id)
     return doc_ids
 
 
-def _e1_fetch_late_aca_chunks(store, project_id: str, doc_ids: List[str]) -> List[Chunk]:
+def _e1_fetch_late_aca_chunks(
+    store,
+    project_id: str,
+    doc_ids: List[str],
+    extra_pids: Optional[Iterable[str]] = None,
+    fused: Optional[Dict[str, Tuple]] = None,
+) -> List[Chunk]:
     """Every chunk of the rate-window docs, then text-match / prefix / tail.
 
     Live leftover E1 on 77a96ac (#533): top-k stayed on Contract Data
     8.8 chunks 9–11. Prefix-400 + last-400 miss a middle appendix;
     ``1.1.1``+``excluding`` LIKE misses ``excl. VAT`` without a clause
     number. ``chunks_for_docs`` already loads the file — keep every row.
+
+    Live leftover E1 after #537: a store that accepts ``all_rows`` but
+    still returns first-N, plus CoC 8.8 windows that already cite a
+    real ACA, used to early-exit before the middle 0.1% / excl-VAT
+    rows. Skip prefix/tail/needles only when BOTH compose operands
+    are already in hand. Also retry the cited chunk owners — the UI
+    project id is not always the row owner on Master Corpus.
     """
     by_id: Dict[str, Chunk] = {}
     allowed = set(doc_ids)
     fetch = getattr(store, "chunks_for_docs", None)
+    pids = _e1_scan_project_ids(project_id, extra_pids, fused)
+    if not pids and project_id:
+        pids = [project_id]
+
+    def _keep(chunk: Chunk) -> None:
+        if chunk.doc_id and chunk.doc_id not in allowed:
+            return
+        by_id.setdefault(chunk.chunk_id, chunk)
+
     if callable(fetch):
-        extra = []
-        try:
-            extra = fetch(project_id, doc_ids, all_rows=True)
-        except TypeError:
+        for pid in pids:
+            extra = []
             try:
-                extra = fetch(project_id, doc_ids, k_per_doc=1_000_000)
+                extra = fetch(pid, doc_ids, all_rows=True)
             except TypeError:
                 extra = []
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "e1 late-ACA full scan for %s failed: %s", project_id, exc,
-                )
-                extra = []
-        except Exception as exc:  # noqa: BLE001 — extras must not break
-            logger.warning(
-                "e1 late-ACA full scan for %s failed: %s", project_id, exc,
-            )
-            extra = []
-        for chunk in extra or []:
-            if chunk.doc_id and chunk.doc_id not in allowed:
-                continue
-            by_id.setdefault(chunk.chunk_id, chunk)
-        # Only skip prefix/tail/needles when the full scan already
-        # holds a real ACA. A store that accepts all_rows but still
-        # returns first-N (ignored kwarg) must fall through — that
-        # was the live 77a96ac shape: toys in hand, filled row not.
-        try:
-            from app.lib.construction_formulas_commercial import (
-                chunk_has_real_accepted_contract_amount as _has_real_aca,
-            )
-            if any(
-                _has_real_aca(c.text or "") for c in by_id.values()
-            ):
-                return list(by_id.values())
-        except Exception:  # noqa: BLE001 — keep the rows; try other scans
-            logger.debug("e1 full-scan ACA test failed", exc_info=True)
-        for from_end in (False, True):
-            try:
-                try:
-                    extra = fetch(
-                        project_id, doc_ids,
-                        k_per_doc=_E1_REAL_ACA_DOC_SCAN,
-                        from_end=from_end,
-                    )
-                except TypeError:
-                    extra = (
-                        [] if from_end
-                        else fetch(
-                            project_id, doc_ids,
-                            k_per_doc=_E1_REAL_ACA_DOC_SCAN,
-                        )
-                    )
             except Exception as exc:  # noqa: BLE001 — extras must not break
                 logger.warning(
-                    "e1 late-ACA %s scan for %s failed: %s",
-                    "tail" if from_end else "prefix", project_id, exc,
+                    "e1 late-ACA full scan for %s failed: %s", pid, exc,
                 )
                 extra = []
             for chunk in extra or []:
-                by_id.setdefault(chunk.chunk_id, chunk)
+                _keep(chunk)
+            # A store that accepts all_rows but still returns first-N
+            # (ignored kwarg) looks done after 12 pointer / 0.015%
+            # windows. Fall through to a huge k_per_doc so operands
+            # anywhere in the loaded volume still enter. Live leftover
+            # E1 after #537: chunks 9–11 + BOQ refuse, 0.1% / excl-VAT
+            # sitting mid-volume.
+            if not _e1_chunks_have_both_operands(by_id.values()):
+                try:
+                    extra = fetch(pid, doc_ids, k_per_doc=1_000_000)
+                except TypeError:
+                    extra = []
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "e1 late-ACA wide scan for %s failed: %s", pid, exc,
+                    )
+                    extra = []
+                for chunk in extra or []:
+                    _keep(chunk)
+            # Only skip prefix/tail/needles when the loaded volume
+            # already has Contract Data 0.1% AND standalone excl-VAT.
+            # A first-N window that merely cites a real ACA (live
+            # 9–11 / 0.015%+ACA) is not enough — that was the #537
+            # flake: compose rejected the lookalike and the gate
+            # refused.
+            if _e1_chunks_have_both_operands(by_id.values()):
+                return list(by_id.values())
+            for from_end in (False, True):
+                try:
+                    try:
+                        extra = fetch(
+                            pid, doc_ids,
+                            k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                            from_end=from_end,
+                        )
+                    except TypeError:
+                        extra = (
+                            [] if from_end
+                            else fetch(
+                                pid, doc_ids,
+                                k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                            )
+                        )
+                except Exception as exc:  # noqa: BLE001 — extras must not break
+                    logger.warning(
+                        "e1 late-ACA %s scan for %s failed: %s",
+                        "tail" if from_end else "prefix", pid, exc,
+                    )
+                    extra = []
+                for chunk in extra or []:
+                    _keep(chunk)
+            if _e1_chunks_have_both_operands(by_id.values()):
+                return list(by_id.values())
 
     containing = getattr(store, "chunks_containing_all", None)
     if callable(containing):
-        for needles in _E1_REAL_ACA_TEXT_NEEDLES:
-            try:
+        for pid in pids:
+            for needles in _E1_REAL_ACA_TEXT_NEEDLES:
                 try:
-                    hits = containing(
-                        project_id, list(needles),
-                        k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                    try:
+                        hits = containing(
+                            pid, list(needles),
+                            k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                        )
+                    except TypeError:
+                        hits = containing(
+                            pid, list(needles), k=_E1_REAL_ACA_TEXT_K,
+                        )
+                except Exception as exc:  # noqa: BLE001 — extras must not break
+                    logger.warning(
+                        "e1 late-ACA text scan for %s failed: %s", pid, exc,
                     )
-                except TypeError:
-                    hits = containing(
-                        project_id, list(needles), k=_E1_REAL_ACA_TEXT_K,
-                    )
-            except Exception as exc:  # noqa: BLE001 — extras must not break
-                logger.warning(
-                    "e1 late-ACA text scan for %s failed: %s", project_id, exc,
-                )
-                hits = []
-            for chunk in hits or []:
-                if chunk.doc_id and chunk.doc_id not in allowed:
-                    continue
-                by_id.setdefault(chunk.chunk_id, chunk)
+                    hits = []
+                for chunk in hits or []:
+                    _keep(chunk)
+            if _e1_chunks_have_both_operands(by_id.values()):
+                return list(by_id.values())
     return list(by_id.values())
 
 
@@ -3761,6 +3862,7 @@ def e1_compose_excerpts_from_loaded_cd_volume(
     *,
     rag_context: str = "",
     doc_ids: Optional[List[str]] = None,
+    extra_pids: Optional[Iterable[str]] = None,
 ) -> str:
     """Join Contract Data 0.1% + excl-VAT ACA from the loaded CD volume.
 
@@ -3771,10 +3873,11 @@ def e1_compose_excerpts_from_loaded_cd_volume(
     SAR/day — do not invent a figure and do not elect CoC 0.015%.
     Kill-switch: RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
     """
+    pids = _e1_scan_project_ids(project_id, extra_pids)
     if not (
         delay_damages_daily_rescue_enabled()
         and query_asks_delay_damages_daily_amount(query)
-        and project_id
+        and (pids or project_id)
     ):
         return ""
     ids: List[str] = []
@@ -3792,17 +3895,20 @@ def e1_compose_excerpts_from_loaded_cd_volume(
 
     try:
         from app.core.projects import documents_matching_title_phrase
-        for phrase in ("contract data", "conditions of contract"):
-            try:
-                matches = documents_matching_title_phrase(project_id, phrase) or []
-            except Exception:  # noqa: BLE001 — listing is optional
-                logger.debug(
-                    "e1 loaded-volume title listing failed for %r",
-                    phrase, exc_info=True,
-                )
-                matches = []
-            for doc in matches:
-                _add(doc.get("id") or "")
+        for pid in pids or [project_id]:
+            if not pid:
+                continue
+            for phrase in ("contract data", "conditions of contract"):
+                try:
+                    matches = documents_matching_title_phrase(pid, phrase) or []
+                except Exception:  # noqa: BLE001 — listing is optional
+                    logger.debug(
+                        "e1 loaded-volume title listing failed for %r",
+                        phrase, exc_info=True,
+                    )
+                    matches = []
+                for doc in matches:
+                    _add(doc.get("id") or "")
     except Exception:  # noqa: BLE001 — rag doc_ids may still be enough
         logger.debug("e1 loaded-volume projects import failed", exc_info=True)
 
@@ -3815,7 +3921,10 @@ def e1_compose_excerpts_from_loaded_cd_volume(
             logger.debug("e1 loaded-volume store open failed", exc_info=True)
             return ""
 
-    extra = _e1_fetch_late_aca_chunks(store, project_id, ids)
+    extra = _e1_fetch_late_aca_chunks(
+        store, project_id or (pids[0] if pids else ""), ids,
+        extra_pids=pids,
+    )
     rate_parts: List[str] = []
     aca_parts: List[str] = []
 
@@ -4216,7 +4325,7 @@ def _rescue_e1_real_aca_from_pool_docs(
     doc_ids = _e1_pool_doc_ids_for_late_aca(fused)
     if not doc_ids:
         return 0
-    extra = _e1_fetch_late_aca_chunks(store, project_id, doc_ids)
+    extra = _e1_fetch_late_aca_chunks(store, project_id, doc_ids, fused=fused)
     recovered = 0
     if not has_standalone_aca:
         for chunk in _pair_adjacent_keep_text(
