@@ -6,7 +6,9 @@
   Hybrid BM25 **and** vector legs filter `retrieval_visible = true` (chunks
   without a documents row stay visible). Seed / ops helper sets
   `b5033ec2.superseded_by = 93982d45` and hides the stale row. No hard-delete.
-- **R3** Ingest refuses a duplicate `content_sha256` unless `--reingest <old_id>`.
+- **R3** Ingest refuses a duplicate `content_sha256` unless `--reingest <old_id>`
+  (scoped to that row's id/sha so a folder walk cannot hide one id behind
+  every other file). Admin / CDE / reconcile skip instead of abort.
 - **R4** `doc-reindex` and `--reingest` stamp `chunk_count`, `ingest_status=INDEXED`,
   `extractor_version=8535199-sdt`. `/health` corpus `chunks` is `COUNT(*)` on the
   chunk table (`source=chunk_table_count`), not `SUM(documents.chunk_count)`.
@@ -50,3 +52,6 @@ Targeted + related (this revision):
   letter filename — 129 passed, 1 skipped
 
 mutants run/survivors: UNPRODUCED
+
+HEAD: `a6c1a24bec5a8e4d00876b3b05dcdace068a37a8`
+retries: 2 (reload class identity; --reingest scope after review)
