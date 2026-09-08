@@ -636,7 +636,11 @@ class VectorStore:
             try:
                 session.rollback()
             except Exception:
-                pass
+                logger.debug(
+                    "visibility probe rollback failed; treating documents "
+                    "as ungated",
+                    exc_info=True,
+                )
             self._visibility_ready = False
         finally:
             if close:

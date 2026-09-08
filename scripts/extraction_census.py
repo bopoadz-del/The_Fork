@@ -22,6 +22,7 @@ Never hard-deletes a documents row.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -29,6 +30,7 @@ from typing import Any, Dict, List, Optional
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+logger = logging.getLogger(__name__)
 
 
 def _is_docx(name: str, path: str) -> bool:
@@ -58,7 +60,10 @@ def stored_chars(project_id: str, doc_id: str) -> int:
                 chunks = entry.get("chunks") or []
                 return sum(len(c or "") for c in chunks)
     except Exception:
-        pass
+        logger.debug(
+            "census stored_chars fallback via doc_index failed for %s",
+            doc_id, exc_info=True,
+        )
     return 0
 
 

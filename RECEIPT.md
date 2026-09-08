@@ -29,8 +29,24 @@ treat `8199b14b` as a real document id.
 
 UNPRODUCED
 
+## Lint gates
+
+- `scripts/audit_stubs.py` — clean
+- `scripts/scan_exception_pass.py` — clean
+- `frontend` eslint — clean
+- `scripts/scan_secrets.py` — not run here (`SECRET_SCAN_PATTERNS` unset)
+
 ## Tests
 
-Targeted pytest files under `tests/test_retrieval_visible.py`,
-`tests/test_sha_reingest.py`, `tests/test_index_stamp_and_health_corpus.py`,
-`tests/test_extraction_census.py` plus e2e `/health`.
+Targeted + related (this revision):
+
+- `tests/test_retrieval_visible.py` `test_sha_reingest.py`
+  `test_index_stamp_and_health_corpus.py` `test_extraction_census.py`
+  `test_projects_migration.py` `test_p1b_ingest_drive_server.py`
+  `test_health.py` `tests/e2e/test_f1_boot_and_health.py`
+  `test_health_capability_probe.py` `test_hybrid_retrieval.py`
+  `test_doc_index_zero_chunk.py` — 68 passed, 4 skipped
+- `tests/e2e/` + p1b accounting / silent_exit / r2 / drive proof /
+  letter filename — 129 passed, 1 skipped
+
+mutants run/survivors: UNPRODUCED

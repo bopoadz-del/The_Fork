@@ -6,8 +6,6 @@ import importlib
 
 import pytest
 
-from app.core.projects import DuplicateContentError
-
 
 def _reload(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -42,7 +40,7 @@ def test_add_document_refuses_duplicate_sha_without_flag(monkeypatch, tmp_path):
         size=139671,
         content_sha256=sha,
     )
-    with pytest.raises(DuplicateContentError) as exc:
+    with pytest.raises(projects.DuplicateContentError) as exc:
         projects.add_document(
             project_id=proj["id"],
             original_name="b.docx",
