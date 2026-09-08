@@ -1357,8 +1357,89 @@ def _docx_drawing_plain_parts(root: Any) -> list[str]:
     return parts
 
 
+#: Structured document tags -- Word "content controls". A ``w:p`` inside one is
+#: NOT a direct child of ``w:body``, so python-docx's ``.paragraphs`` cannot see
+#: it. Letter templates put the closing and signature block in a content control
+#: constantly, which is how a 139 KB letter reached the corpus as 1168
+#: characters ending "Yours sincerely, ," with no signatory. See D1.
+_DOCX_SDT_CONTENT = "sdtContent"
+
+#: Containers already harvested by other walks. A paragraph inside one of these
+#: must not be collected twice.
+_DOCX_ALREADY_WALKED = frozenset({"txbxContent", "txBody", "tbl"})
+
+
+def _docx_sdt_plain_parts(root: Any) -> list[str]:
+    """Text from content controls that no other walk reaches.
+
+    python-docx exposes body paragraphs, and this module already adds tables and
+    text boxes. A third blind spot remains: ``w:sdt`` content controls sitting
+    directly in the body. Their paragraphs are real body text to a reader and
+    invisible to ``.paragraphs``.
+
+    Paragraphs whose ancestry includes a table or a text box are skipped -- those
+    walks have already taken them, and counting a signature twice is its own kind
+    of wrong.
+    """
+    if root is None or not hasattr(root, "iter"):
+        return []
+
+    parts: list[str] = []
+    for el in root.iter():
+        if _oxml_local_name(getattr(el, "tag", "")) != _DOCX_SDT_CONTENT:
+            continue
+        paragraphs = [
+            child
+            for child in el.iter()
+            if _oxml_local_name(getattr(child, "tag", "")) == "p"
+        ]
+        if paragraphs:
+            # A block-level content control: it wraps whole paragraphs.
+            for child in paragraphs:
+                if _docx_ancestor_already_walked(child):
+                    continue
+                para = _docx_runs_text(child)
+                if para:
+                    parts.append(para)
+            continue
+
+        # An INLINE content control: the runs sit directly under sdtContent with
+        # no paragraph of their own. python-docx's ``Paragraph.text`` walks only
+        # direct ``w:r`` children, so these runs are missing from the paragraph
+        # they visibly belong to -- a letter reference number or a subject line
+        # arrives with a hole in the middle of it.
+        if _docx_ancestor_already_walked(el):
+            continue
+        inline = _docx_runs_text(el)
+        if inline:
+            parts.append(inline)
+    return parts
+
+
+def _docx_runs_text(el: Any) -> str:
+    """Concatenated ``w:t`` / ``w:tab`` character data beneath one element."""
+    bits: list[str] = []
+    for t_el in el.iter():
+        local = _oxml_local_name(getattr(t_el, "tag", ""))
+        if local == "t" and t_el.text:
+            bits.append(t_el.text)
+        elif local == "tab":
+            bits.append("	")
+    return "".join(bits).strip()
+
+
+def _docx_ancestor_already_walked(el: Any) -> bool:
+    """True when a table or text-box walk has already collected this paragraph."""
+    parent = getattr(el, "getparent", lambda: None)()
+    while parent is not None:
+        if _oxml_local_name(getattr(parent, "tag", "")) in _DOCX_ALREADY_WALKED:
+            return True
+        parent = getattr(parent, "getparent", lambda: None)()
+    return False
+
+
 def _docx_plain_text(document: Any) -> str:
-    """Body paragraphs + tables (including nested) + text-box / drawing text.
+    """Body paragraphs + tables + text boxes + content controls.
 
     getattr-guarded so a test double without ``.tables`` / ``.element`` still
     yields the paragraph text already collected.
@@ -1371,7 +1452,19 @@ def _docx_plain_text(document: Any) -> str:
     for table in getattr(document, "tables", None) or []:
         parts.extend(_docx_table_row_parts(table))
     parts.extend(_docx_drawing_plain_parts(getattr(document, "element", None)))
-    return "\n".join(parts)
+    parts.extend(_docx_sdt_plain_parts(getattr(document, "element", None)))
+
+    # A content control can wrap a paragraph the body walk already returned, so
+    # the same line can arrive by two routes. Order is preserved.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for part in parts:
+        key = part.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(part)
+    return "\n".join(deduped)
 
 
 def _extract_with_meta_impl(
