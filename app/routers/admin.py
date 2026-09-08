@@ -617,18 +617,27 @@ async def admin_drive_ingest_proof(
     filepath = os.path.join(data_dir, stored_as)
     file_crypto.write_document(filepath, blob)
 
-    doc = _projects.add_document(
-        req.project_id,
-        original_name,
-        stored_as=stored_as,
-        file_path=filepath,
-        size=len(blob),
-        content_sha256=hashlib.sha256(blob).hexdigest(),
-        metadata={
-            "drive_file_id": file_id,
-            "source": "drive_admin_ingest_proof",
-        },
-    )
+    try:
+        doc = _projects.add_document(
+            req.project_id,
+            original_name,
+            stored_as=stored_as,
+            file_path=filepath,
+            size=len(blob),
+            content_sha256=hashlib.sha256(blob).hexdigest(),
+            metadata={
+                "drive_file_id": file_id,
+                "source": "drive_admin_ingest_proof",
+            },
+        )
+    except _projects.DuplicateContentError as exc:
+        return {
+            "ok": False,
+            "error": "DUPLICATE_SHA",
+            "existing_id": exc.existing_id,
+            "file_id": file_id,
+            "name": original_name,
+        }
 
     idx_result = _doc_index.index_document(req.project_id, doc["id"])
     if idx_result.get("status") == "error":

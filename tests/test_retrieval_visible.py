@@ -135,6 +135,14 @@ def test_bm25_leg_drops_hidden_doc(vis_store):
     assert STALE_ID not in ids
 
 
+def test_identifier_search_drops_hidden_doc(vis_store):
+    store, _emb, pid, _p = vis_store
+    hits = store.identifier_search(pid, ["D1LETTER"], k=5)
+    ids = _ids(hits)
+    assert LIVE_ID in ids
+    assert STALE_ID not in ids
+
+
 def test_d1_hybrid_top5_contains_live_not_stale(vis_store, monkeypatch):
     store, embedder, pid, _p = vis_store
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")

@@ -103,6 +103,9 @@ def _ingest_file(
         }
 
     existing_by_sha = projects_mod.find_document_by_sha(project_id, content_sha)
+    reingest_of = projects_mod.scoped_reingest_of(
+        reingest_of, content_sha, existing_by_sha,
+    )
     if existing_by_sha and not reingest_of:
         return rel, {
             "status": "error",

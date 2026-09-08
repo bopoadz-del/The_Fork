@@ -83,6 +83,7 @@ def census_row(doc: Dict[str, Any]) -> Dict[str, Any]:
     doc_id = str(doc.get("id") or "")
     project_id = str(doc.get("project_id") or "")
     filename = doc.get("stored_as") or os.path.basename(doc.get("file_path") or "") or doc_id
+    original_name = doc.get("original_name") or filename
     sha = doc.get("content_sha256") or ""
     stored = stored_chars(project_id, doc_id)
     source_path, source_status = resolve_source_path(doc)
@@ -102,6 +103,7 @@ def census_row(doc: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": doc_id,
         "filename": filename,
+        "original_name": original_name,
         "sha": sha,
         "chars_stored": stored,
         "chars_fixed": extracted_n,
@@ -168,7 +170,7 @@ def apply_reingest(row: Dict[str, Any]) -> Dict[str, Any]:
         return {"skipped": True, "reason": "NEEDS_SOURCE"}
     new_doc = projects_mod.add_document(
         project_id=row["project_id"],
-        original_name=row["filename"],
+        original_name=row.get("original_name") or row["filename"],
         stored_as=row["filename"],
         file_path=path,
         size=os.path.getsize(path) if os.path.isfile(path) else 0,

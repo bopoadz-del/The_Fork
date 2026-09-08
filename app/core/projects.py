@@ -979,8 +979,16 @@ def add_document(
         existing = find_document_by_sha(project_id, content_sha256)
         if existing is not None:
             raise DuplicateContentError(existing["id"], content_sha256)
-    if reingest_of and get_document(reingest_of) is None:
-        raise ValueError(f"reingest_of={reingest_of} is not a documents row")
+    if reingest_of:
+        old_row = get_document(reingest_of)
+        if old_row is None:
+            raise ValueError(f"reingest_of={reingest_of} is not a documents row")
+        old_sha = old_row.get("content_sha256")
+        if content_sha256 and old_sha and old_sha != content_sha256:
+            logger.warning(
+                "reingest sha differs old_id=%s old_sha=%s new_sha=%s",
+                reingest_of, old_sha, content_sha256,
+            )
     did = str(uuid.uuid4())[:8]
     doc_type = classify_doc_type(original_name)
     doc_role = role if role in VALID_ROLES else classify_doc_role(original_name)
@@ -1323,6 +1331,29 @@ def find_document_by_sha(
             .limit(1)
         ).first()
     return _document_as_dict(document) if document else None
+
+
+def scoped_reingest_of(
+    reingest_of: Optional[str],
+    content_sha256: Optional[str],
+    existing_by_sha: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Return ``reingest_of`` only when this file replaces that row.
+
+    A folder walk that passes ``--reingest OLD_ID`` must not hide OLD_ID
+    behind every other file in the batch. Match is the named id or the
+    same content sha.
+    """
+    if not reingest_of:
+        return None
+    old = get_document(reingest_of)
+    if old is None:
+        return None
+    if existing_by_sha and existing_by_sha.get("id") == reingest_of:
+        return reingest_of
+    if content_sha256 and old.get("content_sha256") == content_sha256:
+        return reingest_of
+    return None
 
 
 def supersede_document(old_id: str, new_id: str) -> Optional[Dict[str, Any]]:

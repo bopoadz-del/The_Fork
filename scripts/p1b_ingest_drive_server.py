@@ -331,6 +331,9 @@ def _ingest_file(
 
     content_sha = hashlib.sha256(raw_bytes).hexdigest()
     existing_by_sha = projects_mod.find_document_by_sha(project_id, content_sha)
+    reingest_of = projects_mod.scoped_reingest_of(
+        reingest_of, content_sha, existing_by_sha,
+    )
     if existing_by_sha and not reingest_of and existing_doc is None:
         return rel, {
             "status": "error",
@@ -401,7 +404,7 @@ def _ingest_file(
         # above landed at the same path the row's file_path points to.
         projects_mod.update_document_metadata(existing_doc["id"], common_meta)
         result = doc_index.index_document(
-            project_id, existing_doc["id"], stamp_as_indexed=True,
+            project_id, existing_doc["id"],
         )
         result["reindexed_existing_doc"] = True
         r2_storage.delete_local_archive(str(dest))

@@ -125,6 +125,25 @@ def test_p1b_ingest_file_refuses_duplicate_sha(monkeypatch, tmp_path):
     assert len(projects.list_documents(proj["id"])) == 1
 
 
+def test_scoped_reingest_ignores_unrelated_sha(monkeypatch, tmp_path):
+    projects, users = _reload(monkeypatch, tmp_path)
+    projects.init_db()
+    proj = _project(projects, users)
+    old = projects.add_document(
+        project_id=proj["id"],
+        original_name="old.docx",
+        stored_as="old.docx",
+        file_path="/tmp/old.docx",
+        size=10,
+        content_sha256=hashlib.sha256(b"old-bytes").hexdigest(),
+    )
+    other_sha = hashlib.sha256(b"other-bytes").hexdigest()
+    assert projects.scoped_reingest_of(old["id"], other_sha) is None
+    assert projects.scoped_reingest_of(
+        old["id"], old["content_sha256"],
+    ) == old["id"]
+
+
 def test_seed_d1_is_noop_when_ids_absent(monkeypatch, tmp_path):
     projects, _users = _reload(monkeypatch, tmp_path)
     projects.init_db()
