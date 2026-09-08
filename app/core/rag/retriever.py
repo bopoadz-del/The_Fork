@@ -1048,7 +1048,9 @@ def build_rescue_phrases(terms: List[str]) -> List[str]:
 #
 # Re-score on tip d7a4ca8 (2026-09-05, Neon project the-fork): retrieval
 # now finds b5033ec2, but the indexed text is corpus-blocked. 8199b14b is
-# MISSING from ``documents``. b5033ec2 is TEXT_SPARSE
+# MISSING from ``documents`` (fabricated eval fixture id — FORK_EVAL
+# citation-grounding failure: citations must resolve against documents
+# before render). b5033ec2 is TEXT_SPARSE
 # (``single_window:terminal``, one 1168-char chunk) and ends
 # ``Yours sincerely, ,`` — no signatory name, role, or company. Do not
 # invent a name that is not in the chunk. Re-extract / re-ingest of the

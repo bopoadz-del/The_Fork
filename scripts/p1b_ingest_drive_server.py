@@ -263,6 +263,7 @@ def _ingest_file(
     run_id: str,
     gdrive_service: Any,
     existing_doc: Dict[str, Any] | None = None,
+    reingest_of: str | None = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Download one Drive file and index it. Returns (drive_path, result).
 
@@ -329,6 +330,14 @@ def _ingest_file(
         }
 
     content_sha = hashlib.sha256(raw_bytes).hexdigest()
+    existing_by_sha = projects_mod.find_document_by_sha(project_id, content_sha)
+    if existing_by_sha and not reingest_of and existing_doc is None:
+        return rel, {
+            "status": "error",
+            "error": "DUPLICATE_SHA",
+            "existing_id": existing_by_sha["id"],
+            "content_sha256": content_sha,
+        }
     stored_name = f"{hashlib.sha256(rel.encode()).hexdigest()[:8]}_{_safe_stored_name(Path(rel).name)}"
     dest = data_dir / stored_name
     file_crypto.write_document(str(dest), raw_bytes)
@@ -386,12 +395,14 @@ def _ingest_file(
     if archive.get("error"):
         common_meta["r2_archive_error"] = archive["error"]
 
-    if existing_doc is not None:
+    if existing_doc is not None and not reingest_of:
         # Zero-chunk retry: the row exists from a failed pass; re-index it
         # in place. The stored name is deterministic, so the fresh download
         # above landed at the same path the row's file_path points to.
         projects_mod.update_document_metadata(existing_doc["id"], common_meta)
-        result = doc_index.index_document(project_id, existing_doc["id"])
+        result = doc_index.index_document(
+            project_id, existing_doc["id"], stamp_as_indexed=True,
+        )
         result["reindexed_existing_doc"] = True
         r2_storage.delete_local_archive(str(dest))
         result["r2_archive"] = archive
@@ -408,16 +419,30 @@ def _ingest_file(
         )
         return rel, result
 
-    doc = projects_mod.add_document(
-        project_id=project_id,
-        original_name=Path(rel).name,
-        stored_as=stored_name,
-        file_path=str(dest),
-        size=size,
-        content_sha256=content_sha,
-        metadata=common_meta,
+    try:
+        doc = projects_mod.add_document(
+            project_id=project_id,
+            original_name=Path(rel).name,
+            stored_as=stored_name,
+            file_path=str(dest),
+            size=size,
+            content_sha256=content_sha,
+            metadata=common_meta,
+            reingest_of=reingest_of,
+        )
+    except projects_mod.DuplicateContentError as exc:
+        return rel, {
+            "status": "error",
+            "error": "DUPLICATE_SHA",
+            "existing_id": exc.existing_id,
+            "content_sha256": content_sha,
+        }
+    result = doc_index.index_document(
+        project_id, doc["id"], stamp_as_indexed=bool(reingest_of),
     )
-    result = doc_index.index_document(project_id, doc["id"])
+    if reingest_of:
+        result["reingest_of"] = reingest_of
+        result["superseded"] = True
     r2_storage.delete_local_archive(str(dest))
     result["r2_archive"] = archive
     log(
@@ -502,6 +527,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Run the ingest as a child process and report HOW it died. Only a "
             "parent can see a SIGKILL: run 37159882e871 vanished at 316/1361 "
             "with no traceback and nothing recorded which signal ended it."
+        ),
+    )
+    ap.add_argument(
+        "--reingest",
+        default=None,
+        metavar="OLD_ID",
+        help=(
+            "Allow a file whose sha256 already exists by creating a NEW "
+            "documents row and hiding OLD_ID (retrieval_visible=false, "
+            "superseded_by=new). Without this flag a duplicate sha is "
+            "refused. Hard delete is never used."
         ),
     )
     return ap
@@ -706,6 +742,7 @@ def main() -> int:
         "skipped_too_small": 0,
         "skipped_unsupported": 0,
         "skipped_empty": 0,
+        "duplicate_sha": 0,
         "download_failed": 0,
         "errors": 0,
         "already_indexed": 0,
@@ -751,7 +788,7 @@ def main() -> int:
         folder_tallies.setdefault(folder_name, {
             "succeeded": 0, "zero_chunk": 0, "skipped_too_large": 0,
             "skipped_too_small": 0, "skipped_unsupported": 0,
-            "skipped_empty": 0, "download_failed": 0, "errors": 0,
+            "skipped_empty": 0, "duplicate_sha": 0, "download_failed": 0, "errors": 0,
         })[key] += 1
 
     def _sync_outstanding() -> None:
@@ -836,7 +873,7 @@ def main() -> int:
                 "processed": global_tally["succeeded"],
                 "attempted": accounting["attempted"],
                 "skipped": global_tally["skipped_too_large"] + global_tally["skipped_too_small"]
-                + global_tally["skipped_empty"],
+                + global_tally["skipped_empty"] + global_tally.get("duplicate_sha", 0),
                 "failed": global_tally["errors"] + global_tally["zero_chunk"]
                 + global_tally["download_failed"],
                 "unsupported": global_tally["skipped_unsupported"],
@@ -1253,6 +1290,9 @@ def main() -> int:
                 elif err == "SKIPPED_EMPTY":
                     global_tally["skipped_empty"] += 1
                     _bump_folder(folder_name, "skipped_empty")
+                elif err == "DUPLICATE_SHA":
+                    global_tally["duplicate_sha"] += 1
+                    _bump_folder(folder_name, "duplicate_sha")
                 elif err.startswith("DOWNLOAD_FAILED"):
                     global_tally["download_failed"] += 1
                     _bump_folder(folder_name, "download_failed")
@@ -1272,6 +1312,7 @@ def main() -> int:
                 _, result = _ingest_file(
                     file_meta, project_id, data_dir, run_id, gdrive_service,
                     existing_doc=retry_doc_by_fid.get(file_meta["id"]),
+                    reingest_of=getattr(args, "reingest", None),
                 )
             except Exception as exc:  # noqa: BLE001 — one file must not kill the run
                 result = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}

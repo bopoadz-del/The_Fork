@@ -78,7 +78,7 @@ def test_ingest_proof_ok(client, fresh_db, monkeypatch):
     payload = b"ingest me"
     _monkeypatch_download(monkeypatch, payload)
 
-    def fake_index_document(pid, did, chunker="default"):
+    def fake_index_document(pid, did, chunker="default", **_k):
         return {"status": "ok", "project_id": pid, "total_chunks": 3}
 
     monkeypatch.setattr(doc_index, "index_document", fake_index_document)
@@ -103,7 +103,7 @@ def test_ingest_proof_zero_chunk(client, fresh_db, monkeypatch):
     payload = b"unparseable"
     _monkeypatch_download(monkeypatch, payload)
 
-    def fake_index_document(pid, did, chunker="default"):
+    def fake_index_document(pid, did, chunker="default", **_k):
         return {
             "status": "error",
             "error": "ZERO_CHUNK",

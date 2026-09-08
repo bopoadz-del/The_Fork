@@ -237,6 +237,7 @@ async def _doc_reindex_job(
             document_id,
             chunker,
             force_ocr=force_ocr,
+            stamp_as_indexed=True,
         )
         job.update(result)
         job["status"] = result.get("status") or "error"
@@ -334,6 +335,7 @@ async def admin_doc_reindex(
         document_id,
         chunker,
         force_ocr=force_ocr,
+        stamp_as_indexed=True,
     )
 
 

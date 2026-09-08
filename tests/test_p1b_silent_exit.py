@@ -633,7 +633,7 @@ def test_ingest_releases_the_downloaded_payload_before_indexing(tmp_path, monkey
         "app.core.projects.add_document", lambda **_k: {"id": "doc-1"},
     )
 
-    def _index(_pid, _did):
+    def _index(_pid, _did, **_k):
         alive_during_index.append(ref() is not None)
         return {"status": "ok", "rag_indexed": 5}
 
@@ -675,7 +675,7 @@ def test_verification_line_still_reports_the_downloaded_size(tmp_path, monkeypat
     )
     monkeypatch.setattr(
         "app.core.doc_index.index_document",
-        lambda *_a: {"status": "ok", "rag_indexed": 1},
+        lambda *_a, **_k: {"status": "ok", "rag_indexed": 1},
     )
 
     class _Drive:
