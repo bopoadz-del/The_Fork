@@ -495,11 +495,18 @@ def test_rag_search_route_happy_path(isolated_data_dir, monkeypatch):
     """POST /v1/rag/search returns chunks + metadata, scoped by project."""
     from fastapi.testclient import TestClient
     from app.main import app
+    from app.core import projects as projects_mod
     from app.core.rag.retriever import index_chunks
 
     # Auth: tests typically use a dev API key. Check the env the auth
     # router reads; fall back to bypassing if no key needed in test mode.
     # The auth router accepts the built-in dev key "cb_dev_key" via Bearer.
+
+    # The route now resolves the caller's access to the project before it
+    # retrieves (see routers/rag.py::_searchable_project_or_404), so the id
+    # needs a real row. Owned by "system", which is who cb_dev_key resolves
+    # to — this test is about retrieval, not about the gate.
+    projects_mod.create_project(name="Route Probe", project_id="proj_route")
 
     index_chunks("proj_route", "doc1", ["alpha beta gamma", "delta epsilon"])
 
@@ -531,13 +538,21 @@ def test_rag_search_route_validates_query(isolated_data_dir, monkeypatch):
         assert r.status_code == 422
 
 
-def test_rag_search_route_unknown_project_returns_empty(isolated_data_dir, monkeypatch):
+def test_rag_search_route_unknown_project_is_not_readable(isolated_data_dir, monkeypatch):
+    """An unknown project id is refused, not answered with an empty result.
+
+    Was ``..._returns_empty`` asserting 200 / count 0. That made the route
+    distinguish "no such project" (200) from "exists but not yours" (404),
+    which is an id-enumeration oracle — and the same code path let a caller
+    read chunks under any id that had no ``projects`` row at all. Both
+    answers are 404 now; the guarantee this test carries (an unknown project
+    yields nothing) is strictly stronger than the one it replaced.
+    """
     from fastapi.testclient import TestClient
     from app.main import app
 
-    # Isolate from any general-knowledge corpus: this test asserts an unknown
-    # project has no docs of its OWN. With GK merge on (PR #107) a seeded GK
-    # project would otherwise contribute background chunks and make count > 0.
+    # Isolate from any general-knowledge corpus: with GK merge on (PR #107) a
+    # seeded GK project would otherwise contribute background chunks.
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     # The auth router accepts the built-in dev key "cb_dev_key" via Bearer.
     with TestClient(app) as client:
@@ -546,8 +561,8 @@ def test_rag_search_route_unknown_project_returns_empty(isolated_data_dir, monke
             json={"query": "anything", "project_id": "never_existed", "k": 5},
             headers={"Authorization": "Bearer cb_dev_key"},
         )
-        assert r.status_code == 200
-        assert r.json()["count"] == 0
+        assert r.status_code == 404
+        assert "chunks" not in r.json()
 
 
 # ── Graceful degradation when libs aren't installed ──────────────────────
