@@ -139,3 +139,4 @@ manifests/p1a_drive_manifest_client.json
 manifests/p1a_local_drive_manifest.json
 rag_backfill_indexable_candidates.json
 rag_backfill_batch_*.json
+.mutation_in_flight

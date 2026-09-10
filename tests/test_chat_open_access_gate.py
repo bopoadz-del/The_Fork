@@ -118,6 +118,46 @@ def test_admin_resolves_system_owned_platform_project(client, world):
         store.archive_project(pid)
 
 
+def test_regular_user_cannot_read_a_system_owned_platform_project(client, world):
+    """The mirror of the test above, and the one the role check actually buys.
+
+    Found by a mutation probe: replacing
+
+        if u and (u.get("role") or "").lower() == "admin":
+
+    with
+
+        if u:
+
+    left every test in this file green. The inner _is_platform_project fence
+    still held, so the admin fallthrough stayed scoped to platform projects —
+    but ANY resolvable user reached it, and a system-owned corpus that is not
+    admin-approved is exactly the row that fence does not cover. Nothing
+    asserted that the role, not merely being a known user, is what opens it.
+
+    A guard nothing tests is a guard nobody can safely change.
+    """
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+    from app.core.users import SYSTEM_USER_ID
+
+    pid = client.post(
+        "/v1/projects", json={"name": "OAG platform corpus 2"}, headers=_h(world["owner"])
+    ).json()["id"]
+    with SessionLocal() as db:
+        p = db.get(Project, pid)
+        p.user_id = SYSTEM_USER_ID   # seed/system-owned corpus
+        p.is_approved = False        # NOT admin-approved: not shared with users
+        db.commit()
+    try:
+        # The admin reaches it (the behaviour the fallthrough exists for) …
+        assert store.get_project_accessible(pid, world["admin"]["id"]) is not None
+        # … and a regular, known, logged-in user does not.
+        assert store.get_project_accessible(pid, world["stranger"]["id"]) is None
+    finally:
+        store.archive_project(pid)
+
+
 def test_legacy_key_system_admin_cannot_read_private_project(world):
     # The exact blocker: a legacy API key resolves to SYSTEM_USER_ID (role
     # admin). Through the chat data-path helper it must NOT reach a real
