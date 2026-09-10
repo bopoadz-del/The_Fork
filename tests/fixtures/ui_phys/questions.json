@@ -348,6 +348,11 @@
         "trees",
         "pavement"
       ],
+      "must_not": [
+        "DD-2022",
+        "DD2022",
+        "template scaffold"
+      ],
       "source": "S2"
     },
     "F2": {
