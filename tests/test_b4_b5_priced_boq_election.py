@@ -455,3 +455,59 @@ def test_retrieve_b5_prefers_priced_part_nr_3_over_rate_only_and_excluded(
         and not ret.chunk_states_priced_item(c.text, ["d549.2"])
         for c in chunks
     )
+
+
+def test_named_rate_only_survives_other_contract_priced_row():
+    """Named-year Rate Only must not empty when another year is priced.
+
+    Codex #558: DD-2022-175 D529.3 is Rate Only; DD-2023-118 has a
+    priced lookalike. The priced fence used the whole pool, dropped
+    the named Rate Only row, then the named-id check dropped the
+    other year's priced row — retrieval went empty.
+    """
+    from app.core.rag.retriever import _ContractScope
+
+    ask = (
+        LIVE_PREFIX
+        + "Under DD-2022-175, what is the total amount for removal of "
+        "storm water culverts (D529.3)?"
+    )
+    named_ro = (
+        "DD-2022-175 - Demolition BOQ.pdf",
+        "D529.3 Removal of storm water culverts — m 1,370.00 Rate Only",
+    )
+    other_priced = (
+        "DD-2023-118 - Demolition BOQ.pdf",
+        "D529.3 Removal of storm water culverts 1,370 m 50.00 68,500.00",
+    )
+    scope = _ContractScope(ask, [named_ro, other_priced])
+    assert scope.named
+    assert scope._rate_only_in_pool
+    assert not scope._priced_item_in_pool
+    assert scope.allow(*named_ro)
+    assert not scope.allow(*other_priced)
+
+
+def test_named_priced_still_fences_same_contract_rate_only_sibling():
+    """Naming the year must not weaken #558 same-contract priced election."""
+    from app.core.rag.retriever import _ContractScope
+
+    ask = LIVE_PREFIX + "Under DD-2023-118, " + B5_ASK
+    named_priced = (
+        "DD-2023-118 - Demolition BOQ Part Nr. 3.pdf",
+        PART_NR_3_PRICED,
+    )
+    named_ro = (
+        "DD-2023-118 - Demolition BOQ Rate Only.pdf",
+        RATE_ONLY_D549_SIBLING,
+    )
+    other_ex = (
+        "DD-2022-175 - Bill of Quantities (Priced).pdf",
+        EXCLUDED_D549_SIBLING,
+    )
+    scope = _ContractScope(ask, [named_priced, named_ro, other_ex])
+    assert scope.named
+    assert scope._priced_item_in_pool
+    assert scope.allow(*named_priced)
+    assert not scope.allow(*named_ro)
+    assert not scope.allow(*other_ex)
