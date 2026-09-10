@@ -5497,6 +5497,69 @@ def _compose_priced_boq_instead_of_retry(
         return ""
 
 
+def _e1_audit_project_ids(
+    project_id: str | None,
+    audit_rec: dict[str, Any] | None,
+) -> tuple[str | None, list[str] | None]:
+    """UI project + cited-chunk owners for leftover-E1 last-chance compose."""
+    pid = project_id or (audit_rec or {}).get("project_id")
+    extra: list[str] = []
+    seen: set[str] = set()
+    if pid:
+        extra.append(str(pid))
+        seen.add(str(pid))
+    for ch in (audit_rec or {}).get("chunks") or []:
+        if not isinstance(ch, dict):
+            continue
+        cp = str(ch.get("project_id") or "").strip()
+        if cp and cp not in seen:
+            seen.add(cp)
+            extra.append(cp)
+    return (str(pid) if pid else None), (extra or None)
+
+
+def _should_short_circuit_delay_damages_daily(
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+    *,
+    has_predispatch: bool,
+    project_id: str | None = None,
+    audit_rec: dict[str, Any] | None = None,
+) -> str:
+    """Composed E1 SAR/day, or '' if the LLM hop must still run.
+
+    Live leftover E1 after #559: synthesis copied the contracts-kernel
+    BOQ refuse ("I don't have a rate on file… upload your priced BOQ")
+    when priced CESMM soup shared the pool. Rate × ACA was already in
+    the excerpts / loaded CD volume — compose it instead of waiting on
+    the provider. Predispatch deliverables keep the LLM path. Kill-switch:
+    COMPOSE_DELAY_DAMAGES_DAILY=0.
+    """
+    if has_predispatch:
+        return ""
+    try:
+        from app.lib.construction_formulas_commercial import (
+            compose_delay_damages_daily_enabled,
+            query_asks_delay_damages_daily_amount,
+        )
+        if not compose_delay_damages_daily_enabled():
+            return ""
+        user = _latest_operator_ask(messages)
+        if not query_asks_delay_damages_daily_amount(user):
+            return ""
+        pid, extra = _e1_audit_project_ids(project_id, audit_rec)
+        grafted = _graft_composed_delay_damages_daily(
+            "", rag_sys_msg, messages, project_id=pid,
+            extra_project_ids=extra,
+        )
+        if grafted and grafted.strip() and grafted.strip() != _CG_REFUSAL:
+            return grafted
+        return ""
+    except Exception:  # noqa: BLE001 — retry skip must never break a turn
+        _LOG.exception("e1 daily short-circuit failed; continuing LLM path")
+        return ""
+
+
 def _should_short_circuit_priced_boq(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
@@ -5542,22 +5605,10 @@ def _postprocess_answer(
     # text before the cost gate. A percentage-only excerpt still cannot
     # invent a daily figure; both operands must be in the excerpts or
     # the loaded CD volume (last-chance after refuse-prone top-k).
-    pid = project_id or (audit_rec or {}).get("project_id")
-    extra_pids: list[str] = []
-    seen_pids: set[str] = set()
-    if pid:
-        extra_pids.append(str(pid))
-        seen_pids.add(str(pid))
-    for ch in (audit_rec or {}).get("chunks") or []:
-        if not isinstance(ch, dict):
-            continue
-        cp = str(ch.get("project_id") or "").strip()
-        if cp and cp not in seen_pids:
-            seen_pids.add(cp)
-            extra_pids.append(cp)
+    pid, extra_pids = _e1_audit_project_ids(project_id, audit_rec)
     text = _graft_composed_delay_damages_daily(
         text, rag_sys_msg, messages, project_id=pid,
-        extra_project_ids=extra_pids or None,
+        extra_project_ids=extra_pids,
     )
     # Wave-1 DeepSeek: A2 answered delay damages, A3/A9 said the
     # particular was absent. Graft the asked row from excerpts only.
@@ -8284,14 +8335,45 @@ class Agent:
                 "messages": messages + [{"role": "assistant", "content": answer}],
                 "sources": [],
             }
+        _has_pre = bool(
+            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
+        )
+        # Leftover E1 before B4/B5: rate × ACA is already in the
+        # excerpts / loaded CD volume. Skip the provider hop so a
+        # priced-BOQ refuse cannot close the turn. Predispatch
+        # deliverables keep the LLM.
+        _e1_fast = _should_short_circuit_delay_damages_daily(
+            _rag_sys_msg, messages,
+            has_predispatch=_has_pre,
+            project_id=project_id,
+            audit_rec=_rag_audit,
+        )
+        if _e1_fast:
+            answer = _postprocess_answer(
+                _e1_fast, _rag_sys_msg, messages,
+                fallback_used=bool(_rag_audit.get("fallback_used")),
+                agent_name=self.name,
+                project_id=project_id,
+                audit_rec=_rag_audit,
+            )
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": messages + [{"role": "assistant", "content": answer}],
+                "sources": _build_sources_from_audit(_rag_audit, answer),
+            }
         # WAVE 2 B4: priced D599.5 is already in the excerpts. Skip the
         # provider hop so a transient OpenRouter / unavailable banner
         # cannot empty the turn. Predispatch deliverables keep the LLM.
         _priced_fast = _should_short_circuit_priced_boq(
             _rag_sys_msg, messages,
-            has_predispatch=bool(
-                _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
-            ),
+            has_predispatch=_has_pre,
         )
         if _priced_fast:
             answer = _postprocess_answer(
@@ -8565,8 +8647,14 @@ class Agent:
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
+        e1_cap = _should_short_circuit_delay_damages_daily(
+            _rag_sys_msg, messages, has_predispatch=False,
+            project_id=project_id, audit_rec=_rag_audit,
+        )
         priced_cap = _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages)
-        if priced_cap:
+        if e1_cap:
+            final_text = e1_cap
+        elif priced_cap:
             final_text = priced_cap
         else:
             forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
@@ -9230,13 +9318,43 @@ class Agent:
             yield {"type": "end", "iterations": 0, "sources": [],
                    "tools": list(tools_invoked)}
             return
+        _has_pre = bool(
+            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
+        )
+        # Leftover E1 before B4/B5: compose rate × ACA so a priced-BOQ
+        # refuse cannot close the turn. Predispatch keeps the LLM.
+        _e1_fast = _should_short_circuit_delay_damages_daily(
+            _rag_sys_msg, messages,
+            has_predispatch=_has_pre,
+            project_id=project_id,
+            audit_rec=_rag_audit,
+        )
+        if _e1_fast:
+            answer = _postprocess_answer(
+                _e1_fast, _rag_sys_msg, messages,
+                fallback_used=bool(_rag_audit.get("fallback_used")),
+                agent_name=self.name,
+                project_id=project_id,
+                audit_rec=_rag_audit,
+            )
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {
+                "type": "end",
+                "content": answer,
+                "iterations": 0,
+                "sources": _build_sources_from_audit(_rag_audit, answer),
+                "tools": list(tools_invoked),
+            }
+            return
         # WAVE 2 B4: priced row already in excerpts — skip the provider
         # hop so a transient unavailable banner cannot empty the turn.
         _priced_fast = _should_short_circuit_priced_boq(
             _rag_sys_msg, messages,
-            has_predispatch=bool(
-                _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
-            ),
+            has_predispatch=_has_pre,
         )
         if _priced_fast:
             answer = _postprocess_answer(
@@ -9918,8 +10036,14 @@ class Agent:
             messages.extend(pending_nudges)
 
         # Hit the cap without a final answer — force one more call with tools disabled.
+        e1_cap = _should_short_circuit_delay_damages_daily(
+            _rag_sys_msg, messages, has_predispatch=False,
+            project_id=project_id, audit_rec=_rag_audit,
+        )
         priced_cap = _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages)
-        if priced_cap:
+        if e1_cap:
+            final_text = e1_cap
+        elif priced_cap:
             final_text = priced_cap
         else:
             _LOG.warning("chat_stream: hit MAX_TOOL_ITERATIONS=%d, forcing no-tools retry",
