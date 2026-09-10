@@ -87,6 +87,9 @@ async def understand_intent(message: str, has_documents: bool = False) -> Dict[s
         return empty
     if message_wants_answer_report(message):
         return empty
+    from app.core.conversation_wbs import message_wants_wbs_export
+    if message_wants_wbs_export(message):
+        return empty
     user = message.strip()
     if has_documents:
         user += "\n\n(Note: the user has attached document(s) to this project.)"

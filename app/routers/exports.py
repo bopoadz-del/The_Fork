@@ -217,6 +217,10 @@ class ScheduleFromBriefRequest(BaseModel):
         None,
         description="Activity-name substring → working days (e.g. {\"slab\": 6}).",
     )
+    conversation_id: Optional[str] = Field(
+        None,
+        description="When set, export the conversation's staged WBS instead of regenerating.",
+    )
 
 
 class ScheduleFromBOQRequest(BaseModel):
@@ -754,6 +758,33 @@ async def export_cost_schedule(
                         filename=f"{name.replace(' ', '_')}_cost_loaded_schedule.xlsx")
 
 
+def _workbook_from_wbs_activities(
+    activities: List[Dict[str, Any]],
+    name: str,
+    *,
+    currency: str = "SAR",
+    start_date: Optional[str] = None,
+    day_rate: Optional[float] = None,
+    crew_per_trade: int = 4,
+    target_milestones: Optional[List[Dict[str, Any]]] = None,
+) -> Any:
+    """Bridge generate_wbs-style rows and write the cost-loaded workbook."""
+    from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+    from app.lib.pm_excel import generate_cost_loaded_schedule
+
+    bridged = bridge_wbs_to_cost_loaded(
+        activities, crew_per_trade=crew_per_trade, day_rate=day_rate,
+    )
+    meta: Dict[str, Any] = {"project": name, "currency": currency}
+    if start_date:
+        meta["start_date"] = start_date
+    if day_rate:
+        meta["cost_basis"] = "Indicative Labor"
+    if target_milestones:
+        meta["target_milestones"] = target_milestones
+    return generate_cost_loaded_schedule(meta, bridged)
+
+
 @router.post("/v1/projects/{project_id}/export/schedule-from-brief")
 async def export_schedule_from_brief(
     project_id: str,
@@ -762,12 +793,40 @@ async def export_schedule_from_brief(
 ):
     """Cost-loaded L2 schedule from a brief: generate_wbs -> bridge -> workbook
     (CPM, man-days S-curve, manpower histogram, milestones). This backs the
-    chat 'Schedule (Excel)' download offer."""
+    chat 'Schedule (Excel)' download offer.
+
+    When ``conversation_id`` is set and that conversation has a staged WBS,
+    that snapshot is exported instead of regenerating (F-BAT-D H2). A
+    BOQ-scope WBS ask that would otherwise emit the template scaffold is
+    refused with 422.
+    """
     proj = _check_owner(project_id, auth["user_id"])
     name = req.project_name or proj.get("name") or "Project"
+    from app.core.conversation_wbs import (
+        load_conversation_wbs,
+        refuse_scaffold_for_boq_wbs_ask,
+    )
+
+    staged = load_conversation_wbs(req.conversation_id) if req.conversation_id else None
+    if staged:
+        acts = staged.get("activities") or []
+        wb = _workbook_from_wbs_activities(
+            acts, name,
+            currency=req.currency,
+            start_date=req.start_date or staged.get("start_date"),
+            day_rate=req.day_rate,
+            crew_per_trade=req.crew_per_trade,
+            target_milestones=staged.get("target_milestones") or None,
+        )
+        fd, path = tempfile.mkstemp(prefix="sched_conv_", suffix=".xlsx"); os.close(fd)
+        wb.save(path)
+        return FileResponse(
+            path, media_type=_XLSX_MEDIA,
+            filename=f"{name.replace(' ', '_')}_schedule.xlsx",
+            headers={"X-Activities": str(len(acts)), "X-WBS-Source": "conversation"},
+        )
+
     from app.containers.construction import ConstructionContainer
-    from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
-    from app.lib.pm_excel import generate_cost_loaded_schedule
 
     wbs = await ConstructionContainer().generate_wbs({}, {
         "brief": req.brief,
@@ -776,19 +835,22 @@ async def export_schedule_from_brief(
         "start_date": req.start_date,
         "user_message": req.brief,
         "duration_overrides": req.duration_overrides,
+        "project_id": project_id,
     })
+    refusal = refuse_scaffold_for_boq_wbs_ask(req.brief or "", req.brief or "", wbs)
+    if refusal:
+        raise HTTPException(422, refusal)
     acts = wbs.get("activities") or []
     if not acts:
         raise HTTPException(422, f"WBS produced no activities ({wbs.get('cpm_error') or wbs.get('status')})")
-    bridged = bridge_wbs_to_cost_loaded(
-        acts, crew_per_trade=req.crew_per_trade, day_rate=req.day_rate,
+    wb = _workbook_from_wbs_activities(
+        acts, name,
+        currency=req.currency,
+        start_date=req.start_date or wbs.get("start_date"),
+        day_rate=req.day_rate,
+        crew_per_trade=req.crew_per_trade,
+        target_milestones=wbs.get("target_milestones") or None,
     )
-    meta: Dict[str, Any] = {"project": name, "currency": req.currency}
-    if req.start_date or wbs.get("start_date"):
-        meta["start_date"] = req.start_date or wbs.get("start_date")
-    if req.day_rate:
-        meta["cost_basis"] = "Indicative Labor"
-    wb = generate_cost_loaded_schedule(meta, bridged)
     fd, path = tempfile.mkstemp(prefix="sched_brief_", suffix=".xlsx"); os.close(fd)
     wb.save(path)
     return FileResponse(path, media_type=_XLSX_MEDIA,
@@ -1095,6 +1157,53 @@ def _render_message_xlsx(
     return path
 
 
+@router.post("/v1/projects/{project_id}/conversations/{conversation_id}/export/schedule")
+async def export_conversation_schedule(
+    project_id: str,
+    conversation_id: str,
+    auth: Dict[str, Any] = Depends(require_user),
+):
+    """Export the WBS staged on this conversation — never a fresh scaffold.
+
+    F-BAT-D H2: the chat 'Schedule (Excel)' offer and "Export F1 WBS as
+    xlsx" bind here. 404 when no WBS was built in the conversation;
+    422 when a BOQ-scope WBS was requested and only a template remains.
+    """
+    proj = _check_owner(project_id, auth["user_id"])
+    from app.core.conversation_wbs import (
+        load_conversation_wbs,
+        refuse_scaffold_for_boq_wbs_ask,
+    )
+    staged = load_conversation_wbs(conversation_id)
+    if not staged:
+        raise HTTPException(
+            404,
+            "No WBS or schedule is staged in this conversation. "
+            "Generate a WBS first; a generic template will not be substituted.",
+        )
+    refusal = refuse_scaffold_for_boq_wbs_ask(
+        str(staged.get("brief") or ""),
+        str(staged.get("brief") or ""),
+        staged,
+    )
+    if refusal:
+        raise HTTPException(422, refusal)
+    acts = staged.get("activities") or []
+    name = proj.get("name") or "Project"
+    wb = _workbook_from_wbs_activities(
+        acts, name,
+        start_date=staged.get("start_date"),
+        target_milestones=staged.get("target_milestones") or None,
+    )
+    fd, path = tempfile.mkstemp(prefix="sched_conv_", suffix=".xlsx"); os.close(fd)
+    wb.save(path)
+    return FileResponse(
+        path, media_type=_XLSX_MEDIA,
+        filename=f"{name.replace(' ', '_')}_schedule.xlsx",
+        headers={"X-Activities": str(len(acts)), "X-WBS-Source": "conversation"},
+    )
+
+
 @router.post("/v1/projects/{project_id}/conversations/{conversation_id}/export")
 async def export_conversation_message(
     project_id: str,
@@ -1199,11 +1308,32 @@ async def export_conversation_message(
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ext = "docx"
     elif fmt == "xlsx":
-        path = _render_message_xlsx(
-            project_name,
-            chosen.get("content") or "",
-            conversation_id,
+        from app.core.conversation_wbs import (
+            load_conversation_wbs,
+            message_looks_like_wbs_answer,
         )
+        staged = load_conversation_wbs(conversation_id)
+        if (
+            staged
+            and message_looks_like_wbs_answer(chosen.get("content") or "")
+        ):
+            acts = staged.get("activities") or []
+            wb = _workbook_from_wbs_activities(
+                acts, project_name,
+                start_date=staged.get("start_date"),
+                target_milestones=staged.get("target_milestones") or None,
+            )
+            fd, path = tempfile.mkstemp(
+                prefix=f"export-{conversation_id[:8]}-", suffix=".xlsx",
+            )
+            os.close(fd)
+            wb.save(path)
+        else:
+            path = _render_message_xlsx(
+                project_name,
+                chosen.get("content") or "",
+                conversation_id,
+            )
         media = _XLSX_MEDIA
         ext = "xlsx"
     elif fmt == "pdf":
