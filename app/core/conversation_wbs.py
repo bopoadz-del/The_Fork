@@ -10,10 +10,13 @@ honestly. Nothing marks a template scaffold as the conversation WBS.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 # Verbatim live H2 ask (UI-PHYS "Question (ask exactly)").
 H2_EXPORT_ASK = "Export F1 WBS as xlsx"
@@ -148,12 +151,14 @@ def load_conversation_wbs(conversation_id: str | None) -> Optional[dict[str, Any
     try:
         path = staged_wbs_path(conversation_id)
     except ValueError:
+        logger.warning("refusing unusable conversation_id for WBS load")
         return None
     if not path.is_file():
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        logger.warning("could not read staged WBS for %s", conversation_id, exc_info=True)
         return None
     if not isinstance(raw, dict):
         return None
@@ -170,6 +175,7 @@ def clear_conversation_wbs(conversation_id: str | None) -> bool:
     try:
         path = staged_wbs_path(conversation_id)
     except ValueError:
+        logger.warning("refusing unusable conversation_id for WBS clear")
         return False
     if not path.is_file():
         return False
