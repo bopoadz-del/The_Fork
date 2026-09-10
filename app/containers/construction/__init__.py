@@ -50,7 +50,7 @@ class ConstructionContainer(
         if os.path.exists(file_path):
             return f"construction:doc:{doc_type}:{os.path.getmtime(file_path)}:{os.path.getsize(file_path)}"
         import hashlib
-        path_hash = hashlib.md5(str(file_path).encode()).hexdigest()
+        path_hash = hashlib.md5(str(file_path).encode(), usedforsecurity=False).hexdigest()
         return f"construction:doc:{doc_type}:missing:{path_hash}"
     async def _classify_document(self, file_path: str) -> str:
         name = Path(file_path).name.lower()

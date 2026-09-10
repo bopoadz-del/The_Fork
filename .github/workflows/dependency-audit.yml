@@ -50,6 +50,23 @@ jobs:
       # arq/gtts/ddgs; no server code path feeds it untrusted input. Durable
       # record in docs/SECURITY_TRIAGE.md. Re-visit when gtts releases with a
       # relaxed cap, or if gtts is dropped.
+      # ADJUDICATED 2026-09-10 — PYSEC-2026-2132, click <= 8.3.2.
+      #
+      # The advisory is command injection in `click.edit()`, the helper that
+      # shells out to $EDITOR for interactive CLI apps.
+      #
+      # Why it is not fixed: the fix is click 8.3.3, and `gtts==2.5.4`
+      # requires `click<8.2,>=7.1`. 2.5.4 is the LATEST gtts, so there is no
+      # version pair that satisfies both. Bumping click breaks the install.
+      #
+      # Why that is acceptable: nothing in this repository imports click at
+      # all -- it is transitive, via uvicorn/typer/gtts -- so `click.edit()`
+      # is unreachable. `tests/test_click_edit_is_unreachable.py` is the twin
+      # that keeps this true: the day someone adds a click.edit() call, this
+      # adjudication becomes false and CI says so instead of this comment
+      # quietly going stale.
+      #
+      # Re-check when gtts lifts its ceiling.
       IGNORE_ARGS: "--ignore-vuln PYSEC-2026-2132"
     steps:
       - uses: actions/checkout@v4

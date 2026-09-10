@@ -4,7 +4,7 @@
 #
 #    pip-compile --output-file=requirements-ml.txt --strip-extras requirements-ml.in
 #
-accelerate==1.14.0
+accelerate==1.15.0
     # via
     #   -r requirements-ml.in
     #   peft
