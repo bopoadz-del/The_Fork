@@ -90,6 +90,11 @@ def _import_missing_file(
         return False, False, f"download failed for {name}: {dl_err}"
 
     content_sha = hashlib.sha256(blob).hexdigest()
+    existing = projects.find_document_by_sha(project_id, content_sha)
+    if existing is not None:
+        return False, False, (
+            f"DUPLICATE_SHA {name} ({fid}) existing_id={existing['id']}"
+        )
     data_dir = os.getenv("DATA_DIR", "data")
     os.makedirs(data_dir, exist_ok=True)
     stored_as = f"{hashlib.sha256(fid.encode()).hexdigest()[:8]}_{name}"

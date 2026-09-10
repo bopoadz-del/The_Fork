@@ -216,7 +216,7 @@ def harness(tmp_path, monkeypatch):
 
     monkeypatch.setattr(projects_mod, "add_document", _add_document)
 
-    def _index_document(project_id, doc_id):
+    def _index_document(project_id, doc_id, **_k):
         h.index_calls += 1
         # A couple of realistic failures so the tally is not all-success.
         if h.index_calls % 7 == 0:

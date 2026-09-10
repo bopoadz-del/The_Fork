@@ -60,6 +60,12 @@ def ingest_cde_bytes(
         meta = existing.get("metadata") or {}
         if meta.get("cde_document_id") == cde_document_id:
             return {"status": "exists", "document": existing, "skipped": True}
+        return {
+            "status": "exists",
+            "document": existing,
+            "skipped": True,
+            "error": "DUPLICATE_SHA",
+        }
 
     file_id = str(uuid.uuid4())[:8]
     stored_as = f"{file_id}_{original_name}"

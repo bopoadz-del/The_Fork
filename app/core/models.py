@@ -347,6 +347,19 @@ class Document(Base):
     # the archive identity and is never a skip key.
     drive_md5: Mapped[str | None] = mapped_column(String, nullable=True)
     last_verified_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    # ── retrieval visibility (migration 0017) ─────────────────────────────
+    # Supersede, don't delete. A stale extract stays on the row; retrieval
+    # hides it when retrieval_visible is false. Reversible by flipping the
+    # flag. Hard delete of a documents row remains forbidden.
+    superseded_by: Mapped[str | None] = mapped_column(
+        String, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
+    )
+    retrieval_visible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=sa_text("TRUE"),
+    )
+    # Extractor family that produced the current chunks. Tied to the
+    # content-control fix (#550 / 8535199-sdt).
+    extractor_version: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ProjectFact(Base):

@@ -45,6 +45,48 @@ def probe_database(timeout_s: float = 2.0) -> Dict[str, Any]:
         }
 
 
+def probe_corpus_chunks(timeout_s: float = 1.5) -> Dict[str, Any]:
+    """COUNT(*) against the active chunk table — never documents.chunk_count.
+
+    The ledger column can sit at 0 after a successful index (the defect
+    this probe exists to stop reporting as truth). A missing table is an
+    honest zero, not a hang: /health stays a liveness probe.
+    """
+    started = time.monotonic()
+    try:
+        import os
+        from sqlalchemy import text
+        from app.core.db import SessionLocal
+        from app.core.models import rag_chunk_table_name
+
+        ns = os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
+        table = rag_chunk_table_name(ns)
+        with SessionLocal() as session:
+            try:
+                session.execute(
+                    text("SET LOCAL statement_timeout = :ms"),
+                    {"ms": int(timeout_s * 1000)},
+                )
+            except Exception:  # noqa: BLE001 — SQLite: skip
+                session.rollback()
+            n = session.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()
+        return {
+            "chunks": int(n or 0),
+            "source": "chunk_table_count",
+            "table": table,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+            "error": None,
+        }
+    except Exception as exc:  # noqa: BLE001 — probe must never raise
+        return {
+            "chunks": None,
+            "source": "chunk_table_count",
+            "table": None,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+            "error": f"{type(exc).__name__}: {exc}"[:200],
+        }
+
+
 def probe_embedder() -> Dict[str, Any]:
     """Report whether the RAG embedder is warm-loaded (NON-loading probe).
 

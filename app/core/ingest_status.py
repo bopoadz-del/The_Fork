@@ -64,6 +64,11 @@ ALL_STATUSES = frozenset(
     }
 )
 
+# Extractor family stamped on INDEXED rows after the content-control fix.
+# #550 / 8535199: Word SDT + deduped text boxes. Bump the suffix when the
+# extract walk changes again; do not invent a hash that is not this family.
+EXTRACTOR_VERSION = "8535199-sdt"
+
 #: Statuses that represent OPEN work. Everything else is a settled outcome.
 #: ``TEXT_SPARSE`` is deliberately absent -- see ``is_open``.
 OPEN_STATUSES = frozenset({UNVERIFIED, ZERO_CHUNK, EXTRACT_FAILED})

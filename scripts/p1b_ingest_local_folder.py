@@ -59,6 +59,7 @@ def _ingest_file(
     project_id: str,
     data_dir: Path,
     drive_root: Path,
+    reingest_of: str | None = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Copy one file into the project and index it. Returns (relative_path, result)."""
     from app.core import doc_index, projects as projects_mod
@@ -101,6 +102,18 @@ def _ingest_file(
             "reason": f"Cannot read file on Drive mount: {exc}",
         }
 
+    existing_by_sha = projects_mod.find_document_by_sha(project_id, content_sha)
+    reingest_of = projects_mod.scoped_reingest_of(
+        reingest_of, content_sha, existing_by_sha,
+    )
+    if existing_by_sha and not reingest_of:
+        return rel, {
+            "status": "error",
+            "error": "DUPLICATE_SHA",
+            "existing_id": existing_by_sha["id"],
+            "content_sha256": content_sha,
+        }
+
     stored_name = (
         f"{hashlib.sha256(str(src_path).encode()).hexdigest()[:8]}_"
         f"{_safe_stored_name(src_path.name)}"
@@ -108,16 +121,30 @@ def _ingest_file(
     dest = data_dir / stored_name
     shutil.copy2(src_path, dest)
 
-    doc = projects_mod.add_document(
-        project_id=project_id,
-        original_name=src_path.name,
-        stored_as=stored_name,
-        file_path=str(dest),
-        size=size,
-        content_sha256=content_sha,
-        metadata={"local_drive_path": rel, "source": "p1b_local_reingestion"},
+    try:
+        doc = projects_mod.add_document(
+            project_id=project_id,
+            original_name=src_path.name,
+            stored_as=stored_name,
+            file_path=str(dest),
+            size=size,
+            content_sha256=content_sha,
+            metadata={"local_drive_path": rel, "source": "p1b_local_reingestion"},
+            reingest_of=reingest_of,
+        )
+    except projects_mod.DuplicateContentError as exc:
+        return rel, {
+            "status": "error",
+            "error": "DUPLICATE_SHA",
+            "existing_id": exc.existing_id,
+            "content_sha256": content_sha,
+        }
+    result = doc_index.index_document(
+        project_id, doc["id"], stamp_as_indexed=bool(reingest_of),
     )
-    result = doc_index.index_document(project_id, doc["id"])
+    if reingest_of:
+        result["reingest_of"] = reingest_of
+        result["superseded"] = True
     return rel, result
 
 
@@ -145,6 +172,16 @@ def main() -> int:
                     help="Plan only — no DB writes (env: INGEST_DRY_RUN)")
     ap.add_argument("--drive-root", default="G:/My Drive",
                     help="Local Drive mount root")
+    ap.add_argument(
+        "--reingest",
+        default=None,
+        metavar="OLD_ID",
+        help=(
+            "Create a new row for a sha256 that already exists and hide "
+            "OLD_ID (retrieval_visible=false). Without this flag a "
+            "duplicate sha is refused."
+        ),
+    )
     args = ap.parse_args()
 
     try:
@@ -365,7 +402,10 @@ def main() -> int:
         print(f"[p1b] {idx}/{len(batch_files)} {rel}", file=sys.stderr)
         t_file = time.monotonic()
         try:
-            _, result = _ingest_file(src_path, project_id, data_dir, drive_root)
+            _, result = _ingest_file(
+                src_path, project_id, data_dir, drive_root,
+                reingest_of=args.reingest,
+            )
             results.append({"path": rel, "identity": _identity(src_path), "result": result})
             if result.get("status") == "error":
                 if result.get("error") == "ZERO_CHUNK":
@@ -376,6 +416,12 @@ def main() -> int:
                     skipped_unsupported += 1
                 elif result.get("error") == "SKIPPED_UNREADABLE":
                     skipped_unreadable += 1
+                elif result.get("error") == "DUPLICATE_SHA":
+                    errors.append({
+                        "path": rel,
+                        "error": "DUPLICATE_SHA",
+                        "existing_id": result.get("existing_id"),
+                    })
                 else:
                     errors.append({"path": rel, "error": result.get("error")})
             elif result.get("rag_indexed", 0) == 0:
