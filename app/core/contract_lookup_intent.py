@@ -84,6 +84,30 @@ _CONTRACT_SCHEDULE_N_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# S14 / F-BAT-B fresh_eot_notice_period: "Within how many days must the
+# Contractor give notice of an EOT claim on this project?" is Contract
+# Data (the project's notice period), not claims_builder. The words
+# "EOT" / "claim" / "notice" used to shape-match the claim-build path,
+# which then dead-ended on missing delay_events. Claim-build verbs
+# (draft / prepare / build / …) stay excluded via _CLAIM_WORK_RE.
+_EOT_NOTICE_PERIOD_RE = re.compile(
+    r"(?:"
+    r"(?:how\s+many\s+days|within\s+(?:how\s+many\s+)?days?).{0,120}"
+    r"(?:give\s+)?notice"
+    r"|"
+    r"(?:eot|extension\s+of\s+time|claim).{0,48}notice\s+period"
+    r"|"
+    r"notice\s+period.{0,48}(?:eot|extension\s+of\s+time|claim|clause\s+20)"
+    r"|"
+    r"(?:time\s*[- ]?bar|timebar).{0,48}(?:eot|extension\s+of\s+time|claim|notice)"
+    r"|"
+    r"(?:eot|extension\s+of\s+time|claim).{0,48}(?:time\s*[- ]?bar|timebar)"
+    r"|"
+    r"(?:give\s+)?notice\s+of\s+(?:an?\s+)?(?:eot|extension\s+of\s+time)\s+claim"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
 # Schedule/WBS generative actions the keyword router must not dispatch
 # for a Contract Data lookup.
 CONTRACT_LOOKUP_BLOCKED_ACTIONS = frozenset({
@@ -97,15 +121,30 @@ CONTRACT_LOOKUP_BLOCKED_ACTIONS = frozenset({
 })
 
 
+def message_is_eot_notice_period_lookup(text: str) -> bool:
+    """True for contractual EOT / claim notice-period Q&A (S14).
+
+    Positive: days to give notice of an EOT claim; EOT notice period;
+    claim time-bar. Negative: draft / prepare / build an EOT claim
+    (those stay on claims_builder and still need delay events).
+    """
+    raw = text or ""
+    if not raw.strip():
+        return False
+    if _CLAIM_WORK_RE.search(raw):
+        return False
+    return bool(_EOT_NOTICE_PERIOD_RE.search(raw))
+
+
 def message_is_contract_data_lookup(text: str) -> bool:
     """True when the turn is a Contract Data fact lookup, not a WBS generate.
 
     Positive: Time for Completion / Milestone N TfC / delay damages / DNP /
     performance bond / Engineer / Aconex / Accepted Contract Amount /
-    numbered contract Schedule N contents.
+    numbered contract Schedule N contents / EOT claim notice period.
 
     Negative: "create an L2 schedule", "generate a WBS", "extract milestones
-    from the XER / programme".
+    from the XER / programme", "prepare an EOT claim" (claim-build).
     """
     raw = text or ""
     if not raw.strip():
@@ -117,5 +156,7 @@ def message_is_contract_data_lookup(text: str) -> bool:
     if _CLAIM_WORK_RE.search(raw):
         return False
     if _CONTRACT_SCHEDULE_N_RE.search(raw):
+        return True
+    if message_is_eot_notice_period_lookup(raw):
         return True
     return any(cue.search(raw) for cue in _LOOKUP_CUES)

@@ -1358,7 +1358,7 @@ def _message_wants_ipc_draft(text: str) -> bool:
 
 
 def _message_wants_delay_claim(text: str) -> bool:
-    return bool(re.search(r"delay claim|claim notice|eot claim", text or "", re.I))
+    return bool(not message_is_contract_data_lookup(text or "") and re.search(r"delay claim|claim notice|eot claim", text or "", re.I))
 
 
 def _message_wants_as_built_note(text: str) -> bool:
