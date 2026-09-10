@@ -7,7 +7,7 @@ by filename + content — all without a code change.
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from app.core import doc_types
 from app.dependencies import require_api_key, require_user
@@ -31,6 +31,14 @@ class DocumentTypeRequest(BaseModel):
 class ClassifyRequest(BaseModel):
     filename: str = ""
     content_sample: str = ""
+
+    @model_validator(mode="after")
+    def _needs_something_to_classify(self):
+        # Both fields defaulted to "", so an empty body classified nothing
+        # and answered 200 with whatever the fallback rule returns.
+        if not (self.filename.strip() or self.content_sample.strip()):
+            raise ValueError("filename or content_sample is required")
+        return self
 
 
 @router.get("/v1/document-types")

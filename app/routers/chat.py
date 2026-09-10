@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +20,12 @@ from app.dependencies import require_user
 from app.dependencies import block_instances
 from app.infra.monitoring import capture_llm_transport_failure, get_request_id
 from app.routers.chat_watchdog import guarantee_terminal
+
+#: Upper bound on one chat message. Above this the turn is refused with 413
+#: before any retrieval, tool or model work starts. Generous enough for a
+#: pasted specification section; the point is that there IS a bound, and that
+#: exceeding it is the caller's answer rather than a 200 that dies mid-stream.
+CHAT_MAX_PROMPT_CHARS = int(os.getenv("CHAT_MAX_PROMPT_CHARS", "32000"))
 
 logger = logging.getLogger(__name__)
 
@@ -807,12 +814,24 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     if "chat" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Chat block not available")
 
+    # Validate BEFORE the stream opens. Once `start` is emitted the status
+    # code is committed, and a client fault can only be reported as an error
+    # event inside a 200 -- which is how "{}" became "the assistant is
+    # temporarily unavailable", a platform fault the platform did not have.
     try:
         body = await request.json()
     except Exception:
-        body = {}
+        raise HTTPException(422, "Request body must be a JSON object")
+    if not isinstance(body, dict):
+        raise HTTPException(422, "Request body must be a JSON object")
 
     prompt = body.get("prompt", body.get("message", ""))
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise HTTPException(422, "message is required and must be a non-empty string")
+    if len(prompt) > CHAT_MAX_PROMPT_CHARS:
+        raise HTTPException(
+            413, f"message exceeds {CHAT_MAX_PROMPT_CHARS} characters"
+        )
     model = body.get("model", body.get("provider", "kimi-k2.6"))
     session_id = body.get("session_id", "default")
     history = body.get("history", []) or []

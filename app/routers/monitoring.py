@@ -110,5 +110,12 @@ async def record_metrics(
     if not MONITORING_AVAILABLE:
         return {"status": "no_op"}
     block = get_monitoring_block()
+    if not (request.provider or "").strip():
+        raise HTTPException(422, "provider is required")
     payload = {"action": "record_call", **request.model_dump(exclude_none=True)}
-    return await block.execute(payload)
+    result = await block.execute(payload)
+    # The block reports an unknown provider as data. That is the caller's
+    # fault and must not leave here as a 200 with an error inside it.
+    if isinstance(result, dict) and result.get("error"):
+        raise HTTPException(422, str(result["error"]))
+    return result
