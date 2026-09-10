@@ -345,3 +345,113 @@ def test_retrieve_g4_still_elects_rate_only_from_soup(monkeypatch):
     assert chunks
     assert any(ret.chunk_states_rate_only_item(c.text, ["d529.3"]) for c in chunks)
     assert "Rate Only" in chunks[0].text
+
+
+PART_NR_3_PRICED = (
+    "PART NR. 3 DEMOLITION\n"
+    "D 549.2 Removal of existing chain link fence 3,504 m @ SAR 80.00 "
+    f"= SAR 280,320.00"
+)
+RATE_ONLY_D549_SIBLING = (
+    "PART NR. 3\n"
+    "D549.2 Removal of existing chain link fence — m Rate Only"
+)
+EXCLUDED_D549_SIBLING = (
+    "IP-INF-053-0000-JCB-BOQ-CA-000007-B Bill of Quantities (Priced)\n"
+    "D549.2 Removal of existing chain link fence | sum 1 Excluded"
+)
+
+
+def _install_b5_sibling_corpus(monkeypatch):
+    """Live be93dee shape: priced Part Nr. 3 plus Rate Only / Excluded."""
+    from app.core.rag import retriever as ret
+
+    priced = _chunk("part3", "part3", 0.11, PART_NR_3_PRICED)
+    rate_only = _chunk("ro", "ro", 0.93, RATE_ONLY_D549_SIBLING)
+    excluded = _chunk("ex", "ex", 0.88, EXCLUDED_D549_SIBLING)
+    semantic = [rate_only, excluded, priced]
+
+    def fake_search(self, project_id, qvec, k, query_text=None):
+        return [c for c in semantic if c.project_id == project_id][:k]
+
+    def fake_id_search(self, project_id, identifiers, k=20):
+        blob = " ".join(identifiers).lower()
+        if "549.2" in blob or "d549" in blob:
+            return [rate_only, excluded, priced][:k]
+        return []
+
+    def fake_containing_all(self, project_id, needles, k=20):
+        cleaned = [" ".join((n or "").lower().split()) for n in (needles or [])]
+        hits = []
+        for chunk in semantic:
+            hay = (chunk.text or "").lower()
+            if cleaned and all(n in hay for n in cleaned):
+                hits.append(chunk)
+        return hits[:k]
+
+    def _name(did):
+        if did == "ex":
+            return (
+                "IP-INF-053-0000-JCB-BOQ-CA-000007-B_"
+                "Bill of Quantities (Priced).pdf"
+            )
+        return "Demolition BOQ Part Nr. 3.pdf"
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.identifier_search", fake_id_search,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_for_docs",
+        lambda self, project_id, doc_ids, k_per_doc=12: [],
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_containing_all",
+        fake_containing_all,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.count", lambda self, pid=None: 3,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore._verify_embedding_identity",
+        lambda self: None,
+    )
+    monkeypatch.setattr(ret, "_doc_name_for_id", _name, raising=False)
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_title_phrase",
+        lambda pid, phrase, limit=8: [],
+    )
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_filename_terms",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("RAG_RATE_ONLY_RESCUE", raising=False)
+    monkeypatch.delenv("COMPOSE_PRICED_BOQ_ROW", raising=False)
+    monkeypatch.delenv("RAG_LAYERED", raising=False)
+    return ret
+
+
+def test_retrieve_b5_prefers_priced_part_nr_3_over_rate_only_and_excluded(
+    monkeypatch,
+):
+    """Rate Only + Excluded siblings must not fence out 280,320."""
+    ret = _install_b5_sibling_corpus(monkeypatch)
+    chunks, _ = ret.retrieve_with_filter(LIVE_B5, ACTIVE, k=5)
+    assert chunks
+    blob = " ".join(c.text for c in chunks)
+    assert B5_AMT in blob.replace(",", "")
+    top = chunks[0].text
+    assert B5_AMT in top.replace(",", "")
+    assert ret.chunk_states_priced_item(top, ["d549.2"])
+    assert not ret.chunk_states_rate_only_item(top, ["d549.2"])
+    assert not ret.chunk_states_excluded_item(top, ["d549.2"])
+    # Priced fence drops Rate Only / Excluded-only siblings.
+    assert all(ret.chunk_states_priced_item(c.text, ["d549.2"]) for c in chunks)
+    assert not any(
+        ret.chunk_states_rate_only_item(c.text, ["d549.2"])
+        and not ret.chunk_states_priced_item(c.text, ["d549.2"])
+        for c in chunks
+    )
