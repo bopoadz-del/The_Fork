@@ -175,12 +175,23 @@ jobs:
       # Quote the name: an unquoted `Exception: pass` is invalid YAML
       # (`: ` starts a mapping), so GitHub skipped the entire lint workflow
       # and required checks ruff/eslint/integrity never appeared on the PR.
-      - name: "No silent except Exception: pass"
-        # Twin of the S110 gate above. ruff S110 (check-typed-exception =
-        # false) flags bare `except: pass` only. This AST walk flags the
-        # typed form S110 misses: `except Exception: pass` and
-        # `except Exception as <name>: pass`. Stdlib only. Exit 1 with a
-        # file:line list. Empty ALLOWLIST is the goal.
+      - name: "No silent except: pass, and no new silent empty return"
+        # TWO twins, one script, both AST walks over the same tree.
+        #
+        # PASS twin: ruff S110 (check-typed-exception = false) flags bare
+        # `except: pass` only. This flags the typed form S110 misses:
+        # `except Exception: pass` / `... as <name>: pass`. ALLOWLIST is
+        # empty and staying that way.
+        #
+        # RETURN twin: the larger, quieter version -- a handler whose whole
+        # body is `return None` / `{}` / `[]` / `''` / `0`. The caller then
+        # cannot tell "nothing there" from "the lookup failed". 124 of those
+        # existed the day the twin was written, 58 under app/core, so they
+        # are baselined by file:line in RETURN_ALLOWLIST and the gate fails
+        # on the 125th. The baseline may only shrink; a test asserts its
+        # ceiling and refuses stale keys.
+        #
+        # Stdlib only. Exit 1 with a file:line list.
         run: python scripts/scan_exception_pass.py
 
   eslint:
