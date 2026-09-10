@@ -299,6 +299,27 @@ def _apply_rag_context(
                 "project-specific facts (names, drawing or clause references) "
                 "that are not in the context.\n\nCALCULATION REQUEST: "
             )
+        elif _message_wants_boq_scope_wbs_ask(question):
+            # Leftover F1 on Master Corpus: "Answer only from the client
+            # project documents. Generate a high-level WBS for the
+            # demolition and site clearance scope in this project's BOQ."
+            # The verb is generative, but the user prefix plus DD-2022-175
+            # CoC excerpts made the model refuse and cite the wrong
+            # contract. Measured BOQ rows (via generate_wbs) are the
+            # evidence; another year's Conditions of Contract is not.
+            directive = (
+                "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
+                "The request below is a HIGH-LEVEL WBS over this project's "
+                "demolition / site-clearance BOQ. Present the generate_wbs "
+                "result (or the already pre-dispatched tree). Do NOT refuse "
+                "because Conditions of Contract prose does not contain a "
+                "WBS — the bill's measured rows are the evidence. Do NOT "
+                "cite another contract year's Conditions of Contract "
+                "(including DD-2022 / DD2022) as the governing contract. "
+                "Do not print the generic building template as the answer. "
+                "Treat the reference context as background only."
+                "\n\nREQUEST: "
+            )
         elif _message_is_duration_override_rerun(question, history_for_override):
             # OLD-pack F2 on a fresh Master Corpus thread, verbatim:
             #   "Answer only from the client project documents. Use 45 days
@@ -1059,7 +1080,7 @@ def _operator_user_text(messages: list) -> str:
 
 
 async def _predispatch_wbs_duration_override(
-    agent: "Agent", messages: list,
+    agent: "Agent", messages: list, project_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Re-run ``generate_wbs`` when the user overrides a template duration.
 
@@ -1096,6 +1117,7 @@ async def _predispatch_wbs_duration_override(
             "user_message": user_msg,
             "history": history,
             "duration_overrides": overrides,
+            "project_id": project_id,
         }
         result = await container.generate_wbs({}, params)
         if not isinstance(result, dict) or result.get("status") != "success":
@@ -1463,10 +1485,14 @@ def _message_wants_safety_briefing(text: str) -> bool:
     return bool(re.search(r"\bbriefing\b", raw, re.I) and len(topics) >= 2)
 
 
+def _message_wants_boq_scope_wbs_ask(text: str) -> bool:
+    """True for leftover F1: high-level WBS over demolition / site-clearance BOQ."""
+    from app.core.predefined_reasoning import message_wants_boq_scope_wbs
+    return bool(message_wants_boq_scope_wbs(text or ""))
+
+
 def _message_wants_first_run_wbs(text: str) -> bool:
     raw = text or ""
-    if not re.search(r"\b(build a wbs|work breakdown|\bwbs\b for)\b", raw, re.I):
-        return False
     try:
         from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
         if message_wants_wbs_duration_rerun(raw, []):
@@ -1476,6 +1502,14 @@ def _message_wants_first_run_wbs(text: str) -> bool:
             "swallowed %s in _message_wants_first_run_wbs() — treating as first-run",
             "Exception", exc_info=True,
         )
+    # Leftover F1: "Generate a high-level WBS for the demolition…" is a
+    # first-run produce, not a duration re-run. The older regex required
+    # "build a wbs|work breakdown|wbs for"; keep that, and also elect the
+    # BOQ-scope WBS phrasing so predispatch cannot miss the live ask.
+    if _message_wants_boq_scope_wbs_ask(raw):
+        return True
+    if not re.search(r"\b(build a wbs|work breakdown|\bwbs\b for)\b", raw, re.I):
+        return False
     return True
 
 
@@ -1558,6 +1592,8 @@ async def _predispatch_construction_draft(
     format_fn,
     instruction: str,
     operator_text: str | None = None,
+    project_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> dict[str, Any] | None:
     if os.getenv(env_key, "1") == "0":
         return None
@@ -1575,16 +1611,32 @@ async def _predispatch_construction_draft(
         if handler is None:
             return None
         params = {"user_message": user_msg, "brief": user_msg, "message": user_msg}
+        if project_id:
+            params["project_id"] = project_id
         if action == "commissioning_checklist":
             inferred = _infer_commissioning_systems(user_msg)
             if inferred:
                 params["systems"] = inferred
         result = await handler(
-            {"text": user_msg, "message": user_msg, "user_message": user_msg},
+            {
+                "text": user_msg,
+                "message": user_msg,
+                "user_message": user_msg,
+                "project_id": project_id,
+            },
             params,
         )
         if not isinstance(result, dict) or result.get("status") != "success":
             return None
+        if action == "generate_wbs":
+            from app.core.conversation_wbs import refuse_scaffold_for_boq_wbs_ask
+            if refuse_scaffold_for_boq_wbs_ask(user_msg, user_msg, result):
+                # Leftover F1: do not inject the 204-activity building
+                # template as an "authoritative" WBS — that is the other
+                # live FAIL class (generic scaffold, not BOQ-grounded).
+                return None
+            if conversation_id:
+                stage_conversation_wbs(conversation_id, result)
         rendered = format_fn(result)
         _inject_predispatch(messages, action, rendered, instruction)
         return {
@@ -1604,6 +1656,7 @@ async def _predispatch_remaining_deliverables(
     messages: list,
     project_id: str | None,
     operator_text: str | None = None,
+    conversation_id: str | None = None,
 ) -> dict[str, Any] | None:
     """First matching non-WIR deliverable draft, so a Groq 413 still has copy."""
     user_msg, _history = _messages_user_and_history(messages)
@@ -1632,8 +1685,11 @@ async def _predispatch_remaining_deliverables(
             _message_wants_first_run_wbs,
             "generate_wbs",
             _format_wbs_result,
-            "Report the operator-stated milestone durations (852 / 397 / 487 "
-            "when present) and the WBS branches. Do not invent man-hours.",
+            "Present this WBS in full. When it is BOQ-derived, keep the "
+            "numbered demolition / site-clearance packages. Do not refuse. "
+            "Do not cite another contract year's Conditions of Contract "
+            "(including DD-2022) as the governing contract. Do not invent "
+            "man-hours.",
         ),
         (
             "AGENT_RFI_PREDISPATCH",
@@ -1702,6 +1758,8 @@ async def _predispatch_remaining_deliverables(
             format_fn=format_fn,
             instruction=instruction,
             operator_text=detect,
+            project_id=project_id,
+            conversation_id=conversation_id,
         )
         if out:
             return out
@@ -3466,6 +3524,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
         except Exception:  # noqa: BLE001
             return None
     # Duration override + re-run must force generate_wbs, not a calculator.
+    # Leftover F1: a demolition / site-clearance BOQ WBS ask must also
+    # force generate_wbs so RAG-folded DD-2022 CoC cannot steal the turn.
     if "generate_wbs" in available:
         try:
             from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
@@ -3477,6 +3537,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
                 "duration-override tool force skipped; falling through",
                 exc_info=True,
             )
+        if _message_wants_boq_scope_wbs_ask(text):
+            return "generate_wbs"
     if "resource_histogram" in available and _message_wants_resource_histogram(text):
         return "resource_histogram"
     if "look_ahead" in available and _message_wants_look_ahead(text):
@@ -5681,6 +5743,56 @@ def _should_short_circuit_delay_damages_daily(
         return ""
 
 
+def _boq_scope_wbs_compose_enabled() -> bool:
+    """ON by default — leftover F1 skips the LLM hop once generate_wbs is BOQ-derived."""
+    return (os.getenv("F1_BOQ_WBS_COMPOSE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _compose_boq_scope_wbs_answer(
+    pre: dict[str, Any] | None,
+    user_message: str,
+) -> str:
+    """Formatted BOQ-derived WBS, or '' when this is not leftover F1."""
+    if not _boq_scope_wbs_compose_enabled():
+        return ""
+    if not pre or pre.get("name") != "generate_wbs":
+        return ""
+    if not _message_wants_boq_scope_wbs_ask(user_message or ""):
+        return ""
+    result = pre.get("result")
+    if not isinstance(result, dict):
+        return ""
+    scaffold = result.get("scaffold") if isinstance(result.get("scaffold"), dict) else {}
+    if not scaffold.get("derived_from_boq"):
+        return ""
+    return _format_wbs_result(result)
+
+
+def _graft_boq_scope_wbs_if_wrong_contract(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Replace a leftover-F1 refuse / DD-2022 cite with the predispatched WBS."""
+    if not _boq_scope_wbs_compose_enabled():
+        return text
+    user = _latest_operator_ask(messages)
+    if not _message_wants_boq_scope_wbs_ask(user):
+        return text
+    from app.lib.boq_schedule import (
+        f1_wbs_answer_fails_wrong_contract,
+        f1_wbs_answer_is_grounded,
+    )
+    raw = text or ""
+    if f1_wbs_answer_is_grounded(raw) and not f1_wbs_answer_fails_wrong_contract(raw):
+        return text
+    recovered = _recover_answer_from_tool_messages(_EMPTY_RESPONSE_FALLBACK, messages)
+    if recovered and f1_wbs_answer_is_grounded(recovered):
+        return recovered
+    return text
+
+
 def _should_short_circuit_priced_boq(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
@@ -5718,6 +5830,9 @@ def _postprocess_answer(
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
+    # Leftover F1: refuse + DD-2022 CoC cite is FAIL. If generate_wbs
+    # already produced a BOQ-derived tree, that draft is the answer.
+    text = _graft_boq_scope_wbs_if_wrong_contract(text, messages)
     text = _graft_operator_claim_facts(text, _operator_user_text(messages))
     # Leftover E4: compose raft volume + documented waste when the model
     # hung on "Let me validate…" and never wrote 945 m³.
@@ -8445,7 +8560,9 @@ class Agent:
             _pre = await _predispatch_file_tool(self, messages, project_id)
         if _pre:
             tool_calls_made.append(_pre)
-        _wbs_pre = await _predispatch_wbs_duration_override(self, messages)
+        _wbs_pre = await _predispatch_wbs_duration_override(
+            self, messages, project_id,
+        )
         if _wbs_pre:
             tool_calls_made.append(_wbs_pre)
         _hist_pre = await _predispatch_resource_histogram(
@@ -8469,6 +8586,7 @@ class Agent:
         if not _hist_pre:
             _more_pre = await _predispatch_remaining_deliverables(
                 self, messages, project_id, operator_text=user_message,
+                conversation_id=conversation_id,
             )
         if _more_pre:
             tool_calls_made.append(_more_pre)
@@ -8494,6 +8612,30 @@ class Agent:
         _has_pre = bool(
             _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
         )
+        # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
+        # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
+        # the turn. Other deliverables still keep the LLM.
+        _f1_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
+        if _f1_fast:
+            answer = _postprocess_answer(
+                _f1_fast, _rag_sys_msg, messages,
+                fallback_used=bool(_rag_audit.get("fallback_used")),
+                agent_name=self.name,
+                project_id=project_id,
+                audit_rec=_rag_audit,
+            )
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": tool_calls_made,
+                "iterations": 0,
+                "messages": messages + [{"role": "assistant", "content": answer}],
+                "sources": [],
+            }
         # Leftover E1 before B4/B5: rate × ACA is already in the
         # excerpts / loaded CD volume. Skip the provider hop so a
         # priced-BOQ refuse cannot close the turn. Predispatch
@@ -9334,7 +9476,9 @@ class Agent:
                    "result": _pre_summary,
                    "predispatched": True}
 
-        _wbs_pre = await _predispatch_wbs_duration_override(self, messages)
+        _wbs_pre = await _predispatch_wbs_duration_override(
+            self, messages, project_id,
+        )
         if _wbs_pre:
             _note_tool(_wbs_pre["name"])
             stream_tool_results.append(_wbs_pre)
@@ -9457,6 +9601,7 @@ class Agent:
         if not _hist_pre:
             _more_pre = await _predispatch_remaining_deliverables(
                 self, messages, project_id, operator_text=user_message,
+                conversation_id=conversation_id,
             )
         if _more_pre:
             _note_tool(_more_pre["name"])
@@ -9494,6 +9639,31 @@ class Agent:
         _has_pre = bool(
             _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
         )
+        # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
+        # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
+        # the turn. Other deliverables still keep the LLM.
+        _f1_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
+        if _f1_fast:
+            answer = _postprocess_answer(
+                _f1_fast, _rag_sys_msg, messages,
+                fallback_used=bool(_rag_audit.get("fallback_used")),
+                agent_name=self.name,
+                project_id=project_id,
+                audit_rec=_rag_audit,
+            )
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {
+                "type": "end",
+                "content": answer,
+                "iterations": 0,
+                "sources": [],
+                "tools": list(tools_invoked),
+            }
+            return
         # Leftover E1 before B4/B5: compose rate × ACA so a priced-BOQ
         # refuse cannot close the turn. Predispatch keeps the LLM.
         _e1_fast = _should_short_circuit_delay_damages_daily(

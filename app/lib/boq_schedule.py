@@ -665,6 +665,122 @@ def _resolve_rag_project_id(project_id: str) -> str:
         return project_id
 
 
+_DD2022_CITE_RE = re.compile(r"(?i)\bdd[-\s]?2022\b")
+_F1_REFUSE_RE = re.compile(
+    r"(?i)\b(?:cannot|can\s*'?\s*t|could\s+not|unable\s+to|do\s+not\s+have|"
+    r"don\s*'?\s*t\s+have|does\s+not\s+contain|do\s+not\s+contain|"
+    r"excerpts?\s+do\s+not|not\s+(?:enough|sufficient)\s+(?:to\s+)?"
+    r"(?:produce|generate|build)|won\s*'?\s*t\s+(?:produce|generate)|"
+    r"cannot\s+produce|can\s*'?\s*t\s+produce|cannot\s+generate|"
+    r"can\s*'?\s*t\s+generate|i\s+(?:cannot|can\s*'?\s*t|could\s+not))\b"
+)
+_F1_WBS_HIERARCHY_RE = re.compile(r"(?m)^(?:### )?\d+(?:\.\d+)*\s+\S")
+_F1_CESMM_D_RE = re.compile(r"(?i)\bD\d{2,4}(?:\.\d+)?\b")
+_F1_TEMPLATE_RE = re.compile(
+    r"(?i)template\s+scaffold|site\s+preparation|superstructure|"
+    r"project_type\s+inferred:\s*building"
+)
+_F1_SCOPE_RE = re.compile(r"(?i)\b(?:demolit|site\s+clear)\w*")
+
+
+def _source_contract_recency(name: str) -> Optional[Tuple[int, int]]:
+    """PREFIX-YEAR-SEQ sort key from a filename, or None when undated."""
+    try:
+        from app.core.rag.retriever import extract_contract_doc_ids
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("contract-id parse unavailable for BOQ election: %s", exc)
+        return None
+    ids = extract_contract_doc_ids(name or "")
+    if not ids:
+        return None
+    parts = ids[0].lower().split("-")
+    year = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else -1
+    seq = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else -1
+    return (year, seq)
+
+
+def _prefer_newer_contract_year_docs(
+    docs: List[Dict[str, str]],
+) -> List[Dict[str, str]]:
+    """Stable-sort demolition bills so the later PREFIX-YEAR-SEQ is first."""
+    dated = []
+    undated = []
+    for doc in docs or []:
+        blob = f"{doc.get('original_name') or ''} {doc.get('file_path') or ''}"
+        key = _source_contract_recency(blob)
+        if key is None:
+            undated.append(doc)
+        else:
+            dated.append((key, doc))
+    dated.sort(key=lambda pair: pair[0], reverse=True)
+    return [doc for _key, doc in dated] + undated
+
+
+def _prefer_newer_contract_year_items(
+    items: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Keep measured rows from the newest dated bill when two years mixed.
+
+    Undated fixture rows (no PREFIX-YEAR-SEQ in ``source``) stay. When a
+    later-year bill is present, drop earlier-year siblings so leftover F1
+    cannot elect DD-2022-175 once DD-2023-118's demolition BOQ is in the
+    pool.
+    """
+    dated_keys: List[Tuple[int, int]] = []
+    for item in items or []:
+        key = _source_contract_recency(str((item or {}).get("source") or ""))
+        if key is not None:
+            dated_keys.append(key)
+    if not dated_keys:
+        return list(items or [])
+    best = max(dated_keys)
+    kept: List[Dict[str, Any]] = []
+    for item in items or []:
+        key = _source_contract_recency(str((item or {}).get("source") or ""))
+        if key is None or key == best:
+            kept.append(item)
+    return kept
+
+
+def f1_wbs_answer_fails_wrong_contract(answer: str) -> bool:
+    """True for the live leftover F1 FAIL: refuse and/or DD-2022 cite.
+
+    Soft battery ``must_any: clearance|trees|pavement`` marks PASS when
+    the refuse merely mentions demolition. That is a FAIL.
+    """
+    blob = answer or ""
+    cites_dd2022 = bool(_DD2022_CITE_RE.search(blob))
+    refuses = bool(_F1_REFUSE_RE.search(blob))
+    if cites_dd2022 and refuses:
+        return True
+    if cites_dd2022:
+        return True
+    if refuses and not f1_wbs_answer_is_grounded(blob):
+        return True
+    return False
+
+
+def f1_wbs_answer_is_grounded(answer: str) -> bool:
+    """True for a demolition / site-clearance WBS from BOQ rows, not a refuse.
+
+    Requires the demolition/site-clearance scope AND either a numbered
+    hierarchy or CESMM D-codes. A mere mention of demolition is not enough.
+    Template scaffold and DD-2022 cites fail.
+    """
+    blob = answer or ""
+    if not blob.strip():
+        return False
+    if _DD2022_CITE_RE.search(blob):
+        return False
+    if _F1_TEMPLATE_RE.search(blob):
+        return False
+    if _F1_REFUSE_RE.search(blob) and not _F1_CESMM_D_RE.search(blob):
+        return False
+    if not _F1_SCOPE_RE.search(blob):
+        return False
+    return bool(_F1_WBS_HIERARCHY_RE.search(blob) or _F1_CESMM_D_RE.search(blob))
+
+
 def _list_boq_scope_documents(project_id: str) -> List[Dict[str, str]]:
     """Bills of quantities already in the project document pool.
 
@@ -725,7 +841,13 @@ def _list_boq_scope_documents(project_id: str) -> List[Dict[str, str]]:
     # Prefer the demolition / site-clearance bill. A generic priced bill
     # is used only when no scoped bill is in the pool — we still only
     # keep rows the demolition filter accepts.
-    chosen = (demo or found)[:4]
+    # Unnamed Master Corpus leftover F1: when both years' demolition
+    # bills are in the pool, the later package owns the ask. Arrival
+    # order used to hand generate_wbs the DD-2022-175 bill (or only
+    # its Conditions of Contract prose) and synthesis then refused.
+    pool = demo or found
+    pool = _prefer_newer_contract_year_docs(pool)
+    chosen = pool[:4]
     return chosen
 
 
@@ -838,7 +960,11 @@ def retrieve_boq_scope_items(query: str, project_id: str) -> List[Dict[str, Any]
                 text, filename, require_measured_gate=True,
             )
         )
-    return filter_demolition_site_clearance_items(collected)
+    # Elect the later-year bill BEFORE CESMM-code dedupe. Filtering first
+    # would keep an earlier-year D110 and drop the later-year twin.
+    return filter_demolition_site_clearance_items(
+        _prefer_newer_contract_year_items(collected),
+    )
 
 
 def wbs_tree_from_boq_items(

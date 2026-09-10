@@ -2691,10 +2691,10 @@ class ConstructionScheduleMixin:
             citations = []
             for item in boq_items or []:
                 code = str((item or {}).get("item_key") or "").strip()
-                src = str((item or {}).get("source") or "").strip()
-                bit = " ".join(x for x in (code, src) if x)
-                if bit and bit not in citations:
-                    citations.append(bit)
+                # Item codes only — source filenames can carry DD-2022-175
+                # and leftover F1 must not cite that year as governing.
+                if code and code not in citations:
+                    citations.append(code)
             result["scaffold"] = {
                 "source": "boq",
                 "project_type": "demolition_site_clearance",
