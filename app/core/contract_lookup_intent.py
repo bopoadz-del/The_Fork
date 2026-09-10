@@ -71,6 +71,12 @@ _LOOKUP_CUES = (
         r"\btime\s+for\s+completion\b.{0,40}\bmilestone\s+\d+\b",
         re.IGNORECASE | re.DOTALL,
     ),
+    re.compile(r"\bparent\s+company\s+guarantee\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:commencement\s+date|"
+        r"when\s+does\s+(?:the\s+|this\s+)?contract\s+commence)\b",
+        re.IGNORECASE,
+    ),
 )
 
 # Numbered contract-volume Schedules ("Schedule 10: Not Used"), not a P6
@@ -141,7 +147,8 @@ def message_is_contract_data_lookup(text: str) -> bool:
 
     Positive: Time for Completion / Milestone N TfC / delay damages / DNP /
     performance bond / Engineer / Aconex / Accepted Contract Amount /
-    numbered contract Schedule N contents / EOT claim notice period.
+    numbered contract Schedule N contents / Parent Company Guarantee /
+    contract Commencement Date / EOT claim notice period.
 
     Negative: "create an L2 schedule", "generate a WBS", "extract milestones
     from the XER / programme", "prepare an EOT claim" (claim-build).
