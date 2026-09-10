@@ -7,6 +7,7 @@ SQLAlchemy-backed via app.core.db — unified The Fork schema.
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -19,6 +20,7 @@ from sqlalchemy import delete, select, update
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.models import AgentFact, Conversation, Message
 
+logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _initialized = False
 # Tracks WHICH database the schema was created in. `_initialized` alone is a
@@ -225,8 +227,17 @@ def clear_conversation(conversation_id: str) -> Dict[str, int]:
 
     Returns ``{"messages": N, "facts": M}`` so the caller can surface
     how much was removed. Idempotent — clearing an empty / nonexistent
-    conversation returns zeros without raising.
+    conversation returns zeros without raising. Also drops the staged
+    conversation WBS snapshot so a later export cannot resurrect it.
     """
+    try:
+        from app.core.conversation_wbs import clear_conversation_wbs
+        clear_conversation_wbs(conversation_id)
+    except Exception:
+        logger.warning(
+            "could not clear staged WBS for conversation %s",
+            conversation_id, exc_info=True,
+        )
     _ensure_db()
     with _lock:
         with SessionLocal() as session:

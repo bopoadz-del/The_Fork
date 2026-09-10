@@ -450,6 +450,7 @@ async def _stream_from_predefined(
     params: Optional[Dict[str, Any]] = None,
     deliverable: Optional[bool] = None,
     emit_start: bool = True,
+    conversation_id: Optional[str] = None,
 ):
     """Run the orchestrator's predefined reasoning for a known workflow and
     yield SSE events (same shape as the heavy path). Intent-gated: a question
@@ -459,6 +460,34 @@ async def _stream_from_predefined(
     rid = get_request_id()
     if emit_start:
         yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'mode': 'predefined', 'request_id': rid})}\n\n"
+
+    from app.core.conversation_wbs import fulfill_wbs_export, message_wants_wbs_export
+
+    def _persist_predefined_turn(answer: str) -> None:
+        if not conversation_id:
+            return
+        try:
+            from app.core import agent_memory
+            agent_memory.get_or_create_conversation(
+                conversation_id, "project-assistant", project_id,
+            )
+            agent_memory.append_message(conversation_id, "user", user_message)
+            agent_memory.append_message(conversation_id, "assistant", answer)
+        except Exception:  # noqa: BLE001 — persist must never break the stream
+            logger.exception("predefined: could not persist conversation turn")
+
+    # F-BAT-D H2: "Export F1 WBS as xlsx" after a chat-built WBS must bind
+    # to that snapshot. Re-running generate_wbs from the export ask used
+    # to serve the 204-activity building scaffold.
+    if message_wants_wbs_export(user_message):
+        answer, exports = fulfill_wbs_export(
+            user_message, project_id, conversation_id, "project-assistant",
+        )
+        for word in answer.split(" "):
+            yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
+            await asyncio.sleep(0.01)
+        yield f"data: {json.dumps({'type': 'end', 'complete': True, 'mode': 'predefined', 'workflow': 'export_wbs', 'plan_steps': [], 'exports': exports, 'tools': ['export_wbs'], 'request_id': rid})}\n\n"
+        return
 
     # Tenant gate — same as the heavy path: drop project_id when not owned.
     safe_project_id = project_id
@@ -483,6 +512,7 @@ async def _stream_from_predefined(
         "project_name": project_name or "Project",
         "document_ids": document_ids if safe_project_id else [],
         "params": {k: v for k, v in (params or {}).items() if v is not None},
+        "conversation_id": conversation_id,
     }
     if deliverable is not None:
         context["deliverable"] = deliverable   # dynamic UNDERSTAND verdict wins
@@ -494,6 +524,7 @@ async def _stream_from_predefined(
     resolved_params, param_error = _resolve_predefined_file_params(
         action, safe_project_id, context["params"], user_message)
     if param_error:
+        _persist_predefined_turn(param_error)
         for word in param_error.split(" "):
             yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
             await asyncio.sleep(0.01)
@@ -526,6 +557,7 @@ async def _stream_from_predefined(
         return
 
     answer = out.get("answer") or "(no answer produced)"
+    _persist_predefined_turn(answer)
     for word in answer.split(" "):
         yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
         await asyncio.sleep(0.01)
@@ -921,9 +953,12 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
                 from app.core.answer_report_intent import (
                     message_wants_answer_report,
                 )
+                from app.core.conversation_wbs import message_wants_wbs_export
                 if message_is_contract_data_lookup(prompt):
                     intent = {"action": None}
                 elif message_wants_answer_report(prompt):
+                    intent = {"action": None}
+                elif message_wants_wbs_export(prompt):
                     intent = {"action": None}
                 else:
                     intent = await understand_intent(
@@ -947,6 +982,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
                     project_id=project_id, user_id=user_id, session_id=session_id,
                     document_ids=document_ids, params=merged,
                     deliverable=intent.get("deliverable"), emit_start=False,
+                    conversation_id=conversation_id,
                 ):
                     yield evt
                 return

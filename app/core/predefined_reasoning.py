@@ -117,6 +117,9 @@ def lookup_question_hijack(message: str, confidence: float) -> bool:
         return True
     if message_wants_answer_report(message):
         return True
+    from app.core.conversation_wbs import message_wants_wbs_export
+    if message_wants_wbs_export(message):
+        return True
     if confidence >= 0.5:
         return False
     msg = (message or "").strip()
@@ -312,10 +315,27 @@ def deliver_schedule(session: ProjectSession, deliverable: bool,
 
 def _export_descriptor(context: Dict[str, Any]) -> Dict[str, Any] | None:
     """Intent-gated materialization: the export endpoint (the render API call)
-    the deliverable should be produced from, on click. None when no project."""
+    the deliverable should be produced from, on click. None when no project.
+
+    When a conversation already has a staged WBS, the offer binds to that
+    snapshot (F-BAT-D H2). Re-running schedule-from-brief from the current
+    message used to serve the 204-activity building scaffold instead.
+    """
     project_id = context.get("project_id")
     if not project_id:
         return None
+    conversation_id = context.get("conversation_id")
+    if conversation_id:
+        from app.core.conversation_wbs import (
+            conversation_schedule_export_descriptor,
+            load_conversation_wbs,
+        )
+        staged = load_conversation_wbs(str(conversation_id))
+        if staged:
+            n = len(staged.get("activities") or [])
+            return conversation_schedule_export_descriptor(
+                project_id, str(conversation_id), n,
+            )
     p = context.get("params") or {}
     doc_ids = context.get("document_ids") or []
     if doc_ids:
@@ -328,6 +348,8 @@ def _export_descriptor(context: Dict[str, Any]) -> Dict[str, Any] | None:
     for k in ("project_type", "start_date", "day_rate", "duration_overrides"):
         if p.get(k) is not None:
             payload[k] = p[k]
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
     return {"label": "Schedule (Excel)", "format": "xlsx", "method": "POST",
             "endpoint": endpoint, "payload": payload}
 
@@ -695,6 +717,11 @@ async def run_workflow(action: str, context: Dict[str, Any],
     run = await PlanExecutor().run(plan, session)
     deliver = DELIVER_REGISTRY.get(action, deliver_schedule)
     answer = deliver(session, deliverable, context.get("message") or "")
+    wbs = session.data.get("wbs") if isinstance(session.data.get("wbs"), dict) else {}
+    cid = context.get("conversation_id")
+    if cid and wbs:
+        from app.core.conversation_wbs import stage_conversation_wbs
+        stage_conversation_wbs(str(cid), wbs)
     export = _export_descriptor(context) if deliverable else None
     return {
         "handled": True,
