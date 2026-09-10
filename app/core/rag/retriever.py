@@ -519,6 +519,10 @@ class _ContractScope:
         self._e1_compose_in_pool = False
         self._schedule_labels: List[str] = []
         self._schedule_register_in_pool = False
+        # F-BAT-D G3/G6: Contract Data "not required" / empty commencement
+        # over Schedule 8 form % and commencement-pack dates.
+        self._pcg_cd_in_pool = False
+        self._commencement_cd_in_pool = False
         # OLD-pack G4: D529.3 Amount is Rate Only. Priced lookalikes
         # (D549.2 fence, D599.5 carriageway, Excluded culvert) used to
         # occupy every slot and the model greeted. Not #504/#505/#506.
@@ -617,6 +621,21 @@ class _ContractScope:
                         chunk_states_schedule_register(text, self._schedule_labels)
                         for _name, text in docs
                     )
+            if (
+                pcg_value_rescue_enabled()
+                and query_asks_for_parent_company_guarantee(self.query)
+            ):
+                self._pcg_cd_in_pool = any(
+                    chunk_states_pcg_contract_data(text) for _n, text in docs
+                )
+            if (
+                commencement_date_rescue_enabled()
+                and query_asks_for_contract_commencement_date(self.query)
+            ):
+                self._commencement_cd_in_pool = any(
+                    chunk_states_commencement_contract_data(text)
+                    for _n, text in docs
+                )
             # Leftover E1 (rate × ACA in SAR/day) is not a CESMM quote.
             # A priced D549.2 / D599.5 row in the same unnamed pool must
             # not fence out Contract Data operands — that refuse-closes
@@ -720,6 +739,12 @@ class _ContractScope:
             if not chunk_states_schedule_register(
                 chunk_text, self._schedule_labels,
             ):
+                return False
+        if self._pcg_cd_in_pool:
+            if not chunk_states_pcg_contract_data(chunk_text):
+                return False
+        if self._commencement_cd_in_pool:
+            if not chunk_states_commencement_contract_data(chunk_text):
                 return False
         if self.named:
             return filename_matches_named_contracts(
@@ -1672,6 +1697,14 @@ def _apply_contract_data_filename_boost(
     want_eng = query_asks_who_the_engineer_is(query)
     want_e1 = query_asks_delay_damages_daily_amount(query)
     want_dnp = query_asks_for_defects_notification_period(query)
+    want_pcg = (
+        pcg_value_rescue_enabled()
+        and query_asks_for_parent_company_guarantee(query)
+    )
+    want_comm = (
+        commencement_date_rescue_enabled()
+        and query_asks_for_contract_commencement_date(query)
+    )
     for i, (score, chunk) in enumerate(scored):
         name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
         if not filename_looks_like_contract_data(name):
@@ -1681,6 +1714,7 @@ def _apply_contract_data_filename_boost(
         # lift the row that answers — an ACA-only Contract Data file
         # must not steal Time for Completion (test_a3_is_not_stolen).
         # E1 lifts the two compose operands, not every CD sibling.
+        # G3/G6 lift only the answering PCG / commencement row.
         if want_tfc and not want_aca and not chunk_states_time_for_completion(text):
             continue
         if want_eng and not want_aca and not chunk_states_engineer_identity(text):
@@ -1688,6 +1722,10 @@ def _apply_contract_data_filename_boost(
         if want_e1 and not want_aca and not chunk_states_delay_damages_rate(text):
             continue
         if want_dnp and not want_aca and not chunk_states_defects_notification_period(text):
+            continue
+        if want_pcg and not want_aca and not chunk_states_pcg_contract_data(text):
+            continue
+        if want_comm and not want_aca and not chunk_states_commencement_contract_data(text):
             continue
         boosted = score + _CONTRACT_DATA_FILENAME_BONUS
         chunk.score = round(boosted, 6)
@@ -1743,6 +1781,10 @@ def _rescue_contract_data_docs(
             keep = _chunk_is_e1_compose_operand
         elif query_asks_for_defects_notification_period(query):
             keep = chunk_states_defects_notification_period
+        elif query_asks_for_parent_company_guarantee(query):
+            keep = chunk_states_pcg_contract_data
+        elif query_asks_for_contract_commencement_date(query):
+            keep = chunk_states_commencement_contract_data
         paired = _pair_adjacent_keep_text(hits, keep) if keep else []
         e1 = query_asks_delay_damages_daily_amount(query)
         for chunk in paired:
@@ -1970,6 +2012,436 @@ def _rescue_schedule_register_chunks(
             "schedule-register rescue recovered %d chunk(s) for labels %r",
             recovered, labels,
         )
+    return recovered
+
+
+# ── G3 / G6 honest-refusal (Contract Data over form / pack) ─────────────
+#
+# Live F-BAT-D on BASELINE 0d9fd23:
+#
+#   G3 — "What is the value of the Parent Company Guarantee?"
+#   Contract Data 4.3.7 = No / not required. Cosine preferred the
+#   Schedule 8 form's "20% of paid-up Capital and Reserves" and the
+#   model invented a monetary value. The form is a blank template;
+#   "not required" IS the answer.
+#
+#   G6 — "What is the Commencement Date of the contract?"
+#   Tender Contract Data field is empty / tied to LOA-NOA. Cosine
+#   preferred a Construction Commencement Pack Report and the model
+#   invented 10 January 2024. That pack is site commencement, not
+#   the contract Commencement Date particular.
+#
+# Same shape as G1 (register row over Vol 4 prose) and G4 (Rate Only
+# over priced lookalikes): rescue the Contract Data row, fence the
+# lookalike, instruct compose, graft if the model still invents.
+# Do not invent: the excerpt itself must already say not required /
+# not populated, or a filled CD value/date. Kill-switches:
+# RAG_PCG_VALUE_RESCUE=0 / RAG_COMMENCEMENT_DATE_RESCUE=0.
+#
+# Not #506 (G1 Schedule 10), not #542 (G4 Rate Only). A filled
+# Contract Data value or date still wins — this only refuses the
+# form/pack when CD already answered.
+_PCG_HONEST_BONUS = 2.0
+_COMMENCEMENT_HONEST_BONUS = 2.0
+_PCG_ASK_RE = re.compile(r"(?i)\bparent\s+company\s+guarantee\b|\bpcg\b")
+_PCG_NOT_REQUIRED_RE = re.compile(
+    r"(?i)(?:not\s+required|is\s+not\s+used|not\s+applicable|"
+    r"\bno\b\s+(?:parent\s+company\s+guarantee|pcg)\s+is\s+required|"
+    r"parent\s+company\s+guarantee\s+is\s+not\s+required|"
+    r"parent\s+company\s+guarantee\s*[:|–—-]?\s*(?:no|none)\b)"
+)
+_PCG_NO_ROW_RE = re.compile(
+    r"(?i)(?:^|\n)\s*(?:no\.?|none)\s*(?:[.\n]|$)",
+)
+_PCG_FORM_RE = re.compile(
+    r"(?i)(?:paid[- ]up\s+capital|form\s+of\s+parent\s+company|"
+    r"schedule\s+8\b|the\s+guarantor\s+shall|"
+    r"\[\s*(?:insert|name|amount|date)\b)",
+)
+_PCG_FILLED_VALUE_RE = re.compile(
+    r"(?i)(?:\d+(?:\.\d+)?\s*%|"
+    r"\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b"
+    r"[^\n]{0,12}\d{1,3}(?:,\d{3})+(?:\.\d+)?)",
+)
+_PCG_CLAUSE_RE = re.compile(r"(?i)\b4\.3\.7\b")
+_COMMENCEMENT_DATE_ASK_RE = re.compile(
+    r"(?i)(?:\bcommencement\s+date\b|"
+    r"when\s+does\s+(?:the\s+|this\s+)?contract\s+commence|"
+    r"when\s+(?:does|is)\s+(?:the\s+|this\s+)?contract\s+"
+    r"(?:start|begin))",
+)
+_COMMENCEMENT_PACK_ASK_RE = re.compile(
+    r"(?i)(?:commencement\s+pack|pack\s+report|"
+    r"site\s+commencement)",
+)
+_COMMENCEMENT_NOT_POPULATED_RE = re.compile(
+    r"(?i)(?:not\s+populated|not\s+stated|not\s+completed|"
+    r"tied\s+to\s+(?:the\s+)?(?:loa|noa|letter\s+of\s+acceptance|"
+    r"notice\s+of\s+(?:award|acceptance)))",
+)
+_COMMENCEMENT_PACK_RE = re.compile(
+    r"(?i)(?:construction\s+commencement\s+pack|"
+    r"commencement\s+pack\s+report|commencement\s+pack)",
+)
+_COMMENCEMENT_LABEL_RE = re.compile(r"(?i)\bcommencement\s+date\b")
+_COMMENCEMENT_FILLED_DATE_RE = re.compile(
+    r"(?i)(?:\b\d{1,2}(?:st|nd|rd|th)?\s+"
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+    r"dec(?:ember)?)\s+\d{4}\b|"
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+    r"dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\b|"
+    r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b)",
+)
+_PCG_VALUE_RESCUE_PHRASES = (
+    "parent company guarantee",
+    "4.3.7",
+    "not required",
+)
+_COMMENCEMENT_RESCUE_PHRASES = (
+    "commencement date",
+    "not populated",
+    "letter of acceptance",
+)
+
+
+def pcg_value_rescue_enabled() -> bool:
+    """ON by default — live G3 form-template invention.
+
+    RAG_PCG_VALUE_RESCUE=0 restores pre-fix ranking if the lift is noisy.
+    """
+    return _env_flag_on("RAG_PCG_VALUE_RESCUE")
+
+
+def commencement_date_rescue_enabled() -> bool:
+    """ON by default — live G6 commencement-pack invention.
+
+    RAG_COMMENCEMENT_DATE_RESCUE=0 restores pre-fix ranking if noisy.
+    """
+    return _env_flag_on("RAG_COMMENCEMENT_DATE_RESCUE")
+
+
+def query_asks_for_parent_company_guarantee(query: str) -> bool:
+    """True for G3 — the value of the Parent Company Guarantee.
+
+    Performance bond / performance guarantee stay on their own path.
+    Definition questions are not this class.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if re.search(r"(?i)performance\s+(?:bond|security|guarantee)", q):
+        return False
+    return bool(_PCG_ASK_RE.search(q))
+
+
+def query_asks_for_site_commencement_pack(query: str) -> bool:
+    """True when the ask wants site commencement from a pack, not CD."""
+    return bool(_COMMENCEMENT_PACK_ASK_RE.search(query or ""))
+
+
+def query_asks_for_contract_commencement_date(query: str) -> bool:
+    """True for G6 — the contract Commencement Date particular.
+
+    Time for Completion ('N days from the Commencement Date') and an
+    explicit commencement-pack / site-commencement ask stay off this
+    path so a filled TfC row and a pack report can still answer those.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if query_asks_for_time_for_completion(q):
+        return False
+    if re.search(r"(?i)time\s+for\s+completion", q):
+        return False
+    if query_asks_for_site_commencement_pack(q):
+        return False
+    return bool(_COMMENCEMENT_DATE_ASK_RE.search(q))
+
+
+def _chunk_mentions_pcg(text: str) -> bool:
+    blob = _normalize_retrieval_ws(text)
+    return bool(_PCG_ASK_RE.search(blob) or _PCG_CLAUSE_RE.search(blob))
+
+
+def chunk_states_pcg_form_template(text: str) -> bool:
+    """True for Schedule 8 / blank-form PCG wording, not Contract Data."""
+    if not text or not _chunk_mentions_pcg(text):
+        return False
+    if _PCG_NOT_REQUIRED_RE.search(text):
+        return False
+    return bool(_PCG_FORM_RE.search(text))
+
+
+def chunk_states_pcg_not_required(text: str) -> bool:
+    """True when Contract Data (or a particulars row) says PCG is No.
+
+    Does not invent: the excerpt itself must already say not required
+    / No. Form language that mentions a % of paid-up capital is not
+    this class even when it also names the guarantee.
+    """
+    if not text or not _chunk_mentions_pcg(text):
+        return False
+    if chunk_states_pcg_form_template(text):
+        return False
+    if _PCG_NOT_REQUIRED_RE.search(text):
+        return True
+    # Heading + "No." on the next line (fixture S1 / live 4.3.7).
+    if _PCG_NO_ROW_RE.search(text) and not _PCG_FILLED_VALUE_RE.search(text):
+        return True
+    return False
+
+
+def chunk_states_pcg_filled_value(text: str) -> bool:
+    """True when Contract Data states a PCG amount or percentage.
+
+    The Schedule 8 form's paid-up-capital % is not a filled particular.
+    """
+    if not text or not _chunk_mentions_pcg(text):
+        return False
+    if chunk_states_pcg_not_required(text):
+        return False
+    if chunk_states_pcg_form_template(text):
+        return False
+    return bool(_PCG_FILLED_VALUE_RE.search(text))
+
+
+def chunk_states_pcg_contract_data(text: str) -> bool:
+    """CD already answered G3 — not required, or a filled value."""
+    return chunk_states_pcg_not_required(text) or chunk_states_pcg_filled_value(text)
+
+
+def chunk_states_commencement_pack(text: str) -> bool:
+    """True for a Construction Commencement Pack / site-start report."""
+    return bool(_COMMENCEMENT_PACK_RE.search(text or ""))
+
+
+def chunk_states_commencement_not_populated(text: str) -> bool:
+    """True when Contract Data says the commencement field is empty.
+
+    Tied-to-LOA/NOA is the same class. A pack report that happens to
+    mention LOA is not this row.
+    """
+    if not text or not _COMMENCEMENT_LABEL_RE.search(text):
+        return False
+    if chunk_states_commencement_pack(text):
+        return False
+    return bool(_COMMENCEMENT_NOT_POPULATED_RE.search(text))
+
+
+def chunk_states_commencement_filled_date(text: str) -> bool:
+    """True when Contract Data itself states a commencement calendar date."""
+    if not text or not _COMMENCEMENT_LABEL_RE.search(text):
+        return False
+    if chunk_states_commencement_not_populated(text):
+        return False
+    if chunk_states_commencement_pack(text):
+        return False
+    return bool(_COMMENCEMENT_FILLED_DATE_RE.search(text))
+
+
+def chunk_states_commencement_contract_data(text: str) -> bool:
+    """CD already answered G6 — not populated, or a filled date."""
+    return (
+        chunk_states_commencement_not_populated(text)
+        or chunk_states_commencement_filled_date(text)
+    )
+
+
+def format_pcg_honest_line(excerpt: str = "") -> str:
+    """User-facing G3 sentence. Does not invent a % from the form."""
+    if chunk_states_pcg_filled_value(excerpt):
+        match = _PCG_FILLED_VALUE_RE.search(excerpt or "")
+        value = (match.group(0) or "").strip() if match else ""
+        if value:
+            return (
+                f"The Parent Company Guarantee is {value} "
+                f"(Contract Data 4.3.7)."
+            )
+    return (
+        "A Parent Company Guarantee is not required "
+        "(Contract Data 4.3.7)."
+    )
+
+
+def format_commencement_honest_line(excerpt: str = "") -> str:
+    """User-facing G6 sentence. Does not invent a pack date."""
+    if chunk_states_commencement_filled_date(excerpt):
+        match = _COMMENCEMENT_FILLED_DATE_RE.search(excerpt or "")
+        value = (match.group(0) or "").strip() if match else ""
+        if value:
+            return f"The Commencement Date of the contract is {value}."
+    return (
+        "The Commencement Date is not populated in the Contract Data; "
+        "it is tied to LOA/NOA issuance."
+    )
+
+
+def answer_states_pcg_not_required(text: str) -> bool:
+    """True when the answer already elects not required / no PCG value."""
+    blob = text or ""
+    if _PCG_NOT_REQUIRED_RE.search(blob):
+        return True
+    return bool(re.search(r"(?i)\bno\s+value\b|\bno parent company guarantee\b", blob))
+
+
+def answer_states_commencement_not_populated(text: str) -> bool:
+    """True when the answer already elects not populated / tied to LOA."""
+    blob = text or ""
+    if _COMMENCEMENT_NOT_POPULATED_RE.search(blob):
+        return True
+    return bool(re.search(r"(?i)\b(?:loa|noa)\b", blob) and re.search(
+        r"(?i)(?:tied|issuance|not\s+populated|not\s+stated)", blob,
+    ))
+
+
+def answer_invents_pcg_value(text: str) -> bool:
+    """True when the answer quotes a % / money / paid-up-capital figure."""
+    blob = text or ""
+    if _PCG_FORM_RE.search(blob):
+        return True
+    return bool(_PCG_FILLED_VALUE_RE.search(blob))
+
+
+def answer_invents_commencement_date(text: str) -> bool:
+    """True when the answer states a calendar date as commencement."""
+    return bool(_COMMENCEMENT_FILLED_DATE_RE.search(text or ""))
+
+
+def _apply_pcg_value_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift the Contract Data PCG row over the Schedule 8 form."""
+    if not pcg_value_rescue_enabled():
+        return
+    if not query_asks_for_parent_company_guarantee(query):
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_pcg_contract_data(chunk.text or ""):
+            continue
+        boosted = score + _PCG_HONEST_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _apply_commencement_date_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift the empty/filled CD commencement row over a pack."""
+    if not commencement_date_rescue_enabled():
+        return
+    if not query_asks_for_contract_commencement_date(query):
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_commencement_contract_data(chunk.text or ""):
+            continue
+        boosted = score + _COMMENCEMENT_HONEST_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_pcg_value_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: Optional[List[str]] = None,
+) -> int:
+    """Pull the Contract Data 4.3.7 / not-required row into ``fused``."""
+    if not pcg_value_rescue_enabled():
+        return 0
+    if not query_asks_for_parent_company_guarantee(query):
+        return 0
+    recovered = _rescue_chunks_matching(
+        project_id, fused, store, _PCG_VALUE_RESCUE_PHRASES,
+        chunk_states_pcg_contract_data, label="pcg-value",
+        bonus=_PCG_HONEST_BONUS,
+    )
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return recovered
+    pids = [project_id] + [
+        p for p in (extra_pids or []) if p and p != project_id
+    ]
+    needle_sets = (
+        ["parent company guarantee", "not required"],
+        ["parent company guarantee"],
+        ["4.3.7"],
+    )
+    for pid in pids:
+        for needles in needle_sets:
+            try:
+                hits = fetch(pid, needles, k=20)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "pcg-value rescue for %s (%r) failed: %s",
+                    pid, needles, exc,
+                )
+                continue
+            for chunk in hits:
+                if not chunk_states_pcg_contract_data(chunk.text or ""):
+                    continue
+                if chunk.chunk_id in fused:
+                    continue
+                fused[chunk.chunk_id] = (chunk, 0.0, _PCG_HONEST_BONUS)
+                recovered += 1
+    if recovered:
+        logger.info("pcg-value rescue recovered %d chunk(s)", recovered)
+    return recovered
+
+
+def _rescue_commencement_date_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: Optional[List[str]] = None,
+) -> int:
+    """Pull the empty / filled Contract Data commencement row into ``fused``."""
+    if not commencement_date_rescue_enabled():
+        return 0
+    if not query_asks_for_contract_commencement_date(query):
+        return 0
+    recovered = _rescue_chunks_matching(
+        project_id, fused, store, _COMMENCEMENT_RESCUE_PHRASES,
+        chunk_states_commencement_contract_data, label="commencement-date",
+        bonus=_COMMENCEMENT_HONEST_BONUS,
+    )
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return recovered
+    pids = [project_id] + [
+        p for p in (extra_pids or []) if p and p != project_id
+    ]
+    needle_sets = (
+        ["commencement date", "not populated"],
+        ["commencement date", "loa"],
+        ["commencement date"],
+    )
+    for pid in pids:
+        for needles in needle_sets:
+            try:
+                hits = fetch(pid, needles, k=20)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "commencement-date rescue for %s (%r) failed: %s",
+                    pid, needles, exc,
+                )
+                continue
+            for chunk in hits:
+                if not chunk_states_commencement_contract_data(chunk.text or ""):
+                    continue
+                if chunk.chunk_id in fused:
+                    continue
+                fused[chunk.chunk_id] = (
+                    chunk, 0.0, _COMMENCEMENT_HONEST_BONUS,
+                )
+                recovered += 1
+    if recovered:
+        logger.info("commencement-date rescue recovered %d chunk(s)", recovered)
     return recovered
 
 
@@ -3580,7 +4052,7 @@ def extract_defects_notification_period(text: str) -> Optional[str]:
 
 
 def query_wants_contract_data_file(query: str) -> bool:
-    """A2 / A3 / A6 / A9 / E1 live in a Contract Data file, not PSA / CPM."""
+    """A2 / A3 / A6 / A9 / E1 / G3 / G6 live in a Contract Data file, not PSA / CPM."""
     return (
         query_asks_for_accepted_contract_amount(query)
         or query_asks_for_time_for_completion(query)
@@ -3589,6 +4061,14 @@ def query_wants_contract_data_file(query: str) -> bool:
         or (
             dnp_rescue_enabled()
             and query_asks_for_defects_notification_period(query)
+        )
+        or (
+            pcg_value_rescue_enabled()
+            and query_asks_for_parent_company_guarantee(query)
+        )
+        or (
+            commencement_date_rescue_enabled()
+            and query_asks_for_contract_commencement_date(query)
         )
     )
 
@@ -6022,6 +6502,14 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
+    _rescue_pcg_value_chunks(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
+    _rescue_commencement_date_chunks(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
     _rescue_rate_only_item_chunks(
         query, project_id, fused_lex, store,
     )
@@ -6048,6 +6536,8 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _apply_contract_data_filename_boost(query, scored_lex, name_by_id)
     _apply_asked_particular_value_boost(query, scored_lex)
     _apply_schedule_register_boost(query, scored_lex)
+    _apply_pcg_value_boost(query, scored_lex)
+    _apply_commencement_date_boost(query, scored_lex)
     _apply_rate_only_boost(query, scored_lex)
     _apply_priced_boq_boost(query, scored_lex)
     _apply_spec_precedence_list_boost(query, scored_lex)
@@ -6540,6 +7030,16 @@ def retrieve_with_filter(
         store,
         extra_pids=extra_rescue_pids,
     )
+    # G3/G6: Contract Data "not required" / empty commencement over
+    # Schedule 8 form % and commencement-pack dates.
+    _rescue_pcg_value_chunks(
+        query, project_id, fused, store,
+        extra_pids=extra_rescue_pids,
+    )
+    _rescue_commencement_date_chunks(
+        query, project_id, fused, store,
+        extra_pids=extra_rescue_pids,
+    )
     # G4: Rate Only CESMM row (D529.3) vs priced lookalikes. Project-only
     # so a curated CESMM note cannot impersonate the client's Amount.
     _rescue_rate_only_item_chunks(query, project_id, fused, store)
@@ -6669,6 +7169,8 @@ def retrieve_with_filter(
     _apply_contract_data_filename_boost(query, scored, name_by_id)
     _apply_asked_particular_value_boost(query, scored)
     _apply_schedule_register_boost(query, scored)
+    _apply_pcg_value_boost(query, scored)
+    _apply_commencement_date_boost(query, scored)
     _apply_rate_only_boost(query, scored)
     _apply_priced_boq_boost(query, scored)
     _apply_spec_precedence_list_boost(query, scored)

@@ -150,10 +150,11 @@ def test_a_document_that_names_itself_a_blank_form_is_a_template(name):
     "Blanket wayleave agreement.pdf",
 ])
 def test_a_real_contract_document_is_not_demoted_by_a_near_miss(name):
-    """G3 answered correctly out of "the Schedule 8 form". A rule that fired
-    on the bare word "form" -- or on "Templeton", or "Blanket" -- would
-    reclassify live contract documents as blank ones and break a passing
-    trap.
+    """The filename still must not be demoted by the bare word "form".
+    G3 honesty (Contract Data 4.3.7 "not required" over the Schedule 8
+    blank %) is a dedicated retriever/compose gate, not this classifier.
+    A rule that fired on "form" -- or on "Templeton", or "Blanket" --
+    would reclassify live contract documents as blank ones.
 
     Mutation killed: dropping the word boundaries from the name pattern.
     """
