@@ -48,6 +48,11 @@ def test_parser_accepts_repeatable_and_comma_separated_folder_ids():
     assert parse_folder_ids(args.folder_ids) == ["aaa", "bbb", "ccc"]
 
 
+def test_parser_accepts_reingest_old_id():
+    args = build_parser().parse_args(["--reingest", "b5033ec2"])
+    assert args.reingest == "b5033ec2"
+
+
 def test_parser_omitting_folder_id_leaves_default_unset():
     args = build_parser().parse_args(["--tier", "1", "--resume"])
     assert args.folder_ids is None

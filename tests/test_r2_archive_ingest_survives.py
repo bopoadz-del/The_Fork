@@ -260,7 +260,7 @@ def _install_ingest_fakes(monkeypatch, archive_impl, added: List[Dict[str, Any]]
     )
     monkeypatch.setattr(
         "app.core.doc_index.index_document",
-        lambda pid, did: indexed.append(did) or {"status": "ok", "rag_indexed": 2},
+        lambda pid, did, **k: indexed.append(did) or {"status": "ok", "rag_indexed": 2},
     )
     monkeypatch.setattr("app.core.r2_storage.delete_local_archive", lambda p: None)
 

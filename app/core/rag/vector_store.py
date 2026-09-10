@@ -608,11 +608,75 @@ class VectorStore:
         # FTS5 mirror (SQLite only). Idempotent.
         if not self._use_pgvector:
             self._ensure_fts5_sqlite()
+        # Cached: isolated vector-store test DBs have no documents table.
+        self._visibility_ready: Optional[bool] = None
 
     @property
     def fast_search(self) -> bool:
         """True when search uses pgvector ANN on PostgreSQL."""
         return self._use_pgvector
+
+    def _docs_visibility_ready(self, session: Optional[Session] = None) -> bool:
+        """True when ``documents.retrieval_visible`` can gate this store.
+
+        Isolated hybrid-test DBs create only the chunks table. A missing
+        documents table must not empty the result set — those chunks stay
+        visible. Cached per store after the first probe.
+        """
+        if self._visibility_ready is not None:
+            return self._visibility_ready
+        close = False
+        if session is None:
+            session = self._session_factory()()
+            close = True
+        try:
+            session.execute(text("SELECT retrieval_visible FROM documents LIMIT 0"))
+            self._visibility_ready = True
+        except Exception:
+            try:
+                session.rollback()
+            except Exception:
+                logger.debug(
+                    "visibility probe rollback failed; treating documents "
+                    "as ungated",
+                    exc_info=True,
+                )
+            self._visibility_ready = False
+        finally:
+            if close:
+                session.close()
+        return self._visibility_ready
+
+    def _hidden_doc_sql(self, chunk_alias: str = "c") -> str:
+        """AND-clause that hides ``retrieval_visible = false`` rows.
+
+        Chunks with no documents row stay visible (NOT EXISTS). Dialect-
+        split because SQLite stores the boolean as 0/1.
+        """
+        if self._visibility_ready is not True:
+            return ""
+        flag = "IS FALSE" if self._use_pgvector else "= 0"
+        return (
+            f" AND NOT EXISTS (SELECT 1 FROM documents d "
+            f"WHERE d.id = {chunk_alias}.doc_id "
+            f"AND d.retrieval_visible {flag})"
+        )
+
+    def _hidden_doc_ids(self, session: Session, project_id: str) -> Set[str]:
+        if not self._docs_visibility_ready(session):
+            return set()
+        try:
+            rows = session.execute(
+                select(Document.id).where(
+                    Document.project_id == project_id,
+                    Document.retrieval_visible.is_(False),
+                )
+            ).scalars().all()
+        except SQLAlchemyError:
+            session.rollback()
+            self._visibility_ready = False
+            return set()
+        return {str(r) for r in rows}
 
     def _verify_embedding_identity(self) -> None:
         """Fail loud if the namespace contains chunks from a different model.
@@ -1316,18 +1380,21 @@ class VectorStore:
             ident_clauses.append("(" + " AND ".join(token_clauses) + ")")
 
         like_clauses = " OR ".join(ident_clauses)
-        sql = text(
-            "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
-            "knowledge_layer, authority "
-            f"FROM {self._table_name} "
-            "WHERE project_id = :project_id "
-            f"AND ({like_clauses}) "
-            "LIMIT :k"
-        )
-
+        vis = ""
         try:
             with self._lock:
                 with self._session_factory()() as session:
+                    if self._docs_visibility_ready(session):
+                        vis = self._hidden_doc_sql(self._table_name)
+                    sql = text(
+                        "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
+                        "knowledge_layer, authority "
+                        f"FROM {self._table_name} "
+                        "WHERE project_id = :project_id "
+                        f"AND ({like_clauses}) "
+                        f"{vis} "
+                        "LIMIT :k"
+                    )
                     rows = session.execute(sql, params).all()
         except OperationalError as e:
             logger.warning(
@@ -1422,11 +1489,20 @@ class VectorStore:
                 score_expr,
             )
             .where(self._rag_chunk_cls.project_id == project_id)
-            .order_by(distance)
-            .limit(k)
         )
         with self._lock:
             with self._session_factory()() as session:
+                if self._docs_visibility_ready(session):
+                    hidden = (
+                        select(Document.id)
+                        .where(
+                            Document.id == self._rag_chunk_cls.doc_id,
+                            Document.retrieval_visible.is_(False),
+                        )
+                        .exists()
+                    )
+                    stmt = stmt.where(~hidden)
+                stmt = stmt.order_by(distance).limit(k)
                 _enable_iterative_scan(session)
                 rows = session.execute(stmt).all()
         return [
@@ -1449,7 +1525,11 @@ class VectorStore:
         stmt = select(self._rag_chunk_cls).where(self._rag_chunk_cls.project_id == project_id)
         with self._lock:
             with self._session_factory()() as session:
-                rows = session.scalars(stmt).all()
+                hidden = self._hidden_doc_ids(session, project_id)
+                rows = [
+                    r for r in session.scalars(stmt).all()
+                    if r.doc_id not in hidden
+                ]
 
         if not rows:
             return []
@@ -1521,21 +1601,25 @@ class VectorStore:
         if not safe_query:
             return []
         table = self._table_name
-        sql = text(
-            f"""
-            SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
-                   c.text, c.knowledge_layer, c.authority,
-                   ts_rank(c.text_search, q) AS rank
-            FROM {table} c, websearch_to_tsquery('english', :q) AS q
-            WHERE c.text_search @@ q
-              AND c.project_id = :project_id
-            ORDER BY rank DESC
-            LIMIT :k
-            """
-        )
+        vis = ""
         try:
             with self._lock:
                 with self._session_factory()() as session:
+                    if self._docs_visibility_ready(session):
+                        vis = self._hidden_doc_sql("c")
+                    sql = text(
+                        f"""
+                        SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
+                               c.text, c.knowledge_layer, c.authority,
+                               ts_rank(c.text_search, q) AS rank
+                        FROM {table} c, websearch_to_tsquery('english', :q) AS q
+                        WHERE c.text_search @@ q
+                          AND c.project_id = :project_id
+                          {vis}
+                        ORDER BY rank DESC
+                        LIMIT :k
+                        """
+                    )
                     rows = session.execute(
                         sql,
                         {"q": safe_query, "project_id": project_id, "k": k},
@@ -1578,22 +1662,26 @@ class VectorStore:
             return []
         table = self._table_name
         fts_table = f"{table}_fts"
-        sql = text(
-            f"""
-            SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
-                   c.text, c.knowledge_layer, c.authority,
-                   {fts_table}.rank AS bm25_rank
-            FROM {fts_table}
-            JOIN {table} c ON c.rowid = {fts_table}.rowid
-            WHERE {fts_table} MATCH :q
-              AND c.project_id = :project_id
-            ORDER BY {fts_table}.rank
-            LIMIT :k
-            """
-        )
+        vis = ""
         try:
             with self._lock:
                 with self._session_factory()() as session:
+                    if self._docs_visibility_ready(session):
+                        vis = self._hidden_doc_sql("c")
+                    sql = text(
+                        f"""
+                        SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
+                               c.text, c.knowledge_layer, c.authority,
+                               {fts_table}.rank AS bm25_rank
+                        FROM {fts_table}
+                        JOIN {table} c ON c.rowid = {fts_table}.rowid
+                        WHERE {fts_table} MATCH :q
+                          AND c.project_id = :project_id
+                          {vis}
+                        ORDER BY {fts_table}.rank
+                        LIMIT :k
+                        """
+                    )
                     rows = session.execute(
                         sql,
                         {"q": safe_query, "project_id": project_id, "k": k},

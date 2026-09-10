@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Response
 
 from app.blocks import BLOCK_REGISTRY, FAILED_BLOCKS
-from app.core.health_probes import probe_database, probe_embedder
+from app.core.health_probes import probe_corpus_chunks, probe_database, probe_embedder
 from app.dependencies import block_instances, MONITORING_AVAILABLE, get_monitoring_block
 from app.infra.monitoring import get_observability_health_payload
 
@@ -36,6 +36,7 @@ def _evaluate_health() -> dict:
     """
     db = probe_database()
     emb = probe_embedder()
+    corpus = probe_corpus_chunks()
     return {
         # LIVENESS status: the process is up. DB reachability is reflected
         # truthfully as degraded rather than failing this endpoint — /health is
@@ -47,6 +48,9 @@ def _evaluate_health() -> dict:
             "database": db,
             "embedder": emb,
         },
+        # Derived from COUNT(*) on the active chunk table, not the stale
+        # documents.chunk_count column. A probe error does not fail liveness.
+        "corpus": corpus,
         "blocks_loaded": len(block_instances),
         "blocks_available": len(BLOCK_REGISTRY),
         "blocks_failed": {

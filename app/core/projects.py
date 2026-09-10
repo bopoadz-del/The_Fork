@@ -23,11 +23,32 @@ from sqlalchemy import delete, func, or_, select, text as sqla_text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.db import SessionLocal, engine, get_database_url
+from app.core.ingest_status import EXTRACTOR_VERSION, INDEXED
 from app.core.models import Document, IngestionJob, Project, ProjectFact
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class DuplicateContentError(ValueError):
+    """Ingest refused: this sha256 already has a documents row.
+
+    Hard-delete is forbidden. Pass ``reingest_of=<old_id>`` to add a new
+    row and hide the old one (``retrieval_visible=false``).
+    """
+
+    def __init__(self, existing_id: str, content_sha256: str):
+        self.existing_id = existing_id
+        self.content_sha256 = content_sha256
+        super().__init__(
+            f"DUPLICATE_SHA existing_id={existing_id}"
+        )
+
+
+# Live D1 letter pair. Seed is a no-op when either id is absent.
+D1_STALE_DOC_ID = "b5033ec2"
+D1_LIVE_DOC_ID = "93982d45"
 
 # ── pilot master-corpus alias ───────────────────────────────────────────────
 # Per-project Drive approval/indexing is not pilot-ready. Expose the existing
@@ -210,6 +231,15 @@ def _document_as_dict(document: Document) -> Dict[str, Any]:
     meta = coerce_document_metadata(getattr(document, "metadata_", None))
     if getattr(document, "metadata_", None) is not None:
         out["metadata"] = meta
+    out["ingest_status"] = getattr(document, "ingest_status", None)
+    out["ingest_status_reason"] = getattr(document, "ingest_status_reason", None)
+    out["chunk_count"] = int(getattr(document, "chunk_count", 0) or 0)
+    out["superseded_by"] = getattr(document, "superseded_by", None)
+    out["retrieval_visible"] = bool(
+        True if getattr(document, "retrieval_visible", None) is None
+        else document.retrieval_visible
+    )
+    out["extractor_version"] = getattr(document, "extractor_version", None)
     pointers = extract_document_source_pointers(out)
     local = _path_looks_present(out.get("file_path") or "")
     out["has_remote_source"] = bool(
@@ -267,6 +297,7 @@ def _patch_legacy_columns() -> None:
       * projects.is_approved (Alembic 0004)
       * projects.origin       (Alembic 0005)
       * documents.metadata    (Alembic 0009)
+      * documents.superseded_by / retrieval_visible / extractor_version (0017)
     """
     url = get_database_url()
     if not url.startswith("sqlite"):
@@ -300,6 +331,22 @@ def _patch_legacy_columns() -> None:
             if "metadata" not in doc_cols:
                 conn.execute(sqla_text(
                     "ALTER TABLE documents ADD COLUMN metadata TEXT"
+                ))
+                conn.commit()
+            if "superseded_by" not in doc_cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE documents ADD COLUMN superseded_by TEXT"
+                ))
+                conn.commit()
+            if "retrieval_visible" not in doc_cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE documents ADD COLUMN retrieval_visible "
+                    "BOOLEAN NOT NULL DEFAULT 1"
+                ))
+                conn.commit()
+            if "extractor_version" not in doc_cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE documents ADD COLUMN extractor_version TEXT"
                 ))
                 conn.commit()
     except Exception:
@@ -911,8 +958,15 @@ def add_document(
     role: Optional[str] = None,
     content_sha256: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    reingest_of: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Register a document under a project. Storing only — runs no analysis."""
+    """Register a document under a project. Storing only — runs no analysis.
+
+    A non-empty ``content_sha256`` that already exists in this project is
+    refused unless ``reingest_of`` names the old row. That path creates a
+    new id and hides the old one (``retrieval_visible=false``). Hard
+    delete is never used.
+    """
     _ensure_db()
     # Writes go to the BACKING corpus, never the virtual alias — see
     # storage_project_id. Without this, uploading to the Master Corpus violated
@@ -921,6 +975,20 @@ def add_document(
     # A recorded size must describe the bytes that exist, not the default of
     # whichever caller forgot to pass one — see resolve_document_size.
     size = resolve_document_size(size, file_path)
+    if content_sha256 and not reingest_of:
+        existing = find_document_by_sha(project_id, content_sha256)
+        if existing is not None:
+            raise DuplicateContentError(existing["id"], content_sha256)
+    if reingest_of:
+        old_row = get_document(reingest_of)
+        if old_row is None:
+            raise ValueError(f"reingest_of={reingest_of} is not a documents row")
+        old_sha = old_row.get("content_sha256")
+        if content_sha256 and old_sha and old_sha != content_sha256:
+            logger.warning(
+                "reingest sha differs old_id=%s old_sha=%s new_sha=%s",
+                reingest_of, old_sha, content_sha256,
+            )
     did = str(uuid.uuid4())[:8]
     doc_type = classify_doc_type(original_name)
     doc_role = role if role in VALID_ROLES else classify_doc_role(original_name)
@@ -939,9 +1007,12 @@ def add_document(
                     uploaded_at=_now(),
                     content_sha256=content_sha256,
                     metadata_=metadata,
+                    retrieval_visible=True,
                 )
             )
             session.commit()
+    if reingest_of:
+        supersede_document(reingest_of, did)
     with SessionLocal() as session:
         document = session.get(Document, did)
     assert document is not None
@@ -1248,6 +1319,7 @@ def find_document_by_sha(
     if not content_sha256:
         return None
     _ensure_db()
+    project_id = storage_project_id(project_id)
     with SessionLocal() as session:
         document = session.scalars(
             select(Document)
@@ -1259,6 +1331,161 @@ def find_document_by_sha(
             .limit(1)
         ).first()
     return _document_as_dict(document) if document else None
+
+
+def scoped_reingest_of(
+    reingest_of: Optional[str],
+    content_sha256: Optional[str],
+    existing_by_sha: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Return ``reingest_of`` only when this file replaces that row.
+
+    A folder walk that passes ``--reingest OLD_ID`` must not hide OLD_ID
+    behind every other file in the batch. Match is the named id or the
+    same content sha.
+    """
+    if not reingest_of:
+        return None
+    old = get_document(reingest_of)
+    if old is None:
+        return None
+    if existing_by_sha and existing_by_sha.get("id") == reingest_of:
+        return reingest_of
+    if content_sha256 and old.get("content_sha256") == content_sha256:
+        return reingest_of
+    return None
+
+
+def supersede_document(old_id: str, new_id: str) -> Optional[Dict[str, Any]]:
+    """Hide ``old_id`` and point it at ``new_id``. Never deletes a row.
+
+    Reversible: set ``retrieval_visible=true`` and clear ``superseded_by``.
+    """
+    if not old_id or not new_id or old_id == new_id:
+        return None
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            old = session.get(Document, old_id)
+            new = session.get(Document, new_id)
+            if old is None or new is None:
+                return None
+            old.superseded_by = new_id
+            old.retrieval_visible = False
+            session.commit()
+    return get_document(old_id)
+
+
+def stamp_document_index(
+    doc_id: str,
+    *,
+    chunk_count: int,
+    ingest_status: str = INDEXED,
+    ingest_status_reason: Optional[str] = None,
+    extractor_version: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Write ledger columns after a successful (re)index. Never deletes."""
+    if not doc_id:
+        return None
+    _ensure_db()
+    version = extractor_version or EXTRACTOR_VERSION
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document is None:
+                return None
+            document.chunk_count = int(chunk_count)
+            document.ingest_status = ingest_status
+            document.ingest_status_reason = ingest_status_reason
+            document.extractor_version = version
+            document.last_verified_at = _now()
+            session.commit()
+    return get_document(doc_id)
+
+
+def backfill_chunk_counts_from_table(
+    *,
+    project_id: Optional[str] = None,
+    apply: bool = False,
+) -> Dict[str, Any]:
+    """Set ``documents.chunk_count`` from a COUNT of the active chunk table.
+
+    Targets rows where the ledger column is 0 (or stale) but chunks exist.
+    Never deletes. Dry-run unless ``apply``.
+    """
+    _ensure_db()
+    from app.core import ingest_status as ist
+    from app.core.rag.vector_store import get_store
+
+    store = get_store()
+    stmt = select(Document)
+    if project_id:
+        stmt = stmt.where(Document.project_id == storage_project_id(project_id))
+    with SessionLocal() as session:
+        docs = list(session.scalars(stmt).all())
+
+    scanned = 0
+    stale = 0
+    updated = 0
+    by_project: Dict[str, List[Document]] = {}
+    for doc in docs:
+        scanned += 1
+        by_project.setdefault(doc.project_id, []).append(doc)
+
+    for pid, group in by_project.items():
+        counts = store.count_by_doc(pid)
+        for doc in group:
+            real = int(counts.get(doc.id, 0) or 0)
+            if real > 0 and int(doc.chunk_count or 0) != real:
+                stale += 1
+                if apply:
+                    ext = os.path.splitext(doc.original_name or "")[1]
+                    classified = ist.classify(
+                        chunk_count=real, extension=ext,
+                    )
+                    stamp_document_index(
+                        doc.id,
+                        chunk_count=real,
+                        ingest_status=classified.status,
+                        ingest_status_reason=classified.reason,
+                    )
+                    updated += 1
+
+    return {
+        "scanned": scanned,
+        "stale": stale,
+        "updated": updated,
+        "apply": apply,
+        "table": store._table_name,
+    }
+
+
+def seed_d1_letter_supersede() -> Dict[str, Any]:
+    """Ops helper: hide ``b5033ec2`` behind ``93982d45`` when both exist.
+
+    No-op (and never a delete) when either id is missing. Same seed as
+    migration 0017 so a late-arriving corrected copy can be wired after
+    deploy.
+    """
+    _ensure_db()
+    stale = get_document(D1_STALE_DOC_ID)
+    live = get_document(D1_LIVE_DOC_ID)
+    if stale is None or live is None:
+        return {
+            "applied": False,
+            "stale_id": D1_STALE_DOC_ID,
+            "live_id": D1_LIVE_DOC_ID,
+            "stale_present": stale is not None,
+            "live_present": live is not None,
+        }
+    updated = supersede_document(D1_STALE_DOC_ID, D1_LIVE_DOC_ID)
+    return {
+        "applied": True,
+        "stale_id": D1_STALE_DOC_ID,
+        "live_id": D1_LIVE_DOC_ID,
+        "superseded_by": (updated or {}).get("superseded_by"),
+        "retrieval_visible": (updated or {}).get("retrieval_visible"),
+    }
 
 
 def documents_matching_filename_terms(
@@ -1307,6 +1534,7 @@ def documents_matching_filename_terms(
         select(Document.id, Document.original_name, Document.file_path)
         .where(Document.project_id == source_id)
         .where(or_(*term_clauses))
+        .where(Document.retrieval_visible.is_(True))
     )
     if require_letter:
         stmt = stmt.where(or_(name_l.like("%letter%"), path_l.like("%letter%")))

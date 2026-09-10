@@ -2710,12 +2710,53 @@ def _scanned_pdf_missing_ocr(ext: str, meta: dict[str, Any]) -> bool:
     return False
 
 
+def _stamp_index_ledger(
+    document_id: str,
+    filename: str,
+    chunk_count: int,
+    *,
+    stamp_as_indexed: bool = False,
+    extract_failed: bool = False,
+) -> None:
+    """Write documents.chunk_count / ingest_status / extractor_version.
+
+    ``stamp_as_indexed`` is the doc-reindex / --reingest path: those must
+    land INDEXED when any chunks were produced, even if a single window
+    would otherwise classify TEXT_SPARSE. First ingest still uses classify.
+    Never deletes a row.
+    """
+    from app.core import ingest_status as ist
+    from app.core import projects as projects_mod
+
+    ext = os.path.splitext(filename or "")[1]
+    if extract_failed:
+        status, reason = ist.EXTRACT_FAILED, None
+    elif stamp_as_indexed and chunk_count > 0:
+        status, reason = ist.INDEXED, None
+    else:
+        classified = ist.classify(chunk_count=chunk_count, extension=ext)
+        status, reason = classified.status, classified.reason
+    try:
+        projects_mod.stamp_document_index(
+            document_id,
+            chunk_count=chunk_count,
+            ingest_status=status,
+            ingest_status_reason=reason,
+            extractor_version=ist.EXTRACTOR_VERSION,
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "stamp_document_index failed for %s", document_id, exc_info=True,
+        )
+
+
 def index_document(
     project_id: str,
     document_id: str,
     chunker: str = "default",
     *,
     force_ocr: bool = False,
+    stamp_as_indexed: bool = False,
 ) -> dict[str, Any]:
     """Incrementally index a single document into the project's index.
 
@@ -2845,6 +2886,11 @@ def index_document(
             }
             if extract_error:
                 result["extract_error"] = extract_error
+            _stamp_index_ledger(
+                document_id, filename, 0,
+                stamp_as_indexed=stamp_as_indexed,
+                extract_failed=bool(extract_error),
+            )
             return result
         entry = {
             "document_id": document_id,
@@ -2931,6 +2977,9 @@ def index_document(
     _update_index(project_id, _mutate)
 
     if entry is None:
+        _stamp_index_ledger(
+            document_id, filename, 0, stamp_as_indexed=stamp_as_indexed,
+        )
         return {
             "status": "ok",
             "project_id": project_id,
@@ -2938,6 +2987,9 @@ def index_document(
             "skipped_unsupported": 1,
             "total_chunks": 0,
         }
+    _stamp_index_ledger(
+        document_id, filename, len(chunks), stamp_as_indexed=stamp_as_indexed,
+    )
     result = {
         "status": "ok",
         "project_id": project_id,

@@ -29,6 +29,18 @@ def test_init_db_on_fresh_db_has_user_id(monkeypatch, tmp_path):
     assert "user_id" in cols
 
 
+def test_init_db_on_fresh_db_has_retrieval_visible_on_documents(monkeypatch, tmp_path):
+    pm, db_mod = _reload_stores(monkeypatch, tmp_path)
+    pm.init_db()
+    db_path = db_mod.get_database_url().replace("sqlite:///", "")
+    conn = sqlite3.connect(db_path)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(documents)").fetchall()]
+    conn.close()
+    assert "superseded_by" in cols
+    assert "retrieval_visible" in cols
+    assert "extractor_version" in cols
+
+
 def test_init_db_on_fresh_db_has_content_sha256_on_documents(monkeypatch, tmp_path):
     pm, db_mod = _reload_stores(monkeypatch, tmp_path)
     pm.init_db()
