@@ -377,6 +377,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
                     document_ids=body.get("document_ids") or [],
                     params=_pd_params,
                     emit_start=True,
+                    conversation_id=conversation_id,
                 ):
                     yield chunk
                     await asyncio.sleep(0)
