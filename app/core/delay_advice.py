@@ -123,6 +123,12 @@ def classify_delay(text: str) -> DelayKind:
     raw = text or ""
     if not _DELAY_SIGNAL.search(raw):
         return DelayKind.NONE
+    # S14: "notice of an EOT claim" as a Contract Data days/period
+    # question is not a claim-build turn. claims_builder_permitted
+    # must stay False so the keyword "eot claim" cannot steal RAG.
+    from app.core.contract_lookup_intent import message_is_contract_data_lookup
+    if message_is_contract_data_lookup(raw):
+        return DelayKind.NONE
     if _CONCURRENT.search(raw):
         return DelayKind.CONCURRENT
     if _CULPABLE.search(raw):

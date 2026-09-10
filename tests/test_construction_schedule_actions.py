@@ -389,6 +389,23 @@ class TestClaimsBuilderHonestGate:
         result = await container.claims_builder({"delay_events": events}, {})
         assert result["status"] == "success"
 
+    @pytest.mark.asyncio
+    async def test_eot_notice_period_lookup_does_not_demand_delay_events(
+        self, container,
+    ):
+        """S14 — Contract Data days-to-notice is not a claim-build gate."""
+        ask = (
+            "Within how many days must the Contractor give notice of an "
+            "EOT claim on this project?"
+        )
+        result = await container.claims_builder(
+            {"user_message": ask}, {"user_message": ask},
+        )
+        assert result["status"] == "error"
+        err = (result.get("error") or "").lower()
+        assert "contract data" in err
+        assert "do not require" in err
+
 
 # ---------------------------------------------------------------------------
 # F4 — _fetch_weather: real Open-Meteo or honest 'unavailable', never fabricated

@@ -1240,6 +1240,23 @@ class ConstructionScheduleMixin:
             )
             if x
         )
+        # S14: a contractual notice-period question is not a claim draft.
+        # Refuse before the delay_events gate so the turn cannot dead-end
+        # asking for schedule+baseline on a Contract Data lookup.
+        from app.core.contract_lookup_intent import (
+            message_is_eot_notice_period_lookup,
+        )
+        if message_is_eot_notice_period_lookup(text):
+            return {
+                "status": "error",
+                "action": "claims_builder",
+                "error": (
+                    "This is a Contract Data lookup (EOT / claim notice "
+                    "period). Do not build a claim and do not require "
+                    "delay_events. Answer from retrieved contract context."
+                ),
+            }
+
         notice_facts = _delay_claim_facts_from_text(text)
         if notice_facts and not delay_events and not (schedule_file and baseline_file):
             return _draft_delay_claim_notice(notice_facts, notification_date)
