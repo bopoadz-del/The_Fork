@@ -46,6 +46,29 @@ class RagSearchResponse(BaseModel):
     fast_search: bool  # True when sqlite-vec is loaded; False = numpy fallback
 
 
+def _searchable_project_or_404(project_id: str, auth: dict) -> str:
+    """Tenancy gate shared by every RAG read surface.
+
+    The same rule chat (``routers/chat.py``) and document search
+    (``routers/doc_search.py``) already apply: owner -> admin-approved
+    shared -> admin on PLATFORM projects only, via
+    ``projects.get_project_accessible``. This route reached
+    ``retriever.retrieve()`` without it, so a caller who was merely
+    authenticated could post any project id and read its chunks back.
+
+    404 for missing AND for foreign, deliberately: a 403 would confirm
+    the project exists and make this route an id-enumeration oracle.
+
+    Returns the id to retrieve against — for the master-corpus alias that
+    is its backing source project, matching what doc_search resolves.
+    """
+    from app.core import projects as projects_store
+
+    if projects_store.get_project_accessible(project_id, auth.get("user_id")) is None:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    return projects_store._master_corpus_source(project_id) or project_id
+
+
 @router.post("/v1/rag/search", response_model=RagSearchResponse)
 async def rag_search(
     req: RagSearchRequest,
@@ -62,13 +85,17 @@ async def rag_search(
     from app.core.rag.vector_store import get_store
     from app.core.models import EMBEDDING_DIM
 
+    # Access check FIRST: an unauthorised caller must not be able to tell
+    # "no such project" from "the RAG stack is not installed" either.
+    search_project_id = _searchable_project_or_404(req.project_id, auth)
+
     if not _r.available():
         return RagSearchResponse(
             chunks=[], count=0, available=False, fast_search=False,
         )
 
     try:
-        chunks = _r.retrieve(req.query, req.project_id, k=req.k, intent=req.intent)
+        chunks = _r.retrieve(req.query, search_project_id, k=req.k, intent=req.intent)
     except ValueError as exc:
         # Caller-side error (e.g. empty project_id) — surface as 400
         raise HTTPException(status_code=400, detail=str(exc))
@@ -113,6 +140,11 @@ async def rag_gk_status(
     """
     from app.core.rag import retriever as _r
     from app.core import projects as _projects
+
+    # Same gate as /v1/rag/search: this diagnostic returns merged_topk,
+    # which is exactly what the chat grounding path retrieves for
+    # ``project_id`` — i.e. the project's own chunk text.
+    project_id = _searchable_project_or_404(project_id, auth)
 
     out: dict = {
         "available": _r.available(),
