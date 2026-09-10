@@ -1358,7 +1358,12 @@ def _message_wants_ipc_draft(text: str) -> bool:
 
 
 def _message_wants_delay_claim(text: str) -> bool:
-    return bool(re.search(r"delay claim|claim notice|eot claim", text or "", re.I))
+    raw = text or ""
+    # S14: contractual EOT notice-period Q&A contains "eot claim" but
+    # must not predispatch claims_builder (no delay_events on a lookup).
+    if message_is_contract_data_lookup(raw):
+        return False
+    return bool(re.search(r"delay claim|claim notice|eot claim", raw, re.I))
 
 
 def _message_wants_as_built_note(text: str) -> bool:

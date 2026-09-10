@@ -107,9 +107,11 @@ def lookup_question_hijack(message: str, confidence: float) -> bool:
     on the RAG-grounded path. High-confidence routes and deliverable-verbed
     messages ("generate...", "calculate...") are untouched.
 
-    Contract Data TfC / milestone lookups are always hijacks, even at high
-    keyword confidence — "milestone" matching parse_primavera_schedule at
-    0.4 must not run generate_wbs.
+    Contract Data TfC / milestone / EOT-notice-period lookups are always
+    hijacks, even at high keyword confidence — "milestone" matching
+    parse_primavera_schedule at 0.4 must not run generate_wbs, and
+    "eot claim" matching claims_builder at 0.8 must not steal a
+    days-to-give-notice question (S14 / fresh_eot_notice_period).
     """
     from app.core.contract_lookup_intent import message_is_contract_data_lookup
     from app.core.answer_report_intent import message_wants_answer_report
