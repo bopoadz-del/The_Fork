@@ -5950,6 +5950,7 @@ def _build_sources_from_audit(
             d = _projects.get_document(doc_id) or {}
             return d.get("original_name") or ""
         except Exception:
+            _LOG.debug("doc name lookup failed for %s", doc_id, exc_info=True)
             return ""
 
     # A3: a named contract/doc id must not appear beside another year's
@@ -6769,6 +6770,7 @@ def _openrouter_402_afford_max_tokens(body: str) -> int | None:
     try:
         value = int(match.group(1))
     except ValueError:
+        _LOG.debug("OpenRouter afford-max-tokens parse failed", exc_info=True)
         return None
     return value if value >= 1 else None
 
@@ -7629,6 +7631,7 @@ def _cm_prompt_fragment_for_turn(user_message: str) -> str:
         text = (injected or "").strip()
         return text[:800] if text else ""
     except Exception:  # noqa: BLE001
+        _LOG.debug("cross-domain prompt inject failed", exc_info=True)
         return ""
 
 
@@ -11889,6 +11892,7 @@ def _get_smart_orchestrator_block() -> Any | None:
         _SMART_ORCH_BLOCK_CACHE = cls()
         return _SMART_ORCH_BLOCK_CACHE
     except Exception:  # noqa: BLE001
+        _LOG.debug("smart_orchestrator block cache init failed", exc_info=True)
         return None
 
 
@@ -11912,6 +11916,7 @@ def _message_names_registered_calculator(text: str) -> bool:
     try:
         from app.lib.construction_formulas import CALCULATORS
     except Exception:  # noqa: BLE001
+        _LOG.debug("CALCULATORS import failed", exc_info=True)
         return False
     raw = text or ""
     t = raw.lower().replace("-", "_")

@@ -872,6 +872,7 @@ def _doc_name_for_id(doc_id: str) -> str:
         doc = _projects.get_document(doc_id)
         return (doc or {}).get("original_name") or ""
     except Exception:
+        logger.debug("doc name lookup failed for %s", doc_id, exc_info=True)
         return ""
 
 
@@ -3367,6 +3368,7 @@ def chunk_states_accepted_contract_amount(text: str) -> bool:
                 if not chunk_has_real_accepted_contract_amount(t):
                     return False
             except Exception:  # noqa: BLE001 — rate-only window is not ACA
+                logger.debug("real-ACA test unavailable; treating as non-ACA", exc_info=True)
                 return False
     try:
         from app.lib.construction_formulas_commercial import (
@@ -3394,6 +3396,7 @@ def _chunk_is_e1_compose_operand(text: str) -> bool:
         )
         return chunk_has_real_accepted_contract_amount(text)
     except Exception:  # noqa: BLE001 — rate-only window is not ACA
+        logger.debug("real-ACA test unavailable; treating as non-operand", exc_info=True)
         return False
 
 
@@ -3440,6 +3443,7 @@ def _e1_is_cap_noise(text: str) -> bool:
         if _e1_has_standalone_excl_vat(t):
             return False
     except Exception:  # noqa: BLE001 — treat as noise-unknown, keep the row
+        logger.debug("e1 cap-noise test failed; keeping the row", exc_info=True)
         return False
     if re.search(r"0\.015\s*%", t) and _DELAY_RATE_KEY_RE.search(t):
         return True
@@ -3460,6 +3464,7 @@ def _e1_has_standalone_excl_vat(text: str) -> bool:
             chunk_has_real_accepted_contract_amount,
         )
     except Exception:  # noqa: BLE001 — treat as missing; keep scanning
+        logger.debug("real-ACA import failed; treating as missing", exc_info=True)
         return False
     if not chunk_has_real_accepted_contract_amount(text or ""):
         return False
@@ -3637,6 +3642,7 @@ def _aca_row_is_including_vat(key: str, val: str) -> bool:
             _INCL_VAT_RE,
         )
     except Exception:  # noqa: BLE001
+        logger.debug("VAT regex import failed for including-VAT row", exc_info=True)
         return False
     if _EXCL_VAT_RE.search(k) and not _INCL_VAT_RE.search(k):
         return False
@@ -3673,6 +3679,7 @@ def _aca_nearest_vat_is_including(lead: str) -> bool:
             _INCL_VAT_RE,
         )
     except Exception:  # noqa: BLE001
+        logger.debug("VAT regex import failed for nearest-VAT test", exc_info=True)
         return False
     last_incl = max((m.start() for m in _INCL_VAT_RE.finditer(lead or "")), default=-1)
     last_excl = max((m.start() for m in _EXCL_VAT_RE.finditer(lead or "")), default=-1)
@@ -3684,6 +3691,7 @@ def _aca_money_is_including_vat(tight: str, wide: str) -> bool:
     try:
         from app.lib.construction_formulas_commercial import _INCL_VAT_RE
     except Exception:  # noqa: BLE001
+        logger.debug("including-VAT regex import failed", exc_info=True)
         return False
     if "accepted contract amount" not in (wide or "").lower():
         return False
@@ -3756,6 +3764,7 @@ def extract_aca_including_vat(text: str) -> Optional[Tuple[float, str]]:
             _collapse_ws,
         )
     except Exception:  # noqa: BLE001
+        logger.debug("ACA money regex import failed", exc_info=True)
         return None
     cands: List[Tuple[int, int, Tuple[float, str]]] = []
     order = 0
@@ -5412,6 +5421,7 @@ def _parse_boq_number(raw: str) -> Optional[float]:
     try:
         return float(tok)
     except ValueError:
+        logger.debug("BOQ number parse failed for %r", raw, exc_info=True)
         return None
 
 
