@@ -726,6 +726,9 @@ class SmartOrchestratorBlock(UniversalBlock):
                 r for r in results
                 if r["action"] not in ANSWER_REPORT_BLOCKED_ACTIONS
             ]
+        from app.core.conversation_wbs import message_wants_wbs_export
+        if message_wants_wbs_export(message):
+            results = [r for r in results if r["action"] != "generate_wbs"]
         return self._apply_correctness_filters(message, results)
 
     def _apply_correctness_filters(

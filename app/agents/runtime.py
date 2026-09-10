@@ -37,6 +37,11 @@ from app.core.answer_report_intent import (
     message_wants_answer_report,
     parse_answer_report_range,
 )
+from app.core.conversation_wbs import (
+    fulfill_wbs_export,
+    message_wants_wbs_export,
+    stage_conversation_wbs,
+)
 from app.core.clash_intent import message_wants_clash
 from app.core.contract_lookup_intent import message_is_contract_data_lookup
 from app.core.rag.inject import rag_inject
@@ -6331,6 +6336,7 @@ def _build_exports_from_audit(
     audit_rec: dict[str, Any],
     final_text: str = "",
     tool_calls: list[dict[str, Any]] | None = None,
+    conversation_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """SSE end-event `exports` list — data-backed download offers for the bubble.
 
@@ -6339,15 +6345,17 @@ def _build_exports_from_audit(
       - Cost BOQ: from a document the answer CITED (endpoint self-derives from
         the document_id).
       - Schedule: when the turn ran `generate_wbs`, offer the cost-loaded
-        workbook. The full activity list is stripped from the tool result to
-        keep the SSE payload small, so the offer carries the brief params and
-        the endpoint re-derives them (generate_wbs is deterministic).
+        workbook.         The full activity list is stripped from the tool result to
+        keep the SSE payload small. When a conversation_id is known the
+        offer binds to that conversation's staged WBS (F-BAT-D H2);
+        otherwise it carries the brief params and the endpoint re-derives.
 
     Returns [] when the turn produced nothing exportable. Deduplicated.
     """
     project_id = (audit_rec or {}).get("project_id")
     if not project_id:
         return []
+    conversation_id = conversation_id or (audit_rec or {}).get("conversation_id")
     try:
         from app.core import projects as _projects
         project_id = _projects.ui_project_id(project_id) or project_id
@@ -6416,6 +6424,16 @@ def _build_exports_from_audit(
             payload["project_type"] = res["project_type"]
         if res.get("start_date"):
             payload["start_date"] = res["start_date"]
+        if conversation_id:
+            from app.core.conversation_wbs import (
+                conversation_schedule_export_descriptor,
+                load_conversation_wbs,
+            )
+            if load_conversation_wbs(str(conversation_id)):
+                exports.append(conversation_schedule_export_descriptor(
+                    project_id, str(conversation_id), int(total or 0),
+                ))
+                break
         if rfp_doc_ids:
             # Document-driven: real lead times + milestones from the cited RFP.
             payload["document_ids"] = rfp_doc_ids
@@ -8446,6 +8464,22 @@ class Agent:
                 "exports": exports,
             }
 
+        # F-BAT-D H2: export the conversation's staged WBS, not a new scaffold.
+        if message_wants_wbs_export(user_message):
+            answer, exports = fulfill_wbs_export(
+                user_message, project_id, conversation_id, self.name,
+            )
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": [{"role": "assistant", "content": answer}],
+                "sources": [],
+                "exports": exports,
+            }
+
         cfg = _llm_config()
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check entirely. The empty bearer token sent later is ignored
@@ -8748,6 +8782,7 @@ class Agent:
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
                         "exports": _build_exports_from_audit(
                             _rag_audit, final_text, tool_calls_made,
+                            conversation_id=conversation_id,
                         ),
                     }
                 return resp
@@ -8850,7 +8885,7 @@ class Agent:
                         "iterations": iteration + 1,
                         "messages": messages,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
-                        "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made),
+                        "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made, conversation_id=conversation_id),
                     }
 
             # Persist the assistant turn that contained the tool calls
@@ -8981,7 +9016,7 @@ class Agent:
             "messages": messages,
             "forced_final": True,
             "sources": _build_sources_from_audit(_rag_audit, final_text),
-            "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made),
+            "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made, conversation_id=conversation_id),
         }
 
     async def _fetch_named_missing_input(
@@ -9311,6 +9346,22 @@ class Agent:
                 "iterations": 0,
                 "sources": [],
                 "tools": list(tools_invoked),
+                "exports": exports,
+            }
+            return
+
+        if message_wants_wbs_export(user_message):
+            yield {"type": "start", "agent": self.name}
+            answer, exports = fulfill_wbs_export(
+                user_message, project_id, conversation_id, self.name,
+            )
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {
+                "type": "end",
+                "iterations": 0,
+                "sources": [],
+                "tools": ["export_wbs"],
                 "exports": exports,
             }
             return
@@ -9981,6 +10032,7 @@ class Agent:
                                 ),
                                 "exports": _build_exports_from_audit(
                                     _rag_audit, final_text, stream_tool_results,
+                                    conversation_id=conversation_id,
                                 ),
                             }
                             return
@@ -10044,7 +10096,7 @@ class Agent:
                         "model": served_model,
                         "tools": list(tools_invoked),
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
-                        "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
+                        "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results, conversation_id=conversation_id),
                     }
                     return
             _call_t0 = time.monotonic()
@@ -10095,6 +10147,7 @@ class Agent:
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
                         "exports": _build_exports_from_audit(
                             _rag_audit, final_text, stream_tool_results,
+                            conversation_id=conversation_id,
                         ),
                     }
                     return
@@ -10266,7 +10319,7 @@ class Agent:
                         "model": served_model,
                         "tools": list(tools_invoked),
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
-                        "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
+                        "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results, conversation_id=conversation_id),
                     }
                     return
 
@@ -10400,7 +10453,7 @@ class Agent:
             "model": served_model,
             "tools": list(tools_invoked),
             "sources": _build_sources_from_audit(_rag_audit, final_text),
-            "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
+            "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results, conversation_id=conversation_id),
         }
 
     # ── Internals ─────────────────────────────────────────────────────────
@@ -11409,6 +11462,10 @@ class Agent:
             # phase tree, assumptions, and a sample of activities to cite.
             if isinstance(result, dict) and isinstance(result.get("activities"), list):
                 acts = result["activities"]
+                # Bind the full activity list to this conversation BEFORE
+                # stripping it from the model-facing payload (F-BAT-D H2).
+                if conversation_id and result.get("status") == "success":
+                    stage_conversation_wbs(conversation_id, result)
                 compact = dict(result)
                 compact["activities_total"] = len(acts)
                 compact["activities_sample"] = acts[:15]  # first 15 for reference
