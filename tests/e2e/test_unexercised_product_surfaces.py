@@ -473,13 +473,28 @@ def test_chain_mcp_feedback_memory_hydration_usage_workflows_schedule_rag(
     )
     assert r.status_code in (200, 422), r.text
 
+    # The session's own principal, not _API_KEY. This project belongs to the
+    # user the `session` fixture registered; the legacy API key resolves to
+    # the singleton "system" user, which does not own it. The call passed
+    # before only because /v1/rag/search did no access check at all — it
+    # would hand any authenticated caller any project's chunks. Searching
+    # your own project is what this line is here to exercise.
+    r = client.post(
+        "/v1/rag/search",
+        json={"query": "excavation trench", "project_id": pid, "k": 3},
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+    assert "chunks" in r.json()
+
+    # And the gate itself, on the surface a stranger would actually use.
     r = client.post(
         "/v1/rag/search",
         json={"query": "excavation trench", "project_id": pid, "k": 3},
         headers=_API_KEY,
     )
-    assert r.status_code == 200, r.text
-    assert "chunks" in r.json()
+    assert r.status_code == 404, r.text
+    assert "chunks" not in r.json()
 
 
 def test_conversation_export_clear_history_and_sandbox_gate(client, session):
