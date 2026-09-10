@@ -292,15 +292,18 @@ def format_chunks_as_system_message(
         chunk_states_rate_only_item,
         chunk_states_schedule_not_used,
         chunk_states_time_for_completion,
+        compose_part_summary_total,
         compose_priced_boq_row,
         extract_asked_cesmm_codes,
         extract_contract_doc_ids,
+        part_summary_compose_enabled,
         priced_boq_compose_enabled,
         query_asks_delay_damages_daily_amount,
         query_asks_for_aca_including_vat,
         query_asks_for_boq_item_amount,
         query_asks_for_contract_commencement_date,
         query_asks_for_parent_company_guarantee,
+        query_asks_for_part_summary_total,
         query_asks_for_time_for_completion,
         query_asks_who_the_engineer_is,
         rate_only_rescue_enabled,
@@ -355,6 +358,25 @@ def format_chunks_as_system_message(
             "item is Rate Only. That IS the answer. State Rate Only "
             "and that no amount exists. Do not invent a money total, "
             "and do not give a generic acknowledgement.\n"
+        )
+    _part_summary = (
+        compose_part_summary_total(
+            query, "\n".join(c.text or "" for c in chunks),
+        )
+        if (
+            query
+            and query_asks_for_part_summary_total(query)
+            and part_summary_compose_enabled()
+        )
+        else None
+    )
+    if _part_summary:
+        header += (
+            "PART SUMMARY TOTAL — an excerpt below states the asked "
+            "bill page's Part Summary total. That IS the answer. "
+            "State the page and the printed total. Do not search "
+            "further, do not sum line items, and do not give a "
+            "generic acknowledgement.\n"
         )
 
     if query and query_asks_for_aca_including_vat(query):

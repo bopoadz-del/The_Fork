@@ -450,6 +450,10 @@ def elect_answer_bearing_contract(
                  text, extract_asked_cesmm_codes(query),
              )
          )),
+        (query_asks_for_part_summary_total,
+         lambda _name, text: chunk_states_part_summary_total(
+             text, extract_asked_boq_page_refs(query),
+         )),
     ]
     active = [is_answer for asks, is_answer in kinds if asks(query)]
     if not active:
@@ -531,6 +535,11 @@ class _ContractScope:
         self._rate_only_codes: List[str] = []
         self._rate_only_in_pool = False
         self._priced_item_in_pool = False
+        # F-BAT-D H3 / B3: Part Summary footer loses to D110 / D290.1
+        # line items on the same demolition page. Fence to the printed
+        # page total when it is in the pool.
+        self._part_summary_refs: List[str] = []
+        self._part_summary_in_pool = False
         # OLD-pack C1: Sub-Clause 1.5.1(d) intro ends "as follows";
         # the precedence list is the next same-doc chunk. Not A2/A3/A5/A6/A9.
         self._spec_precedence_list_in_pool = False
@@ -674,6 +683,20 @@ class _ContractScope:
                             for _n, text in scoped
                         )
             if (
+                part_summary_compose_enabled()
+                and query_asks_for_part_summary_total(self.query)
+            ):
+                self._part_summary_refs = extract_asked_boq_page_refs(
+                    self.query,
+                )
+                if self._part_summary_refs:
+                    self._part_summary_in_pool = any(
+                        chunk_states_part_summary_total(
+                            text, self._part_summary_refs,
+                        )
+                        for _n, text in docs
+                    )
+            if (
                 spec_precedence_list_rescue_enabled()
                 and query_asks_for_spec_precedence_list(self.query)
             ):
@@ -701,6 +724,11 @@ class _ContractScope:
         elif self._rate_only_in_pool and not e1_daily:
             if not chunk_states_rate_only_item(
                 chunk_text, self._rate_only_codes,
+            ):
+                return False
+        if self._part_summary_in_pool:
+            if not chunk_states_part_summary_total(
+                chunk_text, self._part_summary_refs,
             ):
                 return False
         if self._spec_precedence_list_in_pool:
@@ -5168,6 +5196,7 @@ def _apply_asked_particular_value_boost(
 # not #506 (G1 Schedule 10 register).
 _RATE_ONLY_BONUS = 2.0
 _PRICED_BOQ_BONUS = 2.0
+_PART_SUMMARY_BONUS = 2.0
 _RATE_ONLY_RE = re.compile(r"(?i)\brate\s*only\b")
 _EXCLUDED_RE = re.compile(r"(?i)\bexcluded\b")
 _ITEM_AMOUNT_ASK_RE = re.compile(
@@ -5524,6 +5553,321 @@ def answer_states_priced_boq(text: str, parsed: Dict[str, Any]) -> bool:
         _plain_boq_number(float(parsed["qty"])) in blob
         and _plain_boq_number(float(parsed["amount"])) in blob
     )
+
+
+# F-BAT-D H3 / WAVE 2 B3: Part Summary total for a CESMM bill page
+# (``d/3/1``). B4/B5 compose a named CESMM triple; B3 has no item
+# code. Line-item chunks from the same demolition page (D110 / D290.1)
+# outrank the sparse footer, then synthesis hangs or says the total
+# was not found. Compose the printed page total only — do not sum
+# OCR line items. Kill-switch: COMPOSE_PART_SUMMARY=0.
+_BOQ_PAGE_REF_RE = re.compile(
+    r"(?i)\b([A-Za-z])\s*[/\-]\s*(\d{1,3})\s*[/\-]\s*(\d{1,3})\b"
+)
+_PART_SUMMARY_LABEL_RE = re.compile(
+    r"(?i)\b(?:part\s+summary|total\s+this\s+page|page\s+total|"
+    r"carried\s+to\s+collection)\b"
+)
+_PART_SUMMARY_ASK_RE = re.compile(
+    r"(?i)\bpart\s+summary\b|\btotal\s+this\s+page\b|\bpage\s+total\b"
+)
+_PART_SUMMARY_BILL_RE = re.compile(
+    r"(?i)\b(?:bill|boq|demolit|site\s+clear|clearance)\b"
+)
+_PART_SUMMARY_MONEY_RE = re.compile(
+    r"(?i)"
+    + _BOQ_CURRENCY_PREFIX
+    + r"(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d{2}|\d{5,})"
+)
+_PART_SUMMARY_ROW_CUT_RE = re.compile(
+    r"(?i)(?:\b[a-z]\d{2,4}(?:\.\d+)?\b|\brate\s*only\b|"
+    r"\bpart\s+summary\b)"
+)
+
+
+def part_summary_compose_enabled() -> bool:
+    """ON by default. ``COMPOSE_PART_SUMMARY=0`` restores the B3 hang."""
+    return _env_flag_on("COMPOSE_PART_SUMMARY")
+
+
+def normalize_boq_page_ref(token: str) -> str:
+    """``D / 3 / 1`` / ``d-3-1`` → ``d/3/1``. Empty when not a page ref."""
+    match = _BOQ_PAGE_REF_RE.search(token or "")
+    if not match:
+        return ""
+    return f"{match.group(1).lower()}/{int(match.group(2))}/{int(match.group(3))}"
+
+
+def extract_asked_boq_page_refs(query: str) -> List[str]:
+    """CESMM bill page refs the ask names (``d/3/1``)."""
+    out: List[str] = []
+    seen: Set[str] = set()
+    for match in _BOQ_PAGE_REF_RE.finditer(query or ""):
+        ref = f"{match.group(1).lower()}/{int(match.group(2))}/{int(match.group(3))}"
+        if ref not in seen:
+            seen.add(ref)
+            out.append(ref)
+    return out
+
+
+def _normalize_boq_page_refs_in_text(text: str) -> str:
+    """Collapse OCR ``D / 3 / 1`` so a query ``d/3/1`` can match."""
+
+    def _repl(match: re.Match) -> str:
+        return f"{match.group(1).lower()}/{int(match.group(2))}/{int(match.group(3))}"
+
+    return _BOQ_PAGE_REF_RE.sub(_repl, text or "")
+
+
+def query_asks_for_part_summary_total(query: str) -> bool:
+    """True for B3 (Part Summary / page total of a named bill page).
+
+    B4/B5 named-CESMM amounts stay on the priced-row path. A2 / E1
+    monetary particulars are not this.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if query_asks_for_accepted_contract_amount(q):
+        return False
+    if query_asks_delay_damages_daily_amount(q):
+        return False
+    if query_asks_for_delay_damages_rate(q) or query_needs_a_monetary_base(q):
+        return False
+    if query_asks_for_boq_item_amount(q):
+        return False
+    refs = extract_asked_boq_page_refs(q)
+    if not refs:
+        return False
+    if _PART_SUMMARY_ASK_RE.search(q):
+        return True
+    return bool(
+        re.search(r"(?i)\btotal\b", q)
+        and re.search(r"(?i)\bpage\b", q)
+        and _PART_SUMMARY_BILL_RE.search(q)
+    )
+
+
+def _part_summary_currency(blob: str) -> str:
+    match = re.search(rf"(?i)\b({_BOQ_CURRENCY_ATOM})\b", blob or "")
+    if not match:
+        return ""
+    token = match.group(1)
+    if token.lower().startswith("riyal"):
+        return "SAR"
+    return token.upper() if token.upper() == token or len(token) <= 3 else token.upper()
+
+
+def _parse_part_summary_amount(raw: str) -> Optional[float]:
+    amount = _parse_boq_number(raw)
+    if amount is None or amount <= 0:
+        return None
+    # Page totals are money, not 2–3 digit quantities / rates.
+    if amount < 100 and "." not in (raw or ""):
+        return None
+    return amount
+
+
+def compose_part_summary_total(
+    query: str, excerpt: str,
+) -> Optional[Dict[str, Any]]:
+    """Parse the asked bill-page Part Summary total from excerpts.
+
+    The figure must already be printed next to a Part Summary / page-
+    total label. Line items on the same page are not summed.
+    """
+    if not part_summary_compose_enabled():
+        return None
+    refs = extract_asked_boq_page_refs(query)
+    if not refs or not excerpt:
+        return None
+    asked = refs[0]
+    blob = _normalize_boq_page_refs_in_text(
+        _normalize_retrieval_ws((excerpt or "").replace("|", " "))
+    )
+    if not _PART_SUMMARY_LABEL_RE.search(blob):
+        return None
+    candidates: List[Dict[str, Any]] = []
+    for label in _PART_SUMMARY_LABEL_RE.finditer(blob):
+        # Amount sits on the summary row (after the label). Looking
+        # behind the label elects a neighbor line-item rate (220.00).
+        # A wide window used to reach the next page's 1,370.00 Rate
+        # Only figure (S2 d/3/3) and elect that as the d/3/1 total.
+        start = max(0, label.start() - 24)
+        after_limit = min(len(blob), label.end() + 80)
+        cut = _PART_SUMMARY_ROW_CUT_RE.search(blob, label.end())
+        if cut:
+            after_limit = min(after_limit, cut.start())
+        window = blob[start:after_limit]
+        window_refs = extract_asked_boq_page_refs(window)
+        if window_refs and asked not in window_refs:
+            continue
+        after = blob[label.end():after_limit]
+        money = list(_PART_SUMMARY_MONEY_RE.finditer(after))
+        if not money:
+            continue
+        parsed_amt: Optional[float] = None
+        raw_amt = ""
+        for match in money:
+            amount = _parse_part_summary_amount(match.group("amount"))
+            if amount is None:
+                continue
+            parsed_amt = amount
+            raw_amt = match.group("amount")
+            break
+        if parsed_amt is None:
+            continue
+        candidates.append({
+            "page": asked,
+            "amount": parsed_amt,
+            "currency": _part_summary_currency(window) or _part_summary_currency(blob),
+            "raw": raw_amt,
+            "page_in_window": asked in window_refs,
+        })
+    if not candidates:
+        return None
+    pinned = [c for c in candidates if c.get("page_in_window")]
+    chosen = pinned[0] if pinned else (candidates[0] if len(candidates) == 1 else None)
+    if not chosen:
+        return None
+    return {
+        "page": chosen["page"],
+        "amount": chosen["amount"],
+        "currency": chosen.get("currency") or "",
+    }
+
+
+def format_part_summary_line(parsed: Dict[str, Any]) -> str:
+    """User-facing Part Summary sentence. Does not invent a currency."""
+    if not parsed:
+        return ""
+    page = parsed.get("page") or "the page"
+    amt_s = f"{float(parsed['amount']):,.2f}"
+    currency = (parsed.get("currency") or "").strip()
+    money = f"{currency} {amt_s}".strip() if currency else amt_s
+    return f"Part Summary total for page {page}: {money}."
+
+
+def answer_states_part_summary(text: str, parsed: Dict[str, Any]) -> bool:
+    """True when ``text`` already names the elected page total."""
+    if not text or not parsed:
+        return False
+    blob = (text or "").replace(",", "").replace(" ", "")
+    return _plain_boq_number(float(parsed["amount"])) in blob
+
+
+def chunk_states_part_summary_total(
+    text: str, page_refs: Optional[List[str]] = None,
+) -> bool:
+    """True when the chunk prints a Part Summary / page-total figure.
+
+    When ``page_refs`` is given, the asked page must appear in the
+    chunk or the chunk must be a single unlabeled Part Summary row
+    (header + footer split by the 500-char BOQ chunker).
+    """
+    blob = text or ""
+    if not _PART_SUMMARY_LABEL_RE.search(blob):
+        return False
+    if not _PART_SUMMARY_MONEY_RE.search(
+        _normalize_retrieval_ws(blob.replace("|", " "))
+    ):
+        return False
+    if not page_refs:
+        return True
+    normalized = _normalize_boq_page_refs_in_text(blob)
+    found = extract_asked_boq_page_refs(normalized)
+    if found:
+        return any(ref in found for ref in page_refs)
+    return True
+
+
+def _apply_part_summary_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift the asked Part Summary page total over line items."""
+    if not part_summary_compose_enabled():
+        return
+    if not query_asks_for_part_summary_total(query):
+        return
+    refs = extract_asked_boq_page_refs(query)
+    if not refs:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_part_summary_total(chunk.text or "", refs):
+            continue
+        boosted = score + _PART_SUMMARY_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_part_summary_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: Optional[List[str]] = None,
+) -> int:
+    """Pull the asked page's Part Summary row into ``fused``. Project-first.
+
+    Cosine prefers D110 / D290.1 line items on the same demolition
+    page (live H3). ``chunks_containing_all`` is the out-of-pool
+    backup when the sparse footer never entered the candidate set.
+    Failures never raise. GK rate-book notes are not searched.
+    """
+    if not part_summary_compose_enabled():
+        return 0
+    if not query_asks_for_part_summary_total(query):
+        return 0
+    refs = extract_asked_boq_page_refs(query)
+    if not refs:
+        return 0
+    asked = refs[0]
+
+    def _keep(text: str) -> bool:
+        return chunk_states_part_summary_total(text, refs)
+
+    recovered = _rescue_chunks_matching(
+        project_id, fused, store,
+        ("part summary", asked, "total this page"),
+        _keep, label="part-summary",
+        bonus=_PART_SUMMARY_BONUS,
+    )
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return recovered
+    pids = [project_id] + [
+        p for p in (extra_pids or []) if p and p != project_id
+    ]
+    needle_sets = (
+        ["part summary", asked],
+        ["part summary"],
+        ["total this page", asked],
+        ["page total", asked],
+    )
+    for pid in pids:
+        for needles in needle_sets:
+            try:
+                hits = fetch(pid, list(needles), k=20)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "part-summary rescue for %s (%r) failed: %s",
+                    pid, needles, exc,
+                )
+                continue
+            for chunk in hits:
+                if not _keep(chunk.text or ""):
+                    continue
+                if chunk.chunk_id in fused:
+                    continue
+                fused[chunk.chunk_id] = (chunk, 0.0, _PART_SUMMARY_BONUS)
+                recovered += 1
+    if recovered:
+        logger.info(
+            "part-summary rescue recovered %d chunk(s) for page %s",
+            recovered, asked,
+        )
+    return recovered
 
 
 def _apply_rate_only_boost(
@@ -6523,6 +6867,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _rescue_rate_only_item_chunks(
         query, project_id, fused_lex, store,
     )
+    _rescue_part_summary_chunks(
+        query, project_id, fused_lex, store,
+    )
     _rescue_spec_precedence_list_neighbors(
         query, project_id, fused_lex, store,
     )
@@ -6550,6 +6897,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _apply_commencement_date_boost(query, scored_lex)
     _apply_rate_only_boost(query, scored_lex)
     _apply_priced_boq_boost(query, scored_lex)
+    _apply_part_summary_boost(query, scored_lex)
     _apply_spec_precedence_list_boost(query, scored_lex)
     candidates = [chunk for _s, chunk in scored_lex]
 
@@ -7053,6 +7401,10 @@ def retrieve_with_filter(
     # G4: Rate Only CESMM row (D529.3) vs priced lookalikes. Project-only
     # so a curated CESMM note cannot impersonate the client's Amount.
     _rescue_rate_only_item_chunks(query, project_id, fused, store)
+    # F-BAT-D H3 / B3: Part Summary footer for page d/3/1 loses to
+    # D110 / D290.1 line items. Project-only so a GK rate note cannot
+    # impersonate the client's page total.
+    _rescue_part_summary_chunks(query, project_id, fused, store)
     # C1: Sub-Clause 1.5.1(d) intro ends "as follows"; the precedence
     # list is the next same-doc chunk. Project-only so a FIDIC note
     # cannot impersonate the client's Specification order.
@@ -7183,6 +7535,7 @@ def retrieve_with_filter(
     _apply_commencement_date_boost(query, scored)
     _apply_rate_only_boost(query, scored)
     _apply_priced_boq_boost(query, scored)
+    _apply_part_summary_boost(query, scored)
     _apply_spec_precedence_list_boost(query, scored)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
