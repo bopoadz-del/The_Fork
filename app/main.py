@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
 
 load_dotenv()
 
@@ -600,6 +601,67 @@ async def rate_limit_middleware(request: Request, call_next):
             level="error",
         )
     return response
+
+
+# ── Browser hardening headers ─────────────────────────────────────────────
+# Measured against live theshovel.ai on 2026-09-10: the only headers on `/`
+# and `/v1/health` were `server: cloudflare` and `x-render-origin-server`.
+# No HSTS, no CSP, no frame guard, no nosniff — on a platform serving a
+# client's contract documents.
+#
+# Registered here, INSIDE CORS (which is added last and must stay outermost),
+# so every response carries these — including the 401s and 413s the CORS
+# layer short-circuits.
+#
+# The CSP ships REPORT-ONLY. Its allowlist is what the live SPA actually
+# fetches, recorded in a browser on the same day rather than assumed: the
+# login bundle pulls a stylesheet from fonts.googleapis.com and woff2 faces
+# from fonts.gstatic.com, so a bare `default-src 'self'` would blank the
+# site's typography the moment anyone enforced it. `'unsafe-inline'` for
+# styles is what the Vite build needs today; removing it is the work that has
+# to happen before the enforcing flip, and the report-only phase is how we
+# find out what else is in the way.
+_CSP_REPORT_ONLY = "; ".join((
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+))
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Stamp baseline security headers on every response.
+
+    ``setdefault`` throughout, never assignment: a route that already chose a
+    value had a reason, and this middleware does not know it.
+    """
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        h = response.headers
+        h.setdefault("X-Content-Type-Options", "nosniff")
+        h.setdefault("X-Frame-Options", "DENY")
+        h.setdefault("Referrer-Policy", "no-referrer")
+        h.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
+        h.setdefault("Content-Security-Policy-Report-Only", _CSP_REPORT_ONLY)
+        # HSTS only where the origin really is https. Sent from a plain-HTTP
+        # dev box it pins that browser to https for a year.
+        if (os.getenv("ENV") or "").strip().lower() in {"production", "prod"}:
+            h.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ── CORS — registered LAST so it is the OUTERMOST middleware ───────────────
