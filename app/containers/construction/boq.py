@@ -926,7 +926,7 @@ class ConstructionBoqMixin:
         # submittal name produced a different ref number on every process
         # restart, making submittal registers unreproducible. Use md5 over the
         # canonical (lowercased) name for stable IDs across runs.
-        seed = hashlib.md5(name.lower().encode("utf-8")).hexdigest()
+        seed = hashlib.md5(name.lower().encode("utf-8"), usedforsecurity=False).hexdigest()
         ref_num = f"SUB-{int(seed[:8], 16) % 9000 + 1000:04d}"
         due_offset = {"Method Statement": 14, "Material Submittal": 28, "Shop Drawing": 42,
                       "Inspection & Test Plan": 35, "Quality Document": 7, "Safety Document": 7,
