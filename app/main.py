@@ -23,12 +23,14 @@ for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
 
 load_dotenv()
 
@@ -601,6 +603,67 @@ async def rate_limit_middleware(request: Request, call_next):
     return response
 
 
+# ── Browser hardening headers ─────────────────────────────────────────────
+# Measured against live theshovel.ai on 2026-09-10: the only headers on `/`
+# and `/v1/health` were `server: cloudflare` and `x-render-origin-server`.
+# No HSTS, no CSP, no frame guard, no nosniff — on a platform serving a
+# client's contract documents.
+#
+# Registered here, INSIDE CORS (which is added last and must stay outermost),
+# so every response carries these — including the 401s and 413s the CORS
+# layer short-circuits.
+#
+# The CSP ships REPORT-ONLY. Its allowlist is what the live SPA actually
+# fetches, recorded in a browser on the same day rather than assumed: the
+# login bundle pulls a stylesheet from fonts.googleapis.com and woff2 faces
+# from fonts.gstatic.com, so a bare `default-src 'self'` would blank the
+# site's typography the moment anyone enforced it. `'unsafe-inline'` for
+# styles is what the Vite build needs today; removing it is the work that has
+# to happen before the enforcing flip, and the report-only phase is how we
+# find out what else is in the way.
+_CSP_REPORT_ONLY = "; ".join((
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+))
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Stamp baseline security headers on every response.
+
+    ``setdefault`` throughout, never assignment: a route that already chose a
+    value had a reason, and this middleware does not know it.
+    """
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        h = response.headers
+        h.setdefault("X-Content-Type-Options", "nosniff")
+        h.setdefault("X-Frame-Options", "DENY")
+        h.setdefault("Referrer-Policy", "no-referrer")
+        h.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
+        h.setdefault("Content-Security-Policy-Report-Only", _CSP_REPORT_ONLY)
+        # HSTS only where the origin really is https. Sent from a plain-HTTP
+        # dev box it pins that browser to https for a year.
+        if (os.getenv("ENV") or "").strip().lower() in {"production", "prod"}:
+            h.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+
 # ── CORS — registered LAST so it is the OUTERMOST middleware ───────────────
 # Starlette wraps the most recently added middleware around all earlier ones.
 # Registering CORS last means EVERY response carries CORS headers, including
@@ -678,9 +741,22 @@ async def _http_exception_handler(request: Request, exc: StarletteHTTPException)
 
 @app.exception_handler(RequestValidationError)
 async def _validation_exception_handler(_request: Request, exc: RequestValidationError):
+    # jsonable_encoder, not exc.errors() raw. A pydantic model_validator or
+    # field_validator that raises ValueError puts the exception OBJECT into
+    # each error's `ctx`, which JSONResponse cannot serialise -- so this
+    # handler, whose whole job is to turn a 422 into an envelope, raised and
+    # the caller got a 500 for sending a bad body. Field-level constraints
+    # (min_length and friends) carry no ctx, which is why the defect stayed
+    # invisible: every validation error the app happened to produce was of
+    # the one shape that serialises.
     return JSONResponse(
         status_code=422,
-        content=_envelope(422, "Request validation failed", "VALIDATION_ERROR", {"errors": exc.errors()}),
+        content=_envelope(
+            422,
+            "Request validation failed",
+            "VALIDATION_ERROR",
+            {"errors": jsonable_encoder(exc.errors())},
+        ),
     )
 
 

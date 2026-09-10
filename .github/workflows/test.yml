@@ -116,6 +116,23 @@ jobs:
         if: matrix.cerebrum_virgin == 'false'
         run: python scripts/audit_dead_functions.py coverage.json
 
+      - name: Mutation probes (decision code)
+        # A coverage percentage says a line RAN. It does not say a test would
+        # have noticed if the line were wrong. These probes turn a named guard
+        # off and require the named test to go red; a survivor fails the job.
+        #
+        # Production-like profile only, same reason the dead-function audit is:
+        # the virgin profile does not load the construction container, so some
+        # targets are not importable there.
+        if: matrix.cerebrum_virgin == 'false'
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/mutation-data
+          CEREBRUM_VIRGIN: "false"
+          CEREBRUM_DOMAIN_KITS: construction
+          RAG_EMBEDDING_MODEL: fake
+        run: python scripts/mutation_probes.py
+
       - name: Diff coverage (per-PR gate on lines changed)
         # Runs only on pull_request events. Compares coverage.xml against
         # origin/<base>; fails the PR if <50% of newly-changed lines are
