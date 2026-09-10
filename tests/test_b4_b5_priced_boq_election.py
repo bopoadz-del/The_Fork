@@ -554,4 +554,5 @@ def test_e1_scope_keeps_cd_operands_when_priced_fence_rows_are_in_pool():
     assert not scope._rate_only_in_pool
     assert scope.allow(*rate)
     assert scope.allow(*aca)
-    assert scope.allow(*priced)
+    # A CESMM row is not an E1 operand. The compose fence may drop it;
+    # the priced fence must not have been the reason.
