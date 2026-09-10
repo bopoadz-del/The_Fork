@@ -23,6 +23,7 @@ for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -740,9 +741,22 @@ async def _http_exception_handler(request: Request, exc: StarletteHTTPException)
 
 @app.exception_handler(RequestValidationError)
 async def _validation_exception_handler(_request: Request, exc: RequestValidationError):
+    # jsonable_encoder, not exc.errors() raw. A pydantic model_validator or
+    # field_validator that raises ValueError puts the exception OBJECT into
+    # each error's `ctx`, which JSONResponse cannot serialise -- so this
+    # handler, whose whole job is to turn a 422 into an envelope, raised and
+    # the caller got a 500 for sending a bad body. Field-level constraints
+    # (min_length and friends) carry no ctx, which is why the defect stayed
+    # invisible: every validation error the app happened to produce was of
+    # the one shape that serialises.
     return JSONResponse(
         status_code=422,
-        content=_envelope(422, "Request validation failed", "VALIDATION_ERROR", {"errors": exc.errors()}),
+        content=_envelope(
+            422,
+            "Request validation failed",
+            "VALIDATION_ERROR",
+            {"errors": jsonable_encoder(exc.errors())},
+        ),
     )
 
 

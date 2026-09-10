@@ -19,7 +19,10 @@ router = APIRouter()
 
 
 class _ScheduleGenerateRequest(BaseModel):
-    brief: str = ""
+    # An empty brief used to yield a 204-activity generic "building"
+    # programme with status "success" -- a fabrication wearing a 200. There
+    # is nothing to schedule without an ask, so the ask is required.
+    brief: str = Field(..., min_length=3, description="What to schedule")
     project_type: Optional[str] = None
     target_count: int = Field(default=200, ge=20, le=1000)
     start_date: Optional[str] = None
