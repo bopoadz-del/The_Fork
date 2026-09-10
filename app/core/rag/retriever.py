@@ -442,8 +442,13 @@ def elect_answer_bearing_contract(
         (query_asks_for_boq_scope,
          lambda name, _text: document_is_a_bill_of_quantities(name)),
         (query_asks_for_boq_item_amount,
-         lambda _name, text: chunk_states_rate_only_item(
-             text, extract_asked_cesmm_codes(query),
+         lambda _name, text: (
+             chunk_states_priced_item(
+                 text, extract_asked_cesmm_codes(query),
+             )
+             or chunk_states_rate_only_item(
+                 text, extract_asked_cesmm_codes(query),
+             )
          )),
     ]
     active = [is_answer for asks, is_answer in kinds if asks(query)]
@@ -517,8 +522,11 @@ class _ContractScope:
         # OLD-pack G4: D529.3 Amount is Rate Only. Priced lookalikes
         # (D549.2 fence, D599.5 carriageway, Excluded culvert) used to
         # occupy every slot and the model greeted. Not #504/#505/#506.
+        # WAVE 2 B5: when a priced D549.2 row is also in-pool, do not
+        # fence to Rate Only / Excluded siblings — that hid 280,320.
         self._rate_only_codes: List[str] = []
         self._rate_only_in_pool = False
+        self._priced_item_in_pool = False
         # OLD-pack C1: Sub-Clause 1.5.1(d) intro ends "as follows";
         # the precedence list is the next same-doc chunk. Not A2/A3/A5/A6/A9.
         self._spec_precedence_list_in_pool = False
@@ -609,16 +617,23 @@ class _ContractScope:
                         chunk_states_schedule_register(text, self._schedule_labels)
                         for _name, text in docs
                     )
-            if (
-                rate_only_rescue_enabled()
-                and query_asks_for_boq_item_amount(self.query)
-            ):
+            if query_asks_for_boq_item_amount(self.query):
                 self._rate_only_codes = extract_asked_cesmm_codes(self.query)
                 if self._rate_only_codes:
-                    self._rate_only_in_pool = any(
-                        chunk_states_rate_only_item(text, self._rate_only_codes)
-                        for _n, text in docs
-                    )
+                    if rate_only_rescue_enabled():
+                        self._rate_only_in_pool = any(
+                            chunk_states_rate_only_item(
+                                text, self._rate_only_codes,
+                            )
+                            for _n, text in docs
+                        )
+                    if priced_boq_compose_enabled():
+                        self._priced_item_in_pool = any(
+                            chunk_states_priced_item(
+                                text, self._rate_only_codes,
+                            )
+                            for _n, text in docs
+                        )
             if (
                 spec_precedence_list_rescue_enabled()
                 and query_asks_for_spec_precedence_list(self.query)
@@ -633,7 +648,15 @@ class _ContractScope:
         # Named PREFIX-YEAR-SEQ (#443) is fail-closed onto that year.
         # The rate / Engineer fences are unnamed-only — a question that
         # names DD-2022-175 must still see that year's chunks.
-        if self._rate_only_in_pool:
+        if self._priced_item_in_pool:
+            # WAVE 2 B5: a priced Part Nr. 3 line beats Rate Only /
+            # Excluded siblings for the same CESMM code. G4 stays on
+            # the Rate Only fence below when no priced row exists.
+            if not chunk_states_priced_item(
+                chunk_text, self._rate_only_codes,
+            ):
+                return False
+        elif self._rate_only_in_pool:
             if not chunk_states_rate_only_item(
                 chunk_text, self._rate_only_codes,
             ):
@@ -4632,7 +4655,9 @@ def _apply_asked_particular_value_boost(
 # Not #504 (E1 delay-damages compose), not #505 (F2 duration override),
 # not #506 (G1 Schedule 10 register).
 _RATE_ONLY_BONUS = 2.0
+_PRICED_BOQ_BONUS = 2.0
 _RATE_ONLY_RE = re.compile(r"(?i)\brate\s*only\b")
+_EXCLUDED_RE = re.compile(r"(?i)\bexcluded\b")
 _ITEM_AMOUNT_ASK_RE = re.compile(
     r"(?i)\b(?:total\s+amount|(?<!contract\s)amount|sum\s+for|value\s+for)\b",
 )
@@ -4745,14 +4770,46 @@ def chunk_states_rate_only_item(text: str, codes: List[str]) -> bool:
 
     A priced lookalike on the same page (D549.2 / D599.5) and an
     Excluded culvert that only shares the description are not this.
+    A window that already prints qty × rate = amount is priced, even
+    when a neighbor or page note says Rate Only (live WAVE 2 B5).
     Does not invent: the excerpt itself must already say Rate Only
-    on the asked item's row.
+    on the asked item's row, with no priced triple in that window.
     """
     if not codes or not _RATE_ONLY_RE.search(text or ""):
         return False
     for code in codes:
         for window in _cesmm_row_windows(text, code):
-            if _RATE_ONLY_RE.search(window):
+            if _RATE_ONLY_RE.search(window) and not _parse_priced_cesmm_window(
+                window, code,
+            ):
+                return True
+    return False
+
+
+def chunk_states_priced_item(text: str, codes: List[str]) -> bool:
+    """True when the asked CESMM row already prints qty × rate = amount."""
+    if not codes or not text:
+        return False
+    for code in codes:
+        for window in _cesmm_row_windows(text, code):
+            if _parse_priced_cesmm_window(window, code):
+                return True
+    return False
+
+
+def chunk_states_excluded_item(text: str, codes: List[str]) -> bool:
+    """True when the asked CESMM row's Amount is Excluded, not priced.
+
+    A page note like "Excluded items listed separately" after a valid
+    triple is not this. Does not invent a total.
+    """
+    if not codes or not _EXCLUDED_RE.search(text or ""):
+        return False
+    for code in codes:
+        for window in _cesmm_row_windows(text, code):
+            if _EXCLUDED_RE.search(window) and not _parse_priced_cesmm_window(
+                window, code,
+            ):
                 return True
     return False
 
@@ -4850,8 +4907,13 @@ def _parse_boq_number(raw: str) -> Optional[float]:
 
 
 def _parse_priced_cesmm_window(window: str, code: str) -> Optional[Dict[str, Any]]:
-    """Qty / unit / rate / amount from one isolated CESMM row. None if Rate Only."""
-    if not window or _RATE_ONLY_RE.search(window):
+    """Qty / unit / rate / amount from one isolated CESMM row.
+
+    A Rate Only / Excluded *status* with no triple is None. A valid
+    qty × rate = amount still parses when a neighbor or page note
+    says Rate Only (live WAVE 2 B5 Part Nr. 3 stain).
+    """
+    if not window:
         return None
     blob = _normalize_retrieval_ws((window or "").replace("|", " "))
     match = _PRICED_BOQ_TRIPLE_RE.search(blob)
@@ -4891,15 +4953,15 @@ def _parse_priced_cesmm_window(window: str, code: str) -> Optional[Dict[str, Any
 def compose_priced_boq_row(query: str, excerpt: str) -> Optional[Dict[str, Any]]:
     """Parse the asked CESMM row's quantity + amount from excerpts.
 
-    Rate Only (G4) and Excluded culvert mentions are not this. Does not
-    invent: qty × rate must already equal the printed amount.
+    Prefers a priced window when Rate Only / Excluded siblings for the
+    same CESMM code are also in the excerpt (live WAVE 2 B5). A
+    Rate-Only-only ask (G4) and an Excluded-only culvert are not this.
+    Does not invent: qty × rate must already equal the printed amount.
     """
     if not priced_boq_compose_enabled():
         return None
     codes = extract_asked_cesmm_codes(query)
     if not codes or not excerpt:
-        return None
-    if chunk_states_rate_only_item(excerpt, codes):
         return None
     qlow = (query or "").lower()
     candidates: List[Dict[str, Any]] = []
@@ -4949,7 +5011,11 @@ def _apply_rate_only_boost(
     query: str,
     scored: List[Tuple[float, Chunk]],
 ) -> None:
-    """In-place: lift the asked Rate Only row over priced lookalikes."""
+    """In-place: lift the asked Rate Only row over priced lookalikes.
+
+    Skip when a priced row for the same CESMM code is already in the
+    pool — live WAVE 2 B5 must not promote Rate Only over 280,320.
+    """
     if not rate_only_rescue_enabled():
         return
     if not query_asks_for_boq_item_amount(query):
@@ -4957,10 +5023,32 @@ def _apply_rate_only_boost(
     codes = extract_asked_cesmm_codes(query)
     if not codes:
         return
+    if any(chunk_states_priced_item(chunk.text or "", codes) for _s, chunk in scored):
+        return
     for i, (score, chunk) in enumerate(scored):
         if not chunk_states_rate_only_item(chunk.text or "", codes):
             continue
         boosted = score + _RATE_ONLY_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _apply_priced_boq_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift the asked priced CESMM row over Rate Only / Excluded."""
+    if not priced_boq_compose_enabled():
+        return
+    if not query_asks_for_boq_item_amount(query):
+        return
+    codes = extract_asked_cesmm_codes(query)
+    if not codes:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_priced_item(chunk.text or "", codes):
+            continue
+        boosted = score + _PRICED_BOQ_BONUS
         chunk.score = round(boosted, 6)
         scored[i] = (boosted, chunk)
 
@@ -5932,6 +6020,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _apply_asked_particular_value_boost(query, scored_lex)
     _apply_schedule_register_boost(query, scored_lex)
     _apply_rate_only_boost(query, scored_lex)
+    _apply_priced_boq_boost(query, scored_lex)
     _apply_spec_precedence_list_boost(query, scored_lex)
     candidates = [chunk for _s, chunk in scored_lex]
 
@@ -6552,6 +6641,7 @@ def retrieve_with_filter(
     _apply_asked_particular_value_boost(query, scored)
     _apply_schedule_register_boost(query, scored)
     _apply_rate_only_boost(query, scored)
+    _apply_priced_boq_boost(query, scored)
     _apply_spec_precedence_list_boost(query, scored)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a

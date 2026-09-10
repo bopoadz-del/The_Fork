@@ -5328,6 +5328,7 @@ def _graft_rate_only_item(
         from app.core.rag.retriever import (
             answer_states_rate_only,
             chunk_states_rate_only_item,
+            compose_priced_boq_row,
             extract_asked_cesmm_codes,
             format_rate_only_line,
             query_asks_for_boq_item_amount,
@@ -5342,6 +5343,9 @@ def _graft_rate_only_item(
         if not codes:
             return text
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        # WAVE 2 B5: a priced Part Nr. 3 line beats a Rate Only sibling.
+        if compose_priced_boq_row(user, rag):
+            return text
         if not chunk_states_rate_only_item(rag, codes):
             return text
         line = format_rate_only_line(codes, rag)
@@ -5388,7 +5392,6 @@ def _graft_priced_boq_item(
     try:
         from app.core.rag.retriever import (
             answer_states_priced_boq,
-            chunk_states_rate_only_item,
             compose_priced_boq_row,
             extract_asked_cesmm_codes,
             format_priced_boq_line,
@@ -5404,8 +5407,6 @@ def _graft_priced_boq_item(
         if not codes:
             return text
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
-        if chunk_states_rate_only_item(rag, codes):
-            return text
         parsed = compose_priced_boq_row(user, rag)
         if not parsed:
             return text
@@ -5437,6 +5438,12 @@ def _graft_priced_boq_item(
             re.search(r"(?i)storm\s+water", body)
             and not re.search(r"(?i)storm\s+water", parsed.get("description") or "")
         )
+        # Live B5: model refused Rate Only (PART NR. 3) vs Excluded
+        # (priced BOQ) and never wrote the elected amount.
+        sibling_conflict = bool(
+            re.search(r"(?i)\brate\s*only\b", body)
+            and re.search(r"(?i)\bexcluded\b", body)
+        )
         if (
             not body
             or body == _CG_REFUSAL
@@ -5446,6 +5453,7 @@ def _graft_priced_boq_item(
             or _MISSING_PARTICULAR_RE.search(body)
             or _answer_echoes_ask(body, user)
             or storm_misroute
+            or sibling_conflict
         ):
             return line
         if len(body) < 500 and not answer_states_priced_boq(body, parsed):
@@ -5557,13 +5565,13 @@ def _postprocess_answer(
         text, rag_sys_msg, messages, project_id=pid,
         extra_project_ids=extra_pids or None,
     )
-    # OLD-pack G4: state Rate Only when the retrieved BOQ row already
-    # says so. The live FAIL greeted ("I'm ready to help…") and never
-    # named D529.3 / Rate Only. Do not invent a money total.
-    text = _graft_rate_only_item(text, rag_sys_msg, messages)
-    # WAVE 2 B4/B5: compose qty + amount from the elected priced row
-    # when synthesis hung empty / echoed the ask / promised to search.
+    # WAVE 2 B4/B5 first: a priced CESMM row beats Rate Only / Excluded
+    # siblings. G4 Rate Only runs after so it cannot overwrite 280,320.
     text = _graft_priced_boq_item(text, rag_sys_msg, messages)
+    # OLD-pack G4: state Rate Only when the retrieved BOQ row already
+    # says so and no priced triple exists. The live FAIL greeted
+    # ("I'm ready to help…") and never named D529.3 / Rate Only.
+    text = _graft_rate_only_item(text, rag_sys_msg, messages)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     # Citation provenance: an attribution no evidence record backs is removed
     # and the answer flagged. Sibling of the cost gate above -- that one
