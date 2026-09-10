@@ -620,19 +620,32 @@ class _ContractScope:
             if query_asks_for_boq_item_amount(self.query):
                 self._rate_only_codes = extract_asked_cesmm_codes(self.query)
                 if self._rate_only_codes:
+                    # Named PREFIX-YEAR-SEQ (#443): decide Rate Only /
+                    # priced fences from that year's docs only. A priced
+                    # row on another contract must not empty a named
+                    # Rate Only ask (Codex #558).
+                    scoped = [
+                        (name, text) for name, text in docs
+                        if (
+                            not self.named
+                            or filename_matches_named_contracts(
+                                name, self.named, chunk_text=text,
+                            )
+                        )
+                    ]
                     if rate_only_rescue_enabled():
                         self._rate_only_in_pool = any(
                             chunk_states_rate_only_item(
                                 text, self._rate_only_codes,
                             )
-                            for _n, text in docs
+                            for _n, text in scoped
                         )
                     if priced_boq_compose_enabled():
                         self._priced_item_in_pool = any(
                             chunk_states_priced_item(
                                 text, self._rate_only_codes,
                             )
-                            for _n, text in docs
+                            for _n, text in scoped
                         )
             if (
                 spec_precedence_list_rescue_enabled()
