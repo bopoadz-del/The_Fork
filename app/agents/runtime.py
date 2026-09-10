@@ -5694,6 +5694,146 @@ def _should_short_circuit_priced_boq(
     return _compose_priced_boq_instead_of_retry("", rag_sys_msg, messages)
 
 
+_PART_SUMMARY_MISS_RE = re.compile(
+    r"(?i)part\s+summary|priced\s+boq|not\s+found|could\s+not\s+find|"
+    r"cannot\s+find|no\s+(?:printed\s+)?total",
+)
+
+
+def _graft_part_summary_total(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """F-BAT-D H3 / B3: write the page Part Summary when synthesis hung.
+
+    Live 0d9fd23 mobile H3 echoed empty / said the priced-BOQ Part
+    Summary was not found. The d/3/1 total was already in the
+    demolition-bill excerpts (B1/B2 line items on the same page PASS).
+    Kill-switch: COMPOSE_PART_SUMMARY=0. B4/B5 CESMM rows are not this.
+    """
+    try:
+        from app.core.rag.retriever import (
+            answer_states_part_summary,
+            compose_part_summary_total,
+            format_part_summary_line,
+            part_summary_compose_enabled,
+            query_asks_for_part_summary_total,
+        )
+        if not part_summary_compose_enabled():
+            return text
+        user = _latest_operator_ask(messages)
+        if not query_asks_for_part_summary_total(user):
+            return text
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        parsed = compose_part_summary_total(user, rag)
+        if not parsed:
+            return text
+        line = format_part_summary_line(parsed)
+        if not line:
+            return text
+        payload = json.dumps({
+            "part_summary_total": {
+                "page": parsed.get("page"),
+                "amount": parsed.get("amount"),
+                "currency": parsed.get("currency") or "",
+                "note": line,
+            }
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "part_summary_total" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        raw = text or ""
+        if answer_states_part_summary(raw, parsed):
+            return text
+        body = raw.strip()
+        if (
+            not body
+            or body == _CG_REFUSAL
+            or body == _EMPTY_RESPONSE_FALLBACK
+            or _GENERIC_ACK_RE.search(body)
+            or _looks_like_search_preamble(body)
+            or _MISSING_PARTICULAR_RE.search(body)
+            or _PART_SUMMARY_MISS_RE.search(body)
+            or _answer_echoes_ask(body, user)
+        ):
+            return line
+        if len(body) < 500 and not answer_states_part_summary(body, parsed):
+            return line
+        return f"{line}\n\n{body}"
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        _LOG.exception("part-summary compose failed; passing answer through")
+        return text
+
+
+def _compose_part_summary_instead_of_retry(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Part Summary page total from RAG, or '' when compose cannot fill.
+
+    Live H3 hung or refused 'not found' while the printed d/3/1 total
+    was already in the excerpts. Compose it instead of another LLM hop.
+    """
+    try:
+        from app.core.rag.retriever import (
+            answer_states_part_summary,
+            compose_part_summary_total,
+            part_summary_compose_enabled,
+            query_asks_for_part_summary_total,
+        )
+        if not part_summary_compose_enabled():
+            return ""
+        user = _latest_operator_ask(messages)
+        if not query_asks_for_part_summary_total(user):
+            return ""
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        parsed = compose_part_summary_total(user, rag)
+        if not parsed:
+            return ""
+        grafted = _graft_part_summary_total(text or "", rag_sys_msg, messages)
+        if grafted and answer_states_part_summary(grafted, parsed):
+            return grafted
+        return ""
+    except Exception:  # noqa: BLE001 — retry skip must never break a turn
+        _LOG.exception("part-summary retry skip failed; continuing retry path")
+        return ""
+
+
+def _should_short_circuit_part_summary(
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+    *,
+    has_predispatch: bool,
+) -> str:
+    """Composed Part Summary total, or '' if the LLM hop must still run.
+
+    Live H3 on 0d9fd23: two mobile attempts produced no response; the
+    third said the total was not found. The figure was already in the
+    demolition-bill excerpts. Predispatch deliverables keep the LLM.
+    """
+    if has_predispatch:
+        return ""
+    return _compose_part_summary_instead_of_retry("", rag_sys_msg, messages)
+
+
+def _compose_excerpt_boq_instead_of_retry(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Priced CESMM row, else Part Summary page total, else ''."""
+    return (
+        _compose_priced_boq_instead_of_retry(text, rag_sys_msg, messages)
+        or _compose_part_summary_instead_of_retry(text, rag_sys_msg, messages)
+    )
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -5735,6 +5875,8 @@ def _postprocess_answer(
     # WAVE 2 B4/B5 first: a priced CESMM row beats Rate Only / Excluded
     # siblings. G4 Rate Only runs after so it cannot overwrite 280,320.
     text = _graft_priced_boq_item(text, rag_sys_msg, messages)
+    # F-BAT-D H3 / B3: Part Summary page total (no CESMM code).
+    text = _graft_part_summary_total(text, rag_sys_msg, messages)
     # OLD-pack G4: state Rate Only when the retrieved BOQ row already
     # says so and no priced triple exists. The live FAIL greeted
     # ("I'm ready to help…") and never named D529.3 / Rate Only.
@@ -8517,6 +8659,31 @@ class Agent:
                 "messages": messages + [{"role": "assistant", "content": answer}],
                 "sources": _build_sources_from_audit(_rag_audit, answer),
             }
+        # F-BAT-D H3 / B3: Part Summary total already in the excerpts.
+        _part_fast = _should_short_circuit_part_summary(
+            _rag_sys_msg, messages,
+            has_predispatch=_has_pre,
+        )
+        if _part_fast:
+            answer = _postprocess_answer(
+                _part_fast, _rag_sys_msg, messages,
+                fallback_used=bool(_rag_audit.get("fallback_used")),
+                agent_name=self.name,
+                project_id=project_id,
+                audit_rec=_rag_audit,
+            )
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": messages + [{"role": "assistant", "content": answer}],
+                "sources": _build_sources_from_audit(_rag_audit, answer),
+            }
         # Root fix for the tool-loop (mirrors chat_stream): cap explicit
         # search_project_documents calls, then stop offering the tool so the
         # model answers from injected context instead of grinding to the cap.
@@ -8538,7 +8705,7 @@ class Agent:
         # WAVE 2 B4: priced D599.5 is already in RAG. Offering
         # boq_processor here starts a 28 MB scan and never writes
         # quantity + amount (live 2ceef76 empty hang).
-        if _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages):
+        if _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages):
             excluded_tools.add("boq_processor")
         error_nudges = 0
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
@@ -8641,7 +8808,7 @@ class Agent:
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
                     if _final_text_needs_forced_retry(final_text, user_message=user_message):
-                        priced = _compose_priced_boq_instead_of_retry(
+                        priced = _compose_excerpt_boq_instead_of_retry(
                             final_text, _rag_sys_msg, messages,
                         )
                         if priced:
@@ -8773,7 +8940,7 @@ class Agent:
             _rag_sys_msg, messages, has_predispatch=False,
             project_id=project_id, audit_rec=_rag_audit,
         )
-        priced_cap = _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages)
+        priced_cap = _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages)
         if e1_cap:
             final_text = e1_cap
         elif priced_cap:
@@ -9499,6 +9666,32 @@ class Agent:
                 "tools": list(tools_invoked),
             }
             return
+        # F-BAT-D H3 / B3: Part Summary total already in the excerpts.
+        _part_fast = _should_short_circuit_part_summary(
+            _rag_sys_msg, messages,
+            has_predispatch=_has_pre,
+        )
+        if _part_fast:
+            answer = _postprocess_answer(
+                _part_fast, _rag_sys_msg, messages,
+                fallback_used=bool(_rag_audit.get("fallback_used")),
+                agent_name=self.name,
+                project_id=project_id,
+                audit_rec=_rag_audit,
+            )
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {
+                "type": "end",
+                "content": answer,
+                "iterations": 0,
+                "sources": _build_sources_from_audit(_rag_audit, answer),
+                "tools": list(tools_invoked),
+            }
+            return
         # Root fix for the tool-loop: RAG context is injected pre-loop, yet the
         # model keeps re-calling search_project_documents when an exact value
         # isn't found — grinding to the iteration cap. Allow a few explicit
@@ -9526,7 +9719,7 @@ class Agent:
         # WAVE 2 B4: priced D599.5 is already in RAG. Offering
         # boq_processor here starts a 28 MB scan and never writes
         # quantity + amount (live 2ceef76 empty hang).
-        if _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages):
+        if _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages):
             excluded_tools.add("boq_processor")
         error_nudges = 0
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
@@ -9755,7 +9948,7 @@ class Agent:
                         # detector. Ordering the other way would send the model
                         # "stop promising to search" for a turn where it never
                         # promised anything.
-                        priced = _compose_priced_boq_instead_of_retry(
+                        priced = _compose_excerpt_boq_instead_of_retry(
                             final_text, _rag_sys_msg, messages,
                         )
                         if priced:
@@ -9965,7 +10158,7 @@ class Agent:
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
                     if _final_text_needs_forced_retry(final_text, user_message=user_message):
-                        priced = _compose_priced_boq_instead_of_retry(
+                        priced = _compose_excerpt_boq_instead_of_retry(
                             final_text, _rag_sys_msg, messages,
                         )
                         if priced:
@@ -10162,7 +10355,7 @@ class Agent:
             _rag_sys_msg, messages, has_predispatch=False,
             project_id=project_id, audit_rec=_rag_audit,
         )
-        priced_cap = _compose_priced_boq_instead_of_retry("", _rag_sys_msg, messages)
+        priced_cap = _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages)
         if e1_cap:
             final_text = e1_cap
         elif priced_cap:
