@@ -617,7 +617,14 @@ class _ContractScope:
                         chunk_states_schedule_register(text, self._schedule_labels)
                         for _name, text in docs
                     )
-            if query_asks_for_boq_item_amount(self.query):
+            # Leftover E1 (rate × ACA in SAR/day) is not a CESMM quote.
+            # A priced D549.2 / D599.5 row in the same unnamed pool must
+            # not fence out Contract Data operands — that refuse-closes
+            # as "upload your priced BOQ" (live leftover after #559).
+            if (
+                query_asks_for_boq_item_amount(self.query)
+                and not query_asks_delay_damages_daily_amount(self.query)
+            ):
                 self._rate_only_codes = extract_asked_cesmm_codes(self.query)
                 if self._rate_only_codes:
                     # Named PREFIX-YEAR-SEQ (#443): decide Rate Only /
@@ -661,15 +668,18 @@ class _ContractScope:
         # Named PREFIX-YEAR-SEQ (#443) is fail-closed onto that year.
         # The rate / Engineer fences are unnamed-only — a question that
         # names DD-2022-175 must still see that year's chunks.
-        if self._priced_item_in_pool:
+        e1_daily = query_asks_delay_damages_daily_amount(self.query)
+        if self._priced_item_in_pool and not e1_daily:
             # WAVE 2 B5: a priced Part Nr. 3 line beats Rate Only /
             # Excluded siblings for the same CESMM code. G4 stays on
             # the Rate Only fence below when no priced row exists.
+            # E1 keeps Contract Data rate + ACA even when a priced
+            # CESMM row shares the unnamed pool.
             if not chunk_states_priced_item(
                 chunk_text, self._rate_only_codes,
             ):
                 return False
-        elif self._rate_only_in_pool:
+        elif self._rate_only_in_pool and not e1_daily:
             if not chunk_states_rate_only_item(
                 chunk_text, self._rate_only_codes,
             ):
@@ -4721,6 +4731,12 @@ def query_asks_for_boq_item_amount(query: str) -> bool:
     if not q or _DEFINITION_QUESTION_RE.search(q):
         return False
     if query_asks_for_accepted_contract_amount(q):
+        return False
+    # E1 (calculate delay damages … in SAR) is rate × ACA compose,
+    # not a CESMM unit-rate / amount quote. Check the daily-ask
+    # class first so a monetary-base regex drift cannot open the
+    # priced fence and refuse-close leftover E1.
+    if query_asks_delay_damages_daily_amount(q):
         return False
     if query_asks_for_delay_damages_rate(q) or query_needs_a_monetary_base(q):
         return False

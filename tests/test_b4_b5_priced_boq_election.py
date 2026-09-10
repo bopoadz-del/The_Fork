@@ -511,3 +511,48 @@ def test_named_priced_still_fences_same_contract_rate_only_sibling():
     assert scope.allow(*named_priced)
     assert not scope.allow(*named_ro)
     assert not scope.allow(*other_ex)
+
+
+def test_e1_scope_keeps_cd_operands_when_priced_fence_rows_are_in_pool():
+    """Leftover E1 after #559: priced D549.2 must not drop Contract Data.
+
+    Unnamed calculate-in-SAR is rate × ACA, not a CESMM quote. A priced
+    fence row in the same pool used to look like a unit-rate miss.
+    """
+    from app.core.rag.retriever import (
+        _ContractScope,
+        query_asks_delay_damages_daily_amount,
+        query_asks_for_boq_item_amount,
+    )
+
+    e1 = (
+        LIVE_PREFIX
+        + "Calculate the delay damages per calendar day in SAR for the "
+        "whole of the Works."
+    )
+    rate = (
+        "DD-2023-118 - Contract Data.pdf",
+        "CONTRACT DATA particulars.\n"
+        "8.8 Delay Damages for the whole of the Works: "
+        "0.1% of the Contract Price per calendar day",
+    )
+    aca = (
+        "DD-2023-118 - Contract Data.pdf",
+        "CONTRACT DATA particulars.\n"
+        "1.1.1 Accepted Contract Amount excluding VAT | "
+        "SAR 1,754,504,456.25",
+    )
+    priced = (
+        "DD-2023-118 - Demolition BOQ Part Nr. 3.pdf",
+        PART_NR_3_PRICED,
+    )
+    assert query_asks_delay_damages_daily_amount(e1)
+    assert not query_asks_for_boq_item_amount(e1)
+    scope = _ContractScope(e1, [priced, rate, aca])
+    assert not scope.named
+    assert not scope._priced_item_in_pool
+    assert not scope._rate_only_in_pool
+    assert scope.allow(*rate)
+    assert scope.allow(*aca)
+    # A CESMM row is not an E1 operand. The compose fence may drop it;
+    # the priced fence must not have been the reason.

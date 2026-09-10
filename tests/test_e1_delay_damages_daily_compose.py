@@ -23,6 +23,8 @@ from app.agents.runtime import (
     _cost_grounding_gate,
     _graft_composed_delay_damages_daily,
     _postprocess_answer,
+    _should_short_circuit_delay_damages_daily,
+    _should_short_circuit_priced_boq,
 )
 from app.lib.construction_formulas_commercial import (
     aca_amount_is_toy_example,
@@ -935,3 +937,69 @@ def test_graft_replaces_015_when_store_caps_k(monkeypatch):
     assert posted != _CG_REFUSAL
     assert "263,175.67" not in posted.split("\n", 1)[0]
     assert "0.015%" not in posted.split("\n", 1)[0]
+
+
+# Live leftover E1 after #559: priced CESMM soup shared the unnamed pool
+# and the turn refuse-closed as a BOQ unit-rate miss. E1 is rate × ACA.
+B5_PRICED_SOUP = (
+    "D549.2 Removal of existing chain link fence 3,504 m @ SAR 80.00 "
+    "= SAR 280,320.00"
+)
+
+
+def test_e1_ask_is_not_a_priced_boq_item_amount():
+    from app.core.rag.retriever import query_asks_for_boq_item_amount
+
+    assert query_asks_delay_damages_daily_amount(LIVE_E1)
+    assert not query_asks_for_boq_item_amount(LIVE_E1)
+    assert not query_asks_for_boq_item_amount(E1_ASK)
+
+
+def test_postprocess_replaces_priced_boq_refuse_with_e1_daily():
+    """Model copied the contracts-kernel BOQ refuse; compose still owns E1."""
+    rag = _sys(RATE_ROW, NET_ACA_ROW, B5_PRICED_SOUP)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    out = _postprocess_answer(_CG_REFUSAL, rag, msgs)
+    assert "1,754,504.46" in out
+    assert out != _CG_REFUSAL
+    assert "upload your priced BOQ" not in out.lower()
+    assert "280,320" not in out
+
+
+def test_e1_short_circuit_states_daily_figure_and_skips_priced_boq():
+    rag = _sys(RATE_ROW, NET_ACA_ROW, B5_PRICED_SOUP)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    out = _should_short_circuit_delay_damages_daily(
+        rag, msgs, has_predispatch=False,
+    )
+    assert "1,754,504.46" in out
+    assert "upload your priced BOQ" not in out.lower()
+    assert _should_short_circuit_delay_damages_daily(
+        rag, msgs, has_predispatch=True,
+    ) == ""
+    assert _should_short_circuit_priced_boq(
+        rag, msgs, has_predispatch=False,
+    ) == ""
+
+
+def test_e1_short_circuit_kill_switch_restores_provider_hop(monkeypatch):
+    monkeypatch.setenv("COMPOSE_DELAY_DAMAGES_DAILY", "0")
+    rag = _sys(RATE_ROW, NET_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    assert _should_short_circuit_delay_damages_daily(
+        rag, msgs, has_predispatch=False,
+    ) == ""
+
+
+def test_e1_short_circuit_does_not_steal_b5():
+    from app.core.rag.retriever import query_asks_delay_damages_daily_amount
+
+    b5 = (
+        "Answer only from the client project documents. "
+        "What is the amount for removal of existing chain link fence (D549.2)?"
+    )
+    assert not query_asks_delay_damages_daily_amount(b5)
+    rag = _sys(RATE_ROW, NET_ACA_ROW, B5_PRICED_SOUP)
+    assert _should_short_circuit_delay_damages_daily(
+        rag, [{"role": "user", "content": b5}], has_predispatch=False,
+    ) == ""
