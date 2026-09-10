@@ -5363,6 +5363,122 @@ def _graft_rate_only_item(
         return text
 
 
+def _graft_honest_contract_refusal(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """F-BAT-D G3/G6: prefer Contract Data honesty over form/pack invention.
+
+    G3: if excerpts say PCG is not required, replace a Schedule 8
+    "20% of paid-up Capital" invention. A filled CD value is left (or
+    grafted) instead of the form %.
+
+    G6: if excerpts say the commencement field is not populated / tied
+    to LOA-NOA, replace an invented pack date. A filled CD date is
+    left (or grafted). An ask that names the commencement pack is not
+    this path.
+
+    Compose nothing — only fire when an excerpt already states the
+    CD row. Kill-switches: RAG_PCG_VALUE_RESCUE=0 /
+    RAG_COMMENCEMENT_DATE_RESCUE=0.
+    """
+    try:
+        from app.core.rag.retriever import (
+            answer_invents_commencement_date,
+            answer_invents_pcg_value,
+            answer_states_commencement_not_populated,
+            answer_states_pcg_not_required,
+            chunk_states_commencement_contract_data,
+            chunk_states_commencement_filled_date,
+            chunk_states_commencement_not_populated,
+            chunk_states_pcg_contract_data,
+            chunk_states_pcg_filled_value,
+            chunk_states_pcg_not_required,
+            commencement_date_rescue_enabled,
+            format_commencement_honest_line,
+            format_pcg_honest_line,
+            pcg_value_rescue_enabled,
+            query_asks_for_contract_commencement_date,
+            query_asks_for_parent_company_guarantee,
+        )
+        user = _latest_operator_ask(messages)
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        raw = text or ""
+        if (
+            pcg_value_rescue_enabled()
+            and query_asks_for_parent_company_guarantee(user)
+            and chunk_states_pcg_contract_data(rag)
+        ):
+            line = format_pcg_honest_line(rag)
+            already_honest = (
+                chunk_states_pcg_not_required(rag)
+                and answer_states_pcg_not_required(raw)
+                and not answer_invents_pcg_value(raw)
+            )
+            already_filled = (
+                chunk_states_pcg_filled_value(rag)
+                and not chunk_states_pcg_not_required(rag)
+                and line.split("(")[0].strip().lower() in raw.lower()
+                and not re.search(r"(?i)paid[- ]up\s+capital", raw)
+            )
+            if already_honest or already_filled:
+                return text
+            if (
+                not raw.strip()
+                or _GENERIC_ACK_RE.search(raw)
+                or raw.strip() == _CG_REFUSAL
+                or _MISSING_PARTICULAR_RE.search(raw)
+                or (
+                    chunk_states_pcg_not_required(rag)
+                    and answer_invents_pcg_value(raw)
+                )
+                or re.search(r"(?i)paid[- ]up\s+capital", raw)
+            ):
+                return line
+            return f"{line}\n\n{raw.strip()}" if raw.strip() else line
+        if (
+            commencement_date_rescue_enabled()
+            and query_asks_for_contract_commencement_date(user)
+            and chunk_states_commencement_contract_data(rag)
+        ):
+            line = format_commencement_honest_line(rag)
+            already_honest = (
+                chunk_states_commencement_not_populated(rag)
+                and answer_states_commencement_not_populated(raw)
+                and not answer_invents_commencement_date(raw)
+            )
+            already_filled = (
+                chunk_states_commencement_filled_date(rag)
+                and not chunk_states_commencement_not_populated(rag)
+                and line.split(" is ", 1)[-1].rstrip(".").lower() in raw.lower()
+            )
+            if already_honest or already_filled:
+                return text
+            if (
+                not raw.strip()
+                or _GENERIC_ACK_RE.search(raw)
+                or raw.strip() == _CG_REFUSAL
+                or _MISSING_PARTICULAR_RE.search(raw)
+                or (
+                    chunk_states_commencement_not_populated(rag)
+                    and answer_invents_commencement_date(raw)
+                )
+                or (
+                    chunk_states_commencement_filled_date(rag)
+                    and answer_invents_commencement_date(raw)
+                    and line.split(" is ", 1)[-1].rstrip(".").lower()
+                    not in raw.lower()
+                )
+            ):
+                return line
+            return f"{line}\n\n{raw.strip()}" if raw.strip() else line
+        return text
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        _LOG.exception("honest-contract-refusal graft failed; passing answer through")
+        return text
+
+
 def _answer_echoes_ask(text: str, user: str) -> bool:
     """True when synthesis only repeated the operator ask (live B4 chrome)."""
     raw = re.sub(r"\s+", " ", (text or "").strip().lower())
@@ -5623,6 +5739,9 @@ def _postprocess_answer(
     # says so and no priced triple exists. The live FAIL greeted
     # ("I'm ready to help…") and never named D529.3 / Rate Only.
     text = _graft_rate_only_item(text, rag_sys_msg, messages)
+    # F-BAT-D G3/G6: Contract Data "not required" / empty commencement
+    # over Schedule 8 form % and commencement-pack dates.
+    text = _graft_honest_contract_refusal(text, rag_sys_msg, messages)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     # Citation provenance: an attribution no evidence record backs is removed
     # and the answer flagged. Sibling of the cost gate above -- that one
@@ -5831,6 +5950,7 @@ def _build_sources_from_audit(
             d = _projects.get_document(doc_id) or {}
             return d.get("original_name") or ""
         except Exception:
+            _LOG.debug("doc name lookup failed for %s", doc_id, exc_info=True)
             return ""
 
     # A3: a named contract/doc id must not appear beside another year's
@@ -6650,6 +6770,7 @@ def _openrouter_402_afford_max_tokens(body: str) -> int | None:
     try:
         value = int(match.group(1))
     except ValueError:
+        _LOG.debug("OpenRouter afford-max-tokens parse failed", exc_info=True)
         return None
     return value if value >= 1 else None
 
@@ -7510,6 +7631,7 @@ def _cm_prompt_fragment_for_turn(user_message: str) -> str:
         text = (injected or "").strip()
         return text[:800] if text else ""
     except Exception:  # noqa: BLE001
+        _LOG.debug("cross-domain prompt inject failed", exc_info=True)
         return ""
 
 
@@ -11770,6 +11892,7 @@ def _get_smart_orchestrator_block() -> Any | None:
         _SMART_ORCH_BLOCK_CACHE = cls()
         return _SMART_ORCH_BLOCK_CACHE
     except Exception:  # noqa: BLE001
+        _LOG.debug("smart_orchestrator block cache init failed", exc_info=True)
         return None
 
 
@@ -11793,6 +11916,7 @@ def _message_names_registered_calculator(text: str) -> bool:
     try:
         from app.lib.construction_formulas import CALCULATORS
     except Exception:  # noqa: BLE001
+        _LOG.debug("CALCULATORS import failed", exc_info=True)
         return False
     raw = text or ""
     t = raw.lower().replace("-", "_")

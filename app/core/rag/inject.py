@@ -281,8 +281,14 @@ def format_chunks_as_system_message(
     from app.core.rag.retriever import (
         chunk_states_aca_including_vat,
         chunk_states_accepted_contract_amount,
+        chunk_states_commencement_contract_data,
+        chunk_states_commencement_filled_date,
+        chunk_states_commencement_not_populated,
         chunk_states_delay_damages_rate,
         chunk_states_engineer_identity,
+        chunk_states_pcg_contract_data,
+        chunk_states_pcg_filled_value,
+        chunk_states_pcg_not_required,
         chunk_states_rate_only_item,
         chunk_states_schedule_not_used,
         chunk_states_time_for_completion,
@@ -293,6 +299,8 @@ def format_chunks_as_system_message(
         query_asks_delay_damages_daily_amount,
         query_asks_for_aca_including_vat,
         query_asks_for_boq_item_amount,
+        query_asks_for_contract_commencement_date,
+        query_asks_for_parent_company_guarantee,
         query_asks_for_time_for_completion,
         query_asks_who_the_engineer_is,
         rate_only_rescue_enabled,
@@ -390,6 +398,54 @@ def format_chunks_as_system_message(
                 "That IS the answer. State the appointed firm. Do not say "
                 "the identity is absent, and do not answer from a Conditions "
                 "of Contract glossary or drawing note instead.\n"
+            )
+    if query and query_asks_for_parent_company_guarantee(query):
+        _pcg_texts = [c.text or "" for c in chunks]
+        if any(chunk_states_pcg_not_required(t) for t in _pcg_texts):
+            header += (
+                "PARENT COMPANY GUARANTEE — an excerpt below states that a "
+                "Parent Company Guarantee is not required (Contract Data "
+                "4.3.7 = No). That IS the answer. State that it is not "
+                "required. Do not invent a monetary or percentage value "
+                "from a Schedule 8 form, specimen, or blank guarantee "
+                "template.\n"
+            )
+        elif any(chunk_states_pcg_filled_value(t) for t in _pcg_texts):
+            header += (
+                "PARENT COMPANY GUARANTEE — an excerpt below states the "
+                "Parent Company Guarantee value in Contract Data. That IS "
+                "the answer. State that Contract Data figure. Do not "
+                "replace it with a Schedule 8 form percentage of paid-up "
+                "capital.\n"
+            )
+        elif any(chunk_states_pcg_contract_data(t) for t in _pcg_texts):
+            header += (
+                "PARENT COMPANY GUARANTEE — prefer the Contract Data row "
+                "over a blank form template.\n"
+            )
+    if query and query_asks_for_contract_commencement_date(query):
+        _cd_texts = [c.text or "" for c in chunks]
+        if any(chunk_states_commencement_not_populated(t) for t in _cd_texts):
+            header += (
+                "COMMENCEMENT DATE — an excerpt below states that the "
+                "contract Commencement Date is not populated in Contract "
+                "Data and is tied to LOA/NOA. That IS the answer. State "
+                "that the field is not populated / tied to LOA-NOA. Do "
+                "not invent a calendar date from a Construction "
+                "Commencement Pack or other ancillary site-start report.\n"
+            )
+        elif any(chunk_states_commencement_filled_date(t) for t in _cd_texts):
+            header += (
+                "COMMENCEMENT DATE — an excerpt below states the contract "
+                "Commencement Date in Contract Data. That IS the answer. "
+                "Lead with that date. Do not replace it with a date from "
+                "a Construction Commencement Pack unless the user asked "
+                "for that pack.\n"
+            )
+        elif any(chunk_states_commencement_contract_data(t) for t in _cd_texts):
+            header += (
+                "COMMENCEMENT DATE — prefer the Contract Data definition "
+                "or empty field over an ancillary commencement pack.\n"
             )
 
     cited_contract_ids: List[str] = []

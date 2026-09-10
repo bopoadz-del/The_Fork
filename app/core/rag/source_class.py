@@ -70,9 +70,11 @@ SOURCE_CLASS_LABELS: dict[str, str] = {
 # ── template detection ────────────────────────────────────────────────────
 #
 # Conservative on purpose. A document that IS part of the contract must not
-# be demoted to a template: G3 answers correctly out of "the Schedule 8
-# form", and a rule that fired on the bare word "form" would break it. Only
-# standalone markers that mean "this is not filled in" count.
+# be demoted to a template by the bare word "form" — "Schedule 8 form of
+# Parent Company Guarantee" is a real upload name. G3 honesty (Contract
+# Data 4.3.7 "not required" over that form's blank %) is a dedicated
+# retriever/compose gate, not this classifier. Only standalone markers
+# that mean "this is not filled in" count.
 #
 # The pattern has a TRAILING word boundary and deliberately no leading one.
 # The trailing boundary is what protects a real document: "Blanket wayleave

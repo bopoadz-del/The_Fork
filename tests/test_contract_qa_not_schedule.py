@@ -34,10 +34,13 @@ MILESTONE_5_BARE = "Milestone 5 Time for Completion"
 SCHEDULE_10 = "What does Schedule 10 of the contract contain?"
 SCHEDULE_10_BARE = "What is Schedule 10?"
 SCHEDULE_9_VOLUMES = "What does Schedule 9 of the contract volumes cover?"
+PCG_VALUE = "What is the value of the Parent Company Guarantee?"
+COMMENCEMENT_DATE = "What is the Commencement Date of the contract?"
 
 CONTRACT_LOOKUP_ASKS = [
     TFC_WHOLE_WORKS, MILESTONE_5_TFC, MILESTONE_5_BARE,
     SCHEDULE_10, SCHEDULE_10_BARE, SCHEDULE_9_VOLUMES,
+    PCG_VALUE, COMMENCEMENT_DATE,
 ]
 
 
