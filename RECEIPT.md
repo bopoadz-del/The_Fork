@@ -31,12 +31,30 @@ treat `8199b14b` as a real document id.
 
 UNPRODUCED
 
+## Rebase onto main 234d95ad (#557) — what broke
+
+GitHub check **client-pattern scan** (job 102858412464) went red after
+update-branch. `scripts/scan_secrets.py` itself was clean
+(`8 pattern(s), 1568 file(s)`). The same job then runs
+`scripts/scan_exception_pass.py` — #557's silent-empty-return twin — and
+that step flagged 16 `file:line` keys.
+
+Those 16 were not new swallows. R1–R5 inserted lines in `projects.py`,
+`doc_index.py`, `retriever.py`, `vector_store.py`, and
+`p1b_ingest_drive_server.py`, so the 124-entry `RETURN_ALLOWLIST` from
+#557 pointed at stale line numbers. Live site count stayed 124.
+
+Minimal fix: retarget the 16 drifted keys via
+`python scripts/scan_exception_pass.py --list-returns`. Ceiling stays 124.
+R1–R5 unchanged.
+
 ## Lint gates
 
 - `scripts/audit_stubs.py` — clean
-- `scripts/scan_exception_pass.py` — clean
+- `scripts/scan_exception_pass.py` — clean (`RETURN: 0 new (124 baselined)`)
 - `frontend` eslint — clean
-- `scripts/scan_secrets.py` — not run here (`SECRET_SCAN_PATTERNS` unset)
+- `scripts/scan_secrets.py` — CI-clean on 3ea31a06; not re-run here
+  (`SECRET_SCAN_PATTERNS` unset)
 
 ## Tests
 
