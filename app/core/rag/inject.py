@@ -306,54 +306,48 @@ def format_chunks_as_system_message(
             "form.\n"
         )
 
-    # OLD-pack G4: even on a single-class set, a retrieved Rate Only
-    # row IS the answer. Without this the model restated "answer only
-    # from the documents" / greeted and never named Rate Only. Do not
-    # invent a total — only fire when an excerpt already says Rate Only
-    # on the asked CESMM item.
-    if (
-        query
-        and rate_only_rescue_enabled()
-        and query_asks_for_boq_item_amount(query)
-    ):
-        _ro_codes = extract_asked_cesmm_codes(query)
-        if _ro_codes and any(
-            chunk_states_rate_only_item(c.text or "", _ro_codes) for c in chunks
-        ):
-            header += (
-                "RATE ONLY — an excerpt below states that the asked BOQ "
-                "item is Rate Only. That IS the answer. State Rate Only "
-                "and that no amount exists. Do not invent a money total, "
-                "and do not give a generic acknowledgement.\n"
-            )
-
-    # WAVE 2 B4/B5: priced D599.5 / D549.2 is already in the excerpts.
-    # Without this the model echoed the ask / promised to search and
-    # never wrote quantity + amount. G4 Rate Only stays on the block
-    # above.
-    if (
-        query
-        and priced_boq_compose_enabled()
-        and query_asks_for_boq_item_amount(query)
-    ):
-        _pb_codes = extract_asked_cesmm_codes(query)
+    # WAVE 2 B4/B5 then G4: a priced CESMM row in the excerpts IS the
+    # answer even when Rate Only / Excluded siblings share the code.
+    # Without this the model refused a Rate Only vs Excluded conflict
+    # and never wrote 280,320 (live B5). G4 Rate Only fires only when
+    # no priced triple exists for the asked item.
+    _boq_codes = (
+        extract_asked_cesmm_codes(query)
+        if query and query_asks_for_boq_item_amount(query)
+        else []
+    )
+    _priced_row = (
+        compose_priced_boq_row(
+            query, "\n".join(c.text or "" for c in chunks),
+        )
         if (
-            _pb_codes
-            and not any(
-                chunk_states_rate_only_item(c.text or "", _pb_codes)
-                for c in chunks
-            )
-            and compose_priced_boq_row(
-                query, "\n".join(c.text or "" for c in chunks),
-            )
-        ):
-            header += (
-                "PRICED BOQ ROW — an excerpt below states the asked "
-                "item's quantity, rate, and amount. That IS the answer. "
-                "State the quantity and the amount. Do not search "
-                "further, do not call a BOQ parser, and do not give a "
-                "generic acknowledgement.\n"
-            )
+            _boq_codes
+            and priced_boq_compose_enabled()
+        )
+        else None
+    )
+    if _priced_row:
+        header += (
+            "PRICED BOQ ROW — an excerpt below states the asked "
+            "item's quantity, rate, and amount. That IS the answer. "
+            "State the quantity and the amount. Do not search "
+            "further, do not call a BOQ parser, and do not give a "
+            "generic acknowledgement. Rate Only or Excluded siblings "
+            "for the same item do not override the priced line.\n"
+        )
+    elif (
+        _boq_codes
+        and rate_only_rescue_enabled()
+        and any(
+            chunk_states_rate_only_item(c.text or "", _boq_codes) for c in chunks
+        )
+    ):
+        header += (
+            "RATE ONLY — an excerpt below states that the asked BOQ "
+            "item is Rate Only. That IS the answer. State Rate Only "
+            "and that no amount exists. Do not invent a money total, "
+            "and do not give a generic acknowledgement.\n"
+        )
 
     if query and query_asks_for_aca_including_vat(query):
         if any(chunk_states_aca_including_vat(c.text or "") for c in chunks):

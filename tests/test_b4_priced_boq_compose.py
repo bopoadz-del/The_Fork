@@ -35,6 +35,9 @@ from app.agents.runtime import (
 from app.core.rag.inject import format_chunks_as_system_message
 from app.core.rag.retriever import (
     answer_states_priced_boq,
+    chunk_states_excluded_item,
+    chunk_states_priced_item,
+    chunk_states_rate_only_item,
     compose_priced_boq_row,
     format_priced_boq_line,
     priced_boq_compose_enabled,
@@ -559,3 +562,107 @@ async def test_chat_short_circuits_b5_without_calling_llm(monkeypatch):
     assert _has_b5_figures(result["answer"])
     assert STORM_WATER not in result["answer"].lower()
     assert result["iterations"] == 0
+
+
+# Live WAVE 2 B5 on be93dee: Rate Only (PART NR. 3) vs Excluded
+# (priced BOQ …53-0000-JCB-BOQ-CA-000007-B) suppressed 280,320.
+PART_NR_3_PRICED = (
+    "PART NR. 3 DEMOLITION\n"
+    "D529.3 Removal of storm water culverts — m 1,370.00 Rate Only\n"
+    "D 549.2 Removal of existing chain link fence 3,504 m @ SAR 80.00 "
+    "= SAR 280,320.00\n"
+)
+RATE_ONLY_D549_SIBLING = (
+    "PART NR. 3\n"
+    "D549.2 Removal of existing chain link fence — m Rate Only\n"
+)
+EXCLUDED_D549_SIBLING = (
+    "IP-INF-053-0000-JCB-BOQ-CA-000007-B Bill of Quantities (Priced)\n"
+    "D549.2 Removal of existing chain link fence | sum 1 Excluded\n"
+)
+STAINED_PART_NR_3 = (
+    "PART NR. 3 DEMOLITION Rate Only items listed separately. "
+    "D 549.2 Removal of existing chain link fence 3,504 m @ SAR 80.00 "
+    "= SAR 280,320.00 Rate Only notes continue.\n"
+)
+CONFLICT_REFUSE = (
+    "The retrieved documents conflict: PART NR. 3 states Rate Only "
+    "while the priced BOQ IP-INF-053-0000-JCB-BOQ-CA-000007-B states "
+    "Excluded. I cannot confirm the amount."
+)
+B5_SIBLING_RAG = _sys(
+    PART_NR_3_PRICED, RATE_ONLY_D549_SIBLING, EXCLUDED_D549_SIBLING,
+)
+
+
+def test_compose_prefers_priced_part_nr_3_over_rate_only_and_excluded():
+    blob = "\n".join(
+        (PART_NR_3_PRICED, RATE_ONLY_D549_SIBLING, EXCLUDED_D549_SIBLING),
+    )
+    parsed = compose_priced_boq_row(LIVE_B5, blob)
+    assert parsed, blob
+    assert _plain(parsed["qty"]) == B5_QTY
+    assert abs(parsed["rate"] - 80.0) < 1e-9
+    assert _plain(parsed["amount"]) == B5_AMT
+    assert "chain link" in (parsed.get("description") or "").lower()
+    assert chunk_states_priced_item(PART_NR_3_PRICED, ["d549.2"])
+    assert chunk_states_rate_only_item(RATE_ONLY_D549_SIBLING, ["d549.2"])
+    assert chunk_states_excluded_item(EXCLUDED_D549_SIBLING, ["d549.2"])
+    assert not chunk_states_rate_only_item(PART_NR_3_PRICED, ["d549.2"])
+    assert not chunk_states_excluded_item(PART_NR_3_PRICED, ["d549.2"])
+
+
+def test_stained_part_nr_3_window_still_composes_280320():
+    """Rate Only page notes must not hide the priced D549.2 triple."""
+    parsed = compose_priced_boq_row(LIVE_B5, STAINED_PART_NR_3)
+    assert parsed
+    assert _plain(parsed["amount"]) == B5_AMT
+    assert not chunk_states_rate_only_item(STAINED_PART_NR_3, ["d549.2"])
+    assert chunk_states_priced_item(STAINED_PART_NR_3, ["d549.2"])
+
+
+def test_rate_only_plus_excluded_conflict_does_not_suppress_priced_amount():
+    """Live be93dee refuse: Rate Only vs Excluded must not hide 280,320."""
+    for hung in ("", CONFLICT_REFUSE, _CG_REFUSAL, B5_QUESTION_ECHO):
+        out = _graft_priced_boq_item(hung, B5_SIBLING_RAG, _msgs(LIVE_B5))
+        assert _has_b5_figures(out), hung
+        assert "Rate Only" not in out
+        assert "Excluded" not in out
+        assert "cannot confirm" not in out.lower()
+    assert _graft_rate_only_item(
+        CONFLICT_REFUSE, B5_SIBLING_RAG, _msgs(LIVE_B5),
+    ) == CONFLICT_REFUSE
+    post = _postprocess_answer(CONFLICT_REFUSE, B5_SIBLING_RAG, _msgs(LIVE_B5))
+    assert _has_b5_figures(post)
+    assert "cannot confirm" not in post.lower()
+    g4 = _postprocess_answer(
+        "I'm ready to help. Please let me know what you need.",
+        B5_SIBLING_RAG, _msgs(LIVE_G4),
+    )
+    assert "Rate Only" in g4
+    assert "D529.3" in g4
+    assert B5_AMT not in g4.replace(",", "")
+
+
+def test_inject_prefers_priced_header_when_rate_only_and_excluded_siblings():
+    chunks = [
+        Chunk(
+            chunk_id="part3", project_id="p_master", doc_id="part3",
+            chunk_index=0, text=PART_NR_3_PRICED, score=0.4,
+        ),
+        Chunk(
+            chunk_id="ro", project_id="p_master", doc_id="ro",
+            chunk_index=0, text=RATE_ONLY_D549_SIBLING, score=0.9,
+        ),
+        Chunk(
+            chunk_id="ex", project_id="p_master", doc_id="ex",
+            chunk_index=0, text=EXCLUDED_D549_SIBLING, score=0.85,
+        ),
+    ]
+    b5 = format_chunks_as_system_message(chunks, 4, query=LIVE_B5)["content"]
+    assert "PRICED BOQ ROW" in b5
+    assert "RATE ONLY" not in b5
+    assert B5_AMT in b5.replace(",", "")
+    g4 = format_chunks_as_system_message(chunks, 4, query=LIVE_G4)["content"]
+    assert "RATE ONLY" in g4
+    assert "PRICED BOQ ROW" not in g4
