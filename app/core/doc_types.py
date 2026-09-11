@@ -8,12 +8,15 @@ content-aware, not filename-only, and an unmatched document is reported as
 """
 
 import json
+import logging
 import re
 import os
 import threading
 from typing import Any, Dict, List
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 
@@ -51,6 +54,7 @@ def _load_custom() -> List[Dict[str, Any]]:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f) or []
     except Exception:
+        logger.warning("failed to load custom document types from %s", path, exc_info=True)
         return []
 
 

@@ -97,6 +97,7 @@ def worth_isolating(file_path: str) -> bool:
     try:
         return (os.path.getsize(file_path) / (1024 * 1024)) >= _MIN_MB
     except OSError:
+        logger.warning("could not stat %r for isolation threshold", file_path, exc_info=True)
         return False
 
 
@@ -116,6 +117,7 @@ def isolation_available() -> bool:
         import multiprocessing
         import resource  # noqa: F401
     except Exception:
+        logger.warning("extraction isolation imports unavailable", exc_info=True)
         return False
     return "fork" in multiprocessing.get_all_start_methods()
 

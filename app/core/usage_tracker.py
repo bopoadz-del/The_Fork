@@ -20,6 +20,7 @@ SQLAlchemy-backed via app.core.db — unified The Fork schema.
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import uuid
@@ -30,6 +31,8 @@ from sqlalchemy import func, select
 
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.models import UsageRun
+
+logger = logging.getLogger(__name__)
 
 _LOCK = threading.RLock()
 
@@ -76,6 +79,7 @@ def _load_pricing() -> Dict[str, Dict[str, Dict[str, float]]]:
     try:
         mtime = os.path.getmtime(path)
     except OSError:
+        logger.warning("LLM pricing file missing or unreadable at %s", path, exc_info=True)
         return {}
     if _PRICING_CACHE is not None and mtime == _PRICING_MTIME:
         return _PRICING_CACHE

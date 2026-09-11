@@ -294,6 +294,7 @@ def shred_file(path: str) -> bool:
             fh.flush()
             os.fsync(fh.fileno())
     except OSError:
+        logger.warning("could not shred decrypted temp file %s", path, exc_info=True)
         return False
     try:
         os.remove(path)
