@@ -88,6 +88,10 @@ def looks_encrypted(blob: bytes) -> bool:
 
         decoded = base64.urlsafe_b64decode(blob)
     except Exception:
+        logger.debug(
+            "blob is not a Fernet token; treating as plaintext",
+            exc_info=True,
+        )
         return False
     return len(decoded) >= 57 and decoded[0] == _FERNET_VERSION
 

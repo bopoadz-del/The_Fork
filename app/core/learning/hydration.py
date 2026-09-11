@@ -770,6 +770,7 @@ def _load_gdrive_seen() -> Dict[str, List[str]]:
                 out[str(k)] = [str(x) for x in v]
         return out
     except Exception:  # noqa: BLE001 — corrupt sidecar shouldn't kill hydration
+        logger.warning("corrupt hydration gdrive-seen sidecar at %s", path, exc_info=True)
         return {}
 
 

@@ -30,8 +30,11 @@ unparseable" flags, not 500s.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # Math tolerance: relative for non-tiny values, absolute otherwise.
@@ -76,6 +79,7 @@ def _to_float(value: Any) -> Optional[float]:
             return None
         return float(s)
     except (TypeError, ValueError):
+        logger.warning("could not parse BOQ numeric value %r", value, exc_info=True)
         return None
 
 

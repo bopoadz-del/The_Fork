@@ -109,7 +109,7 @@ def test_the_baseline_is_only_ever_smaller():
 
 def test_the_baseline_is_not_a_place_to_add_things():
     """A ceiling, stated. Raise it only by deleting this assertion on purpose."""
-    assert len(RETURN_ALLOWLIST) <= 94, (
+    assert len(RETURN_ALLOWLIST) <= 79, (
         f"the baseline grew to {len(RETURN_ALLOWLIST)}; it was 124 on "
         "2026-09-10 and is meant to shrink"
     )

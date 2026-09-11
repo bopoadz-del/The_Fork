@@ -322,6 +322,7 @@ def _has_sentence_transformers() -> bool:
         import sentence_transformers  # noqa: F401
         return True
     except ImportError:
+        logger.warning("sentence-transformers import unavailable", exc_info=True)
         return False
 
 

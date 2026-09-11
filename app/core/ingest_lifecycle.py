@@ -51,6 +51,7 @@ from __future__ import annotations
 import atexit
 import faulthandler
 import json
+import logging
 import os
 import platform
 import signal
@@ -69,6 +70,8 @@ _MB = 1024.0 * 1024.0
 # A cgroup "no limit" is written either as the literal "max" (v2) or as a
 # near-2**63 sentinel (v1). Anything above this is not a real ceiling.
 _NO_LIMIT_BYTES = 1 << 50
+
+logger = logging.getLogger(__name__)
 
 LogFn = Callable[[str], None]
 
@@ -93,6 +96,7 @@ def _read_text(path: Path) -> Optional[str]:
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
+        logger.warning("could not read %s", path, exc_info=True)
         return None
 
 
@@ -107,6 +111,7 @@ def _read_int(path: Path) -> Optional[int]:
     try:
         value = int(token.split()[0])
     except ValueError:
+        logger.warning("cgroup integer unparseable in %r", token, exc_info=True)
         return None
     if value >= _NO_LIMIT_BYTES:
         return None
@@ -145,6 +150,9 @@ def _read_proc_kb(status_path: Path, key: str) -> Optional[float]:
         try:
             return round(int(parts[1]) / 1024.0, 1)
         except ValueError:
+            logger.warning(
+                "proc status %s field unparseable: %r", key, parts[1], exc_info=True
+            )
             return None
     return None
 
@@ -162,6 +170,7 @@ def host_uptime_s(proc_root: Path = Path("/proc")) -> Optional[float]:
     try:
         return round(float(raw.split()[0]), 1)
     except (ValueError, IndexError):
+        logger.warning("host uptime unparseable: %r", raw, exc_info=True)
         return None
 
 
@@ -566,6 +575,7 @@ def read_state(path: Path) -> Optional[Dict[str, Any]]:
     try:
         state = json.loads(raw)
     except json.JSONDecodeError:
+        logger.warning("ingest run-state JSON is corrupt at %s", path, exc_info=True)
         return None
     return state if isinstance(state, dict) else None
 

@@ -6,8 +6,11 @@ metadata at 169.254.169.254), or private-network addresses.
 """
 
 import ipaddress
+import logging
 import socket
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 
 class UnsafeURLError(ValueError):
@@ -18,6 +21,7 @@ def _is_public_ip(ip_str: str) -> bool:
     try:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
+        logger.warning("not a public IP (unparseable): %r", ip_str, exc_info=True)
         return False
     # is_global is False for private, loopback, link-local and reserved ranges.
     return ip.is_global and not ip.is_multicast

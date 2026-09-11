@@ -760,6 +760,11 @@ def get_project_accessible(project_id: str, user_id: Optional[str] = None):
             if candidate is not None and _is_platform_project(candidate):
                 return candidate
     except Exception:  # noqa: BLE001 -- fail closed on lookup errors
+        logger.warning(
+            "admin platform-project fallthrough failed for project_id=%r",
+            project_id,
+            exc_info=True,
+        )
         return None
     return None
 
@@ -1085,6 +1090,7 @@ def _local_plaintext_size(path: str) -> int:
 
         return int(file_crypto.plaintext_size(path) or 0)
     except (OSError, ValueError):
+        logger.warning("could not read plaintext size for %s", path, exc_info=True)
         return 0
 
 
