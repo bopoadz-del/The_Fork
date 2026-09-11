@@ -1,8 +1,11 @@
 from __future__ import annotations
+import logging
 import os
 
 from arq import create_pool
 from arq.connections import RedisSettings
+
+logger = logging.getLogger(__name__)
 
 _pool = None
 
@@ -31,4 +34,11 @@ async def enqueue_ingest(project_id: str, document_id: str, job_id: str) -> bool
         await _pool.enqueue_job("ingest_document", project_id, document_id, job_id)
         return True
     except Exception:
+        logger.warning(
+            "ingest enqueue failed project_id=%r document_id=%r job_id=%r",
+            project_id,
+            document_id,
+            job_id,
+            exc_info=True,
+        )
         return False

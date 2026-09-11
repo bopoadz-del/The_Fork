@@ -21,10 +21,13 @@ never assigned an invented number.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import statistics as st
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ── rate-card data (loaded once, path relative to this module) ───────────────
 _CARD_PATH = os.path.join(os.path.dirname(__file__), "data", "boq_rate_card.json")
@@ -126,6 +129,7 @@ def _num(x: Any) -> float | None:
         v = float(s)
         return v if v == v else None
     except Exception:
+        logger.warning("could not parse BOQ rate-card numeric value %r", x, exc_info=True)
         return None
 
 

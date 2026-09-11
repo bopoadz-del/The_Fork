@@ -324,6 +324,7 @@ def _bump_prometheus_request_counter(method: str, status: int) -> None:
                 ["method", "status"],
             )
         except Exception:
+            logger.debug("prometheus-client unavailable; request counter disabled", exc_info=True)
             return
     try:
         _PROM_REQUESTS_TOTAL.labels(method=method, status=str(status)).inc()

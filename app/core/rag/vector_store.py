@@ -1754,6 +1754,10 @@ class VectorStore:
                     rows = session.execute(sql, params).all()
         except OperationalError:
             # photo_chunks table may not exist on older deployments.
+            logger.warning(
+                "photo_chunks BM25 search failed (table may be missing)",
+                exc_info=True,
+            )
             return []
 
         out: List[Chunk] = []

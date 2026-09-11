@@ -469,6 +469,7 @@ async def _drain_request_body(request: Request, *, seconds: float) -> bool:
             if _time.monotonic() > deadline:
                 return False
     except Exception:  # noqa: BLE001 — client vanished mid-drain; nothing to answer
+        logger.debug("client vanished mid-body-drain", exc_info=True)
         return False
     return True
 

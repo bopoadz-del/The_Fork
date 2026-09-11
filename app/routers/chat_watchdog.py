@@ -95,6 +95,7 @@ def event_type(raw: str) -> Optional[str]:
         try:
             data = json.loads(body)
         except ValueError:
+            _LOG.debug("SSE frame is not JSON: %r", body, exc_info=True)
             return None
         if isinstance(data, dict):
             got = data.get("type")

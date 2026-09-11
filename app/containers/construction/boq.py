@@ -778,6 +778,12 @@ class ConstructionBoqMixin:
             start = datetime.strptime(str(schedule_start)[:10], "%Y-%m-%d")
             return (start - timedelta(weeks=lead_time_weeks)).strftime("%Y-%m-%d")
         except Exception:
+            logger.warning(
+                "could not compute procurement order date from schedule_start=%r lead_time_weeks=%r",
+                schedule_start,
+                lead_time_weeks,
+                exc_info=True,
+            )
             return None
     def _group_by_category(self, items: List[Dict]) -> Dict:
         grouped: Dict = {}

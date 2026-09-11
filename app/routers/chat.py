@@ -362,6 +362,11 @@ def _resolve_attached_documents(
         from app.core import projects as projects_store
         docs = projects_store.list_documents(project_id) or []
     except Exception:  # noqa: BLE001 — resolution is best-effort
+        logger.warning(
+            "attached-file name resolution failed for project_id=%r",
+            project_id,
+            exc_info=True,
+        )
         return []
 
     resolved: List[Dict[str, Any]] = []

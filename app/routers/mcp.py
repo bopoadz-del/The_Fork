@@ -7,9 +7,12 @@ This module is import-safe even if the optional `mcp` package is not installed
 or doesn't ship the SSE transport — see `mcp_router_available()`.
 """
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+
+logger = logging.getLogger(__name__)
 from fastapi.responses import JSONResponse
 
 from app.dependencies import require_api_key, get_block_instance
@@ -59,6 +62,7 @@ def mcp_router_available() -> bool:
         from mcp.server.sse import SseServerTransport  # noqa: F401
         return True
     except Exception:
+        logger.warning("mcp SSE transport imports unavailable", exc_info=True)
         return False
 
 

@@ -338,6 +338,7 @@ def _xer_hours(value) -> float:
     try:
         return float(value or 0)
     except (TypeError, ValueError):
+        _logger.warning("xer hour-count unparseable: %r", value, exc_info=True)
         return 0.0
 
 

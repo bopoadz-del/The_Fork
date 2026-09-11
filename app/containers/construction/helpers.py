@@ -67,6 +67,7 @@ def _parse_money_str(value: Any) -> Optional[float]:
     try:
         return float(s)
     except ValueError:
+        logger.warning("could not parse construction numeric value %r", s, exc_info=True)
         return None
 
 

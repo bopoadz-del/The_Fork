@@ -41,6 +41,7 @@ def _pydub_available() -> bool:
         import pydub  # noqa: F401
         return True
     except ImportError:
+        _LOG.warning("pydub import unavailable", exc_info=True)
         return False
 
 

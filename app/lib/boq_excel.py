@@ -18,8 +18,11 @@ tests can verify the formulas actually compute the right totals.
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 import openpyxl
 from openpyxl.chart import BarChart, PieChart, Reference
@@ -186,6 +189,7 @@ def evaluate_workbook_total(src) -> float:
             try:
                 return _eval(sheet, m.group(1))
             except Exception:
+                logger.debug("IFERROR formula fallback to 0 for %r", expr, exc_info=True)
                 return 0.0
         m = re.fullmatch(r"SUM\(([A-Z]+\d+):([A-Z]+\d+)\)", expr)
         if m:

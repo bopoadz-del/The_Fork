@@ -331,6 +331,7 @@ def _has_model2vec() -> bool:
         import model2vec  # noqa: F401
         return True
     except ImportError:
+        logger.warning("model2vec import unavailable", exc_info=True)
         return False
 
 

@@ -14,8 +14,11 @@ The parser is deliberately narrow:
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Longest-first so "floor slab" wins over "slab".
 ACTIVITY_FAMILIES: Tuple[str, ...] = (
@@ -145,6 +148,7 @@ def _clamp_days(raw: Any) -> Optional[int]:
     try:
         days = int(raw)
     except (TypeError, ValueError):
+        logger.warning("WBS duration override unparseable: %r", raw, exc_info=True)
         return None
     if days < _MIN_DAYS or days > _MAX_DAYS:
         return None
