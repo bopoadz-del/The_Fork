@@ -1422,9 +1422,8 @@ def main() -> int:
             file_iter = iter(filtered_files)
 
             def _submit_next() -> bool:
-                try:
-                    fm = next(file_iter)
-                except StopIteration:
+                fm = next(file_iter, None)
+                if fm is None:
                     return False
                 pending[pool.submit(_process_one, fm)] = fm
                 return True
