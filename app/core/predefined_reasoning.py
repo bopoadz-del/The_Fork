@@ -549,6 +549,7 @@ def _to_number(s: str):
     try:
         return float(str(s).replace(",", "").strip())
     except (ValueError, TypeError):
+        logger.warning("could not parse grounding number %r", s, exc_info=True)
         return None
 
 def _collect_result_numbers(result: Any) -> set:
@@ -662,6 +663,7 @@ async def _run_container_action(action: str, context: Dict[str, Any]) -> Optiona
         from app.dependencies import get_block_instance
         con = get_block_instance("construction")
     except Exception:
+        logger.warning("construction block unavailable for action %s", action, exc_info=True)
         return None
     try:
         actions = set(con.get_actions().keys()) if hasattr(con, "get_actions") else set()
