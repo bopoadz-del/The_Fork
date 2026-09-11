@@ -248,6 +248,20 @@ def _is_geodatabase_internal(path: str) -> bool:
     return any(part.lower().endswith(".gdb") for part in Path(path).parts[:-1])
 
 
+def _ingest_status_from_index_result(
+    result: Dict[str, Any], existing_doc: Dict[str, Any],
+) -> str:
+    """Classify the in-place retry outcome for the now_indexed tally."""
+    from app.core import ingest_status as ist
+
+    stamped = result.get("ingest_status")
+    if stamped in ist.ALL_STATUSES:
+        return str(stamped)
+    n = int(result.get("rag_indexed") or result.get("total_chunks") or 0)
+    ext = ist.document_extension(existing_doc) or ".docx"
+    return ist.classify(chunk_count=n, extension=ext).status
+
+
 def _safe_stored_name(original: str) -> str:
     """Filesystem-safe stored name; preserves extension."""
     base = Path(original).stem
@@ -399,14 +413,19 @@ def _ingest_file(
         common_meta["r2_archive_error"] = archive["error"]
 
     if existing_doc is not None and not reingest_of:
-        # Zero-chunk retry: the row exists from a failed pass; re-index it
-        # in place. The stored name is deterministic, so the fresh download
-        # above landed at the same path the row's file_path points to.
+        # In-place retry: the row exists from a prior pass (zero-chunk, or a
+        # TEXT_SPARSE .docx stamped by an older extractor). Re-index the SAME
+        # document id so chunks are replaced. No new row, no supersede.
         projects_mod.update_document_metadata(existing_doc["id"], common_meta)
         result = doc_index.index_document(
             project_id, existing_doc["id"],
         )
         result["reindexed_existing_doc"] = True
+        if existing_doc.get("_stale_extractor_retry"):
+            result["stale_extractor_retry"] = True
+            result["ingest_status"] = _ingest_status_from_index_result(
+                result, existing_doc,
+            )
         r2_storage.delete_local_archive(str(dest))
         result["r2_archive"] = archive
         log(
@@ -749,6 +768,9 @@ def main() -> int:
         "download_failed": 0,
         "errors": 0,
         "already_indexed": 0,
+        "stale_extractor_open": 0,
+        "retried": 0,
+        "now_indexed": 0,
     }
     results: List[Dict[str, Any]] = []
 
@@ -777,6 +799,9 @@ def main() -> int:
         "outstanding": 0,
         "walk_errors": 0,
         "skipped_no_folder_id": 0,
+        "stale_extractor_open": 0,
+        "retried": 0,
+        "now_indexed": 0,
     }
     folder_accounting: List[Dict[str, Any]] = []
     walk_error_messages: List[str] = []
@@ -940,6 +965,9 @@ def main() -> int:
             f"| attempted={accounting['attempted']}/batch={accounting['batch']} "
             f"assigned={accounting['assigned']} "
             f"already_indexed={global_tally['already_indexed']} "
+            f"stale_extractor_open={global_tally['stale_extractor_open']} "
+            f"retried={global_tally['retried']} "
+            f"now_indexed={global_tally['now_indexed']} "
             f"unsupported={global_tally['skipped_unsupported']} "
             f"walk_errors={accounting['walk_errors']} "
             f"skipped_no_folder_id={accounting['skipped_no_folder_id']} "
@@ -1042,6 +1070,7 @@ def main() -> int:
         # stable project_id; fall back to a name-derived id.
         already_indexed: set[str] = set()
         retry_doc_by_fid: Dict[str, Dict[str, Any]] = {}
+        folder_stale_open = 0
         project_id: str | None = None
         if not dry_run:
             preferred_id = (project_id_for_folder or "").strip() or None
@@ -1077,7 +1106,9 @@ def main() -> int:
 
             # Resume is ALWAYS on for live runs. A document row alone is
             # NOT proof of success — skip only files whose doc actually
-            # has chunks; zero-chunk docs are re-indexed in place.
+            # has chunks AND is not an open stale-extractor .docx.
+            # Zero-chunk docs and TEXT_SPARSE .docx stamped by an older
+            # extractor are re-indexed in place (same row, same id).
             #
             # FAIL CLOSED. This used to fall back to row-presence resume on
             # any exception, which counts ZERO_CHUNK documents as indexed: one
@@ -1087,6 +1118,8 @@ def main() -> int:
             # The identity `already_indexed + assigned == supported` held the
             # whole time. An unusable resume check must stop the run, not
             # quietly redefine what "already indexed" means.
+            # Same fail-closed for stale .docx: if status / extractor_version
+            # cannot be read, do not silently count the row as already_indexed.
             try:
                 chunk_counts: Dict[str, int] = _vs.get_store().count_by_doc(project_id)
             except Exception as exc:  # noqa: BLE001 — surfaced as a hard abort below
@@ -1110,18 +1143,48 @@ def main() -> int:
                     or _is_geodatabase_internal(path)
                 )
 
+            from app.core import ingest_status as ist
+
+            folder_stale_open = 0
             for doc in projects_mod.list_documents(project_id):
                 fid = (doc.get("metadata") or {}).get("drive_file_id")
                 if not fid:
                     continue
-                if chunk_counts.get(doc["id"], 0) > 0:
-                    already_indexed.add(fid)
+                chunks = chunk_counts.get(doc["id"], 0)
+                if chunks > 0:
+                    if ist.resume_is_already_indexed(doc, chunks):
+                        already_indexed.add(fid)
+                        continue
+                    # Open due to stale/missing extractor on .docx, or
+                    # unreadable status/version (fail closed). Leave the
+                    # file assigned so ~401 re-indexes the same row.
+                    if ist.docx_stale_extractor_open(
+                        doc.get("ingest_status"),
+                        extension=ist.document_extension(doc),
+                        extractor_version=doc.get("extractor_version"),
+                    ) or (
+                        ist.document_extension(doc) == ".docx"
+                        and (
+                            "ingest_status" not in doc
+                            or "extractor_version" not in doc
+                        )
+                    ):
+                        folder_stale_open += 1
+                        retry_doc = dict(doc)
+                        retry_doc["_stale_extractor_retry"] = True
+                        if fid not in retry_doc_by_fid:
+                            retry_doc_by_fid[fid] = retry_doc
+                    elif fid not in retry_doc_by_fid:
+                        retry_doc_by_fid[fid] = doc
                 elif _doc_is_unsupported(doc):
                     # Legacy zero-chunk row for a file we now know is
                     # unsupported (e.g. geodatabase internals). Don't retry.
                     continue
                 elif fid not in retry_doc_by_fid:
                     retry_doc_by_fid[fid] = doc
+            if folder_stale_open:
+                accounting["stale_extractor_open"] += folder_stale_open
+                global_tally["stale_extractor_open"] += folder_stale_open
 
         # Drop unsupported before sharding so every worker sees the same
         # supported universe and sha256 assignment stays partition-complete.
@@ -1180,7 +1243,8 @@ def main() -> int:
             f"already_indexed={skipped_already} "
             f"shard={shard_index}/{total_shards} assigned={len(shard_files)} "
             f"batch={len(batch_files)} "
-            f"({len(retry_doc_by_fid)} zero-chunk retries)"
+            f"({len(retry_doc_by_fid)} in-place retries, "
+            f"{folder_stale_open} stale-extractor-open)"
         )
         # Recorded BEFORE any file is processed, so a run that dies mid-folder
         # still leaves the denominator behind. `assigned` used to live only in
@@ -1199,6 +1263,9 @@ def main() -> int:
             "batch": len(batch_files),
             "attempted": 0,
             "zero_chunk_retries": len(retry_doc_by_fid),
+            "stale_extractor_open": folder_stale_open,
+            "retried": 0,
+            "now_indexed": 0,
             "walk_errors": len(walk_errors),
         }
         folder_accounting.append(folder_record)
@@ -1308,6 +1375,18 @@ def main() -> int:
             else:
                 global_tally["succeeded"] += 1
                 _bump_folder(folder_name, "succeeded")
+            if result.get("stale_extractor_retry"):
+                accounting["retried"] += 1
+                global_tally["retried"] += 1
+                folder_record["retried"] = folder_record.get("retried", 0) + 1
+                from app.core import ingest_status as ist
+                ended = result.get("ingest_status") or ""
+                if ended == ist.INDEXED:
+                    accounting["now_indexed"] += 1
+                    global_tally["now_indexed"] += 1
+                    folder_record["now_indexed"] = (
+                        folder_record.get("now_indexed", 0) + 1
+                    )
 
         def _process_one(file_meta: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             rel = file_meta.get("_drive_path") or file_meta.get("name", "")
@@ -1410,12 +1489,27 @@ def main() -> int:
         )
     else:
         fully_accounted = dry_run or accounting["outstanding"] == 0
+        from app.core import ingest_status as ist
+        stale_complete = ist.stale_extractor_run_complete(
+            stale_extractor_open=accounting["stale_extractor_open"],
+            retried=accounting["retried"],
+            otherwise_complete=fully_accounted,
+        )
         if not fully_accounted:
             log(
                 f"ERROR: {accounting['outstanding']} queued file(s) were never "
                 f"accounted for; refusing to write a terminal shard manifest"
             )
             run.finish("incomplete_accounting", complete=False)
+            exit_code = 1
+        elif not stale_complete:
+            log(
+                f"ERROR: stale_extractor_open={accounting['stale_extractor_open']} "
+                f"but retried=0; refusing to mark the run complete — this is "
+                f"the gate that would have caught runs that skipped sparse "
+                f".docx extracted before {ist.EXTRACTOR_VERSION}"
+            )
+            run.finish("stale_extractor_not_retried", complete=False)
             exit_code = 1
         else:
             run.finish(lifecycle.PHASE_COMPLETED, complete=True)

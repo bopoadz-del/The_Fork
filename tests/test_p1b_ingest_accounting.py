@@ -174,6 +174,9 @@ def harness(tmp_path, monkeypatch):
     h.zero_chunk_rows = zero_chunk_rows
     h.expected_assigned = supported_count - preindexed_count
     h.store = _FakeStore(chunk_counts)
+    h.files = files
+    h.docs = docs
+    h.chunk_counts = chunk_counts
 
     monkeypatch.setenv("P1B_EVIDENCE_DIR", str(h.evidence_dir))
     monkeypatch.setenv("P1B_PARALLELISM", "1")
@@ -292,8 +295,14 @@ def test_global_tally_cannot_be_summed_to_the_attempted_count(harness):
     report = harness.report()
     tally, acc = report["global_tally"], report["accounting"]
 
-    assert sum(tally.values()) != acc["attempted"]
-    assert sum(tally.values()) == acc["discovered"]
+    outcome_keys = (
+        "succeeded", "zero_chunk", "skipped_too_large", "skipped_too_small",
+        "skipped_unsupported", "skipped_empty", "duplicate_sha",
+        "download_failed", "errors", "already_indexed",
+    )
+    outcome_sum = sum(tally[k] for k in outcome_keys)
+    assert outcome_sum != acc["attempted"]
+    assert outcome_sum == acc["discovered"]
 
     per_file = (
         tally["succeeded"] + tally["zero_chunk"] + tally["errors"]
@@ -576,3 +585,131 @@ def test_folder_accounting_records_the_denominator_before_work_starts(harness):
     assert folder["already_indexed"] == harness.preindexed_count
     assert folder["assigned"] == harness.expected_assigned
     assert folder["attempted"] == folder["batch"]
+
+
+# ── stale-extractor .docx resume ──────────────────────────────────────────
+
+
+def _add_sparse_docx(
+    harness,
+    *,
+    n: int = 2,
+    extractor_version: str | None = "pre-sdt",
+    omit_fields: bool = False,
+) -> None:
+    """Append TEXT_SPARSE .docx rows that already have chunks."""
+    from app.core import ingest_status as ist
+
+    for i in range(n):
+        fid = f"stale{i:03d}"
+        path = f"{FOLDER_NAME}/sub/sparse{i:03d}.docx"
+        harness.files.append({
+            "id": fid,
+            "name": f"sparse{i:03d}.docx",
+            "_drive_path": path,
+            "mimeType": (
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+            "size": 8000 + i,
+        })
+        doc: Dict[str, Any] = {
+            "id": f"stale-doc-{i:03d}",
+            "original_name": f"sparse{i:03d}.docx",
+            "metadata": {
+                "drive_file_id": fid,
+                "drive_path": path,
+                "mimeType": (
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+            },
+        }
+        if not omit_fields:
+            doc["ingest_status"] = ist.TEXT_SPARSE
+            doc["ingest_status_reason"] = "single_window:terminal"
+            doc["extractor_version"] = extractor_version
+        harness.docs.append(doc)
+        harness.chunk_counts[doc["id"]] = 3
+    harness.store = _FakeStore(harness.chunk_counts)
+
+
+def test_stale_extractor_docx_with_chunks_is_not_already_indexed(
+    harness, monkeypatch,
+):
+    """The defect: chunks>0 hid TEXT_SPARSE .docx from an older extractor."""
+    from app.core import ingest_status as ist
+    from app.core.rag import vector_store as vs
+
+    _add_sparse_docx(harness, n=2, extractor_version="pre-sdt")
+    monkeypatch.setattr(vs, "get_store", lambda: harness.store)
+    monkeypatch.setenv("P1B_LARGEST_FIRST", "1")
+
+    assert harness.run("--limit", "2") == 0
+    report = harness.report()
+    acc, tally = report["accounting"], report["global_tally"]
+
+    assert acc["stale_extractor_open"] == 2
+    assert acc["already_indexed"] == harness.preindexed_count
+    assert acc["retried"] == 2
+    assert acc["now_indexed"] == 2
+    assert tally["stale_extractor_open"] == 2
+    assert tally["retried"] == 2
+    assert tally["now_indexed"] == 2
+    assert report["run_complete"] is True
+    # In-place: same row, no add_document for the stale cohort.
+    reindexed = [
+        r for r in report["results"]
+        if (r.get("result") or {}).get("stale_extractor_retry")
+    ]
+    assert len(reindexed) == 2
+    assert all(r["result"].get("reindexed_existing_doc") for r in reindexed)
+    assert all(r["result"].get("ingest_status") == ist.INDEXED for r in reindexed)
+
+
+def test_stamped_current_extractor_docx_is_already_indexed(harness, monkeypatch):
+    from app.core import ingest_status as ist
+    from app.core.rag import vector_store as vs
+
+    _add_sparse_docx(harness, n=2, extractor_version=ist.EXTRACTOR_VERSION)
+    monkeypatch.setattr(vs, "get_store", lambda: harness.store)
+
+    assert harness.run() == 0
+    acc = harness.report()["accounting"]
+    assert acc["stale_extractor_open"] == 0
+    assert acc["retried"] == 0
+    assert acc["already_indexed"] == harness.preindexed_count + 2
+    assert acc["assigned"] == harness.expected_assigned
+
+
+def test_stale_extractor_open_without_retry_marks_run_incomplete(
+    harness, monkeypatch, capsys,
+):
+    """open>0 and retried==0 is RUN INCOMPLETE — the runs 1–7 gate."""
+    from app.core.rag import vector_store as vs
+
+    _add_sparse_docx(harness, n=2, extractor_version="pre-sdt")
+    monkeypatch.setattr(vs, "get_store", lambda: harness.store)
+
+    # Offset past the whole assigned set so nothing is sent to _ingest_file.
+    assert harness.run("--offset", "9999") == 1
+
+    report = harness.report()
+    acc = report["accounting"]
+    assert acc["stale_extractor_open"] == 2
+    assert acc["retried"] == 0
+    assert acc["now_indexed"] == 0
+    assert report["run_complete"] is False
+    assert report["complete"] is False
+    assert report["exit_reason"] == "stale_extractor_not_retried"
+    assert not harness.durable_shard_path.exists()
+
+    err = capsys.readouterr().err
+    assert "RUN INCOMPLETE" in err
+    assert "stale_extractor_open=2" in err
+    assert "retried=0" in err
+    assert "now_indexed=0" in err
+    summaries = harness.run_summaries(err)
+    assert summaries[-1]["complete"] is False
+    assert summaries[-1]["accounting"]["stale_extractor_open"] == 2
+    assert summaries[-1]["accounting"]["retried"] == 0
