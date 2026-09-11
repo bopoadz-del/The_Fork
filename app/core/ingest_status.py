@@ -38,7 +38,7 @@ in as INDEXED the way the evidence-beats-policy ordering was designed to let
 from __future__ import annotations
 
 import os
-from typing import NamedTuple
+from typing import Any, Mapping, NamedTuple
 
 # ── status vocabulary (mirrors the CHECK constraint in migration 0016) ────────
 
@@ -139,13 +139,83 @@ _SPARSE_CHARS_PER_PAGE = int(os.getenv("INGEST_SPARSE_CHARS_PER_PAGE", "6000"))
 class Classification(NamedTuple):
     status: str
     reason: str | None
+    extension: str | None = None
+    extractor_version: str | None = None
 
     @property
     def is_open(self) -> bool:
-        return is_open(self.status, self.reason)
+        return is_open(
+            self.status,
+            self.reason,
+            extension=self.extension,
+            extractor_version=self.extractor_version,
+        )
 
 
-def is_open(status: str, reason: str | None = None) -> bool:
+def _normalize_ext(extension: str | None) -> str:
+    ext = (extension or "").strip().lower()
+    if ext and not ext.startswith("."):
+        ext = "." + ext
+    return ext
+
+
+def _is_docx_ext(extension: str | None) -> bool:
+    return _normalize_ext(extension) == ".docx"
+
+
+def document_extension(doc: Mapping[str, Any]) -> str:
+    """Best-effort file extension from a documents row (or resume dict)."""
+    meta = doc.get("metadata") or {}
+    if not isinstance(meta, Mapping):
+        meta = {}
+    for candidate in (
+        doc.get("original_name"),
+        doc.get("stored_as"),
+        doc.get("file_path"),
+        meta.get("drive_path"),
+        meta.get("local_drive_path"),
+    ):
+        if not candidate:
+            continue
+        ext = _normalize_ext(os.path.splitext(str(candidate))[1])
+        if ext:
+            return ext
+    return ""
+
+
+#: Thin-but-chunked outcomes that a newer .docx extractor may still recover.
+#: ZERO_CHUNK / UNVERIFIED / EXTRACT_FAILED are already in OPEN_STATUSES.
+_THIN_STATUSES = frozenset({TEXT_SPARSE})
+
+
+def docx_stale_extractor_open(
+    status: str | None,
+    *,
+    extension: str | None = None,
+    extractor_version: str | None = None,
+) -> bool:
+    """True when a .docx is still thin and was extracted by an older extractor.
+
+    Scope is strictly ``.docx``. A missing extractor_version is stale. After
+    the current ``EXTRACTOR_VERSION`` stamps the same sparse outcome, this
+    returns False so resume cannot retry the row forever.
+    """
+    if not _is_docx_ext(extension):
+        return False
+    if (extractor_version or "") == EXTRACTOR_VERSION:
+        return False
+    if not status or status in _THIN_STATUSES:
+        return True
+    return False
+
+
+def is_open(
+    status: str,
+    reason: str | None = None,
+    *,
+    extension: str | None = None,
+    extractor_version: str | None = None,
+) -> bool:
     """True when this document still represents work.
 
     ``TEXT_SPARSE`` is the subtle one. A vector drawing sheet with no
@@ -153,12 +223,61 @@ def is_open(status: str, reason: str | None = None) -> bool:
     holds ~1.6-2.9k characters and no amount of OCR changes that. Treating it
     as open would build a gate that can never go green, which is the same trap
     as targeting a file count that includes formats which never chunk.
+
+    Exception, ``.docx`` only: a thin (TEXT_SPARSE or status-missing) row
+    whose ``extractor_version`` is missing or not ``EXTRACTOR_VERSION`` is
+    still open. The same sparse outcome stamped with the current extractor
+    is settled.
     """
     if status in OPEN_STATUSES:
+        return True
+    if docx_stale_extractor_open(
+        status, extension=extension, extractor_version=extractor_version,
+    ):
         return True
     if status in (TEXT_SPARSE, UNSUPPORTED_TYPE):
         return reason is not None and reason.endswith(RECOVERABLE)
     return False
+
+
+def resume_is_already_indexed(
+    doc: Mapping[str, Any],
+    chunk_count: int,
+) -> bool:
+    """Route B / p1b resume skip: chunks > 0 is not enough for stale .docx.
+
+    Non-docx rows with chunks stay skipped (PDF / drawing / kmz rules
+    unchanged). A .docx that ``docx_stale_extractor_open`` still flags is
+    left assigned so the existing in-place ``index_document`` path can
+    replace chunks on the same row.
+
+    Fail closed: if this is a .docx and status / extractor_version cannot
+    be read, do not count the row as already indexed.
+    """
+    if chunk_count <= 0:
+        return False
+    ext = document_extension(doc)
+    if not _is_docx_ext(ext):
+        return True
+    if "ingest_status" not in doc or "extractor_version" not in doc:
+        return False
+    return not docx_stale_extractor_open(
+        doc.get("ingest_status"),
+        extension=ext,
+        extractor_version=doc.get("extractor_version"),
+    )
+
+
+def stale_extractor_run_complete(
+    *,
+    stale_extractor_open: int,
+    retried: int,
+    otherwise_complete: bool,
+) -> bool:
+    """RUN INCOMPLETE when stale .docx were found and none were retried."""
+    if stale_extractor_open > 0 and retried == 0:
+        return False
+    return otherwise_complete
 
 
 def classify(
@@ -189,7 +308,7 @@ def classify(
     # already-chunked .kmz would fall straight through to INDEXED below and
     # silently re-admit exactly what the owner ordered purged.
     if ext in _GEOSPATIAL_EXTS:
-        return Classification(UNSUPPORTED_TYPE, f"{ext.lstrip('.')}:{TERMINAL}")
+        return Classification(UNSUPPORTED_TYPE, f"{ext.lstrip('.')}:{TERMINAL}", ext)
 
     # EVIDENCE BEATS POLICY. A document that produced chunks yielded text, and
     # no extension list may overrule that. Ordering this the other way round
@@ -203,9 +322,9 @@ def classify(
     # guard ABOVE this check instead of relying on this ordering.
     if chunk_count <= 0:
         if ext in RECOVERABLE_EXTS:
-            return Classification(UNSUPPORTED_TYPE, f"{ext.lstrip('.')}:{RECOVERABLE}")
+            return Classification(UNSUPPORTED_TYPE, f"{ext.lstrip('.')}:{RECOVERABLE}", ext)
         if ext and ext not in TEXT_BEARING_EXTS:
-            return Classification(UNSUPPORTED_TYPE, f"{ext.lstrip('.')}:{TERMINAL}")
+            return Classification(UNSUPPORTED_TYPE, f"{ext.lstrip('.')}:{TERMINAL}", ext)
         # A zero-byte file is a settled outcome, not a failed extraction: the
         # first TIER-1 smoke upload was a 0-byte Drive placeholder that the
         # pipeline correctly reported as "0 chunks, error". 65 of the 231
@@ -213,22 +332,22 @@ def classify(
         # zero chunks -- the bulk backfill routes recorded size=0 on 2,507
         # documents that hold real chunks, so size alone convicts nothing.
         if size_bytes == 0:
-            return Classification(UNSUPPORTED_TYPE, f"empty_file:{TERMINAL}")
-        return Classification(ZERO_CHUNK, None)
+            return Classification(UNSUPPORTED_TYPE, f"empty_file:{TERMINAL}", ext)
+        return Classification(ZERO_CHUNK, None, ext)
 
     qualifier = RECOVERABLE if has_convertible_source else TERMINAL
 
     # A single chunk means the whole extracted text fit one ~500-word window.
     # This needs no tuned threshold and is why the backfill can run in SQL.
     if chunk_count == 1:
-        return Classification(TEXT_SPARSE, f"single_window:{qualifier}")
+        return Classification(TEXT_SPARSE, f"single_window:{qualifier}", ext)
 
     # Multi-chunk documents can still be sparse for their physical extent --
     # a 40-sheet drawing set produces one title-block chunk per sheet.
     if _is_sparse_for_extent(chars, page_count, size_bytes):
-        return Classification(TEXT_SPARSE, f"low_density:{qualifier}")
+        return Classification(TEXT_SPARSE, f"low_density:{qualifier}", ext)
 
-    return Classification(INDEXED, None)
+    return Classification(INDEXED, None, ext)
 
 
 def _is_sparse_for_extent(
