@@ -13,8 +13,11 @@ not a claim about live Neon.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 COVERAGE_LINE_TEMPLATE = "{n} of {m} project documents indexed"
 NOT_FOUND_IN_INDEXED = "not found in the {n} indexed"
@@ -83,7 +86,10 @@ def live_coverage(project_id: str) -> Optional[tuple[int, int]]:
         by_doc = get_store().count_by_doc(project_id) or {}
         indexed = sum(1 for n in by_doc.values() if int(n or 0) > 0)
         return indexed, total
-    except Exception:  # noqa: BLE001 — honesty must not break an answer
+    except Exception:  # honesty must not break an answer
+        logger.warning(
+            "live coverage lookup failed for project_id=%r", project_id, exc_info=True
+        )
         return None
 
 

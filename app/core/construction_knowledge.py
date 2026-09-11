@@ -20,9 +20,12 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -273,9 +276,10 @@ def next_ncr_status(current_status: str) -> Optional[str]:
     current = current_status.upper()
     try:
         idx = NCR_WORKFLOW_SEQUENCE.index(current)
-        return NCR_WORKFLOW_SEQUENCE[idx + 1] if idx + 1 < len(NCR_WORKFLOW_SEQUENCE) else None
     except ValueError:
+        logger.warning("unknown NCR status %r; no next step", current, exc_info=True)
         return None
+    return NCR_WORKFLOW_SEQUENCE[idx + 1] if idx + 1 < len(NCR_WORKFLOW_SEQUENCE) else None
 
 
 # ---------------------------------------------------------------------------

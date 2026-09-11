@@ -214,3 +214,20 @@ def test_send_email_raises_rather_than_reporting_a_phantom_success(monkeypatch):
     with pytest.raises(email_service.EmailNotConfigured):
         import asyncio
         asyncio.run(email_service.send_email("a@b.com", "s", "<p>h</p>"))
+
+
+def test_send_email_raises_when_provider_success_body_is_not_json(monkeypatch):
+    """A 200 with a non-JSON body is a send failure, not an empty message id."""
+    import asyncio
+
+    class _NotJson:
+        status_code = 200
+        text = "not-json"
+
+        def json(self):
+            raise ValueError("No JSON object could be decoded")
+
+    _configured(monkeypatch)
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=_NotJson()):
+        with pytest.raises(email_service.EmailSendFailed, match="non-JSON"):
+            asyncio.run(email_service.send_email("a@b.com", "s", "<p>h</p>"))

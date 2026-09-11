@@ -86,8 +86,10 @@ async def send_email(to: str, subject: str, html: str) -> str:
         )
     try:
         return str(resp.json().get("id") or "")
-    except ValueError:
-        return ""
+    except ValueError as exc:
+        raise EmailSendFailed(
+            "email provider returned a non-JSON success body"
+        ) from exc
 
 
 def verification_html(verify_url: str) -> str:
