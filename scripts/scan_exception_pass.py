@@ -130,7 +130,6 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "scripts/extract_wetransfer_boqs.py:39": "baseline 2026-09-10",
     "scripts/generate_scenarios_drive_archive.py:230": "baseline 2026-09-10",
     "scripts/generate_scenarios_drive_archive_v2.py:299": "baseline 2026-09-10",
-    "scripts/p1b_ingest_drive_server.py:1348": "baseline 2026-09-10",
     "scripts/price_boq.py:54": "baseline 2026-09-10",
     "scripts/rag_backfill_audit.py:90": "baseline 2026-09-10",
     "scripts/security_scan.py:51": "baseline 2026-09-10",

@@ -263,13 +263,16 @@ def main() -> int:
                 file=sys.stderr,
             )
 
+        from app.core import ingest_status as ist
+
         for doc in projects_mod.list_documents(project_id):
             rel = (doc.get("metadata") or {}).get("local_drive_path")
             if not rel:
                 continue
             rel_n = rel.replace("\\", "/")
             if counts_available:
-                if chunk_counts.get(doc["id"], 0) > 0:
+                chunks = chunk_counts.get(doc["id"], 0)
+                if chunks > 0 and ist.resume_is_already_indexed(doc, chunks):
                     already_indexed.add(rel_n)
             elif args.resume:
                 already_indexed.add(rel_n)

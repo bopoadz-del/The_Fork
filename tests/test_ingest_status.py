@@ -268,3 +268,110 @@ def test_mutation_probe_treating_any_chunk_as_success_reopens_the_defect():
     assert ist.classify(chunk_count=1, extension=".pdf").status != old_rule(1)
     # ...and the two rules must still agree where the old one was right.
     assert ist.classify(chunk_count=40, extension=".pdf").status == old_rule(40)
+
+
+# ── stale-extractor .docx (SDT re-extract) ────────────────────────────────
+
+
+def test_sparse_docx_old_extractor_is_open():
+    """TEXT_SPARSE .docx from an older extractor is still work."""
+    assert ist.is_open(
+        ist.TEXT_SPARSE,
+        "single_window:terminal",
+        extension=".docx",
+        extractor_version="pre-sdt",
+    )
+    c = ist.classify(chunk_count=1, extension=".docx")._replace(
+        extractor_version="pre-sdt",
+    )
+    assert c.is_open
+
+
+def test_sparse_docx_current_extractor_is_closed():
+    """After the current extractor stamps the same sparse outcome, settle."""
+    assert not ist.is_open(
+        ist.TEXT_SPARSE,
+        "single_window:terminal",
+        extension=".docx",
+        extractor_version=ist.EXTRACTOR_VERSION,
+    )
+    c = ist.classify(chunk_count=1, extension=".docx")._replace(
+        extractor_version=ist.EXTRACTOR_VERSION,
+    )
+    assert not c.is_open
+
+
+def test_sparse_docx_missing_extractor_is_open():
+    assert ist.is_open(
+        ist.TEXT_SPARSE,
+        "single_window:terminal",
+        extension=".docx",
+        extractor_version=None,
+    )
+    # classify() carries extension; a missing stamp is stale.
+    assert ist.classify(chunk_count=1, extension=".docx").is_open
+
+
+def test_non_docx_sparse_ignores_extractor_version():
+    """PDF / drawing / kmz rules must not change."""
+    assert not ist.is_open(
+        ist.TEXT_SPARSE,
+        "single_window:terminal",
+        extension=".pdf",
+        extractor_version="pre-sdt",
+    )
+    assert not ist.classify(chunk_count=1, extension=".pdf").is_open
+    terminal = ist.classify(chunk_count=1, extension=".pdf")._replace(
+        extractor_version="pre-sdt",
+    )
+    assert not terminal.is_open
+
+
+def test_indexed_docx_current_version_is_closed():
+    assert not ist.is_open(
+        ist.INDEXED,
+        None,
+        extension=".docx",
+        extractor_version=ist.EXTRACTOR_VERSION,
+    )
+    c = ist.classify(chunk_count=12, extension=".docx")._replace(
+        extractor_version=ist.EXTRACTOR_VERSION,
+    )
+    assert c.status == ist.INDEXED
+    assert not c.is_open
+
+
+def test_resume_filter_stale_docx_with_chunks_is_not_already_indexed():
+    """chunks > 0 used to hide these in already_indexed forever."""
+    stale = {
+        "original_name": "spec.docx",
+        "ingest_status": ist.TEXT_SPARSE,
+        "ingest_status_reason": "single_window:terminal",
+        "extractor_version": "old-extractor",
+    }
+    assert not ist.resume_is_already_indexed(stale, 4)
+    stamped = {**stale, "extractor_version": ist.EXTRACTOR_VERSION}
+    assert ist.resume_is_already_indexed(stamped, 4)
+
+
+def test_resume_filter_fail_closed_when_docx_fields_unreadable():
+    bare_docx = {"original_name": "spec.docx"}
+    assert not ist.resume_is_already_indexed(bare_docx, 4)
+    pdf = {"original_name": "sheet.pdf"}
+    assert ist.resume_is_already_indexed(pdf, 4)
+
+
+def test_stale_extractor_open_without_retry_is_incomplete():
+    """The gate that would have caught runs 1–7."""
+    assert ist.stale_extractor_run_complete(
+        stale_extractor_open=54, retried=0, otherwise_complete=True,
+    ) is False
+    assert ist.stale_extractor_run_complete(
+        stale_extractor_open=54, retried=12, otherwise_complete=True,
+    ) is True
+    assert ist.stale_extractor_run_complete(
+        stale_extractor_open=0, retried=0, otherwise_complete=True,
+    ) is True
+    assert ist.stale_extractor_run_complete(
+        stale_extractor_open=0, retried=0, otherwise_complete=False,
+    ) is False
