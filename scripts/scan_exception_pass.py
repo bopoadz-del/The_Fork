@@ -48,10 +48,10 @@ ALLOWLIST: dict[str, str] = {}
 # why the site may stay. Every entry has the same reason -- it was here before
 # the scanner was -- and the count may only fall.
 #
-# The twin exists to stop the 125th, not to pretend these 124 are fine. Each
-# closes one of two ways: log what failed and keep returning empty (the caller
-# genuinely tolerates nothing), or raise a typed outcome (a decision path,
-# where "nothing there" and "it broke" must not be the same answer).
+# The twin exists to stop the next site, not to pretend the remainder are fine.
+# Each closes one of two ways: log what failed and keep returning empty (the
+# caller genuinely tolerates nothing), or raise a typed outcome (a decision
+# path, where "nothing there" and "it broke" must not be the same answer).
 #
 # Regenerate after a cleanup:  python scripts/scan_exception_pass.py --list-returns
 RETURN_ALLOWLIST: dict[str, str] = {
@@ -96,10 +96,6 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/containers/construction/boq.py:780": "baseline 2026-09-10",
     "app/containers/construction/helpers.py:69": "baseline 2026-09-10",
     "app/core/boq_validation.py:78": "baseline 2026-09-10",
-    "app/core/cache_wrapper.py:15": "baseline 2026-09-10",
-    "app/core/cache_wrapper.py:26": "baseline 2026-09-10",
-    "app/core/cache_wrapper.py:36": "baseline 2026-09-10",
-    "app/core/construction_knowledge.py:277": "baseline 2026-09-10",
     "app/core/doc_index.py:1025": "baseline 2026-09-10",
     "app/core/doc_index.py:1068": "baseline 2026-09-10",
     "app/core/doc_index.py:1076": "baseline 2026-09-10",
@@ -116,11 +112,6 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/core/doc_index.py:900": "baseline 2026-09-10",
     "app/core/doc_index.py:914": "baseline 2026-09-10",
     "app/core/doc_index.py:936": "baseline 2026-09-10",
-    "app/core/doc_types.py:53": "baseline 2026-09-10",
-    "app/core/email.py:89": "baseline 2026-09-10",
-    "app/core/extract_isolated.py:118": "baseline 2026-09-10",
-    "app/core/extract_isolated.py:99": "baseline 2026-09-10",
-    "app/core/file_crypto.py:296": "baseline 2026-09-10",
     "app/core/file_crypto.py:90": "baseline 2026-09-10",
     "app/core/ingest_lifecycle.py:109": "baseline 2026-09-10",
     "app/core/ingest_lifecycle.py:147": "baseline 2026-09-10",
@@ -129,20 +120,14 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/core/ingest_lifecycle.py:95": "baseline 2026-09-10",
     "app/core/learning/hydration.py:772": "baseline 2026-09-10",
     "app/core/learning/local_model.py:131": "baseline 2026-09-10",
-    "app/core/llm_client.py:144": "baseline 2026-09-10",
     "app/core/predefined_reasoning.py:551": "baseline 2026-09-10",
     "app/core/predefined_reasoning.py:664": "baseline 2026-09-10",
-    "app/core/projects.py:1082": "baseline 2026-09-10",
-    "app/core/projects.py:156": "baseline 2026-09-10",
-    "app/core/projects.py:164": "baseline 2026-09-10",
-    "app/core/projects.py:757": "baseline 2026-09-10",
-    "app/core/rag/coverage_honesty.py:86": "baseline 2026-09-10",
+    "app/core/projects.py:1087": "baseline 2026-09-10",
+    "app/core/projects.py:762": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:324": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:332": "baseline 2026-09-10",
     "app/core/rag/vector_store.py:1755": "baseline 2026-09-10",
-    "app/core/sandbox.py:302": "baseline 2026-09-10",
     "app/core/url_guard.py:20": "baseline 2026-09-10",
-    "app/core/usage_tracker.py:78": "baseline 2026-09-10",
     "app/infra/monitoring.py:326": "baseline 2026-09-10",
     "app/lib/boq_excel.py:188": "baseline 2026-09-10",
     "app/lib/boq_pricing.py:128": "baseline 2026-09-10",

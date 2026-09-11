@@ -154,6 +154,7 @@ def coerce_document_metadata(meta: Any) -> Dict[str, Any]:
         try:
             parsed = json.loads(meta)
         except json.JSONDecodeError:
+            logger.warning("document metadata is not valid JSON", exc_info=True)
             return {}
         if isinstance(parsed, dict):
             return parsed
@@ -162,6 +163,10 @@ def coerce_document_metadata(meta: Any) -> Dict[str, Any]:
             try:
                 parsed = json.loads(parsed)
             except json.JSONDecodeError:
+                logger.warning(
+                    "document metadata is double-encoded but not valid JSON",
+                    exc_info=True,
+                )
                 return {}
             return parsed if isinstance(parsed, dict) else {}
         return {}

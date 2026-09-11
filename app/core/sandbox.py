@@ -19,8 +19,11 @@ from __future__ import annotations
 
 import builtins as _py_builtins
 import copy
+import logging
 import warnings
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel, Field
 from RestrictedPython import compile_restricted, safe_builtins
@@ -300,6 +303,7 @@ def _extract_stdout(local_ns: Dict[str, Any]) -> str:
             return "".join(txt)
         return str(txt or "")
     except Exception:  # pragma: no cover - defensive
+        logger.warning("sandbox stdout extract failed", exc_info=True)
         return ""
 
 

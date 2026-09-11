@@ -142,5 +142,9 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
                     obj = _json.loads(t[start:i + 1])
                     return obj if isinstance(obj, dict) else {}
                 except Exception:
+                    logger.warning(
+                        "swallowed %s in _extract_json_object() brace match — continuing",
+                        "Exception", exc_info=True,
+                    )
                     return {}
     return {}
