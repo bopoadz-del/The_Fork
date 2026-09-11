@@ -129,6 +129,7 @@ def available() -> bool:
         import peft  # noqa: F401
         import torch  # noqa: F401
     except ImportError:
+        logger.warning("local-model stack imports unavailable", exc_info=True)
         return False
     adapter_dir = _adapter_dir()
     if not os.path.isdir(adapter_dir):
