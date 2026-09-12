@@ -2730,10 +2730,11 @@ def _stamp_index_ledger(
 
     ``advance_extractor_version`` is a caller veto only. The ledger also
     refuses to stamp EXTRACTOR_VERSION unless embed landed
-    (``rag_indexed > 0``, no ``rag_error``) **and** the classified status
-    is INDEXED. TEXT_SPARSE after a 1-chunk "success" must leave the
-    prior stamp (including ``{EXTRACTOR_VERSION}/embed-failed``) so
-    ``docx_stale_extractor_open`` stays open.
+    (``rag_indexed > 0``, no ``rag_error``) **and** either the classified
+    status is INDEXED, or status is TEXT_SPARSE and the prior stamp is
+    the reopen sentinel (``…/embed-failed``). Plain TEXT_SPARSE that was
+    never embed-failed still leaves the prior stamp so
+    ``docx_stale_extractor_open`` cannot false-close that class.
     """
     from app.core import ingest_status as ist
     from app.core import projects as projects_mod
@@ -2746,10 +2747,12 @@ def _stamp_index_ledger(
     else:
         classified = ist.classify(chunk_count=chunk_count, extension=ext)
         status, reason = classified.status, classified.reason
+    existing = projects_mod.get_document(document_id) or {}
     advance = bool(advance_extractor_version) and ist.should_advance_extractor_version(
         ingest_status=status,
         rag_indexed=rag_indexed,
         rag_error=rag_error,
+        prior_extractor_version=existing.get("extractor_version"),
     )
     try:
         kwargs: dict[str, Any] = {
@@ -3004,10 +3007,9 @@ def index_document(
             "skipped_unsupported": 1,
             "total_chunks": 0,
         }
-    # Embed miss OR a thin TEXT_SPARSE classify is not an extractor success.
-    # #573 only vetoed rag_error / rag_indexed==0; a 1-chunk embed that
-    # looked like success still stamped EXTRACTOR_VERSION and closed
-    # stale-open on the live reextract path.
+    # Embed miss never advances. Thin TEXT_SPARSE advances only when the
+    # prior stamp is the reopen sentinel (terminal-close). The ledger
+    # helper enforces that even if this caller veto is too loose.
     embed_landed = (not rag_error) and rag_indexed > 0
     _stamp_index_ledger(
         document_id, filename, len(chunks),

@@ -388,6 +388,56 @@ def test_should_advance_extractor_version_requires_indexed_and_embed():
     )
 
 
+def test_should_advance_terminal_closes_sentinel_thin_embed():
+    """Follow-on to #575: successful thin embed on the reopen sentinel closes.
+
+    #575 refused every TEXT_SPARSE advance so ``{EXTRACTOR_VERSION}/embed-failed``
+    could not false-close. After a genuine thin / single_window reextract
+    with ``rag_indexed>0`` and no ``rag_error``, that sentinel must
+    terminal-close or ``docx_stale_extractor_open`` loops forever.
+
+    Still never advance on rag_error / rag_indexed==0. Still never
+    advance plain TEXT_SPARSE that was never embed-failed.
+    """
+    sentinel = f"{ist.EXTRACTOR_VERSION}/embed-failed"
+    assert ist.should_advance_extractor_version(
+        ingest_status=ist.TEXT_SPARSE,
+        rag_indexed=1,
+        rag_error=None,
+        prior_extractor_version=sentinel,
+    )
+    assert not ist.should_advance_extractor_version(
+        ingest_status=ist.TEXT_SPARSE,
+        rag_indexed=1,
+        rag_error="RuntimeError: 403 Forbidden",
+        prior_extractor_version=sentinel,
+    )
+    assert not ist.should_advance_extractor_version(
+        ingest_status=ist.TEXT_SPARSE,
+        rag_indexed=0,
+        rag_error=None,
+        prior_extractor_version=sentinel,
+    )
+    assert not ist.should_advance_extractor_version(
+        ingest_status=ist.TEXT_SPARSE,
+        rag_indexed=1,
+        rag_error=None,
+        prior_extractor_version=ist.EXTRACTOR_VERSION,
+    )
+    assert not ist.should_advance_extractor_version(
+        ingest_status=ist.TEXT_SPARSE,
+        rag_indexed=1,
+        rag_error=None,
+        prior_extractor_version="pre-sdt",
+    )
+    assert ist.should_advance_extractor_version(
+        ingest_status=ist.INDEXED,
+        rag_indexed=4,
+        rag_error=None,
+        prior_extractor_version=sentinel,
+    )
+
+
 def test_stale_extractor_open_without_retry_is_incomplete():
     """The gate that would have caught runs 1–7."""
     assert ist.stale_extractor_run_complete(

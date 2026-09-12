@@ -235,20 +235,16 @@ def test_embed_success_advances_version_and_indexes(monkeypatch, tmp_path):
     assert int(entry.get("rag_indexed") or 0) > 0
 
 
-def test_reextract_text_sparse_success_leaves_embed_failed_sentinel(
+def test_reextract_sentinel_thin_embed_ok_terminal_closes(
     monkeypatch, tmp_path, capsys,
 ):
-    """Live 3867aff leak: 1-chunk 'success' advanced the reopen sentinel.
+    """Sentinel + genuine thin + embed OK → stamp EXTRACTOR_VERSION.
 
-    Worker tip ran ``reextract_stale_docx --limit 3`` and printed
-    ``before=TEXT_SPARSE/8535199-sdt/embed-failed/1``
-    ``after=TEXT_SPARSE/8535199-sdt/1``. Neon ``chunks_v2`` stayed flat
-    (upsert of the existing one-chunk row). No ``RAG_INDEX_FAILED``.
-
-    #573 only vetoed ``rag_error`` / ``rag_indexed==0``. A thin extract
-    that classify()s TEXT_SPARSE after a 1-chunk embed still advanced
-    EXTRACTOR_VERSION and closed stale-open. FK-REEXTRACT-2: do not
-    advance unless embed landed AND the row is INDEXED.
+    #575 left ``{EXTRACTOR_VERSION}/embed-failed`` in place after a
+    1-chunk TEXT_SPARSE embed so the row could not false-close. That
+    is now an infinite ``docx_stale_extractor_open`` loop: the extract
+    succeeded, the vector landed, the sheet is honestly thin.
+    Terminal-close the sentinel only in this case.
     """
     projects, users = _reload(monkeypatch, tmp_path)
     proj = _seed_project(projects, users)
@@ -272,9 +268,9 @@ def test_reextract_text_sparse_success_leaves_embed_failed_sentinel(
     after = projects.get_document(stale["id"])
     assert after["ingest_status"] == TEXT_SPARSE
     assert after["chunk_count"] == 1
-    assert after["extractor_version"] == EMBED_FAILED_SENTINEL
-    assert after["extractor_version"] != EXTRACTOR_VERSION
-    assert ist.docx_stale_extractor_open(
+    assert after["extractor_version"] == EXTRACTOR_VERSION
+    assert after["extractor_version"] != EMBED_FAILED_SENTINEL
+    assert not ist.docx_stale_extractor_open(
         after["ingest_status"],
         extension=ist.document_extension(after),
         extractor_version=after["extractor_version"],
@@ -283,14 +279,52 @@ def test_reextract_text_sparse_success_leaves_embed_failed_sentinel(
     assert "rag_error" not in entry
     assert int(entry.get("rag_indexed") or 0) == 1
     assert f"before={TEXT_SPARSE}/{EMBED_FAILED_SENTINEL}/1" in out
-    assert f"after={TEXT_SPARSE}/{EXTRACTOR_VERSION}/1" not in out
-    assert f"after={TEXT_SPARSE}/{EMBED_FAILED_SENTINEL}/1" in out
+    assert f"after={TEXT_SPARSE}/{EXTRACTOR_VERSION}/1" in out
 
 
-def test_index_document_text_sparse_rag_hit_does_not_advance_version(
+def test_reextract_sentinel_rag_error_does_not_advance(monkeypatch, tmp_path):
+    """Sentinel + rag_error must stay open. Never terminal-close a miss."""
+    projects, users = _reload(monkeypatch, tmp_path)
+    proj = _seed_project(projects, users)
+    stale = _add_docx(
+        projects, proj["id"], tmp_path,
+        name="stale.docx",
+        ingest_status=TEXT_SPARSE,
+        extractor_version=EMBED_FAILED_SENTINEL,
+        chunk_count=1,
+    )
+    thin = _thin_docx_bytes()
+    monkeypatch.setattr(
+        "app.core.r2_storage.fetch_object_bytes",
+        lambda key, bucket=None: thin if key == "projects/p/stale.docx" else None,
+    )
+    from app.core.rag import retriever as _rag
+
+    monkeypatch.setattr(
+        _rag, "index_chunks",
+        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("403 Forbidden")),
+    )
+
+    from scripts.reextract_stale_docx import main
+
+    assert main([]) == 0
+    after = projects.get_document(stale["id"])
+    assert after["extractor_version"] == EMBED_FAILED_SENTINEL
+    assert after["extractor_version"] != EXTRACTOR_VERSION
+    assert ist.docx_stale_extractor_open(
+        after["ingest_status"],
+        extension=ist.document_extension(after),
+        extractor_version=after["extractor_version"],
+    )
+    entry = _ledger_entry(proj["id"], stale["id"])
+    assert entry.get("rag_error")
+    assert "403" in entry["rag_error"]
+
+
+def test_index_document_sentinel_thin_embed_ok_terminal_closes(
     monkeypatch, tmp_path,
 ):
-    """index_document: TEXT_SPARSE + rag_indexed>0 must not stamp current."""
+    """index_document: sentinel + TEXT_SPARSE + rag_indexed>0 advances."""
     projects, users = _reload(monkeypatch, tmp_path)
     proj = _seed_project(projects, users)
     dest = tmp_path / "thin.docx"
@@ -320,7 +354,53 @@ def test_index_document_text_sparse_rag_hit_does_not_advance_version(
 
     after = projects.get_document(doc["id"])
     assert after["ingest_status"] == TEXT_SPARSE
-    assert after["extractor_version"] == EMBED_FAILED_SENTINEL
+    assert after["extractor_version"] == EXTRACTOR_VERSION
+    assert after["extractor_version"] != EMBED_FAILED_SENTINEL
+    assert not ist.docx_stale_extractor_open(
+        after["ingest_status"],
+        extension=".docx",
+        extractor_version=after["extractor_version"],
+    )
+
+
+def test_index_document_nonsentinel_text_sparse_does_not_advance(
+    monkeypatch, tmp_path,
+):
+    """#575 protection: plain TEXT_SPARSE + rag_indexed=1 stays unstamped.
+
+    The pre-#575 false-close class (never embed-failed) must not close
+    here. Part B reopens only the large under-extract subset.
+    """
+    projects, users = _reload(monkeypatch, tmp_path)
+    proj = _seed_project(projects, users)
+    dest = tmp_path / "thin.docx"
+    dest.write_bytes(_thin_docx_bytes())
+    doc = projects.add_document(
+        project_id=proj["id"],
+        original_name="thin.docx",
+        stored_as="thin.docx",
+        file_path=str(dest),
+        size=dest.stat().st_size,
+        content_sha256="ef" * 32,
+    )
+    projects.stamp_document_index(
+        doc["id"],
+        chunk_count=1,
+        ingest_status=TEXT_SPARSE,
+        ingest_status_reason="single_window:terminal",
+        extractor_version="pre-sdt",
+    )
+
+    from app.core import doc_index
+
+    result = doc_index.index_document(proj["id"], doc["id"], stamp_as_indexed=False)
+    assert result.get("status") == "ok"
+    assert "rag_error" not in result
+    assert int(result.get("rag_indexed") or 0) == 1
+
+    after = projects.get_document(doc["id"])
+    assert after["ingest_status"] == TEXT_SPARSE
+    assert after["extractor_version"] == "pre-sdt"
     assert after["extractor_version"] != EXTRACTOR_VERSION
     assert ist.docx_stale_extractor_open(
         after["ingest_status"],
