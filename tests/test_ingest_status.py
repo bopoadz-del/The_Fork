@@ -361,6 +361,33 @@ def test_resume_filter_fail_closed_when_docx_fields_unreadable():
     assert ist.resume_is_already_indexed(pdf, 4)
 
 
+def test_should_advance_extractor_version_requires_indexed_and_embed():
+    """FK-REEXTRACT-2: TEXT_SPARSE / rag miss must not stamp EXTRACTOR_VERSION.
+
+    Live 3867aff advanced ``8535199-sdt/embed-failed`` → ``8535199-sdt``
+    after classify() returned TEXT_SPARSE on a 1-chunk embed that looked
+    like success (no rag_error, rag_indexed==1). That closed stale-open.
+    """
+    assert not ist.should_advance_extractor_version(
+        ingest_status=ist.TEXT_SPARSE, rag_indexed=1, rag_error=None,
+    )
+    assert not ist.should_advance_extractor_version(
+        ingest_status=ist.TEXT_SPARSE, rag_indexed=0, rag_error=None,
+    )
+    assert not ist.should_advance_extractor_version(
+        ingest_status=ist.INDEXED, rag_indexed=0, rag_error=None,
+    )
+    assert not ist.should_advance_extractor_version(
+        ingest_status=ist.INDEXED, rag_indexed=4, rag_error="embedded 0 of 4",
+    )
+    assert not ist.should_advance_extractor_version(
+        ingest_status=ist.ZERO_CHUNK, rag_indexed=0, rag_error=None,
+    )
+    assert ist.should_advance_extractor_version(
+        ingest_status=ist.INDEXED, rag_indexed=4, rag_error=None,
+    )
+
+
 def test_stale_extractor_open_without_retry_is_incomplete():
     """The gate that would have caught runs 1–7."""
     assert ist.stale_extractor_run_complete(
