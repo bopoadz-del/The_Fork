@@ -100,7 +100,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/core/doc_index.py:1114": "baseline 2026-09-10",
     "app/core/doc_index.py:1212": "baseline 2026-09-10",
     "app/core/doc_index.py:196": "baseline 2026-09-10",
-    "app/core/doc_index.py:2666": "baseline 2026-09-10",
+    "app/core/doc_index.py:2670": "baseline 2026-09-10",
     "app/core/doc_index.py:304": "baseline 2026-09-10",
     "app/core/doc_index.py:341": "baseline 2026-09-10",
     "app/core/doc_index.py:357": "baseline 2026-09-10",
