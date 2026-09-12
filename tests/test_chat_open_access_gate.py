@@ -184,3 +184,39 @@ def test_archived_projects_stay_invisible(client, world):
     store.archive_project(pid)
     # Even the admin path must not resurface an archived project in chat.
     assert store.get_project_accessible(pid, world["admin"]["id"]) is None
+
+
+def test_master_corpus_source_id_is_same_membership_as_alias(client, world, monkeypatch):
+    """S13: get_project_accessible(source) matches the alias for a member.
+
+    get_project(source) stays None for a non-owner (UI-PHYS H1 picker 404).
+    The data-path helper must not conflate that with 'not a member'.
+    """
+    import uuid
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    tag = uuid.uuid4().hex[:10]
+    alias = f"oag_mc_{tag}"
+    source = f"oag_src_{tag}"
+    monkeypatch.setattr(store, "MASTER_CORPUS_PROJECT_ID", alias)
+    monkeypatch.setattr(store, "MASTER_CORPUS_SOURCE_PROJECT_ID", source)
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG source corpus",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=source,
+        origin="user_create",
+    )
+    try:
+        member = world["stranger"]["id"]
+        assert store.get_project(alias, user_id=member, include_admin_approved=True) is not None
+        assert store.get_project(source, user_id=member, include_admin_approved=True) is None
+        assert store.get_project_accessible(alias, member) is not None
+        src = store.get_project_accessible(source, member)
+        assert src is not None
+        assert src["id"] == source
+        assert store.get_project_accessible(source, world["owner"]["id"]) is not None
+        assert store.get_project_accessible(source, None) is None
+    finally:
+        store.delete_project(source)
