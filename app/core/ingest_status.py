@@ -211,27 +211,30 @@ def should_advance_extractor_version(
     """True when embed landed and the row may stamp EXTRACTOR_VERSION.
 
     FK-REEXTRACT-2 / #573: ``rag_error`` or ``rag_indexed == 0`` must not
-    stamp ``EXTRACTOR_VERSION``. #575 then refused every TEXT_SPARSE
-    advance so a 1-chunk embed could not false-close a row that was
-    never embed-failed.
+    stamp ``EXTRACTOR_VERSION`` — a failed embed keeps the row open for a
+    later infra retry (the *only* legitimate reason a re-extracted row stays
+    open).
 
-    Follow-on: a successful thin embed (TEXT_SPARSE, ``rag_indexed>0``,
-    no ``rag_error``) whose *prior* stamp is the reopen sentinel
-    (``…/embed-failed``) terminal-closes. Leaving the sentinel in place
-    loops ``docx_stale_extractor_open`` forever. Plain TEXT_SPARSE that
-    was never embed-failed still does not advance.
+    Once the embed lands (``rag_indexed > 0``, no ``rag_error``) the current
+    extractor's text is final: rich (``INDEXED``) or genuinely thin
+    (``TEXT_SPARSE``). Re-extracting the same bytes with the same extractor
+    cannot change it, so the row advances to ``EXTRACTOR_VERSION`` and closes
+    — **whether the prior stamp was the reopen sentinel or an older version.**
+
+    This is the single terminating rule. #573 withheld the stamp on embed
+    failure; #575 then refused *every* thin advance and #576 added back only
+    the sentinel-prior thin case — leaving ``TEXT_SPARSE`` + successful embed
+    + a plain old prior to loop ``docx_stale_extractor_open`` forever. The
+    discriminator for "still work" is the embed outcome, never the prior
+    version: a full embed (``rag_indexed>0``, no error) means thin is the
+    document's true, settled state. ``prior_extractor_version`` is accepted
+    for call-site compatibility and deliberately not consulted.
     """
     if rag_error:
         return False
     if int(rag_indexed or 0) <= 0:
         return False
-    if ingest_status == INDEXED:
-        return True
-    if ingest_status == TEXT_SPARSE and is_embed_failed_sentinel(
-        prior_extractor_version,
-    ):
-        return True
-    return False
+    return ingest_status in (INDEXED, TEXT_SPARSE)
 
 
 def docx_stale_extractor_open(
