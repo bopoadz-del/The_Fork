@@ -211,6 +211,9 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setattr(
         projects_mod, "update_document_metadata", lambda did, meta: None,
     )
+    monkeypatch.setattr(
+        projects_mod, "set_document_drive_md5", lambda did, token: None,
+    )
     added = {"n": 0}
 
     def _add_document(**kw):
@@ -665,6 +668,21 @@ def test_stale_extractor_docx_with_chunks_is_not_already_indexed(
     assert len(reindexed) == 2
     assert all(r["result"].get("reindexed_existing_doc") for r in reindexed)
     assert all(r["result"].get("ingest_status") == ist.INDEXED for r in reindexed)
+
+
+def test_edited_drive_md5_is_not_already_indexed(harness, monkeypatch):
+    """Same Drive id + new md5Checksum must leave the row assigned."""
+    from app.core.rag import vector_store as vs
+
+    harness.docs[0]["drive_md5"] = "old-md5"
+    harness.docs[0]["ingest_status"] = "INDEXED"
+    harness.files[0]["md5Checksum"] = "new-md5"
+    monkeypatch.setattr(vs, "get_store", lambda: harness.store)
+
+    assert harness.run() == 0
+    acc = harness.report()["accounting"]
+    assert acc["already_indexed"] == harness.preindexed_count - 1
+    assert acc["assigned"] == harness.expected_assigned + 1
 
 
 def test_stamped_current_extractor_docx_is_already_indexed(harness, monkeypatch):

@@ -43,7 +43,8 @@ def _local_docs_by_drive_file_id(project_id: str) -> Dict[str, Dict[str, Any]]:
         with SessionLocal() as session:
             result = session.execute(
                 text(
-                    "SELECT id, original_name, metadata FROM documents "
+                    "SELECT id, original_name, metadata, drive_md5, "
+                    "ingest_status, chunk_count FROM documents "
                     "WHERE project_id = :pid AND metadata ? 'drive_file_id'"
                 ),
                 {"pid": project_id},
@@ -55,7 +56,14 @@ def _local_docs_by_drive_file_id(project_id: str) -> Dict[str, Dict[str, Any]]:
                 select(Document).where(Document.project_id == project_id)
             ).all()
         rows = [
-            {"id": d.id, "original_name": d.original_name, "metadata": d.metadata_}
+            {
+                "id": d.id,
+                "original_name": d.original_name,
+                "metadata": d.metadata_,
+                "drive_md5": getattr(d, "drive_md5", None),
+                "ingest_status": getattr(d, "ingest_status", None),
+                "chunk_count": int(getattr(d, "chunk_count", 0) or 0),
+            }
             for d in docs
             if d.metadata_ and d.metadata_.get("drive_file_id")
         ]
@@ -77,6 +85,7 @@ def _import_missing_file(
     Returns (imported, zero_chunk_error, message).
     """
     from app.core import doc_index, file_crypto, gdrive_service, projects
+    from app.core.ingest_reconcile import source_content_token
 
     fid = f_meta["id"]
     name = (f_meta.get("name") or "").strip() or fid
@@ -114,6 +123,7 @@ def _import_missing_file(
             "drive_path": drive_path,
             "source": "reconcile_drive_delta",
         },
+        drive_md5=source_content_token(f_meta),
     )
 
     idx_result = doc_index.index_document(project_id, doc["id"])
@@ -134,7 +144,13 @@ def _reconcile_project(
     folder_id: str,
     execute: bool,
 ) -> Dict[str, Any]:
-    from app.core import gdrive_service
+    from app.core import doc_index, gdrive_service, projects
+    from app.core.ingest_reconcile import (
+        apply_tombstones,
+        plan_reconcile,
+        resume_source_changed,
+        source_content_token,
+    )
 
     logger.info("Reconciling project=%s folder=%s", project_id, folder_id)
     local_before = _local_docs_by_drive_file_id(project_id)
@@ -147,6 +163,7 @@ def _reconcile_project(
 
     seen_ids: Set[str] = set()
     imported = 0
+    reindexed = 0
     zero_chunk_errors = 0
 
     for f_meta in files:
@@ -156,8 +173,30 @@ def _reconcile_project(
         seen_ids.add(fid)
         if not gdrive_service.is_downloadable(f_meta):
             continue
-        if fid in local_before:
-            logger.debug("Skipping already-local file %s", fid)
+        existing = local_before.get(fid)
+        if existing is not None:
+            if resume_source_changed(existing, f_meta):
+                if execute:
+                    token = source_content_token(f_meta)
+                    if token:
+                        projects.set_document_drive_md5(existing["id"], token)
+                    idx = doc_index.index_document(project_id, existing["id"])
+                    if idx.get("status") == "error":
+                        zero_chunk_errors += 1
+                    else:
+                        reindexed += 1
+                    logger.info(
+                        "source_changed reindex %s (%s) as %s",
+                        existing.get("original_name"), fid, existing["id"],
+                    )
+                else:
+                    reindexed += 1
+                    logger.info(
+                        "would reindex %s (%s) source_changed",
+                        existing.get("original_name"), fid,
+                    )
+            else:
+                logger.debug("Skipping already-local file %s", fid)
             continue
         ok, zero_chunk, msg = _import_missing_file(project_id, f_meta, execute)
         if ok:
@@ -165,6 +204,24 @@ def _reconcile_project(
         if zero_chunk:
             zero_chunk_errors += 1
         logger.info(msg)
+
+    plan = plan_reconcile(
+        local_docs=list(local_before.values()),
+        drive_files=files,
+        walk_complete=not walk_errors,
+    )
+    tombstoned = apply_tombstones(plan.to_tombstone, execute=execute)
+    if plan.skipped_tombstones_reason:
+        logger.warning(
+            "tombstones skipped: %s (walk incomplete)",
+            plan.skipped_tombstones_reason,
+        )
+    elif plan.to_tombstone:
+        logger.info(
+            "%s %s gone-from-Drive row(s)",
+            "tombstoned" if execute else "would tombstone",
+            len(plan.to_tombstone),
+        )
 
     # Refresh count after import.
     local_after = _local_docs_by_drive_file_id(project_id) if execute else local_before
@@ -177,8 +234,11 @@ def _reconcile_project(
         "local_docs_before": local_docs_before,
         "local_docs_after": local_docs_after,
         "imported": imported,
+        "reindexed": reindexed,
+        "tombstoned": tombstoned if execute else len(plan.to_tombstone),
         "zero_chunk_errors": zero_chunk_errors,
         "walk_errors": walk_errors,
+        "index_count": plan.index_count,
     }
 
 

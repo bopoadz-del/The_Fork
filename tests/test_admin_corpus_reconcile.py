@@ -311,6 +311,17 @@ def test_reconcile_non_admin_blocked(client):
     assert resp.status_code == 403
 
 
+def test_coverage_endpoint_is_queryable(client):
+    _wipe_all()
+    resp = client.get("/v1/admin/corpus/coverage")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "by_status" in body
+    assert body["orphans_action"] == "report_only"
+    assert "tombstoned" in body
+    assert "ocr_degraded" in body
+
+
 def test_reconcile_reports_no_mismatches_when_clean(client):
     _wipe_all()
     now = datetime.now(timezone.utc).isoformat()

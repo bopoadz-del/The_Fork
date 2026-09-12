@@ -2720,6 +2720,8 @@ def _stamp_index_ledger(
     advance_extractor_version: bool = True,
     rag_indexed: int = 0,
     rag_error: str | None = None,
+    ocr_degraded: bool = False,
+    reason_override: str | None = None,
 ) -> None:
     """Write documents.chunk_count / ingest_status / extractor_version.
 
@@ -2747,6 +2749,10 @@ def _stamp_index_ledger(
     else:
         classified = ist.classify(chunk_count=chunk_count, extension=ext)
         status, reason = classified.status, classified.reason
+    if reason_override is not None:
+        reason = reason_override
+    if ocr_degraded:
+        reason = ist.with_ocr_degraded(reason)
     existing = projects_mod.get_document(document_id) or {}
     advance = bool(advance_extractor_version) and ist.should_advance_extractor_version(
         ingest_status=status,
@@ -2855,6 +2861,11 @@ def index_document(
                 meta.get("ocr_pages", 0),
                 bool(meta.get("ocr_skipped_too_large")),
             )
+            _stamp_index_ledger(
+                document_id, filename, 0,
+                stamp_as_indexed=False,
+                ocr_degraded=True,
+            )
             return {
                 "status": "error",
                 "error": "OCR_REQUIRED",
@@ -2910,6 +2921,7 @@ def index_document(
                 document_id, filename, 0,
                 stamp_as_indexed=stamp_as_indexed,
                 extract_failed=bool(extract_error),
+                ocr_degraded=bool(meta.get("ocr_skipped_too_large")),
             )
             return result
         entry = {
@@ -3020,6 +3032,7 @@ def index_document(
         advance_extractor_version=embed_landed,
         rag_indexed=rag_indexed,
         rag_error=rag_error,
+        ocr_degraded=bool(meta.get("ocr_skipped_too_large")),
     )
     result = {
         "status": "ok",

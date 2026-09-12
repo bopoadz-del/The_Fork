@@ -50,6 +50,10 @@ UNSUPPORTED_TYPE = "UNSUPPORTED_TYPE"
 EXTRACT_FAILED = "EXTRACT_FAILED"
 TOMBSTONED = "TOMBSTONED"
 QUARANTINED = "QUARANTINED"
+# Reason token, not a CHECK status. OCR skipped above the size/memory
+# ceiling must be visible on the ledger; adding a new ingest_status value
+# would require an ALTER CONSTRAINT. Recoverable: force_ocr / raise ceiling.
+OCR_DEGRADED = "OCR_DEGRADED"
 
 ALL_STATUSES = frozenset(
     {
@@ -397,6 +401,15 @@ def classify(
         return Classification(TEXT_SPARSE, f"low_density:{qualifier}", ext)
 
     return Classification(INDEXED, None, ext)
+
+
+def with_ocr_degraded(reason: str | None) -> str:
+    """Append OCR_DEGRADED to a classify reason without losing the original."""
+    if not reason:
+        return f"{OCR_DEGRADED}:{RECOVERABLE}"
+    if OCR_DEGRADED in reason:
+        return reason
+    return f"{reason}+{OCR_DEGRADED}"
 
 
 def _is_sparse_for_extent(

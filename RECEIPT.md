@@ -1,75 +1,64 @@
-# RECEIPT — extraction follow-through (R1 / R3 / R4 / R2 / R5)
+# RECEIPT — S10 ingest reconcile (Gate-2 prep)
 
-## What landed
+Audit of **current** tip (`5eaf4d8` / #578) plus this delta. F-3 (159
+docx source bytes) remains HELD / owner-gated. This PR does **not** run
+`p1b --tier 1`, does **not** claim Gate-2 corpus done, does **not**
+purge orphans.
 
-- **R1** `documents.superseded_by` + `documents.retrieval_visible` (default true).
-  Hybrid BM25 **and** vector legs filter `retrieval_visible = true` (chunks
-  without a documents row stay visible). Seed / ops helper sets
-  `b5033ec2.superseded_by = 93982d45` and hides the stale row. No hard-delete.
-- **R3** Ingest refuses a duplicate `content_sha256` unless `--reingest <old_id>`
-  (scoped to that row's id/sha so a folder walk cannot hide one id behind
-  every other file). Admin / CDE / reconcile skip instead of abort.
-- **R4** `doc-reindex` and `--reingest` stamp `chunk_count`, `ingest_status=INDEXED`,
-  `extractor_version=8535199-sdt`. `/health` corpus `chunks` is `COUNT(*)` on the
-  chunk table (`source=chunk_table_count`), not `SUM(documents.chunk_count)`.
-- **R2** `scripts/extraction_census.py` + fixture test (`delta==0` after a
-  correct index). Live census is ops-run after merge.
-- **R5** `8199b14b` origin (see below).
+## Already true (struck — do not rebuild)
 
-## R5 — 8199b14b
+| Claim | Evidence |
+| --- | --- |
+| `documents.superseded_by` + `retrieval_visible`; hybrid hides invisible | `app/core/models.py`, `vector_store._hidden_doc_sql`, #551 / RECEIPT R1 |
+| Per-doc `ingest_status` / `chunk_count` / `drive_md5` **columns** | migration `0016`, `Document` ORM. `drive_md5` was unused until this PR |
+| Duplicate SHA refused unless `--reingest` | `projects.add_document` / `DuplicateContentError`, #551 |
+| INDEXED stamp + zero-chunk is `ZERO_CHUNK` not silent INDEXED | `ingest_status.classify`, `doc_index._stamp_index_ledger`, `test_doc_index_zero_chunk.py` |
+| Stale-docx reextract + stamp-guards | #569–#577, `resume_is_already_indexed` |
+| Orphan chunks **reported** (no purge) | `POST /v1/admin/corpus/reconcile` `dangling_*` |
+| JSONL bulk path re-embeds on model/dim mismatch | `scripts/rag_render_bulk_ingest.py` `is_valid_existing` |
+| `/health` corpus = `COUNT(*)` on chunk table | `health_probes.probe_corpus_chunks` |
+| S14 EOT notice-period | closed #561 — out of scope |
 
-`8199b14b` is a fabricated `LETTER_DOC` fixture in
-`tests/test_letter_filename_retrieval.py` (and comments in
-`app/core/rag/retriever.py`); repo search + GitHub `8199b14b` hits are only those
-two files. Comments already state the id is MISSING from `documents`. That is a
-**FORK_EVAL citation-grounding failure**: citations must resolve against
-`documents` before render. Live sparse extract is `b5033ec2`; the corrected
-copy id `93982d45` is Neon-only and is seeded when both rows exist. Do not
-treat `8199b14b` as a real document id.
+## Holes that were still real (this PR)
 
-## mutants run/survivors
+1. **Resume by Drive id only** — `drive_md5` never written, never in
+   `_document_as_dict`, Drive walk omitted `md5Checksum`/`etag`. Edited
+   files with the same id were skipped. Now: persist token on ingest;
+   `should_skip_resume` compares md5/etag when **both** sides exist.
+   Null stored token is **not** treated as changed (would re-index the
+   whole historical corpus / F-3 thrash).
+2. **Drive deletions never tombstoned** — `TOMBSTONED` existed in the
+   CHECK vocab with no writer. `reconcile_drive_delta` only imported
+   missing files. Now: complete-walk tombstone = `TOMBSTONED` +
+   `retrieval_visible=false`. Never deletes chunks. Partial walk / p1b
+   shards do **not** tombstone.
+3. **OCR skip not on the ledger** — `ocr_skipped_too_large` lived in
+   extract meta; `OCR_REQUIRED` returned without `_stamp_index_ledger`.
+   Now stamps `ingest_status_reason` containing `OCR_DEGRADED` (reason
+   token, not a new CHECK status).
+4. **Coverage not queryable as ingest truth** — N-of-M honesty + health
+   chunk count existed; no status / tombstone / OCR / orphan /
+   embedding-mismatch breakdown. Now `GET /v1/admin/corpus/coverage`
+   and `coverage_truth()`.
+5. **Idempotent reconcile** — `plan_reconcile` second pass on a healthy
+   snapshot has `index_count==0` / `work_count==0`.
 
-UNPRODUCED
+## Still blocked (not a code hole)
 
-## Rebase onto main 234d95ad (#557) — what broke
-
-GitHub check **client-pattern scan** (job 102858412464) went red after
-update-branch. `scripts/scan_secrets.py` itself was clean
-(`8 pattern(s), 1568 file(s)`). The same job then runs
-`scripts/scan_exception_pass.py` — #557's silent-empty-return twin — and
-that step flagged 16 `file:line` keys.
-
-Those 16 were not new swallows. R1–R5 inserted lines in `projects.py`,
-`doc_index.py`, `retriever.py`, `vector_store.py`, and
-`p1b_ingest_drive_server.py`, so the 124-entry `RETURN_ALLOWLIST` from
-#557 pointed at stale line numbers. Live site count stayed 124.
-
-Minimal fix: retarget the 16 drifted keys via
-`python scripts/scan_exception_pass.py --list-returns`. Ceiling stays 124.
-R1–R5 unchanged.
-
-## Lint gates
-
-- `scripts/audit_stubs.py` — clean
-- `scripts/scan_exception_pass.py` — clean (`RETURN: 0 new (124 baselined)`)
-- `frontend` eslint — clean
-- `scripts/scan_secrets.py` — CI-clean on 3ea31a06; not re-run here
-  (`SECRET_SCAN_PATTERNS` unset)
+- F-3: 159 docx need owner-gated source bytes. Do not run Shell p1b
+  theater. Gate-2 corpus is **not** done.
+- Orphan **quarantine** of retrieval is left as report-only: R1
+  explicitly keeps chunks without a `documents` row visible. Closure is
+  owner-gated purge, not this PR.
+- Force re-embed of a live mixed-model corpus is listed on the plan
+  (`to_reembed`) and counted in coverage; the JSONL path already
+  re-embeds. Auto-reindex of the production corpus is out of scope.
 
 ## Tests
 
-Targeted + related (this revision):
-
-- `tests/test_retrieval_visible.py` `test_sha_reingest.py`
-  `test_index_stamp_and_health_corpus.py` `test_extraction_census.py`
-  `test_projects_migration.py` `test_p1b_ingest_drive_server.py`
-  `test_health.py` `tests/e2e/test_f1_boot_and_health.py`
-  `test_health_capability_probe.py` `test_hybrid_retrieval.py`
-  `test_doc_index_zero_chunk.py` — 68 passed, 4 skipped
-- `tests/e2e/` + p1b accounting / silent_exit / r2 / drive proof /
-  letter filename — 129 passed, 1 skipped
+Targeted (this revision): `tests/test_ingest_reconcile.py`,
+`tests/test_p1b_ingest_accounting.py::test_edited_drive_md5_is_not_already_indexed`,
+`tests/test_projects_migration.py`, related ingest/admin tests.
 
 mutants run/survivors: UNPRODUCED
-
-HEAD: `a6c1a24bec5a8e4d00876b3b05dcdace068a37a8`
-retries: 2 (reload class identity; --reingest scope after review)
+retries: 0
