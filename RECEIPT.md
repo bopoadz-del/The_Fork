@@ -48,9 +48,9 @@ Gate-2 corpus done.
 
 ## Tests / tools
 
-- tests passed/failed: see CI (virgin, production-like, test-postgres)
+- tests passed/failed: local targeted 60 passed (`test_office_extraction_census`, `test_pptx_extraction`, `test_ingest_reconcile`, `test_admin_corpus_reconcile`, `test_oom_not_reported_as_empty`, xlsx extract, `test_doc_index_zero_chunk`). CI virgin / production-like / test-postgres pending.
 - mutants run/survivors: UNPRODUCED
 - retries: 0
-- tools used: pytest, `scripts/audit_stubs.py`, `scripts/scan_exception_pass.py`
+- tools used: pytest, `scripts/audit_stubs.py`, `scripts/scan_exception_pass.py` (RETURN 0 new, 76 baselined after pptx empty-return closed)
 - rollback SHA: `897df10`
 - deploy SHA: (this branch HEAD)
