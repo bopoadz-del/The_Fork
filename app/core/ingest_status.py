@@ -68,6 +68,9 @@ ALL_STATUSES = frozenset(
 # #550 / 8535199: Word SDT + deduped text boxes. Bump the suffix when the
 # extract walk changes again; do not invent a hash that is not this family.
 EXTRACTOR_VERSION = "8535199-sdt"
+#: Reopen sentinel written by ``scripts/reopen_embed_failed_docx``. Not
+#: ``EXTRACTOR_VERSION``, so ``docx_stale_extractor_open`` stays true.
+EMBED_FAILED_SUFFIX = "/embed-failed"
 
 #: Statuses that represent OPEN work. Everything else is a settled outcome.
 #: ``TEXT_SPARSE`` is deliberately absent -- see ``is_open``.
@@ -188,27 +191,47 @@ def document_extension(doc: Mapping[str, Any]) -> str:
 _THIN_STATUSES = frozenset({TEXT_SPARSE})
 
 
+def embed_failed_sentinel(version: str | None = None) -> str:
+    """``{EXTRACTOR_VERSION}/embed-failed`` — never null, never INDEXED."""
+    return f"{version or EXTRACTOR_VERSION}{EMBED_FAILED_SUFFIX}"
+
+
+def is_embed_failed_sentinel(extractor_version: str | None) -> bool:
+    """True when ``extractor_version`` is the reopen sentinel."""
+    return (extractor_version or "").endswith(EMBED_FAILED_SUFFIX)
+
+
 def should_advance_extractor_version(
     *,
     ingest_status: str | None,
     rag_indexed: int = 0,
     rag_error: str | None = None,
+    prior_extractor_version: str | None = None,
 ) -> bool:
-    """True only when embed landed on an INDEXED row.
+    """True when embed landed and the row may stamp EXTRACTOR_VERSION.
 
     FK-REEXTRACT-2 / #573: ``rag_error`` or ``rag_indexed == 0`` must not
-    stamp ``EXTRACTOR_VERSION``. #573's caller-side veto missed the live
-    hole — ``classify()`` returning ``TEXT_SPARSE`` after a 1-chunk embed
-    that looked like success (``rag_indexed == 1``, no ``rag_error``).
-    That advanced ``{EXTRACTOR_VERSION}/embed-failed`` to
-    ``EXTRACTOR_VERSION`` and closed ``docx_stale_extractor_open``.
-    ``TEXT_SPARSE`` alone is not a landing.
+    stamp ``EXTRACTOR_VERSION``. #575 then refused every TEXT_SPARSE
+    advance so a 1-chunk embed could not false-close a row that was
+    never embed-failed.
+
+    Follow-on: a successful thin embed (TEXT_SPARSE, ``rag_indexed>0``,
+    no ``rag_error``) whose *prior* stamp is the reopen sentinel
+    (``…/embed-failed``) terminal-closes. Leaving the sentinel in place
+    loops ``docx_stale_extractor_open`` forever. Plain TEXT_SPARSE that
+    was never embed-failed still does not advance.
     """
     if rag_error:
         return False
     if int(rag_indexed or 0) <= 0:
         return False
-    return ingest_status == INDEXED
+    if ingest_status == INDEXED:
+        return True
+    if ingest_status == TEXT_SPARSE and is_embed_failed_sentinel(
+        prior_extractor_version,
+    ):
+        return True
+    return False
 
 
 def docx_stale_extractor_open(
