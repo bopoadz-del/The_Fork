@@ -2718,6 +2718,8 @@ def _stamp_index_ledger(
     stamp_as_indexed: bool = False,
     extract_failed: bool = False,
     advance_extractor_version: bool = True,
+    rag_indexed: int = 0,
+    rag_error: str | None = None,
 ) -> None:
     """Write documents.chunk_count / ingest_status / extractor_version.
 
@@ -2726,10 +2728,12 @@ def _stamp_index_ledger(
     would otherwise classify TEXT_SPARSE. First ingest still uses classify.
     Never deletes a row.
 
-    ``advance_extractor_version`` is False when text extracted but embed
-    failed (``rag_error`` / ``rag_indexed == 0``). That outcome is open,
-    not done — stamping EXTRACTOR_VERSION would make
-    ``docx_stale_extractor_open`` treat the row as genuinely thin.
+    ``advance_extractor_version`` is a caller veto only. The ledger also
+    refuses to stamp EXTRACTOR_VERSION unless embed landed
+    (``rag_indexed > 0``, no ``rag_error``) **and** the classified status
+    is INDEXED. TEXT_SPARSE after a 1-chunk "success" must leave the
+    prior stamp (including ``{EXTRACTOR_VERSION}/embed-failed``) so
+    ``docx_stale_extractor_open`` stays open.
     """
     from app.core import ingest_status as ist
     from app.core import projects as projects_mod
@@ -2742,14 +2746,19 @@ def _stamp_index_ledger(
     else:
         classified = ist.classify(chunk_count=chunk_count, extension=ext)
         status, reason = classified.status, classified.reason
+    advance = bool(advance_extractor_version) and ist.should_advance_extractor_version(
+        ingest_status=status,
+        rag_indexed=rag_indexed,
+        rag_error=rag_error,
+    )
     try:
         kwargs: dict[str, Any] = {
             "chunk_count": chunk_count,
             "ingest_status": status,
             "ingest_status_reason": reason,
-            "stamp_extractor_version": advance_extractor_version,
+            "stamp_extractor_version": advance,
         }
-        if advance_extractor_version:
+        if advance:
             kwargs["extractor_version"] = ist.EXTRACTOR_VERSION
         projects_mod.stamp_document_index(document_id, **kwargs)
     except Exception:
@@ -2995,13 +3004,17 @@ def index_document(
             "skipped_unsupported": 1,
             "total_chunks": 0,
         }
-    # Embed failure is not an extractor success. Advancing extractor_version
-    # here is what silently closed TEXT_SPARSE .docx after RAG_INDEX_FAILED.
-    embed_failed = bool(rag_error) or rag_indexed == 0
+    # Embed miss OR a thin TEXT_SPARSE classify is not an extractor success.
+    # #573 only vetoed rag_error / rag_indexed==0; a 1-chunk embed that
+    # looked like success still stamped EXTRACTOR_VERSION and closed
+    # stale-open on the live reextract path.
+    embed_landed = (not rag_error) and rag_indexed > 0
     _stamp_index_ledger(
         document_id, filename, len(chunks),
         stamp_as_indexed=stamp_as_indexed,
-        advance_extractor_version=not embed_failed,
+        advance_extractor_version=embed_landed,
+        rag_indexed=rag_indexed,
+        rag_error=rag_error,
     )
     result = {
         "status": "ok",
