@@ -100,6 +100,24 @@ PROBES: tuple[Probe, ...] = (
         why="drop the role check so any resolvable user takes the admin path",
     ),
     Probe(
+        name="gk_system_seed_acl",
+        path="app/core/projects.py",
+        old="            allowed = include_admin_approved and _is_shared_platform_grant(project)",
+        new=(
+            "            allowed = (\n"
+            "                include_admin_approved\n"
+            "                and getattr(project, \"origin\", \"user_create\") "
+            "== \"admin_drive_approved\"\n"
+            "                and bool(getattr(project, \"is_approved\", True))\n"
+            "            )"
+        ),
+        test=(
+            "tests/test_chat_open_access_gate.py::"
+            "test_regular_user_resolves_system_seed_gk_project"
+        ),
+        why="revert GK/system_seed share to Drive-approved-only; QA 404 must return",
+    ),
+    Probe(
         name="search_preamble_detector",
         path="app/agents/runtime.py",
         old=(

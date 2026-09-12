@@ -61,6 +61,37 @@ MASTER_CORPUS_SOURCE_PROJECT_ID = os.getenv(
 )
 MASTER_CORPUS_NAME = os.getenv("MASTER_CORPUS_NAME", "Master Corpus")
 
+# Boot-seeded general-knowledge origin. Live rows (curated_kb, training_material)
+# were created with this before the shared-platform grant existed.
+_SYSTEM_SEED_ORIGIN = "system_seed"
+_ADMIN_APPROVED_ORIGIN = "admin_drive_approved"
+
+
+def general_knowledge_project_ids() -> frozenset[str]:
+    """Configured always-on general-knowledge project ids.
+
+    Same ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` env that ``knowledge_seed``,
+    layered RAG, and the retriever use. Default first id is historically
+    ``training_material``. Empty / whitespace entries are dropped.
+    """
+    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
+    return frozenset(p.strip() for p in raw.split(",") if p.strip())
+
+
+def _is_shared_platform_grant(project: Any) -> bool:
+    """Approved platform-shared row for ``include_admin_approved`` readers.
+
+    Drive-approved origin, boot-seeded GK origin, or an id listed in
+    ``RAG_GENERAL_KNOWLEDGE_PROJECTS``. Fail-closed on ``is_approved=False``.
+    """
+    if not bool(getattr(project, "is_approved", True)):
+        return False
+    origin = getattr(project, "origin", "user_create") or "user_create"
+    if origin in (_ADMIN_APPROVED_ORIGIN, _SYSTEM_SEED_ORIGIN):
+        return True
+    pid = getattr(project, "id", None)
+    return bool(pid) and pid in general_knowledge_project_ids()
+
 
 def _master_corpus_source(project_id: Optional[str]) -> Optional[str]:
     """Return the backing project_id for a master-corpus alias, if any."""
@@ -568,8 +599,9 @@ def list_projects(
       * When ``user_id`` is set + ``include_admin_approved=False``: rows
         owned by the caller only (legacy behaviour).
       * When ``user_id`` is set + ``include_admin_approved=True``: rows
-        owned by the caller PLUS rows where origin='admin_drive_approved'
-        AND is_approved=True (the platform-wide canonical projects).
+        owned by the caller PLUS approved platform-shared rows:
+        origin='admin_drive_approved', origin='system_seed' (boot-seeded
+        GK), or an id listed in ``RAG_GENERAL_KNOWLEDGE_PROJECTS``.
         ``is_approved=False`` rows are hidden from non-owners regardless
         of origin — defensive against future "detected but not yet
         approved" rows that could otherwise leak.
@@ -595,12 +627,20 @@ def list_projects(
             stmt = stmt.where(Project.hidden_from_sidebar.is_(False))
         if user_id is not None:
             if include_admin_approved:
+                shared = [
+                    Project.origin.in_(
+                        (_ADMIN_APPROVED_ORIGIN, _SYSTEM_SEED_ORIGIN)
+                    ),
+                ]
+                gk_ids = general_knowledge_project_ids()
+                if gk_ids:
+                    shared.append(Project.id.in_(gk_ids))
                 stmt = stmt.where(
                     or_(
                         Project.user_id == user_id,
                         and_(
-                            Project.origin == "admin_drive_approved",
                             Project.is_approved.is_(True),
+                            or_(*shared),
                         ),
                     )
                 )
@@ -640,10 +680,13 @@ def get_project(
 ) -> Optional[Dict[str, Any]]:
     """Load a project the caller can access.
 
-    PR D — non-owners may also read admin-approved platform projects
-    when ``include_admin_approved=True``. ``is_approved=False`` rows
-    stay owner-only regardless of origin (defensive — admins shouldn't
-    leak detected-but-pending candidates to users).
+    PR D — non-owners may also read approved platform-shared projects
+    when ``include_admin_approved=True`` (Drive-approved origin,
+    boot-seeded ``system_seed``, or a configured GK id).
+    ``is_approved=False`` rows stay owner-only regardless of origin
+    (defensive — admins shouldn't leak detected-but-pending candidates
+    to users). The physical master-corpus source id stays owner-only
+    here (UI-PHYS H1); ``get_project_accessible`` remaps that path.
 
     Pilot: a virtual master-corpus project (default ``master_corpus``)
     is backed by the existing full-drive corpus (default ``projects_folder``).
@@ -670,11 +713,7 @@ def get_project(
                 getattr(project, "is_approved", True)
             )
         else:
-            allowed = (
-                include_admin_approved
-                and getattr(project, "origin", "user_create") == "admin_drive_approved"
-                and bool(getattr(project, "is_approved", True))
-            )
+            allowed = include_admin_approved and _is_shared_platform_grant(project)
         if not allowed:
             return None
     proj = _project_as_dict(project)
