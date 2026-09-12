@@ -4,19 +4,31 @@ Master record of the full RAG review. Verified against Neon (`ep-fragrant-river-
 and live `theshovel.ai`. Final retrievable chunk count: **124,166**.
 This note lives in `docs/` (NOT `docs/knowledge/`) so it is not itself ingested as knowledge.
 
-## A. Standards / reference knowledge (copyright-blocked → author summaries in curated_kb)
+## A. Standards / codes knowledge to AUTHOR then ingest into curated_kb
 
 The full copyrighted standard PDFs are NOT and will not be ingested (licensed; can't serve).
-Legitimate path = authored summaries in `docs/knowledge/` → `curated_kb` → general-knowledge merge.
+Legitimate path = **authored summaries** (your own words, cite by clause, no verbatim text) placed
+in `docs/knowledge/` → ingested into `curated_kb` → served via the general-knowledge merge.
+This is the single list — no separate stub files; author against these here.
 
-| item | state | file |
-|---|---|---|
-| Saudi Building Code | **IN curated_kb** (real summary) | `docs/knowledge/ksa_saudi_building_code.md` |
-| US design standards (IBC, IRC, IECC, ASCE 7, AISC 360, ACI 318, ASHRAE 90.1/62.1, NFPA 101/13/72/70/30/497, ASTM, ADA, OSHA 1910) — residential/commercial/industrial | **STUB committed, to fill + ingest** | `docs/knowledge/us_design_standards_residential_commercial_industrial.md` |
-| UAE codes (Dubai Building Code, Al Sa'fat, ADIBC, Estidama Pearl, UAE Fire & Life Safety) | **STUB committed, to fill + ingest** | `docs/knowledge/uae_building_code.md` |
+**Saudi Arabia** — SBC 201 (admin), 301 (loads), 302/303 (soils/foundations), 304 (concrete),
+305 (masonry), 306 (steel), 401 (electrical), 501 (mechanical), 601 (energy), 701 (sanitary),
+801 (fire), 901 (existing). *A filled SBC summary already exists and is ingested:*
+`docs/knowledge/ksa_saudi_building_code.md` — extend it rather than duplicate.
 
-Also already in curated_kb: FIDIC (×3), OSHA 1926 (×6), CESMM4, WBDG (×8 — US design guidance),
-rates (KSA/Gulf 2025), EVM, productivity norms. All INDEXED and reachable.
+**UAE** — Dubai Building Code (DBC), Al Sa'fat green regs, Abu Dhabi International Building Code
+(ADIBC), Estidama Pearl Rating (PBRS/PCRS), UAE Fire & Life Safety Code; authority NOC workflow
+(DM, DCD, DMT, ADCD).
+
+**US — residential / commercial / industrial** — IBC, IRC, IECC, IFC, IPC, IMC, IFGC; ASCE 7,
+AISC 360, ACI 318, ASTM; ASHRAE 90.1 & 62.1; NFPA 101/13/72/70(NEC)/30/497/499; ADA / ICC A117.1;
+OSHA 1910; FM Global, API (process/industrial).
+
+**International reference (cite, don't reproduce):** BS EN / Eurocodes, ISO.
+
+Already in curated_kb and reachable: FIDIC (×3), OSHA 1926 (×6), CESMM4, WBDG (×8 — US design
+guidance), rates (KSA/Gulf 2025), EVM, productivity norms. To add the above: author summaries,
+drop as `.md` in `docs/knowledge/`, ingest into `curated_kb`.
 
 ## B. Owned documents MISSING from the RAG (can ingest — yours, no license issue)
 
