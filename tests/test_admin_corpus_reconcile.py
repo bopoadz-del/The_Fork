@@ -320,6 +320,10 @@ def test_coverage_endpoint_is_queryable(client):
     assert body["orphans_action"] == "report_only"
     assert "tombstoned" in body
     assert "ocr_degraded" in body
+    assert "office" in body
+    assert ".pdf" in body["office"]["by_kind"]
+    assert ".xlsx" in body["office"]["by_kind"]
+    assert ".pptx" in body["office"]["by_kind"]
 
 
 def test_reconcile_reports_no_mismatches_when_clean(client):
