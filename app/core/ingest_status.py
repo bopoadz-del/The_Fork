@@ -188,6 +188,29 @@ def document_extension(doc: Mapping[str, Any]) -> str:
 _THIN_STATUSES = frozenset({TEXT_SPARSE})
 
 
+def should_advance_extractor_version(
+    *,
+    ingest_status: str | None,
+    rag_indexed: int = 0,
+    rag_error: str | None = None,
+) -> bool:
+    """True only when embed landed on an INDEXED row.
+
+    FK-REEXTRACT-2 / #573: ``rag_error`` or ``rag_indexed == 0`` must not
+    stamp ``EXTRACTOR_VERSION``. #573's caller-side veto missed the live
+    hole — ``classify()`` returning ``TEXT_SPARSE`` after a 1-chunk embed
+    that looked like success (``rag_indexed == 1``, no ``rag_error``).
+    That advanced ``{EXTRACTOR_VERSION}/embed-failed`` to
+    ``EXTRACTOR_VERSION`` and closed ``docx_stale_extractor_open``.
+    ``TEXT_SPARSE`` alone is not a landing.
+    """
+    if rag_error:
+        return False
+    if int(rag_indexed or 0) <= 0:
+        return False
+    return ingest_status == INDEXED
+
+
 def docx_stale_extractor_open(
     status: str | None,
     *,

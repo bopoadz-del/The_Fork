@@ -23,6 +23,7 @@ from app.core import ingest_status as ist
 
 
 DRIVE_STALE_ID = "driveStamp01"
+EMBED_FAILED_SENTINEL = f"{EXTRACTOR_VERSION}/embed-failed"
 
 
 def _reload(monkeypatch, tmp_path):
@@ -232,3 +233,97 @@ def test_embed_success_advances_version_and_indexes(monkeypatch, tmp_path):
     entry = _ledger_entry(proj["id"], stale["id"])
     assert "rag_error" not in entry
     assert int(entry.get("rag_indexed") or 0) > 0
+
+
+def test_reextract_text_sparse_success_leaves_embed_failed_sentinel(
+    monkeypatch, tmp_path, capsys,
+):
+    """Live 3867aff leak: 1-chunk 'success' advanced the reopen sentinel.
+
+    Worker tip ran ``reextract_stale_docx --limit 3`` and printed
+    ``before=TEXT_SPARSE/8535199-sdt/embed-failed/1``
+    ``after=TEXT_SPARSE/8535199-sdt/1``. Neon ``chunks_v2`` stayed flat
+    (upsert of the existing one-chunk row). No ``RAG_INDEX_FAILED``.
+
+    #573 only vetoed ``rag_error`` / ``rag_indexed==0``. A thin extract
+    that classify()s TEXT_SPARSE after a 1-chunk embed still advanced
+    EXTRACTOR_VERSION and closed stale-open. FK-REEXTRACT-2: do not
+    advance unless embed landed AND the row is INDEXED.
+    """
+    projects, users = _reload(monkeypatch, tmp_path)
+    proj = _seed_project(projects, users)
+    stale = _add_docx(
+        projects, proj["id"], tmp_path,
+        name="stale.docx",
+        ingest_status=TEXT_SPARSE,
+        extractor_version=EMBED_FAILED_SENTINEL,
+        chunk_count=1,
+    )
+    thin = _thin_docx_bytes()
+    monkeypatch.setattr(
+        "app.core.r2_storage.fetch_object_bytes",
+        lambda key, bucket=None: thin if key == "projects/p/stale.docx" else None,
+    )
+
+    from scripts.reextract_stale_docx import main
+
+    assert main([]) == 0
+    out = capsys.readouterr().out
+    after = projects.get_document(stale["id"])
+    assert after["ingest_status"] == TEXT_SPARSE
+    assert after["chunk_count"] == 1
+    assert after["extractor_version"] == EMBED_FAILED_SENTINEL
+    assert after["extractor_version"] != EXTRACTOR_VERSION
+    assert ist.docx_stale_extractor_open(
+        after["ingest_status"],
+        extension=ist.document_extension(after),
+        extractor_version=after["extractor_version"],
+    )
+    entry = _ledger_entry(proj["id"], stale["id"])
+    assert "rag_error" not in entry
+    assert int(entry.get("rag_indexed") or 0) == 1
+    assert f"before={TEXT_SPARSE}/{EMBED_FAILED_SENTINEL}/1" in out
+    assert f"after={TEXT_SPARSE}/{EXTRACTOR_VERSION}/1" not in out
+    assert f"after={TEXT_SPARSE}/{EMBED_FAILED_SENTINEL}/1" in out
+
+
+def test_index_document_text_sparse_rag_hit_does_not_advance_version(
+    monkeypatch, tmp_path,
+):
+    """index_document: TEXT_SPARSE + rag_indexed>0 must not stamp current."""
+    projects, users = _reload(monkeypatch, tmp_path)
+    proj = _seed_project(projects, users)
+    dest = tmp_path / "thin.docx"
+    dest.write_bytes(_thin_docx_bytes())
+    doc = projects.add_document(
+        project_id=proj["id"],
+        original_name="thin.docx",
+        stored_as="thin.docx",
+        file_path=str(dest),
+        size=dest.stat().st_size,
+        content_sha256="cd" * 32,
+    )
+    projects.stamp_document_index(
+        doc["id"],
+        chunk_count=1,
+        ingest_status=TEXT_SPARSE,
+        ingest_status_reason="single_window:terminal",
+        extractor_version=EMBED_FAILED_SENTINEL,
+    )
+
+    from app.core import doc_index
+
+    result = doc_index.index_document(proj["id"], doc["id"], stamp_as_indexed=False)
+    assert result.get("status") == "ok"
+    assert "rag_error" not in result
+    assert int(result.get("rag_indexed") or 0) > 0
+
+    after = projects.get_document(doc["id"])
+    assert after["ingest_status"] == TEXT_SPARSE
+    assert after["extractor_version"] == EMBED_FAILED_SENTINEL
+    assert after["extractor_version"] != EXTRACTOR_VERSION
+    assert ist.docx_stale_extractor_open(
+        after["ingest_status"],
+        extension=".docx",
+        extractor_version=after["extractor_version"],
+    )
