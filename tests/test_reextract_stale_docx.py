@@ -77,13 +77,19 @@ def _add_docx(
     ingest_status: str,
     extractor_version: str | None,
     chunk_count: int,
-    drive_file_id: str,
+    drive_file_id: str = "",
     r2_object_key: str | None = "projects/p/stale.docx",
     retrieval_visible: bool = True,
 ):
     dest = tmp_path / name
     raw = _thin_docx_bytes()
     dest.write_bytes(raw)
+    metadata: dict = {}
+    if drive_file_id:
+        metadata["drive_file_id"] = drive_file_id
+    if r2_object_key:
+        metadata["r2_object_key"] = r2_object_key
+        metadata["r2_bucket"] = "corpus"
     doc = projects.add_document(
         project_id=project_id,
         original_name=name,
@@ -91,11 +97,7 @@ def _add_docx(
         file_path=str(dest),
         size=len(raw),
         content_sha256=hashlib.sha256(name.encode()).hexdigest(),
-        metadata={
-            "drive_file_id": drive_file_id,
-            "r2_object_key": r2_object_key,
-            "r2_bucket": "corpus",
-        },
+        metadata=metadata,
     )
     projects.stamp_document_index(
         doc["id"],
@@ -380,3 +382,186 @@ def test_dry_run_prints_resolved_source_and_writes_nothing(monkeypatch, tmp_path
     assert f"doc_id={stale['id']}" in out
     assert f"drive_file_id={DRIVE_STALE_ID}" in out
     assert "source=r2" in out
+    assert "source_unavailable=0" in out
+    assert "would_write=" not in out
+
+
+def _seed_leading_none_then_fetchable(projects, users, tmp_path):
+    """Two pointer-less open rows, then three R2-backed stale rows."""
+    proj = _seed_project(projects, users)
+    none_rows = []
+    for name in ("none_a.docx", "none_b.docx"):
+        none_rows.append(
+            _add_docx(
+                projects, proj["id"], tmp_path,
+                name=name,
+                ingest_status=TEXT_SPARSE,
+                extractor_version="pre-sdt",
+                chunk_count=1,
+                drive_file_id="",
+                r2_object_key=None,
+            )
+        )
+    fetchable = []
+    for name, key in (
+        ("fetch_a.docx", "projects/p/fetch_a.docx"),
+        ("fetch_b.docx", "projects/p/fetch_b.docx"),
+        ("fetch_c.docx", "projects/p/fetch_c.docx"),
+    ):
+        fetchable.append(
+            _add_docx(
+                projects, proj["id"], tmp_path,
+                name=name,
+                ingest_status=TEXT_SPARSE,
+                extractor_version="pre-sdt",
+                chunk_count=1,
+                drive_file_id=f"drive{name[:6]}01",
+                r2_object_key=key,
+            )
+        )
+    return none_rows, fetchable
+
+
+def test_limit_skips_source_none_and_retries_fetchable(
+    monkeypatch, tmp_path, capsys,
+):
+    projects, users = _reload(monkeypatch, tmp_path)
+    none_rows, fetchable = _seed_leading_none_then_fetchable(
+        projects, users, tmp_path,
+    )
+    rich = _rich_docx_bytes()
+
+    monkeypatch.setattr(
+        "app.core.r2_storage.fetch_object_bytes",
+        lambda key, bucket=None: (
+            rich if key in {
+                "projects/p/fetch_a.docx",
+                "projects/p/fetch_b.docx",
+                "projects/p/fetch_c.docx",
+            } else None
+        ),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (None, "unused"),
+    )
+
+    from scripts.reextract_stale_docx import main, select_stale_docx_rows
+
+    fetch_ids = {row["id"] for row in fetchable}
+    ordered_fetchable = [
+        row["id"] for row in select_stale_docx_rows() if row["id"] in fetch_ids
+    ]
+    write_ids = set(ordered_fetchable[:2])
+    leftover_id = ordered_fetchable[2]
+
+    assert main(["--limit", "2"]) == 1
+    out = capsys.readouterr().out
+    for doc_id in write_ids:
+        after = projects.get_document(doc_id)
+        assert after["ingest_status"] == INDEXED
+        assert after["extractor_version"] == EXTRACTOR_VERSION
+    leftover = projects.get_document(leftover_id)
+    assert leftover["ingest_status"] == TEXT_SPARSE
+    assert leftover["extractor_version"] == "pre-sdt"
+    after_none = projects.get_document(none_rows[0]["id"])
+    assert after_none["ingest_status"] == TEXT_SPARSE
+    assert after_none["extractor_version"] == "pre-sdt"
+    assert "open=5" in out
+    assert "retried=2" in out
+    assert "source_unavailable=2" in out
+    assert f"SOURCE_UNAVAILABLE doc_id={none_rows[0]['id']}" in out
+    assert f"SOURCE_UNAVAILABLE doc_id={none_rows[1]['id']}" in out
+    for doc_id in write_ids:
+        assert f"VERIFICATION doc_id={doc_id}" in out
+    assert f"after={INDEXED}/{EXTRACTOR_VERSION}/" in out
+
+
+def test_dry_run_limit_prints_all_open_and_counts_unavailable(
+    monkeypatch, tmp_path, capsys,
+):
+    projects, users = _reload(monkeypatch, tmp_path)
+    none_rows, fetchable = _seed_leading_none_then_fetchable(
+        projects, users, tmp_path,
+    )
+    writes: list[str] = []
+    indexes: list[str] = []
+    monkeypatch.setattr(
+        "app.core.r2_storage.fetch_object_bytes",
+        lambda key, bucket=None: (
+            b"docx-bytes" if key in {
+                "projects/p/fetch_a.docx",
+                "projects/p/fetch_b.docx",
+                "projects/p/fetch_c.docx",
+            } else None
+        ),
+    )
+    monkeypatch.setattr(
+        "app.core.file_crypto.write_document",
+        lambda path, data: writes.append(path),
+    )
+    monkeypatch.setattr(
+        "app.core.doc_index.index_document",
+        lambda *a, **k: indexes.append("indexed") or {"status": "ok"},
+    )
+
+    from scripts.reextract_stale_docx import main
+
+    assert main(["--dry-run", "--limit", "2"]) == 0
+    out = capsys.readouterr().out
+    assert writes == []
+    assert indexes == []
+    for row in none_rows + fetchable:
+        after = projects.get_document(row["id"])
+        assert after["ingest_status"] == TEXT_SPARSE
+        assert f"DRY-RUN doc_id={row['id']}" in out
+    assert f"DRY-RUN doc_id={none_rows[0]['id']}" in out
+    assert "source=none would_write=0" in out
+    assert "source=r2 would_write=1" in out
+    assert out.count("would_write=1") == 2
+    assert out.count("would_write=0") == 3
+    assert "open=5" in out
+    assert "source_unavailable=2" in out
+    assert "dry_run=1" in out
+
+
+def test_allow_unavailable_exits_0_when_only_none_remain(
+    monkeypatch, tmp_path, capsys,
+):
+    projects, users = _reload(monkeypatch, tmp_path)
+    none_rows, fetchable = _seed_leading_none_then_fetchable(
+        projects, users, tmp_path,
+    )
+    rich = _rich_docx_bytes()
+    monkeypatch.setattr(
+        "app.core.r2_storage.fetch_object_bytes",
+        lambda key, bucket=None: (
+            rich if key in {
+                "projects/p/fetch_a.docx",
+                "projects/p/fetch_b.docx",
+                "projects/p/fetch_c.docx",
+            } else None
+        ),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (None, "unused"),
+    )
+
+    from scripts.reextract_stale_docx import main, select_stale_docx_rows
+
+    fetch_ids = {row["id"] for row in fetchable}
+    ordered_fetchable = [
+        row["id"] for row in select_stale_docx_rows() if row["id"] in fetch_ids
+    ]
+    write_ids = set(ordered_fetchable[:2])
+    leftover_id = ordered_fetchable[2]
+
+    assert main(["--limit", "2", "--allow-unavailable"]) == 0
+    out = capsys.readouterr().out
+    for doc_id in write_ids:
+        assert projects.get_document(doc_id)["ingest_status"] == INDEXED
+    assert projects.get_document(leftover_id)["ingest_status"] == TEXT_SPARSE
+    assert projects.get_document(none_rows[0]["id"])["ingest_status"] == TEXT_SPARSE
+    assert "retried=2" in out
+    assert "source_unavailable=2" in out
