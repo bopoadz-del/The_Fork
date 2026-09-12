@@ -157,6 +157,20 @@ def test_get_project_blocks_user_create_for_non_owner():
 
 # ── RAG retriever safety ──────────────────────────────────────────────────
 
+def test_general_knowledge_project_ids_parses_env(monkeypatch):
+    """GK id set matches the env knowledge_seed / retriever already use."""
+    monkeypatch.setenv(
+        "RAG_GENERAL_KNOWLEDGE_PROJECTS", "curated_kb, training_material,",
+    )
+    assert projects_mod.general_knowledge_project_ids() == frozenset(
+        {"curated_kb", "training_material"}
+    )
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    assert projects_mod.general_knowledge_project_ids() == frozenset()
+    monkeypatch.delenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", raising=False)
+    assert "training_material" in projects_mod.general_knowledge_project_ids()
+
+
 def test_retrieve_with_filter_rejects_empty_project_id():
     """Without a project_id we'd have no project scoping at all —
     that's a programming error, not a graceful-degradation case."""

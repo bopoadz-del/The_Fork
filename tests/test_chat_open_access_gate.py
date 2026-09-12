@@ -186,6 +186,188 @@ def test_archived_projects_stay_invisible(client, world):
     assert store.get_project_accessible(pid, world["admin"]["id"]) is None
 
 
+def test_regular_user_resolves_system_seed_gk_project(client, world, monkeypatch):
+    """Live 404: curated_kb is SYSTEM-owned with origin=system_seed.
+
+    Ordinary users (role=user) must reach it via include_admin_approved
+    — not the admin fallthrough. Private user_create stays invisible.
+    """
+    import uuid
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    gk_id = f"oag_gk_{uuid.uuid4().hex[:10]}"
+    other_gk = f"oag_gk2_{uuid.uuid4().hex[:10]}"
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", f"{gk_id},{other_gk}")
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG General Knowledge",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=gk_id,
+        origin="system_seed",
+    )
+    try:
+        stranger = world["stranger"]["id"]
+        got = store.get_project(
+            gk_id, user_id=stranger, include_admin_approved=True,
+        )
+        assert got is not None and got["id"] == gk_id
+        assert store.get_project_accessible(gk_id, stranger) is not None
+        listed = store.list_projects(
+            user_id=stranger, include_admin_approved=True,
+        )
+        assert gk_id in {p["id"] for p in listed}
+        # Without the shared-platform flag, GK stays owner-only.
+        assert store.get_project(gk_id, user_id=stranger) is None
+        assert gk_id not in {
+            p["id"]
+            for p in store.list_projects(user_id=stranger)
+        }
+        # Private user_create stays fail-closed.
+        assert store.get_project(
+            world["private"], user_id=stranger, include_admin_approved=True,
+        ) is None
+        assert store.get_project_accessible(world["private"], stranger) is None
+    finally:
+        store.delete_project(gk_id)
+
+
+def test_regular_user_resolves_system_seed_origin_outside_gk_env(client, world):
+    """origin=system_seed is shared even when the id is not in the env set."""
+    import uuid
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    pid = f"oag_seed_{uuid.uuid4().hex[:10]}"
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG seeded corpus",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=pid,
+        origin="system_seed",
+    )
+    try:
+        stranger = world["stranger"]["id"]
+        assert store.get_project(
+            pid, user_id=stranger, include_admin_approved=True,
+        ) is not None
+        assert store.get_project_accessible(pid, stranger) is not None
+        assert pid in {
+            p["id"]
+            for p in store.list_projects(
+                user_id=stranger, include_admin_approved=True,
+            )
+        }
+    finally:
+        store.delete_project(pid)
+
+
+def test_regular_user_resolves_gk_env_id_regardless_of_origin(client, world, monkeypatch):
+    """A configured GK id is shared even if origin was left as user_create."""
+    import uuid
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    gk_id = f"oag_gkenv_{uuid.uuid4().hex[:10]}"
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", gk_id)
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG GK env id",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=gk_id,
+        origin="user_create",
+    )
+    try:
+        stranger = world["stranger"]["id"]
+        assert store.get_project(
+            gk_id, user_id=stranger, include_admin_approved=True,
+        ) is not None
+        assert store.get_project_accessible(gk_id, stranger) is not None
+        assert gk_id in {
+            p["id"]
+            for p in store.list_projects(
+                user_id=stranger, include_admin_approved=True,
+            )
+        }
+    finally:
+        store.delete_project(gk_id)
+
+
+def test_unapproved_gk_stays_owner_only(client, world, monkeypatch):
+    """is_approved=False stays fail-closed even for a GK env id / system_seed."""
+    import uuid
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    gk_id = f"oag_gkunapp_{uuid.uuid4().hex[:10]}"
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", gk_id)
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG GK pending",
+        user_id=SYSTEM_USER_ID,
+        is_approved=False,
+        project_id=gk_id,
+        origin="system_seed",
+    )
+    with SessionLocal() as db:
+        row = db.get(Project, gk_id)
+        row.is_approved = False
+        db.commit()
+    try:
+        stranger = world["stranger"]["id"]
+        assert store.get_project(
+            gk_id, user_id=stranger, include_admin_approved=True,
+        ) is None
+        assert store.get_project_accessible(gk_id, stranger) is None
+        assert gk_id not in {
+            p["id"]
+            for p in store.list_projects(
+                user_id=stranger, include_admin_approved=True,
+            )
+        }
+    finally:
+        store.delete_project(gk_id)
+
+
+def test_hidden_gk_is_readable_but_not_listed(client, world, monkeypatch):
+    """hidden_from_sidebar drops GK from the picker, not from get_project."""
+    import uuid
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    gk_id = f"oag_gkhide_{uuid.uuid4().hex[:10]}"
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", gk_id)
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG GK hidden",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=gk_id,
+        origin="system_seed",
+    )
+    store.set_hidden_from_sidebar(gk_id, True)
+    try:
+        stranger = world["stranger"]["id"]
+        assert store.get_project(
+            gk_id, user_id=stranger, include_admin_approved=True,
+        ) is not None
+        assert gk_id not in {
+            p["id"]
+            for p in store.list_projects(
+                user_id=stranger, include_admin_approved=True,
+            )
+        }
+        assert gk_id in {
+            p["id"]
+            for p in store.list_projects(
+                user_id=stranger, include_admin_approved=True,
+                include_hidden=True,
+            )
+        }
+    finally:
+        store.delete_project(gk_id)
+
+
 def test_master_corpus_source_id_is_same_membership_as_alias(client, world, monkeypatch):
     """S13: get_project_accessible(source) matches the alias for a member.
 
