@@ -29,6 +29,27 @@ def _gk_project_id() -> str:
     return next((p.strip() for p in raw.split(",") if p.strip()), "")
 
 
+def _heal_gk_share(store, project_id: str) -> None:
+    """Flip an existing GK row to the shared-platform grant. Never raises."""
+    try:
+        proj = store.get_project(project_id)
+        if not proj:
+            return
+        origin = proj.get("origin") or "user_create"
+        approved = bool(proj.get("is_approved", True))
+        if origin == "admin_drive_approved" and approved:
+            return
+        if store.approve_project(project_id):
+            logger.info(
+                "knowledge seed: healed GK project '%s' to admin_drive_approved",
+                project_id,
+            )
+    except Exception as e:  # noqa: BLE001 — heal must never break boot
+        logger.warning(
+            "knowledge seed: heal GK project '%s' failed: %s", project_id, e
+        )
+
+
 def seed_knowledge() -> None:
     """Ingest docs/knowledge/*.md into the GK project. Idempotent; never raises."""
     try:
@@ -52,11 +73,16 @@ def seed_knowledge() -> None:
             try:
                 store.create_project(
                     "General Knowledge", user_id=SYSTEM_USER_ID,
-                    project_id=gk, origin="system_seed",
+                    project_id=gk, origin="admin_drive_approved",
                 )
                 logger.info("knowledge seed: created GK project '%s'", gk)
             except Exception as e:  # noqa: BLE001 — a race/existing row is fine
                 logger.warning("knowledge seed: create GK project '%s' failed: %s", gk, e)
+        # Live rows were created as origin=system_seed (owner-only for
+        # ordinary users). Heal every configured GK id to the same
+        # shared-platform grant Drive-approved projects already have.
+        for gid in store.general_knowledge_project_ids():
+            _heal_gk_share(store, gid)
         if not store.get_project(gk):
             logger.warning(
                 "knowledge seed: GK project '%s' missing; skipping document inserts",
