@@ -99,6 +99,48 @@ def _postgres_test_mode() -> bool:
     return os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() in ("1", "true", "yes")
 
 
+def _is_postgres_deadlock(exc: BaseException) -> bool:
+    """True for a Postgres deadlock (sqlstate 40P01) wrapped by SQLAlchemy."""
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate == "40P01":
+        return True
+    return "deadlock detected" in str(exc).lower()
+
+
+def _truncate_postgres_tables(engine, tables: tuple[str, ...], *, attempts: int = 8) -> None:
+    """TRUNCATE the isolation set, retrying DeadlockDetected.
+
+    Module-scoped TestClient keeps lifespan background work (knowledge-seed)
+    on the same DB. TRUNCATE needs AccessExclusiveLock on every table;
+    a concurrent SELECT/INSERT can invert lock order and fail setup.
+    Retrying is the isolation-side counterpart of not re-entering init_db().
+    """
+    import time
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+
+    sql = text(
+        "TRUNCATE TABLE " + ", ".join(tables) + " RESTART IDENTITY CASCADE"
+    )
+    delay = 0.05
+    last: OperationalError | None = None
+    for attempt in range(attempts):
+        try:
+            with engine.begin() as conn:
+                conn.execute(sql)
+            return
+        except OperationalError as exc:
+            last = exc
+            if not _is_postgres_deadlock(exc) or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.8)
+    if last is not None:
+        raise last
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _init_schema_once():
     """Create the whole unified schema exactly once, before any test,
@@ -192,8 +234,6 @@ def _isolate_postgres_db():
         yield
         return
 
-    from sqlalchemy import text
-
     from app.core.db import get_engine
 
     tables = (
@@ -212,14 +252,7 @@ def _isolate_postgres_db():
         "users",
         "ingestion_jobs",
     )
-    with get_engine().begin() as conn:
-        conn.execute(
-            text(
-                "TRUNCATE TABLE "
-                + ", ".join(tables)
-                + " RESTART IDENTITY CASCADE"
-            )
-        )
+    _truncate_postgres_tables(get_engine(), tables)
 
     # Re-seed the system user row TRUNCATE just removed. Deliberately NOT
     # `users_store._initialized = False` + `init_db()`: that combination
@@ -228,7 +261,9 @@ def _isolate_postgres_db():
     # concurrently with a background task's read on the same tables.
     # `ensure_system_user()` only inserts the row — no DDL, no table lock
     # beyond a normal row write — and the schema itself is created exactly
-    # once, at session start (see `_init_schema_once` below).
+    # once, at session start (see `_init_schema_once` below). A live
+    # module-scoped TestClient may re-insert the same PK from knowledge
+    # seed; ensure_system_user treats that UniqueViolation as success.
     from app.core import users as users_store
 
     users_store.ensure_system_user()

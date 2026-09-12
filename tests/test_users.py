@@ -37,6 +37,71 @@ def test_init_db_is_idempotent(users):
     assert users.get_user_by_id("system")["id"] == "system"
 
 
+def test_ensure_system_user_is_idempotent_when_row_already_exists(users):
+    users.init_db()
+    users.ensure_system_user()
+    users.ensure_system_user()
+    assert users.get_user_by_id("system")["id"] == "system"
+
+
+def test_ensure_system_user_survives_duplicate_pk_race(users, monkeypatch):
+    """Re-seed must not UniqueViolation when another caller already inserted.
+
+    Isolation TRUNCATE + a live TestClient knowledge-seed can both observe
+    a missing ``system`` row. The second INSERT used to raise IntegrityError
+    and fail test-postgres setup (users_pkey / id='system').
+    """
+    users.init_db()
+    assert users.get_user_by_id("system") is not None
+
+    from sqlalchemy.orm import Session
+
+    from app.core.models import User
+
+    real_get = Session.get
+
+    def hide_existing_system(self, entity, ident, *args, **kwargs):
+        key = ident[0] if isinstance(ident, tuple) else ident
+        if entity is User and key == users.SYSTEM_USER_ID:
+            return None
+        return real_get(self, entity, ident, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "get", hide_existing_system)
+    users.ensure_system_user()
+    monkeypatch.undo()
+    assert users.get_user_by_id("system")["id"] == "system"
+
+
+def test_ensure_system_user_concurrent_calls_do_not_raise(users):
+    """Several threads re-seeding the same PK must all return cleanly."""
+    import threading
+
+    from app.core.db import SessionLocal
+    from app.core.models import User
+
+    users.init_db()
+    with SessionLocal() as session:
+        row = session.get(User, users.SYSTEM_USER_ID)
+        session.delete(row)
+        session.commit()
+
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            users.ensure_system_user()
+        except BaseException as exc:  # noqa: BLE001 — collect any leak
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert users.get_user_by_id("system")["id"] == "system"
+
+
 def test_create_user_and_password_round_trip(users):
     users.init_db()
     u = users.create_user("alice@example.com", "s3cret-pw", display_name="Alice")

@@ -90,21 +90,30 @@ def ensure_system_user() -> None:
     test-isolation TRUNCATE), including mid-request/background-task, since
     it never touches `Table.create`/`checkfirst` and takes no table lock
     beyond a normal row insert.
+
+    Check-then-insert is not enough under Postgres: isolation TRUNCATE plus
+    a live TestClient lifespan (knowledge-seed ``ensure_user_exists``) can
+    both see a missing row and INSERT ``id='system'``. A UniqueViolation
+    on ``users_pkey`` means the other caller won — treat that as success.
     """
     with SessionLocal() as session:
-        if session.get(User, SYSTEM_USER_ID) is None:
-            session.add(
-                User(
-                    id=SYSTEM_USER_ID,
-                    email="system@local",
-                    password_hash=None,
-                    salt=None,
-                    display_name="System",
-                    role="admin",
-                    created_at=_now(),
-                )
+        if session.get(User, SYSTEM_USER_ID) is not None:
+            return
+        session.add(
+            User(
+                id=SYSTEM_USER_ID,
+                email="system@local",
+                password_hash=None,
+                salt=None,
+                display_name="System",
+                role="admin",
+                created_at=_now(),
             )
+        )
+        try:
             session.commit()
+        except IntegrityError:
+            session.rollback()
 
 
 def _ensure_db() -> None:
