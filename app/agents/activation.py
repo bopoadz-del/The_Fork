@@ -30,6 +30,15 @@ from app.agents.models import AgentManifest
 # -- Env-flag gating ------------------------------------------------------
 # Set FORK_HATS_ENABLED=1 to activate discipline-hat routing.
 # Unset or 0 = adapter returns None, existing runtime.py behavior unchanged.
+# Read at call time so tests (and a live toggle) do not need a process restart.
+_TRUE_FLAG = ("1", "true", "yes", "on")
+
+
+def hats_enabled() -> bool:
+    """True when FORK_HATS_ENABLED is live. Default off."""
+    return (os.environ.get("FORK_HATS_ENABLED") or "").strip().lower() in _TRUE_FLAG
+
+
 _ENV_FLAG = os.environ.get("FORK_HATS_ENABLED", "").strip()
 HATS_ENABLED = _ENV_FLAG in ("1", "true", "True", "TRUE", "yes")
 
@@ -66,14 +75,14 @@ class HatActivationAdapter:
 
     def is_enabled(self) -> bool:
         """Return True if hat routing is active."""
-        return HATS_ENABLED
+        return hats_enabled()
 
     def select_hat_for_message(self, message: str) -> Optional[AgentManifest]:
         """
         Select the best hat for a user message and merge with base.
         Returns None if hats disabled or no hat matches above threshold.
         """
-        if not HATS_ENABLED:
+        if not hats_enabled():
             return None
 
         scores = self._score_all_hats(message)
@@ -101,7 +110,7 @@ class HatActivationAdapter:
         Return discipline -> score mapping for all hats.
         Useful for debugging and UI display. Returns empty dict if disabled.
         """
-        if not HATS_ENABLED:
+        if not hats_enabled():
             return {}
 
         scores = self._score_all_hats(message)
@@ -109,7 +118,7 @@ class HatActivationAdapter:
 
     def get_active_hat_names(self, message: str) -> List[str]:
         """Return list of hat names that would activate for this message."""
-        if not HATS_ENABLED:
+        if not hats_enabled():
             return []
 
         scores = self._score_all_hats(message)
