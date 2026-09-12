@@ -4,12 +4,21 @@
 Not a Drive crawl and not web Shell p1b. Same document id, no new row.
 
 Usage (Render worker the-fork-ingest, from /app):
-    python scripts/reextract_stale_docx.py [--dry-run] [--limit N]
+    python scripts/reextract_stale_docx.py [--dry-run] [--limit N] [--allow-unavailable]
 
 Selects retrieval_visible rows where
 ``ingest_status.docx_stale_extractor_open`` is true, fetches bytes from R2
 then one Drive file id, writes the existing ``file_path``, and re-indexes
 with ``stamp_as_indexed=False``.
+
+``--limit N`` caps rows that successfully fetch bytes (source r2/drive) and
+are written. Rows with no bytes (source=none) are counted as
+``source_unavailable`` and do not consume the cap. Dry-run still prints
+every open row (annotate ``would_write=`` when a limit is set).
+
+Exit 1 when any open row is ``source_unavailable`` (unfinished work), or
+when the fetchable write set was not fully retried. ``--allow-unavailable``
+returns 0 when the only unfinished rows are source_unavailable.
 """
 from __future__ import annotations
 
@@ -34,8 +43,11 @@ def _snap(doc: Dict[str, Any]) -> str:
     )
 
 
-def select_stale_docx_rows(*, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-    """retrieval_visible rows still open under ``docx_stale_extractor_open``."""
+def select_stale_docx_rows() -> List[Dict[str, Any]]:
+    """All retrieval_visible rows still open under ``docx_stale_extractor_open``.
+
+    ``--limit`` is applied later to rows that actually fetch bytes, not here.
+    """
     from sqlalchemy import select
 
     from app.core import ingest_status as ist
@@ -58,8 +70,6 @@ def select_stale_docx_rows(*, limit: Optional[int] = None) -> List[Dict[str, Any
             extractor_version=doc.get("extractor_version"),
         ):
             selected.append(doc)
-    if limit is not None:
-        selected = selected[: max(0, int(limit))]
     return selected
 
 
@@ -114,7 +124,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print id / drive_file_id / source (r2|drive|none). No writes.",
     )
-    ap.add_argument("--limit", type=int, default=None, help="Cap selected rows")
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help=(
+            "Cap rows that successfully fetch bytes and are written/re-indexed. "
+            "source=none does not consume the cap."
+        ),
+    )
+    ap.add_argument(
+        "--allow-unavailable",
+        action="store_true",
+        help=(
+            "Exit 0 when retried matches the fetchable write set even if some "
+            "open rows are source_unavailable."
+        ),
+    )
     return ap
 
 
@@ -124,7 +150,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     from app.core import ingest_status as ist
     from app.core import projects as projects_mod
 
-    rows = select_stale_docx_rows(limit=args.limit)
+    rows = select_stale_docx_rows()
+    write_cap = None if args.limit is None else max(0, int(args.limit))
     tally = {
         "open": len(rows),
         "retried": 0,
@@ -134,17 +161,27 @@ def main(argv: Optional[List[str]] = None) -> int:
         "source_unavailable": 0,
     }
     unavailable: List[Tuple[str, Optional[str], Optional[str]]] = []
+    writes_done = 0
 
     if args.dry_run:
         for row in rows:
-            _raw, source, drive_id, _err = fetch_row_bytes(row)
+            raw, source, drive_id, _err = fetch_row_bytes(row)
+            suffix = ""
+            if write_cap is not None:
+                will = raw is not None and writes_done < write_cap
+                if will:
+                    writes_done += 1
+                suffix = f" would_write={1 if will else 0}"
+            if raw is None:
+                tally["source_unavailable"] += 1
             print(
                 f"DRY-RUN doc_id={row['id']} "
-                f"drive_file_id={drive_id or '-'} source={source}"
+                f"drive_file_id={drive_id or '-'} source={source}{suffix}"
             )
         print(
             f"TALLY open={tally['open']} retried=0 now_indexed=0 "
-            f"still_sparse=0 error=0 source_unavailable=0 dry_run=1"
+            f"still_sparse=0 error=0 "
+            f"source_unavailable={tally['source_unavailable']} dry_run=1"
         )
         return 0
 
@@ -163,10 +200,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 f"before={_snap(before)} after={_snap(before)}"
             )
             continue
+        if write_cap is not None and writes_done >= write_cap:
+            continue
 
         dest = row.get("file_path") or ""
         after = before
         tally["retried"] += 1
+        writes_done += 1
         wrote = False
         try:
             if not dest:
@@ -218,11 +258,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"UNAVAILABLE_RECORD id={doc_id} drive_file_id={drive_id or '-'} "
             f"err={uerr or 'none'}"
         )
-    expected = tally["open"] - tally["source_unavailable"]
+    fetchable = tally["open"] - tally["source_unavailable"]
+    expected = (
+        fetchable if write_cap is None else min(write_cap, fetchable)
+    )
     if tally["retried"] != expected:
         return 1
     # A selected row we could not fetch is unfinished work.
-    if tally["source_unavailable"]:
+    if tally["source_unavailable"] and not args.allow_unavailable:
         return 1
     return 0
 
