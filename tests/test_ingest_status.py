@@ -367,8 +367,12 @@ def test_should_advance_extractor_version_requires_indexed_and_embed():
     Live 3867aff advanced ``8535199-sdt/embed-failed`` → ``8535199-sdt``
     after classify() returned TEXT_SPARSE on a 1-chunk embed that looked
     like success (no rag_error, rag_indexed==1). That closed stale-open.
+
+    index_document now sets rag_error on ANY embed shortfall, so "no
+    rag_error" means a complete embed — a clean thin embed is the
+    document's settled state and now advances.
     """
-    assert not ist.should_advance_extractor_version(
+    assert ist.should_advance_extractor_version(
         ingest_status=ist.TEXT_SPARSE, rag_indexed=1, rag_error=None,
     )
     assert not ist.should_advance_extractor_version(
@@ -396,8 +400,8 @@ def test_should_advance_terminal_closes_sentinel_thin_embed():
     with ``rag_indexed>0`` and no ``rag_error``, that sentinel must
     terminal-close or ``docx_stale_extractor_open`` loops forever.
 
-    Still never advance on rag_error / rag_indexed==0. Still never
-    advance plain TEXT_SPARSE that was never embed-failed.
+    The rule is now: embed success always closes, regardless of prior
+    version. Still never advance on rag_error / rag_indexed==0.
     """
     sentinel = f"{ist.EXTRACTOR_VERSION}/embed-failed"
     assert ist.should_advance_extractor_version(
@@ -418,13 +422,13 @@ def test_should_advance_terminal_closes_sentinel_thin_embed():
         rag_error=None,
         prior_extractor_version=sentinel,
     )
-    assert not ist.should_advance_extractor_version(
+    assert ist.should_advance_extractor_version(
         ingest_status=ist.TEXT_SPARSE,
         rag_indexed=1,
         rag_error=None,
         prior_extractor_version=ist.EXTRACTOR_VERSION,
     )
-    assert not ist.should_advance_extractor_version(
+    assert ist.should_advance_extractor_version(
         ingest_status=ist.TEXT_SPARSE,
         rag_indexed=1,
         rag_error=None,
@@ -436,6 +440,33 @@ def test_should_advance_terminal_closes_sentinel_thin_embed():
         rag_error=None,
         prior_extractor_version=sentinel,
     )
+
+
+def test_reextract_terminates_embed_success_always_closes():
+    """The terminating invariant that the 8-PR loop lacked: once the embed
+    lands (rag_indexed>0, no rag_error) a re-extracted .docx closes for EVERY
+    prior version; only a real embed failure keeps it open for infra retry."""
+    sentinel = ist.embed_failed_sentinel()
+    for prior in (None, "pre-sdt", sentinel, ist.EXTRACTOR_VERSION):
+        for status in (ist.INDEXED, ist.TEXT_SPARSE):
+            # embed success -> advance -> closed
+            assert ist.should_advance_extractor_version(
+                ingest_status=status, rag_indexed=3, rag_error=None,
+                prior_extractor_version=prior,
+            ), (status, prior)
+            final = ist.EXTRACTOR_VERSION  # advanced
+            assert not ist.docx_stale_extractor_open(
+                status, extension=".docx", extractor_version=final,
+            ), (status, prior)
+        # embed FAILURE -> stays open for retry
+        assert not ist.should_advance_extractor_version(
+            ingest_status=ist.TEXT_SPARSE, rag_indexed=0, rag_error=None,
+            prior_extractor_version=prior,
+        )
+        assert not ist.should_advance_extractor_version(
+            ingest_status=ist.TEXT_SPARSE, rag_indexed=1, rag_error="HF offline",
+            prior_extractor_version=prior,
+        )
 
 
 def test_stale_extractor_open_without_retry_is_incomplete():
