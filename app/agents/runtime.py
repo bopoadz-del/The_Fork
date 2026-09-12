@@ -8075,6 +8075,90 @@ _MISSING_INPUT_NUDGE = (
     "the gap you already reported."
 )
 
+# Default UI agent. Specialty agents already bind hats in frontmatter;
+# project-assistant is the /v1/chat/stream front door and was unhatted.
+_DEFAULT_UI_AGENT = "project-assistant"
+
+
+def hats_activation_enabled() -> bool:
+    """True when FORK_HATS_ENABLED is live. Default off."""
+    from app.agents.activation import hats_enabled
+    return hats_enabled()
+
+
+def hat_scores_sse(message: str) -> dict[str, Any] | None:
+    """SSE ``hat_scores`` payload, or None when the flag is off.
+
+    Lives on the default chat path so the UI can show discipline scores
+    when hats are enabled on the live service.
+    """
+    if not hats_activation_enabled():
+        return None
+    from app.agents.activation import HatActivationAdapter
+    adapter = HatActivationAdapter()
+    scores = adapter.score_all_hats(message)
+    selected = adapter.select_hat_for_message(message)
+    return {
+        "type": "hat_scores",
+        "scores": scores,
+        "selected": getattr(selected, "id", None),
+        "selected_name": getattr(selected, "name", None),
+        "enabled": True,
+    }
+
+
+def hat_turn_system_note(message: str) -> dict[str, str] | None:
+    """Steer the default UI turn toward the winning discipline hat."""
+    event = hat_scores_sse(message)
+    if not event:
+        return None
+    scores = event.get("scores") or {}
+    ranked = ", ".join(
+        f"{name}={float(score):.2f}"
+        for name, score in sorted(scores.items(), key=lambda kv: -float(kv[1]))
+    )
+    selected = event.get("selected")
+    if selected:
+        return {
+            "role": "system",
+            "content": (
+                f"Active discipline hat this turn: {event.get('selected_name')} "
+                f"({selected}). Hat scores: {ranked}."
+            ),
+        }
+    if ranked:
+        return {
+            "role": "system",
+            "content": (
+                "Discipline hat scores for this turn (none above routing "
+                f"threshold): {ranked}."
+            ),
+        }
+    return None
+
+
+def _apply_hat_activation(
+    messages: list[dict[str, Any]],
+    user_message: str,
+    agent_name: str,
+) -> dict[str, Any] | None:
+    """Score hats and, on the default UI agent, append a turn note.
+
+    Returns the SSE event (or None when the flag is off). Specialty
+    agents already carry their kernels; they get scores only.
+    """
+    event = hat_scores_sse(user_message)
+    if not event:
+        return None
+    if agent_name == _DEFAULT_UI_AGENT:
+        note = hat_turn_system_note(user_message)
+        if note:
+            if messages and messages[-1].get("role") == "user":
+                messages.insert(-1, note)
+            else:
+                messages.append(note)
+    return event
+
 
 @dataclass
 class Agent:
@@ -8684,6 +8768,8 @@ class Agent:
                 user_data_authoritative=self.user_data_authoritative,
             )
 
+        _apply_hat_activation(messages, user_message, self.name)
+
         # Capability / self-introspection short-circuit: a question ABOUT this
         # agent (its tools, abilities, accessible documents) is answered from the
         # REAL tool roster + REAL document list, not from matched document text.
@@ -9266,7 +9352,7 @@ class Agent:
         _depth: int = 0,
         _call_stack: list[str] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Generator: yields {type, ...} events. Types: start, tool_call, tool_result, token, end, error, heartbeat.
+        """Generator: yields {type, ...} events. Types: start, hat_scores, tool_call, tool_result, token, end, error, heartbeat.
 
         Tool-calling is non-streamed (we collect the whole assistant turn before deciding),
         but the FINAL assistant answer streams token-by-token.
@@ -9535,6 +9621,10 @@ class Agent:
 
         yield {"type": "start", "agent": self.name}
 
+        _hat_evt = hat_scores_sse(user_message)
+        if _hat_evt:
+            yield _hat_evt
+
         # Zero-chunk project guardrail: refuse before spending LLM budget
         # unless the project has other (non-RAG) context such as facts.
         if (
@@ -9599,6 +9689,8 @@ class Agent:
                 messages, _rag_sys_msg,
                 user_data_authoritative=self.user_data_authoritative,
             )
+
+        _apply_hat_activation(messages, user_message, self.name)
 
         # Capability / self-introspection short-circuit: a question ABOUT this
         # agent (its tools, abilities, accessible documents) is answered from the
