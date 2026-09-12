@@ -674,7 +674,10 @@ def _extract_pdf(
             # rather than as an empty document -- the ambiguity that hid this
             # bug for two days.
             raise MemoryError(f"PDF extraction exhausted memory: {exc}") from exc
-        return "", {}
+        return "", {
+            "extract_failed": type(exc).__name__,
+            "extract_failed_detail": str(exc)[:300],
+        }
     meta: dict[str, Any] = {}
     if ocr_pages > 0:
         # The doc relied on OCR for some pages — flag for lower confidence.
@@ -837,12 +840,32 @@ def _extract_pdf_batched(
     return "\n".join(parts), meta
 
 
-def _extract_pptx(file_path: str) -> str:
-    """Extract text from a PowerPoint file, slide by slide.
+def _pptx_shape_texts(shape: Any) -> list[str]:
+    """Plaintext from one shape, including table cells.
 
-    Collects text from all shapes on all slides, prefixed with the slide
-    number so chunk context stays answerable. Never raises.
+    ``shape.text`` is missing on GraphicFrame tables. Construction decks
+    (NOC / register / method-statement tables) used to index as a title
+    only and look TEXT_SPARSE / single-chunk while the rows never entered
+    the corpus.
     """
+    if getattr(shape, "has_table", False):
+        parts: list[str] = []
+        table = shape.table
+        for row in getattr(table, "rows", None) or []:
+            cells = [
+                (getattr(cell, "text", None) or "").strip()
+                for cell in getattr(row, "cells", None) or []
+            ]
+            cells = [c for c in cells if c]
+            if cells:
+                parts.append(" | ".join(cells))
+        return parts
+    text = (getattr(shape, "text", None) or "").strip()
+    return [text] if text else []
+
+
+def _extract_pptx_with_meta(file_path: str) -> tuple[str, dict[str, Any]]:
+    """Slide text + tables. Names extractor failures instead of returning ""."""
     try:
         import pptx
 
@@ -852,13 +875,28 @@ def _extract_pptx(file_path: str) -> str:
         for i, slide in enumerate(prs.slides, start=1):
             slide_texts: list[str] = []
             for shape in slide.shapes:
-                if hasattr(shape, "text") and shape.text:
-                    slide_texts.append(shape.text.strip())
+                slide_texts.extend(_pptx_shape_texts(shape))
             if slide_texts:
                 parts.append(f"Slide {i}:\n" + "\n".join(slide_texts))
-        return "\n\n".join(parts)
-    except Exception:
-        return ""
+        return "\n\n".join(parts), {}
+    except Exception as exc:
+        return "", {
+            "extract_failed": type(exc).__name__,
+            "extract_failed_detail": str(exc)[:300],
+        }
+
+
+def _extract_pptx(file_path: str) -> str:
+    """Extract text from a PowerPoint file, slide by slide.
+
+    Collects text from shapes and tables, prefixed with the slide number
+    so chunk context stays answerable. Never raises — a bad deck must not
+    abort a corpus load. Callers that stamp the ledger must use
+    ``_extract_pptx_with_meta`` so a failed open is EXTRACT_FAILED, not
+    an empty-but-valid ZERO_CHUNK.
+    """
+    text, _meta = _extract_pptx_with_meta(file_path)
+    return text
 
 
 def _extract_kmz(file_path: str) -> str:
@@ -1539,7 +1577,7 @@ def _extract_with_meta_impl(
 
         # ── PPTX ─────────────────────────────────────────────────────────────
         if ext == ".pptx":
-            return _extract_pptx(file_path), {}
+            return _extract_pptx_with_meta(file_path)
 
         # ── KMZ ──────────────────────────────────────────────────────────────
         if ext == ".kmz":
@@ -1973,7 +2011,11 @@ def init_db() -> None:
     """
     global _initialized, _initialized_for_url
     url = get_database_url()
+    if _initialized and _initialized_for_url == url:
+        return
     with _INDEX_LOCK:
+        if _initialized and _initialized_for_url == url:
+            return
         from app.core.projects import init_db as init_projects_db
 
         init_projects_db()

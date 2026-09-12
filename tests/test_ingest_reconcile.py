@@ -269,6 +269,8 @@ def test_coverage_truth_queryable(monkeypatch, tmp_path):
     assert report["orphans_action"] == "report_only"
     assert report["by_status"][ist.INDEXED] == 1
     assert report["by_status"][TOMBSTONED] == 1
+    assert report["office"]["by_kind"][".pdf"]["documents"] == 3
+    assert report["office"]["by_kind"][".pptx"]["documents"] == 0
 
 
 def test_ocr_required_stamps_ocr_degraded(monkeypatch, tmp_path):

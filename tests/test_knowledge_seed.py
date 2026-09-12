@@ -12,6 +12,17 @@ def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setattr(projects_mod, "_initialized", False)
     projects_mod.init_db()
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    gk = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material").split(",")[0].strip()
+    if gk and projects_mod.get_project(gk) is None:
+        projects_mod.create_project(
+            "General Knowledge",
+            user_id=SYSTEM_USER_ID,
+            project_id=gk,
+            origin="system_seed",
+        )
     return tmp_path
 
 
@@ -50,3 +61,22 @@ def test_seed_knowledge_disabled_when_no_gk_project(fresh_db, monkeypatch):
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     from app.core.knowledge_seed import seed_knowledge
     seed_knowledge()  # must be a no-op, never raise
+
+
+def test_seed_knowledge_does_not_insert_docs_without_project(fresh_db, monkeypatch):
+    """Postgres FK: never add_document(training_material) if the project row is gone."""
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
+    added = []
+    monkeypatch.setattr(projects_mod, "get_project", lambda _pid: None)
+    monkeypatch.setattr(
+        projects_mod,
+        "create_project",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("create failed")),
+    )
+    monkeypatch.setattr(
+        projects_mod, "add_document",
+        lambda *a, **k: added.append(1) or {},
+    )
+    from app.core.knowledge_seed import seed_knowledge
+    seed_knowledge()
+    assert added == []

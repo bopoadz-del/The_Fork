@@ -1784,7 +1784,9 @@ def admin_corpus_coverage(
     auth: dict = Depends(require_api_key),
 ):
     """Queryable ingest coverage: status histogram, tombstones, OCR_DEGRADED,
-    orphan chunks (report-only), embedding-model mismatch.
+    orphan chunks (report-only), embedding-model mismatch, and S11 office
+    census (pptx / xlsx / pdf by status, thin rate, missing source,
+    extractor_version).
 
     Read-only. Does not delete vectors or documents.
     """

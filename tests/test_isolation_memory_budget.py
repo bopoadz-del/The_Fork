@@ -132,4 +132,5 @@ def test_generic_failures_are_still_absorbed(monkeypatch, tmp_path):
 
     text, meta = doc_index._extract_pdf(str(pdf))
     assert text == ""
-    assert meta == {}
+    assert meta.get("extract_failed") == "ValueError"
+    assert "cannot open" in (meta.get("extract_failed_detail") or "")

@@ -168,15 +168,39 @@ def _wipe_all():
     The reconcile endpoint reports mismatches across the whole corpus, so
     leftovers from earlier tests make exact-count assertions flaky. Wipe
     everything before seeding the reconcile fixture.
+
+    Keep protected project rows (``training_material``, master-corpus
+    alias/source). Later boot seed / tests insert documents into
+    ``training_material``; dropping that parent trips
+    ``documents_project_id_fkey`` on Postgres.
     """
+    from app.core.projects import _PURGE_PROTECTED_IDS
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
     _ensure_schema()
+    protected = {pid for pid in _PURGE_PROTECTED_IDS if pid}
 
     def _do(session):
         session.query(_chunk_cls()).delete()
         session.query(Document).delete()
-        session.query(Project).delete()
+        q = session.query(Project)
+        if protected:
+            q = q.filter(~Project.id.in_(protected))
+        q.delete(synchronize_session=False)
 
     _wipe_retry(_do)
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    from app.core import projects as store
+    for pid in protected:
+        if store.get_project(pid):
+            continue
+        try:
+            store.create_project(
+                pid, user_id=SYSTEM_USER_ID, project_id=pid, origin="system_seed",
+            )
+        except Exception:
+            if store.get_project(pid) is None:
+                raise
 
 
 def _seed_misplaced_chunks():
@@ -311,6 +335,23 @@ def test_reconcile_non_admin_blocked(client):
     assert resp.status_code == 403
 
 
+def test_wipe_all_keeps_training_material_project(client):
+    """Shared-Postgres: wiping the corpus must not drop the GK parent row."""
+    from app.core import projects as store
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    if store.get_project("training_material") is None:
+        store.create_project(
+            "General Knowledge",
+            user_id=SYSTEM_USER_ID,
+            project_id="training_material",
+            origin="system_seed",
+        )
+    _wipe_all()
+    assert store.get_project("training_material") is not None
+
+
 def test_coverage_endpoint_is_queryable(client):
     _wipe_all()
     resp = client.get("/v1/admin/corpus/coverage")
@@ -320,6 +361,10 @@ def test_coverage_endpoint_is_queryable(client):
     assert body["orphans_action"] == "report_only"
     assert "tombstoned" in body
     assert "ocr_degraded" in body
+    assert "office" in body
+    assert ".pdf" in body["office"]["by_kind"]
+    assert ".xlsx" in body["office"]["by_kind"]
+    assert ".pptx" in body["office"]["by_kind"]
 
 
 def test_reconcile_reports_no_mismatches_when_clean(client):

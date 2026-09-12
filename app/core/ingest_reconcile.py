@@ -7,7 +7,9 @@ The ledger already has the columns (``drive_md5``, ``ingest_status``,
   (id-only skip hid edited files);
 * a complete Drive walk can tombstone rows whose ``drive_file_id`` is gone
   (hide from retrieval; never delete chunks);
-* coverage is a queryable breakdown, not a file-count identity.
+* coverage is a queryable breakdown, not a file-count identity;
+* S11 office census slices that breakdown for ``.pdf`` / ``.xlsx`` /
+  ``.pptx`` (status, thin/single-chunk, missing source, extractor_version).
 
 Null ``drive_md5`` is *not* treated as changed. Historical rows were never
 stamped; treating them as stale would re-index the whole corpus. After this
@@ -23,10 +25,170 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 
 from app.core.ingest_status import (
+    ALL_STATUSES,
+    INDEXED,
     OCR_DEGRADED,
+    TEXT_SPARSE,
     TOMBSTONED,
+    UNVERIFIED,
+    document_extension,
     resume_is_already_indexed,
 )
+
+#: S11 — pptx / xlsx / pdf only. .doc / .xls / .ppt stay out of this tally.
+OFFICE_CENSUS_EXTS = (".pdf", ".xlsx", ".pptx")
+OFFICE_KIND_MIME = {
+    ".pdf": "application/pdf",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+MIME_TO_OFFICE_KIND = {mime: ext for ext, mime in OFFICE_KIND_MIME.items()}
+
+
+def office_kind(doc: Mapping[str, Any]) -> str | None:
+    """``.pdf`` / ``.xlsx`` / ``.pptx`` from name, path, or Drive mime."""
+    ext = document_extension(doc)
+    if ext in OFFICE_KIND_MIME:
+        return ext
+    meta = doc.get("metadata") or {}
+    if not isinstance(meta, Mapping):
+        meta = {}
+    mime = str(meta.get("mimeType") or meta.get("mime") or "").strip().lower()
+    return MIME_TO_OFFICE_KIND.get(mime)
+
+
+def _office_source_present(doc: Mapping[str, Any]) -> bool:
+    """True when local bytes or an R2/Drive pointer exist. Does not fetch."""
+    if doc.get("has_file") is True:
+        return True
+    if doc.get("has_file") is False:
+        return False
+    fp = str(doc.get("file_path") or "")
+    if fp and os.path.isfile(fp) and os.path.getsize(fp) > 0:
+        return True
+    from app.core.projects import extract_document_source_pointers
+
+    pointers = extract_document_source_pointers(dict(doc))
+    return bool(pointers["r2_object_key"] or pointers["drive_file_id"])
+
+
+def _empty_kind_bucket(ext: str) -> dict[str, Any]:
+    return {
+        "extension": ext,
+        "mime": OFFICE_KIND_MIME[ext],
+        "documents": 0,
+        "by_status": {},
+        "single_chunk": 0,
+        "thin": 0,
+        "thin_rate": 0.0,
+        "single_chunk_rate": 0.0,
+        "missing_source": 0,
+        "indexed_zero_chunk": 0,
+        "by_extractor_version": {},
+    }
+
+
+def tally_office_docs(docs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Ledger census for pptx / xlsx / pdf. Pure. No I/O except path stat.
+
+    ``thin`` is TEXT_SPARSE **or** ``chunk_count == 1`` so a
+    ``stamp_as_indexed`` INDEXED single-window row still counts as thin.
+    ``indexed_zero_chunk`` is the silent-INDEXED-on-empty lie.
+    ``missing_source`` is no local bytes and no R2/Drive pointer — this
+    function never hydrates remote objects.
+    """
+    by_kind = {ext: _empty_kind_bucket(ext) for ext in OFFICE_CENSUS_EXTS}
+    for doc in docs:
+        kind = office_kind(doc)
+        if not kind:
+            continue
+        bucket = by_kind[kind]
+        bucket["documents"] += 1
+        status = str(doc.get("ingest_status") or UNVERIFIED)
+        if status not in ALL_STATUSES:
+            status = UNVERIFIED
+        bucket["by_status"][status] = bucket["by_status"].get(status, 0) + 1
+        chunks = int(doc.get("chunk_count") or 0)
+        if chunks == 1:
+            bucket["single_chunk"] += 1
+        if status == TEXT_SPARSE or chunks == 1:
+            bucket["thin"] += 1
+        if status == INDEXED and chunks <= 0:
+            bucket["indexed_zero_chunk"] += 1
+        if not _office_source_present(doc):
+            bucket["missing_source"] += 1
+        ver = str(doc.get("extractor_version") or "(none)")
+        versions = bucket["by_extractor_version"]
+        versions[ver] = versions.get(ver, 0) + 1
+    for bucket in by_kind.values():
+        n = bucket["documents"]
+        if n:
+            bucket["thin_rate"] = round(bucket["thin"] / n, 4)
+            bucket["single_chunk_rate"] = round(bucket["single_chunk"] / n, 4)
+    return {
+        "kinds": list(OFFICE_CENSUS_EXTS),
+        "by_kind": by_kind,
+        "documents_total": sum(b["documents"] for b in by_kind.values()),
+        "indexed_zero_chunk": sum(b["indexed_zero_chunk"] for b in by_kind.values()),
+        "missing_source": sum(b["missing_source"] for b in by_kind.values()),
+    }
+
+
+def render_office_census_markdown(report: Mapping[str, Any]) -> str:
+    """Opaque ledger tally. No client filenames."""
+    lines = [
+        "# Office extraction census (pptx / xlsx / pdf)",
+        "",
+        "Queryable via `GET /v1/admin/corpus/coverage` (`office`) and",
+        "`scripts/office_extraction_census.py`. Counts come from the",
+        "documents ledger. This file is a template until a live or fixture",
+        "run overwrites it. No client names.",
+        "",
+        "| kind | mime | n | INDEXED | TEXT_SPARSE | UNVERIFIED | ZERO_CHUNK | EXTRACT_FAILED | single_chunk | thin | thin_rate | missing_source | indexed_0chunk | extractor_versions |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    by_kind = report.get("by_kind") or {}
+    for ext in report.get("kinds") or OFFICE_CENSUS_EXTS:
+        b = by_kind.get(ext) or _empty_kind_bucket(ext)
+        st = b.get("by_status") or {}
+        versions = b.get("by_extractor_version") or {}
+        ver_s = ", ".join(f"{k}={v}" for k, v in sorted(versions.items())) or "—"
+        lines.append(
+            f"| {ext} | {b.get('mime')} | {b.get('documents', 0)} "
+            f"| {st.get(INDEXED, 0)} | {st.get(TEXT_SPARSE, 0)} "
+            f"| {st.get(UNVERIFIED, 0)} | {st.get('ZERO_CHUNK', 0)} "
+            f"| {st.get('EXTRACT_FAILED', 0)} "
+            f"| {b.get('single_chunk', 0)} | {b.get('thin', 0)} "
+            f"| {b.get('thin_rate', 0)} | {b.get('missing_source', 0)} "
+            f"| {b.get('indexed_zero_chunk', 0)} | {ver_s} |"
+        )
+    lines.extend([
+        "",
+        f"office_docs={report.get('documents_total', 0)} "
+        f"missing_source={report.get('missing_source', 0)} "
+        f"indexed_zero_chunk={report.get('indexed_zero_chunk', 0)}",
+        "",
+        "Read-only. Does not re-extract, fetch Drive, or run p1b.",
+        "F-3 159 docx source bytes remain owner-gated and are not this tally.",
+        "",
+    ])
+    return "\n".join(lines) + "\n"
+
+
+def office_extraction_census(*, project_id: str | None = None) -> dict[str, Any]:
+    """Load ledger rows and tally pptx / xlsx / pdf. Read-only."""
+    from sqlalchemy import select
+    from app.core import projects as projects_mod
+    from app.core.db import SessionLocal
+    from app.core.models import Document
+
+    projects_mod.init_db()
+    with SessionLocal() as session:
+        stmt = select(Document)
+        if project_id:
+            stmt = stmt.where(Document.project_id == project_id)
+        docs = [projects_mod._document_as_dict(d) for d in session.scalars(stmt).all()]
+    return tally_office_docs(docs)
 
 
 def source_content_token(file_meta: Mapping[str, Any] | None) -> str | None:
@@ -272,6 +434,7 @@ def coverage_truth(
     orphan_total = 0
     mismatch_chunks = 0
     mismatch_docs: list[str] = []
+    office: dict[str, Any] = tally_office_docs([])
 
     with SessionLocal() as session:
         dialect = session.bind.dialect.name if session.bind is not None else "sqlite"
@@ -385,6 +548,17 @@ def coverage_truth(
                 mismatch_chunks = 0
                 mismatch_docs = []
 
+        from app.core import projects as projects_mod
+        from app.core.models import Document
+        from sqlalchemy import select as sa_select
+
+        office_stmt = sa_select(Document)
+        if project_id:
+            office_stmt = office_stmt.where(Document.project_id == project_id)
+        office = tally_office_docs(
+            [projects_mod._document_as_dict(d) for d in session.scalars(office_stmt).all()]
+        )
+
     return {
         "documents_total": documents_total,
         "by_status": by_status,
@@ -401,6 +575,7 @@ def coverage_truth(
         "embedding_mismatch_doc_ids": mismatch_docs,
         "chunks_table": chunks_table,
         "project_id": project_id,
+        "office": office,
     }
 
 

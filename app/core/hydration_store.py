@@ -40,10 +40,21 @@ def _ensure_sqlite_parent_dir() -> None:
 
 
 def init_db() -> None:
-    """Idempotent schema creation. Safe to call on every app startup."""
+    """Idempotent schema creation. Safe to call on every app startup.
+
+    Cheap-idempotent: once created for the current database URL, repeated
+    calls are a true no-op and re-issue no DDL. Startup calls this
+    unconditionally on every boot (once per TestClient in the test suite);
+    without this early-exit guard, DDL could re-run concurrently with a
+    background task reading these tables and deadlock Postgres.
+    """
     global _initialized, _initialized_for_url
     url = get_database_url()
+    if _initialized and _initialized_for_url == url:
+        return
     with _lock:
+        if _initialized and _initialized_for_url == url:
+            return
         from app.core.projects import init_db as init_projects_db
 
         init_projects_db()

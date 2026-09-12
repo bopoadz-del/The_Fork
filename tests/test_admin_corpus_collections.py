@@ -31,7 +31,10 @@ def _ensure_schema():
     RagChunk table via the same checkfirst=True pattern
     vector_store.py uses."""
     from app.core.projects import init_db as init_projects_db
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
     init_projects_db()
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
     RagChunk.__table__.create(bind=engine, checkfirst=True)
 
 
