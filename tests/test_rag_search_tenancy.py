@@ -125,6 +125,10 @@ def master_corpus_world(client, monkeypatch):
     from app.core.rag.retriever import index_chunks
     from app.core.users import SYSTEM_USER_ID, ensure_user_exists
 
+    # Shared-Postgres CI seeds training_material; GK merge can fill k=5
+    # with FIDIC "percent per day" notes and hide this fixture's secret.
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+
     tag = uuid.uuid4().hex[:10]
     alias = f"mc_alias_{tag}"
     source = f"mc_src_{tag}"
