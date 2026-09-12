@@ -206,9 +206,18 @@ def two_year_corpus(tmp_path, monkeypatch):
 
     from sqlalchemy import delete as _sa_delete
 
+    from app.core import projects as projects_mod
     from app.core.rag import embeddings as _emb
     from app.core.rag import retriever as ret
     from app.core.rag import vector_store as _vs
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    for pid, name in ((PROJECT, "Master Corpus"), (GK_PROJECT, "General Knowledge")):
+        if projects_mod.get_project(pid) is None:
+            projects_mod.create_project(
+                name, user_id=SYSTEM_USER_ID, project_id=pid, origin="system_seed",
+            )
 
     _emb.reset_embedder_cache()
     _vs.reset_store_cache()

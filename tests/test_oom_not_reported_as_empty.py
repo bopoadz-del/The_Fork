@@ -140,7 +140,10 @@ def test_a_corrupt_pdf_still_degrades_to_empty(monkeypatch, tmp_path):
     monkeypatch.setattr(fitz, "open", lambda *a, **k: (_ for _ in ()).throw(
         ValueError("cannot open broken document")))
 
-    assert doc_index._extract_pdf(str(pdf)) == ("", {})
+    text, meta = doc_index._extract_pdf(str(pdf))
+    assert text == ""
+    assert meta.get("extract_failed") == "ValueError"
+    assert "cannot open" in (meta.get("extract_failed_detail") or "")
 
 
 def test_partial_text_records_that_ocr_was_involved(monkeypatch, tmp_path):

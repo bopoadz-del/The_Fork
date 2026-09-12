@@ -277,7 +277,11 @@ def init_db() -> None:
     an explicit `alembic upgrade head` run.
     """
     global _initialized, _initialized_for_url
+    if _initialized and _initialized_for_url == get_database_url():
+        return
     with _lock:
+        if _initialized and _initialized_for_url == get_database_url():
+            return
         from app.core.users import init_db as init_users_db
 
         init_users_db()

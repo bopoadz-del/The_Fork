@@ -42,16 +42,27 @@ def seed_knowledge() -> None:
 
         from app.core import projects as store
         from app.core import doc_index, file_crypto
+        from app.core.users import SYSTEM_USER_ID, ensure_user_exists
 
+        # documents.project_id FK is enforced on Postgres. create_project also
+        # needs users.id='system'. If either parent is missing the insert
+        # below is IntegrityError (test-postgres: documents_project_id_fkey).
+        ensure_user_exists(SYSTEM_USER_ID, role="admin")
         if not store.get_project(gk):
             try:
                 store.create_project(
-                    "General Knowledge", user_id="system",
+                    "General Knowledge", user_id=SYSTEM_USER_ID,
                     project_id=gk, origin="system_seed",
                 )
                 logger.info("knowledge seed: created GK project '%s'", gk)
             except Exception as e:  # noqa: BLE001 — a race/existing row is fine
                 logger.warning("knowledge seed: create GK project '%s' failed: %s", gk, e)
+        if not store.get_project(gk):
+            logger.warning(
+                "knowledge seed: GK project '%s' missing; skipping document inserts",
+                gk,
+            )
+            return
 
         data_dir = os.getenv("DATA_DIR", "./data")
         os.makedirs(data_dir, exist_ok=True)

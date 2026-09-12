@@ -111,9 +111,20 @@ def _agent_fact_as_dict(fact: AgentFact) -> Dict[str, Any]:
 
 
 def init_db() -> None:
-    """Create the schema if absent. Idempotent — safe to call on every startup."""
+    """Create the schema if absent. Idempotent — safe to call on every startup.
+
+    Cheap-idempotent: once created for the current database URL, repeated
+    calls are a true no-op and never re-issue DDL. App startup calls this
+    unconditionally on every boot (once per TestClient in the test suite);
+    without this early-exit guard, DDL could re-run concurrently with a
+    background task reading these tables and deadlock Postgres.
+    """
     global _initialized, _initialized_for_url
+    if _initialized and _initialized_for_url == get_database_url():
+        return
     with _lock:
+        if _initialized and _initialized_for_url == get_database_url():
+            return
         _ensure_sqlite_parent_dir()
         Conversation.__table__.create(bind=engine, checkfirst=True)
         Message.__table__.create(bind=engine, checkfirst=True)

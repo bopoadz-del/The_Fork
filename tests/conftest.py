@@ -99,6 +99,42 @@ def _postgres_test_mode() -> bool:
     return os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() in ("1", "true", "yes")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _init_schema_once():
+    """Create the whole unified schema exactly once, before any test,
+    TestClient, or background task touches the database.
+
+    Every test module that builds its own `TestClient(app)` re-runs the
+    app's FastAPI `lifespan`, which calls each block's `init_db()`. Those
+    functions are cheap-idempotent (an early-exit guard skips re-issuing
+    DDL once the schema exists for the current DB URL — see
+    app/core/{projects,users,agent_memory,doc_index,hydration_store}.py),
+    but that guard only helps if the schema was already created by the
+    time the first such call races a background task. Calling `init_db()`
+    here, first, before collection even runs a test, guarantees the DDL
+    happens once, quiescently, with nothing else on the database yet.
+    """
+    from app.core.projects import init_db as init_projects_db
+
+    init_projects_db()
+    from app.core.agent_memory import init_db as init_agent_memory_db
+
+    init_agent_memory_db()
+    from app.core.doc_index import init_db as init_doc_index_db
+
+    init_doc_index_db()
+    from app.core.hydration_store import init_db as init_hydration_db
+
+    init_hydration_db()
+    from app.core.workflows import init_db as init_workflows_db
+
+    init_workflows_db()
+    from app.core.usage_tracker import init_db as init_usage_tracker_db
+
+    init_usage_tracker_db()
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _reset_rag_caches():
     """Drop the process-cached embedder + vector stores between EVERY test.
@@ -185,10 +221,17 @@ def _isolate_postgres_db():
             )
         )
 
+    # Re-seed the system user row TRUNCATE just removed. Deliberately NOT
+    # `users_store._initialized = False` + `init_db()`: that combination
+    # forces a schema-creation (DDL) path to run again on every single
+    # test, which is exactly what deadlocks Postgres when it lands
+    # concurrently with a background task's read on the same tables.
+    # `ensure_system_user()` only inserts the row — no DDL, no table lock
+    # beyond a normal row write — and the schema itself is created exactly
+    # once, at session start (see `_init_schema_once` below).
     from app.core import users as users_store
 
-    users_store._initialized = False  # noqa: SLF001
-    users_store.init_db()
+    users_store.ensure_system_user()
 
     from app.core.rag import embeddings as _emb, vector_store as _vs
 
