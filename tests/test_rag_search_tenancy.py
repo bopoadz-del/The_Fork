@@ -100,3 +100,124 @@ def test_gk_status_uses_the_same_gate(client, two_tenants):
     pid, _, h_other = two_tenants
     r = client.get("/v1/rag/gk-status", headers=h_other, params={"project_id": pid})
     assert r.status_code == 404
+
+
+def test_unauthenticated_search_is_401_not_404(client, two_tenants):
+    """Auth failure must not look like a membership/retrieval 404 (S13)."""
+    pid, _, _ = two_tenants
+    r = client.post(
+        "/v1/rag/search",
+        json={"query": "private rate percent", "project_id": pid, "k": 5},
+    )
+    assert r.status_code == 401, r.text
+    assert "chunks" not in r.json()
+
+
+@pytest.fixture
+def master_corpus_world(client, monkeypatch):
+    """Backing corpus + a login JWT that is a master-corpus member, not owner.
+
+    Live WATCH-1: origin=user_create source (projects_folder) 404'd for the
+    same JWT that can open master_corpus. Unique ids keep this isolated on
+    the shared-Postgres CI job.
+    """
+    from app.core import projects as store
+    from app.core.rag.retriever import index_chunks
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    tag = uuid.uuid4().hex[:10]
+    alias = f"mc_alias_{tag}"
+    source = f"mc_src_{tag}"
+    monkeypatch.setattr(store, "MASTER_CORPUS_PROJECT_ID", alias)
+    monkeypatch.setattr(store, "MASTER_CORPUS_SOURCE_PROJECT_ID", source)
+
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="Source corpus",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=source,
+        origin="user_create",
+    )
+    secret = f"corpus-rate-{tag} percent per day"
+    index_chunks(source, f"doc-{tag}", [f"{secret} " * 20])
+
+    member = users_store.create_user(
+        f"mc-member-{tag}@example.test",
+        "Correct-Horse-Battery-9!",
+        email_verified=True,
+    )
+    headers = {"Authorization": f"Bearer {jwt_auth.create_token(member['id'])}"}
+    try:
+        yield {
+            "alias": alias,
+            "source": source,
+            "headers": headers,
+            "secret": secret,
+            "member_id": member["id"],
+        }
+    finally:
+        store.delete_project(source)
+        store.delete_project(alias)
+
+
+def test_master_corpus_jwt_can_search_alias(client, master_corpus_world):
+    """Smoke path: login JWT + project_id=master_corpus is membership, not 404."""
+    w = master_corpus_world
+    r = client.post(
+        "/v1/rag/search",
+        headers=w["headers"],
+        json={"query": w["secret"], "project_id": w["alias"], "k": 5},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] >= 1
+    assert any(w["secret"] in (c.get("text") or "") for c in body["chunks"])
+
+
+def test_master_corpus_jwt_can_search_backing_source_id(client, master_corpus_world):
+    """S13 / WATCH-1: the physical source id is the same membership as the alias."""
+    w = master_corpus_world
+    r = client.post(
+        "/v1/rag/search",
+        headers=w["headers"],
+        json={"query": w["secret"], "project_id": w["source"], "k": 5},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] >= 1
+    assert any(w["secret"] in (c.get("text") or "") for c in body["chunks"])
+
+
+def test_master_corpus_member_still_404s_on_foreign_and_unknown(
+    client, two_tenants, master_corpus_world,
+):
+    """Membership of the alias does not open a private project; 404s match."""
+    foreign_pid, _, _ = two_tenants
+    h = master_corpus_world["headers"]
+    foreign = client.post(
+        "/v1/rag/search",
+        headers=h,
+        json={"query": "private rate percent", "project_id": foreign_pid, "k": 5},
+    )
+    missing = client.post(
+        "/v1/rag/search",
+        headers=h,
+        json={"query": "x", "project_id": "does-not-exist", "k": 5},
+    )
+    assert foreign.status_code == 404, foreign.text
+    assert missing.status_code == 404, missing.text
+    assert foreign.json().get("detail") == missing.json().get("detail") or (
+        "not found" in (foreign.json().get("detail") or "").lower()
+        and "not found" in (missing.json().get("detail") or "").lower()
+    )
+    assert "private rate" not in foreign.text
+
+
+def test_picker_still_hides_physical_source_id(client, master_corpus_world):
+    """UI-PHYS H1: GET /v1/projects/{source} stays 404; only RAG/chat open it."""
+    w = master_corpus_world
+    alias = client.get(f"/v1/projects/{w['alias']}", headers=w["headers"])
+    source = client.get(f"/v1/projects/{w['source']}", headers=w["headers"])
+    assert alias.status_code == 200, alias.text
+    assert source.status_code == 404, source.text

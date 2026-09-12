@@ -722,7 +722,8 @@ def get_project_accessible(project_id: str, user_id: Optional[str] = None):
     (#267 read rule) and upload to it (#277) but chat lost all RAG context
     on it (zero injected sources, no-op search tool). Third instance of the
     same asymmetry class; this helper is the single rule for all of them:
-    owner -> admin-approved shared -> admin on PLATFORM projects only.
+    owner -> admin-approved shared -> master-corpus source id (same ACL
+    as the alias) -> admin on PLATFORM projects only.
     Returns the project dict or None; archived projects stay invisible on
     every path.
 
@@ -749,6 +750,21 @@ def get_project_accessible(project_id: str, user_id: Optional[str] = None):
                        include_admin_approved=True, doc_limit=0)
     if proj is not None:
         return proj
+    # S13 / WATCH-1: the backing corpus id is the same ACL as the
+    # master-corpus alias. get_project(source) stays owner-only so the
+    # physical id stays hidden from the project picker (UI-PHYS H1);
+    # this data-path helper must still let a master-corpus member
+    # search/chat against the source id. A 404 here was being read as
+    # "auth failed" or "retrieval empty".
+    alias_id = ui_project_id(project_id)
+    if alias_id and alias_id != project_id:
+        aliased = get_project(
+            alias_id, user_id=user_id,
+            include_admin_approved=True, doc_limit=0,
+        )
+        if aliased is not None:
+            source = get_project(project_id, doc_limit=0)
+            return source if source is not None else aliased
     try:
         from app.core import users as users_store
         u = users_store.get_user_by_id(user_id)
