@@ -34,9 +34,9 @@ drop as `.md` in `docs/knowledge/`, ingest into `curated_kb`.
 
 | item | count | where | note |
 |---|---|---|---|
-| Governance docs | 5 | Downloads (staged local) | MNL-204 PMWeb Manual for Contractor, PRC-203 Project Reporting, PRC-204 Document Control Management, Construction Submittal Form, Meeras Operational guidance |
-| MGT message files | 3 | Master Folder root (online-only in Drive) | Message from MGT-C552-34 (Sect-1/2/3) — transmittals, separate from the SMGT submittal parts |
-| DG2 text docs never ingested | ~134 | `DG2 Infra Pack 1` | mostly large drawing PDFs (ingest THIN — geometry, low value); the ~15-20 genuinely valuable are contracts (DD-2021-273 Executed Contract Jacobs), design reports, board outcomes, Media Phasing / Site Initiatives decks |
+| Governance docs | 5 | Downloads (staged local) | Governance manuals (PM / document-control / project-reporting procedures), construction submittal form, operational guidance |
+| Transmittal message files | 3 | Master Folder root (online-only in Drive) | Transmittal messages (multi-part), separate from the submittal-package parts |
+| Drive-pack text docs never ingested | ~134 | infrastructure pack (Drive) | mostly large drawing PDFs (ingest THIN — geometry, low value); the ~15-20 genuinely valuable are an executed contract, design reports, board outcomes, and phasing / site-initiative decks |
 
 To ingest B: the worker (`the-fork-ingest`, has the bge embedder) into `drive_archive`, or a local
 path once `sentence-transformers` is installed. Route: client docs → `drive_archive`; standards
@@ -44,13 +44,13 @@ summaries → `curated_kb`.
 
 ## C. Discussed but NOT owned / NOT available
 
-- **AECOM rates** — not in the RAG and no rate schedule found on the drive. AECOM *correspondence*
-  is in (1992 chunks). A rate schedule would need the actual file if it exists.
+- **Consultant rate schedule** — not in the RAG and no rate schedule found on the drive. Consultant
+  correspondence is in (1992 chunks). A rate schedule would need the actual file if it exists.
 
 ## D. Confirmed IN the RAG and reachable (verified live, 12/12 retrieval test)
 
-SMGT-C552 parts 1–4 · the 4 Method Statements · MNL/PRC governance family · Project Controls
-(49 indexed / 174 thin) · AECOM correspondence · risk register · baseline/critical-path · and the
+Submittal-package parts 1–4 · the 4 Method Statements · governance-manual family · Project Controls
+(49 indexed / 174 thin) · consultant correspondence · risk register · baseline/critical-path · and the
 curated standards summaries (SBC/FIDIC/OSHA/CESMM4/WBDG surface via general-knowledge merge).
 
 ## E. Excluded BY DESIGN — never ingested, not gaps
@@ -67,6 +67,6 @@ CAD (`.dwg/.dxf`), images (`.jpg/.png`), Google Earth (`.kmz/.kml`), video, GIS 
 ## Next actions (owner's call, none blocking)
 1. Fill the US + UAE stubs → ingest into `curated_kb`.
 2. Ingest the ~20 valuable owned text docs (governance + contracts + reports) via the worker.
-3. Optionally retire the redundant `client_infra_pack_1` duplicate project.
+3. Optionally retire the redundant duplicate infrastructure-pack project.
 
 *Reviewed 2026-09-12. Nothing was lost; the gaps above were never ingested, not deleted.*
