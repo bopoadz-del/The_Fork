@@ -58,6 +58,13 @@ def _searchable_project_or_404(project_id: str, auth: dict) -> str:
 
     404 for missing AND for foreign, deliberately: a 403 would confirm
     the project exists and make this route an id-enumeration oracle.
+    Auth failure is 401 (require_api_key), not 404 — a 404 is membership
+    or existence, never a bad JWT. Empty retrieval is 200 / count 0.
+
+    Master-corpus membership covers the backing source id too (S13 /
+    WATCH-1): a caller who can open ``master_corpus`` can search
+    ``projects_folder`` (or whatever ``MASTER_CORPUS_SOURCE_PROJECT_ID``
+    is). The picker still 404s the physical id (UI-PHYS H1).
 
     Returns the id to retrieve against — for the master-corpus alias that
     is its backing source project, matching what doc_search resolves.

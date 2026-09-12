@@ -64,6 +64,20 @@ PROBES: tuple[Probe, ...] = (
         why="turn the tenancy gate off; the cross-tenant test must go red",
     ),
     Probe(
+        name="master_corpus_source_acl",
+        path="app/core/projects.py",
+        old=(
+            "    alias_id = ui_project_id(project_id)\n"
+            "    if alias_id and alias_id != project_id:"
+        ),
+        new="    alias_id = None\n    if False:",
+        test=(
+            "tests/test_rag_search_tenancy.py::"
+            "test_master_corpus_jwt_can_search_backing_source_id"
+        ),
+        why="drop the source→alias membership remap; WATCH-1 404 must come back",
+    ),
+    Probe(
         name="admin_fallthrough_platform_only",
         path="app/core/projects.py",
         old="            if candidate is not None and _is_platform_project(candidate):",
