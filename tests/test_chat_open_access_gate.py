@@ -186,6 +186,41 @@ def test_archived_projects_stay_invisible(client, world):
     assert store.get_project_accessible(pid, world["admin"]["id"]) is None
 
 
+def test_stranger_http_surfaces_reach_system_seed_gk(client, world, monkeypatch):
+    """Live QA 404s: GET project, documents, and rag/search on curated_kb."""
+    import uuid
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    gk_id = f"oag_gkhttp_{uuid.uuid4().hex[:10]}"
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", gk_id)
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG GK HTTP",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=gk_id,
+        origin="system_seed",
+    )
+    try:
+        headers = _h(world["stranger"])
+        detail = client.get(f"/v1/projects/{gk_id}", headers=headers)
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["id"] == gk_id
+        docs = client.get(f"/v1/projects/{gk_id}/documents", headers=headers)
+        assert docs.status_code == 200, docs.text
+        rag = client.post(
+            "/v1/rag/search",
+            headers=headers,
+            json={"query": "general knowledge", "project_id": gk_id, "k": 3},
+        )
+        assert rag.status_code != 404, rag.text
+        assert "Project" not in (rag.json().get("detail") or "")
+        private = client.get(f"/v1/projects/{world['private']}", headers=headers)
+        assert private.status_code == 404
+    finally:
+        store.delete_project(gk_id)
+
+
 def test_regular_user_resolves_system_seed_gk_project(client, world, monkeypatch):
     """Live 404: curated_kb is SYSTEM-owned with origin=system_seed.
 
