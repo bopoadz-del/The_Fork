@@ -3160,6 +3160,10 @@ async def search_project_documents(
             chunks, _noise = retrieve_with_filter(query, project_id, k=over_fetch)
             return chunks
         except Exception:
+            logger.warning(
+                "swallowed %s in search_project_documents() — continuing",
+                "Exception", exc_info=True,
+            )
             return []
 
     chunks = _query()
