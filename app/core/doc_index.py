@@ -2717,6 +2717,7 @@ def _stamp_index_ledger(
     *,
     stamp_as_indexed: bool = False,
     extract_failed: bool = False,
+    advance_extractor_version: bool = True,
 ) -> None:
     """Write documents.chunk_count / ingest_status / extractor_version.
 
@@ -2724,6 +2725,11 @@ def _stamp_index_ledger(
     land INDEXED when any chunks were produced, even if a single window
     would otherwise classify TEXT_SPARSE. First ingest still uses classify.
     Never deletes a row.
+
+    ``advance_extractor_version`` is False when text extracted but embed
+    failed (``rag_error`` / ``rag_indexed == 0``). That outcome is open,
+    not done — stamping EXTRACTOR_VERSION would make
+    ``docx_stale_extractor_open`` treat the row as genuinely thin.
     """
     from app.core import ingest_status as ist
     from app.core import projects as projects_mod
@@ -2737,13 +2743,15 @@ def _stamp_index_ledger(
         classified = ist.classify(chunk_count=chunk_count, extension=ext)
         status, reason = classified.status, classified.reason
     try:
-        projects_mod.stamp_document_index(
-            document_id,
-            chunk_count=chunk_count,
-            ingest_status=status,
-            ingest_status_reason=reason,
-            extractor_version=ist.EXTRACTOR_VERSION,
-        )
+        kwargs: dict[str, Any] = {
+            "chunk_count": chunk_count,
+            "ingest_status": status,
+            "ingest_status_reason": reason,
+            "stamp_extractor_version": advance_extractor_version,
+        }
+        if advance_extractor_version:
+            kwargs["extractor_version"] = ist.EXTRACTOR_VERSION
+        projects_mod.stamp_document_index(document_id, **kwargs)
     except Exception:
         logging.getLogger(__name__).warning(
             "stamp_document_index failed for %s", document_id, exc_info=True,
@@ -2987,8 +2995,13 @@ def index_document(
             "skipped_unsupported": 1,
             "total_chunks": 0,
         }
+    # Embed failure is not an extractor success. Advancing extractor_version
+    # here is what silently closed TEXT_SPARSE .docx after RAG_INDEX_FAILED.
+    embed_failed = bool(rag_error) or rag_indexed == 0
     _stamp_index_ledger(
-        document_id, filename, len(chunks), stamp_as_indexed=stamp_as_indexed,
+        document_id, filename, len(chunks),
+        stamp_as_indexed=stamp_as_indexed,
+        advance_extractor_version=not embed_failed,
     )
     result = {
         "status": "ok",
@@ -3147,6 +3160,10 @@ async def search_project_documents(
             chunks, _noise = retrieve_with_filter(query, project_id, k=over_fetch)
             return chunks
         except Exception:
+            logger.warning(
+                "swallowed %s in search_project_documents() — continuing",
+                "Exception", exc_info=True,
+            )
             return []
 
     chunks = _query()

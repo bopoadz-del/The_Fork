@@ -1394,8 +1394,14 @@ def stamp_document_index(
     ingest_status: str = INDEXED,
     ingest_status_reason: Optional[str] = None,
     extractor_version: Optional[str] = None,
+    stamp_extractor_version: bool = True,
 ) -> Optional[Dict[str, Any]]:
-    """Write ledger columns after a successful (re)index. Never deletes."""
+    """Write ledger columns after a successful (re)index. Never deletes.
+
+    ``stamp_extractor_version=False`` leaves the existing extractor_version
+    untouched. Text-extracted-but-not-embedded must not advance the stamp
+    that ``docx_stale_extractor_open`` treats as settled.
+    """
     if not doc_id:
         return None
     _ensure_db()
@@ -1408,7 +1414,8 @@ def stamp_document_index(
             document.chunk_count = int(chunk_count)
             document.ingest_status = ingest_status
             document.ingest_status_reason = ingest_status_reason
-            document.extractor_version = version
+            if stamp_extractor_version:
+                document.extractor_version = version
             document.last_verified_at = _now()
             session.commit()
     return get_document(doc_id)
