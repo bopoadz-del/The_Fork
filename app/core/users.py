@@ -60,27 +60,51 @@ def _as_dict(user: User) -> Dict[str, Any]:
 
 
 def init_db() -> None:
-    """Create the users schema if absent; auto-create the system user."""
+    """Create the users schema if absent; auto-create the system user.
+
+    Idempotent AND cheap: once the schema has been created for the current
+    database URL, repeated calls (e.g. app startup firing on every
+    TestClient instantiation in the test suite) are a true no-op — no DDL
+    is re-issued. DDL running concurrently with a request/background task
+    reading these tables is what deadlocks Postgres (AccessExclusiveLock
+    vs. AccessShareLock taken in opposite orders on two connections), so
+    this guard is checked before touching the engine at all — not only by
+    callers that go through the private `_ensure_db` wrapper.
+    """
     global _initialized, _initialized_for_url
+    if _initialized and _initialized_for_url == get_database_url():
+        return
     with _lock:
+        if _initialized and _initialized_for_url == get_database_url():
+            return
         _ensure_sqlite_parent_dir()
         User.__table__.create(bind=engine, checkfirst=True)
-        with SessionLocal() as session:
-            if session.get(User, SYSTEM_USER_ID) is None:
-                session.add(
-                    User(
-                        id=SYSTEM_USER_ID,
-                        email="system@local",
-                        password_hash=None,
-                        salt=None,
-                        display_name="System",
-                        role="admin",
-                        created_at=_now(),
-                    )
-                )
-                session.commit()
+        ensure_system_user()
         _initialized = True
         _initialized_for_url = get_database_url()
+
+
+def ensure_system_user() -> None:
+    """Insert the system user row if it is missing. No DDL — safe to call
+    any time the schema is known to already exist (e.g. re-seeding after a
+    test-isolation TRUNCATE), including mid-request/background-task, since
+    it never touches `Table.create`/`checkfirst` and takes no table lock
+    beyond a normal row insert.
+    """
+    with SessionLocal() as session:
+        if session.get(User, SYSTEM_USER_ID) is None:
+            session.add(
+                User(
+                    id=SYSTEM_USER_ID,
+                    email="system@local",
+                    password_hash=None,
+                    salt=None,
+                    display_name="System",
+                    role="admin",
+                    created_at=_now(),
+                )
+            )
+            session.commit()
 
 
 def _ensure_db() -> None:

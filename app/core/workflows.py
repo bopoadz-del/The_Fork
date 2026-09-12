@@ -54,8 +54,17 @@ def _workflow_as_dict(workflow: Workflow) -> Dict[str, Any]:
 
 
 def init_db() -> None:
+    """Cheap-idempotent: once created for the current database URL, repeated
+    calls are a true no-op and re-issue no DDL — required so DDL never runs
+    concurrently with a request/background task reading these tables (that
+    ordering deadlocks Postgres).
+    """
     global _initialized, _initialized_for_url
+    if _initialized and _initialized_for_url == get_database_url():
+        return
     with _lock:
+        if _initialized and _initialized_for_url == get_database_url():
+            return
         from app.core.projects import init_db as init_projects_db
 
         init_projects_db()

@@ -35,6 +35,8 @@ from app.core.models import UsageRun
 logger = logging.getLogger(__name__)
 
 _LOCK = threading.RLock()
+_initialized = False
+_initialized_for_url: str | None = None
 
 
 def _db_path() -> str:
@@ -54,10 +56,24 @@ def _ensure_sqlite_parent_dir() -> None:
 
 
 def init_db() -> None:
-    """Create the runs schema if absent. Idempotent — safe on every startup."""
+    """Create the runs schema if absent. Idempotent — safe on every startup.
+
+    Cheap-idempotent: once created for the current database URL, repeated
+    calls (this is called from `record`/`daily_total`/`history` on every
+    invocation) are a true no-op and re-issue no DDL — required so DDL
+    never runs concurrently with a request/background task reading these
+    tables (that ordering deadlocks Postgres).
+    """
+    global _initialized, _initialized_for_url
+    if _initialized and _initialized_for_url == get_database_url():
+        return
     with _LOCK:
+        if _initialized and _initialized_for_url == get_database_url():
+            return
         _ensure_sqlite_parent_dir()
         UsageRun.__table__.create(bind=engine, checkfirst=True)
+        _initialized = True
+        _initialized_for_url = get_database_url()
 
 
 # Per-provider pricing per 1M tokens loaded from config/llm_pricing.json

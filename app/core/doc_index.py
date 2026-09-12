@@ -2011,7 +2011,11 @@ def init_db() -> None:
     """
     global _initialized, _initialized_for_url
     url = get_database_url()
+    if _initialized and _initialized_for_url == url:
+        return
     with _INDEX_LOCK:
+        if _initialized and _initialized_for_url == url:
+            return
         from app.core.projects import init_db as init_projects_db
 
         init_projects_db()
