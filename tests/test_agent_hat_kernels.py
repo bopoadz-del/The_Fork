@@ -65,6 +65,15 @@ def test_the_orchestrator_has_it_all(agents):
         assert m.name in orch.system_prompt, m.id
 
 
+def test_the_project_assistant_has_it_all(agents):
+    """Default UI agent was unhatted while FORK_HATS_ENABLED=1 is live."""
+    pa = agents["project-assistant"]
+    assert set(pa.hats) == {m.id for m in hat_catalog.list_hats()}
+    assert "## Discipline kernels" in pa.system_prompt
+    for m in hat_catalog.list_hats():
+        assert m.name in pa.system_prompt, m.id
+
+
 def test_unhatted_agents_are_untouched(agents):
     for name in ("validation", "document-analyst", "heavy-reasoning"):
         assert agents[name].hats == [], name
