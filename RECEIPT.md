@@ -56,9 +56,20 @@ purge orphans.
 
 ## Tests
 
-Targeted (this revision): `tests/test_ingest_reconcile.py`,
-`tests/test_p1b_ingest_accounting.py::test_edited_drive_md5_is_not_already_indexed`,
-`tests/test_projects_migration.py`, related ingest/admin tests.
+Targeted (this revision, local):
+
+- `test_ingest_reconcile` + `test_p1b_ingest_accounting` (incl. md5
+  resume) + `test_projects_migration` + `test_admin_corpus_reconcile`
+  + `test_ingest_status` + `test_doc_index_zero_chunk` — **74 passed**
+- Related: `test_p1b_ingest_accounting` full + `test_doc_index_ocr` +
+  `test_sha_reingest` + `test_retrieval_visible` +
+  `tests/e2e/test_f1_boot_and_health` — **51 passed, 1 skipped**
+- `scripts/audit_stubs.py` — clean
+- `scripts/scan_exception_pass.py` — `RETURN: 0 new (77 baselined)`
+
+One unrelated local e2e (`test_chain_mcp_feedback_memory_hydration_usage_workflows_schedule_rag`)
+503'd because this VM cannot load `BAAI/bge-small-en-v1.5` (SafetensorError).
+Not caused by S10; CI uses the job embedder.
 
 mutants run/survivors: UNPRODUCED
 retries: 0
