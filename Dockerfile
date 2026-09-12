@@ -87,10 +87,13 @@ RUN pip install --no-cache-dir "sentence-transformers==5.5.1"
 # the running corpus was embedded with. Vectors carry an embedding identity
 # ({model, dim, normalized}) and VectorStore._verify_embedding_identity refuses
 # a namespace whose stamp disagrees — so changing this value without
-# re-embedding the corpus takes retrieval down. It is pinned to the value the
-# code already defaulted to (embeddings.DEFAULT_MODEL2VEC), which is what
-# production has been running with RAG_EMBEDDING_MODEL unset.
-ARG RAG_EMBEDDING_MODEL="minishlab/potion-base-8M"
+# re-embedding the corpus takes retrieval down.
+#
+# Default is the live worker/web model (BAAI/bge-small-en-v1.5, dim 384).
+# CI and a bare `docker build .` do not pass --build-arg; leaving the old
+# potion-base-8M default here baked the wrong weights and HF_HUB_OFFLINE=1
+# could not recover (LocalEntryNotFoundError → RAG_INDEX_FAILED).
+ARG RAG_EMBEDDING_MODEL="BAAI/bge-small-en-v1.5"
 ENV HF_HOME=/opt/hf
 # The script mirrors Embedder.__init__'s backend selection (sentence-
 # transformers first, model2vec second) so the cache is populated by the SAME

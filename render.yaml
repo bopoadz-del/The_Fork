@@ -200,6 +200,13 @@ services:
       # to what the vectors actually are.
       - key: RAG_EMBEDDING_MODEL
         value: BAAI/bge-small-en-v1.5
+      # HF_HOME must stay /opt/hf — that is where the Dockerfile bakes the
+      # embedder. A dashboard override to /app/data/hf-cache lands on the
+      # persistent volume (empty on a new disk / clear-cache deploy) and
+      # produces LocalEntryNotFoundError / RAG_INDEX_FAILED under
+      # HF_HUB_OFFLINE=1 even when the image baked BAAI/bge-small-en-v1.5.
+      - key: HF_HOME
+        value: /opt/hf
       # Phase 1 pilot: route the schedule workflow through the orchestrator's
       # predefined reasoning. Non-breaking (only intercepts high-confidence
       # generate_wbs intents); remove to revert to the tool-agent path.
@@ -403,6 +410,11 @@ services:
       # namespace whose stamp disagrees.
       - key: RAG_EMBEDDING_MODEL
         value: BAAI/bge-small-en-v1.5
+      # Same pin as the web service: baked weights are at /opt/hf, not on
+      # the ephemeral /app/data volume. Do not point HF_HOME at hf-cache
+      # under DATA_DIR.
+      - key: HF_HOME
+        value: /opt/hf
       - key: CEREBRUM_VIRGIN
         value: "false"
       - key: CEREBRUM_DOMAIN_KITS

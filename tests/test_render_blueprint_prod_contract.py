@@ -181,3 +181,56 @@ def test_blueprint_embedding_model_matches_the_corpus():
         f"embedded with {LIVE_EMBEDDING_MODEL!r}. Applying this blueprint "
         "would take retrieval down for every chunk."
     )
+
+
+def _dockerfile_arg_embedding_model() -> str:
+    text = (REPO / "Dockerfile").read_text(encoding="utf-8")
+    match = re.search(
+        r'^ARG RAG_EMBEDDING_MODEL=(?:"([^"]+)"|(\S+))',
+        text,
+        re.MULTILINE,
+    )
+    assert match, "Dockerfile is missing ARG RAG_EMBEDDING_MODEL"
+    return match.group(1) or match.group(2)
+
+
+def test_dockerfile_arg_default_matches_the_corpus():
+    """Unset --build-arg must not bake potion-base-8M.
+
+    CI and a local `docker build .` do not pass the ARG. The previous
+    default (minishlab/potion-base-8M) meant a bake without the live
+    model name shipped the wrong weights. HF_HUB_OFFLINE=1 then cannot
+    recover: LocalEntryNotFoundError → RAG_INDEX_FAILED.
+    """
+    assert _dockerfile_arg_embedding_model() == LIVE_EMBEDDING_MODEL
+
+
+def _service_env(name: str) -> dict[str, dict]:
+    blueprint = yaml.safe_load((REPO / "render.yaml").read_text(encoding="utf-8"))
+    svc = next(s for s in blueprint["services"] if s.get("name") == name)
+    out: dict[str, dict] = {}
+    for item in svc.get("envVars") or []:
+        key = item.get("key")
+        if key:
+            out[key] = item
+    return out
+
+
+def test_blueprint_hf_home_stays_on_baked_weights():
+    """Dashboard HF_HOME=/app/data/hf-cache overrode onto the empty volume.
+
+    Baked weights live at /opt/hf (outside the /app/data mount). A cache
+    path on the volume is empty after every new disk / clear-cache deploy
+    and produces 40× RAG_INDEX_FAILED / LocalEntryNotFoundError even when
+    the image baked BAAI/bge-small-en-v1.5.
+    """
+    text = (REPO / "render.yaml").read_text(encoding="utf-8")
+    assert "HF_HOME" in text
+    assert "/opt/hf" in text
+    for name in ("the-fork", "the-fork-ingest"):
+        item = _service_env(name).get("HF_HOME")
+        assert item is not None, f"HF_HOME missing from {name}"
+        assert item.get("value") == "/opt/hf", (
+            f"{name} HF_HOME={item.get('value')!r}; must stay /opt/hf so "
+            "the volume mount cannot hide the baked embedder."
+        )
