@@ -228,7 +228,9 @@ def _isolate_postgres_db():
     # concurrently with a background task's read on the same tables.
     # `ensure_system_user()` only inserts the row — no DDL, no table lock
     # beyond a normal row write — and the schema itself is created exactly
-    # once, at session start (see `_init_schema_once` below).
+    # once, at session start (see `_init_schema_once` below). A live
+    # module-scoped TestClient may re-insert the same PK from knowledge
+    # seed; ensure_system_user treats that UniqueViolation as success.
     from app.core import users as users_store
 
     users_store.ensure_system_user()
