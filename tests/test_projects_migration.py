@@ -39,6 +39,7 @@ def test_init_db_on_fresh_db_has_retrieval_visible_on_documents(monkeypatch, tmp
     assert "superseded_by" in cols
     assert "retrieval_visible" in cols
     assert "extractor_version" in cols
+    assert "drive_md5" in cols
 
 
 def test_init_db_on_fresh_db_has_content_sha256_on_documents(monkeypatch, tmp_path):

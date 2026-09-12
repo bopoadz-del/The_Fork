@@ -205,7 +205,10 @@ def list_folder_files(folder_id: str, page_size: int = 100) -> Tuple[List[Dict[s
                 params: Dict[str, Any] = {
                     "q": q,
                     "pageSize": page_size,
-                    "fields": "nextPageToken, files(id, name, mimeType, size, modifiedTime)",
+                    "fields": (
+                        "nextPageToken, files(id, name, mimeType, size, "
+                        "modifiedTime, md5Checksum, etag)"
+                    ),
                 }
                 if page_token:
                     params["pageToken"] = page_token
@@ -352,7 +355,7 @@ def find_file_id_by_exact_name(filename: str) -> Tuple[Optional[str], Optional[s
                 params={
                     "q": q,
                     "pageSize": 10,
-                    "fields": "files(id, name, mimeType, size)",
+                    "fields": "files(id, name, mimeType, size, md5Checksum, etag)",
                     "supportsAllDrives": "true",
                     "includeItemsFromAllDrives": "true",
                 },
@@ -408,7 +411,7 @@ def get_file_metadata(file_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[
                 f"{_DRIVE_API}/files/{fid}",
                 headers={"Authorization": f"Bearer {token}"},
                 params={
-                    "fields": "id,name,mimeType,size",
+                    "fields": "id,name,mimeType,size,md5Checksum,etag",
                     "supportsAllDrives": "true",
                 },
             )

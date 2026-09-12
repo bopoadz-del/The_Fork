@@ -1764,7 +1764,32 @@ def admin_corpus_reconcile(
         "dangling_total": len(dangling_rows),
         "repaired": repaired,
         "summary": summary,
+        "coverage": _corpus_coverage(),
     }
+
+
+def _corpus_coverage(project_id: str | None = None) -> Dict[str, Any]:
+    from app.core.ingest_reconcile import coverage_truth
+
+    try:
+        return coverage_truth(project_id=project_id)
+    except Exception:
+        logger.warning("coverage_truth failed", exc_info=True)
+        return {"error": "coverage_unavailable"}
+
+
+@router.get("/v1/admin/corpus/coverage")
+def admin_corpus_coverage(
+    project_id: Optional[str] = Query(None),
+    auth: dict = Depends(require_api_key),
+):
+    """Queryable ingest coverage: status histogram, tombstones, OCR_DEGRADED,
+    orphan chunks (report-only), embedding-model mismatch.
+
+    Read-only. Does not delete vectors or documents.
+    """
+    _require_admin(auth)
+    return _corpus_coverage(project_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────

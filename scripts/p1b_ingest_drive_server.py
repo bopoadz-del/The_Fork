@@ -396,6 +396,9 @@ def _ingest_file(
     downloaded_bytes = len(raw_bytes)
     del raw_bytes
 
+    from app.core.ingest_reconcile import source_content_token
+
+    drive_token = source_content_token(file_meta)
     common_meta = {
         "drive_file_id": file_meta["id"],
         "drive_path": rel,
@@ -404,6 +407,8 @@ def _ingest_file(
         "mimeType": mime,
         "content_sha256": content_sha,
     }
+    if drive_token:
+        common_meta["drive_md5"] = drive_token
     if archive.get("r2_object_key"):
         common_meta["r2_object_key"] = archive["r2_object_key"]
         common_meta["r2_bucket"] = archive.get("r2_bucket")
@@ -417,6 +422,8 @@ def _ingest_file(
         # TEXT_SPARSE .docx stamped by an older extractor). Re-index the SAME
         # document id so chunks are replaced. No new row, no supersede.
         projects_mod.update_document_metadata(existing_doc["id"], common_meta)
+        if drive_token:
+            projects_mod.set_document_drive_md5(existing_doc["id"], drive_token)
         result = doc_index.index_document(
             project_id, existing_doc["id"],
         )
@@ -451,6 +458,7 @@ def _ingest_file(
             content_sha256=content_sha,
             metadata=common_meta,
             reingest_of=reingest_of,
+            drive_md5=drive_token,
         )
     except projects_mod.DuplicateContentError as exc:
         return rel, {
@@ -1144,6 +1152,9 @@ def main() -> int:
                 )
 
             from app.core import ingest_status as ist
+            from app.core.ingest_reconcile import should_skip_resume
+
+            drive_by_id = {str(fm.get("id") or ""): fm for fm in files if fm.get("id")}
 
             folder_stale_open = 0
             for doc in projects_mod.list_documents(project_id):
@@ -1152,7 +1163,7 @@ def main() -> int:
                     continue
                 chunks = chunk_counts.get(doc["id"], 0)
                 if chunks > 0:
-                    if ist.resume_is_already_indexed(doc, chunks):
+                    if should_skip_resume(doc, chunks, drive_by_id.get(fid)):
                         already_indexed.add(fid)
                         continue
                     # Open due to stale/missing extractor on .docx, or

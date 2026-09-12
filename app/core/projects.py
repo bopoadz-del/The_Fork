@@ -23,7 +23,7 @@ from sqlalchemy import delete, func, or_, select, text as sqla_text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.db import SessionLocal, engine, get_database_url
-from app.core.ingest_status import EXTRACTOR_VERSION, INDEXED
+from app.core.ingest_status import EXTRACTOR_VERSION, INDEXED, TOMBSTONED
 from app.core.models import Document, IngestionJob, Project, ProjectFact
 
 import logging
@@ -245,6 +245,7 @@ def _document_as_dict(document: Document) -> Dict[str, Any]:
         else document.retrieval_visible
     )
     out["extractor_version"] = getattr(document, "extractor_version", None)
+    out["drive_md5"] = getattr(document, "drive_md5", None)
     pointers = extract_document_source_pointers(out)
     local = _path_looks_present(out.get("file_path") or "")
     out["has_remote_source"] = bool(
@@ -352,6 +353,11 @@ def _patch_legacy_columns() -> None:
             if "extractor_version" not in doc_cols:
                 conn.execute(sqla_text(
                     "ALTER TABLE documents ADD COLUMN extractor_version TEXT"
+                ))
+                conn.commit()
+            if "drive_md5" not in doc_cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE documents ADD COLUMN drive_md5 TEXT"
                 ))
                 conn.commit()
     except Exception:
@@ -985,6 +991,7 @@ def add_document(
     content_sha256: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reingest_of: Optional[str] = None,
+    drive_md5: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Register a document under a project. Storing only — runs no analysis.
 
@@ -1034,6 +1041,7 @@ def add_document(
                     content_sha256=content_sha256,
                     metadata_=metadata,
                     retrieval_visible=True,
+                    drive_md5=drive_md5,
                 )
             )
             session.commit()
@@ -1311,6 +1319,42 @@ def materialize_document_file(doc: Dict[str, Any]) -> Tuple[Optional[str], str]:
     if int(doc.get("size") or 0) <= 0:
         set_document_size_if_zero(str(doc.get("id") or ""), len(raw))
     return cache, "ok"
+
+
+def set_document_drive_md5(doc_id: str, token: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Write Drive's content token. Never used as a skip key by itself."""
+    if not doc_id:
+        return None
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document is None:
+                return None
+            document.drive_md5 = (token or "").strip() or None
+            session.commit()
+    return get_document(doc_id)
+
+
+def tombstone_document(doc_id: str) -> Optional[Dict[str, Any]]:
+    """Mark a Drive-deleted row hidden. Never deletes the row or its chunks.
+
+    Idempotent: an already-TOMBSTONED row is returned unchanged.
+    """
+    if not doc_id:
+        return None
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document is None:
+                return None
+            if getattr(document, "ingest_status", None) != TOMBSTONED:
+                document.ingest_status = TOMBSTONED
+                document.ingest_status_reason = "drive_deleted"
+                document.retrieval_visible = False
+                session.commit()
+    return get_document(doc_id)
 
 
 def update_document_metadata(doc_id: str, metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
