@@ -363,13 +363,19 @@ def test_index_document_sentinel_thin_embed_ok_terminal_closes(
     )
 
 
-def test_index_document_nonsentinel_text_sparse_does_not_advance(
+def test_index_document_nonsentinel_thin_embed_ok_terminal_closes(
     monkeypatch, tmp_path,
 ):
-    """#575 protection: plain TEXT_SPARSE + rag_indexed=1 stays unstamped.
+    """Terminating rule: a genuinely-thin .docx whose single chunk fully
+    embeds (rag_indexed>0, no rag_error) closes for a plain OLD prior too,
+    not only the reopen sentinel. This exact case — non-sentinel TEXT_SPARSE
+    that embedded fine — never advanced and re-selected forever: the
+    #569-#576 loop.
 
-    The pre-#575 false-close class (never embed-failed) must not close
-    here. Part B reopens only the large under-extract subset.
+    #575's real concern (a RICH doc that only PARTIALLY embeds looking thin
+    and false-closing) is now handled upstream: index_document sets rag_error
+    on any shortfall (embedded k of N), so "no rag_error" here means the
+    single chunk embedded in full and thin is the document's settled truth.
     """
     projects, users = _reload(monkeypatch, tmp_path)
     proj = _seed_project(projects, users)
@@ -400,9 +406,9 @@ def test_index_document_nonsentinel_text_sparse_does_not_advance(
 
     after = projects.get_document(doc["id"])
     assert after["ingest_status"] == TEXT_SPARSE
-    assert after["extractor_version"] == "pre-sdt"
-    assert after["extractor_version"] != EXTRACTOR_VERSION
-    assert ist.docx_stale_extractor_open(
+    assert after["extractor_version"] == EXTRACTOR_VERSION
+    assert after["extractor_version"] != "pre-sdt"
+    assert not ist.docx_stale_extractor_open(
         after["ingest_status"],
         extension=".docx",
         extractor_version=after["extractor_version"],

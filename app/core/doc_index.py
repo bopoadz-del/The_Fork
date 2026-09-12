@@ -2933,14 +2933,17 @@ def index_document(
                 rag_error = "embedding stack unavailable"
             elif chunks:
                 rag_indexed = _rag.index_chunks(project_id, document_id, chunks) or 0
-                if rag_indexed:
-                    entry["rag_indexed"] = rag_indexed
-                else:
-                    # Text was extracted but nothing reached the vector store,
-                    # so the document is unretrievable by semantic search. Same
-                    # end state as ZERO_CHUNK, different cause — and it used to
-                    # look identical to success.
-                    rag_error = f"embedded 0 of {len(chunks)} chunks"
+                entry["rag_indexed"] = rag_indexed
+                if rag_indexed < len(chunks):
+                    # ANY shortfall — zero or partial — leaves the document less
+                    # than fully searchable. A partial embed (k of N, no
+                    # exception) used to record rag_indexed with no error, so a
+                    # rich doc whose vector-store count came back at 1 looked
+                    # identical to genuinely-thin text and could false-close.
+                    # "no rag_error" must mean "every extracted chunk embedded",
+                    # or should_advance_extractor_version cannot trust a thin
+                    # classification as settled. Zero stays a subset of this.
+                    rag_error = f"embedded {rag_indexed} of {len(chunks)} chunks"
         except Exception as exc:  # noqa: BLE001
             # Never let a RAG failure abort the primary doc-index path
             rag_error = f"{type(exc).__name__}: {exc}"
