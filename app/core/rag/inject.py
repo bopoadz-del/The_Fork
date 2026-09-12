@@ -469,6 +469,14 @@ def format_chunks_as_system_message(
                 "COMMENCEMENT DATE — prefer the Contract Data definition "
                 "or empty field over an ancillary commencement pack.\n"
             )
+        else:
+            header += (
+                "COMMENCEMENT DATE — Contract Data does not state a "
+                "calendar Commencement Date. Do not invent one. Do not "
+                "use a Construction Commencement Pack or site-start "
+                "report date as the contract particular. Say the field "
+                "is not stated in Contract Data.\n"
+            )
 
     cited_contract_ids: List[str] = []
     seen_cids = set()

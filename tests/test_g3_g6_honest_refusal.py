@@ -87,6 +87,14 @@ COMMENCEMENT_PACK = (
     "Construction Commencement Pack Report. Site commencement on "
     "10th January 2024. Briefing held with the Engineer."
 )
+COMMENCEMENT_TBA = (
+    "CONTRACT DATA particulars — filled-in amount / duration / percentage.\n"
+    "Commencement Date: TBA — to be notified under Sub-Clause 8.1."
+)
+COMMENCEMENT_BLANK = (
+    "CONTRACT DATA particulars — filled-in amount / duration / percentage.\n"
+    "Commencement Date:\n"
+)
 
 CD_NAME = (
     "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract "
@@ -184,6 +192,10 @@ def test_g3_g6_ask_shapes_and_honesty_gates():
     assert chunk_states_commencement_filled_date(COMMENCEMENT_FILLED)
     assert chunk_states_commencement_contract_data(COMMENCEMENT_FILLED)
     assert not chunk_states_commencement_not_populated(COMMENCEMENT_FILLED)
+    assert chunk_states_commencement_not_populated(COMMENCEMENT_TBA)
+    assert chunk_states_commencement_not_populated(COMMENCEMENT_BLANK)
+    assert not chunk_states_commencement_filled_date(COMMENCEMENT_TBA)
+    assert not chunk_states_commencement_filled_date(COMMENCEMENT_BLANK)
 
 
 def _install_g3_corpus(monkeypatch, *, cd_in_semantic: bool):
@@ -511,13 +523,17 @@ def test_inject_states_not_populated_on_a_g6_ask():
     assert "LOA" in text
 
 
-def test_inject_does_not_fire_g6_on_the_pack_alone():
+def test_inject_forbids_invention_on_pack_only_g6():
+    """Pack-only RAG must still tell the model not to invent a date."""
     msg = format_chunks_as_system_message(
         [_chunk("pack", PACK_DOC, 0.9, COMMENCEMENT_PACK)],
         4,
         query=LIVE_G6,
     )
-    assert "COMMENCEMENT DATE" not in msg["content"]
+    text = msg["content"]
+    assert "COMMENCEMENT DATE" in text
+    assert "Do not invent" in text
+    assert "not stated in Contract Data" in text
 
 
 def test_inject_does_not_fire_g3_on_an_a5_ask():
@@ -541,6 +557,7 @@ INVENTED_PCG = (
     "The Parent Company Guarantee is 20% of paid-up Capital and Reserves."
 )
 INVENTED_DATE = "The Commencement Date of the contract is 10th January 2024."
+INVENTED_DATE_ABBREV = "The Commencement Date of the contract is 10 Jan 2024."
 GENERIC_GREETING = (
     "I'm ready to help. I will answer only from the client project documents."
 )
@@ -637,3 +654,113 @@ def test_mutation_pcg_predicate_is_what_lifts_the_row(monkeypatch):
     chunks, _ = ret.retrieve_with_filter(G3_ASK, ACTIVE, k=5)
     assert chunks
     assert chunks[0].doc_id == FORM_DOC
+
+
+def _install_g6_pack_only_no_cd(monkeypatch):
+    """Live leak after #563: pack retrieved, Contract Data rescue misses."""
+    from app.core.rag import retriever as ret
+
+    pack = _chunk("pack", PACK_DOC, 0.93, COMMENCEMENT_PACK)
+
+    def fake_search(self, project_id, qvec, k, query_text=None):
+        return [pack][:k] if project_id == ACTIVE else []
+
+    def fake_empty(self, *args, **kwargs):
+        return []
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.identifier_search", fake_empty,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_for_docs", fake_empty,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_containing_all", fake_empty,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.count", lambda self, pid=None: 1,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore._verify_embedding_identity",
+        lambda self: None,
+    )
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda did: PACK_NAME, raising=False)
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_title_phrase",
+        lambda pid, phrase, limit=8: [],
+    )
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("RAG_COMMENCEMENT_DATE_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_LAYERED", raising=False)
+    return ret
+
+
+def test_g6_drops_pack_even_when_cd_is_absent(monkeypatch):
+    """Pack dates must not reach the model when Contract Data is missing."""
+    ret = _install_g6_pack_only_no_cd(monkeypatch)
+    chunks, _ = ret.retrieve_with_filter(G6_ASK, ACTIVE, k=5)
+    blob = " ".join(c.text for c in chunks)
+    assert "10th January 2024" not in blob
+    assert all(not ret.chunk_states_commencement_pack(c.text) for c in chunks)
+
+
+def test_graft_refuses_invented_date_when_rag_is_pack_only():
+    rag = _sys(COMMENCEMENT_PACK)
+    msgs = [{"role": "user", "content": LIVE_G6}]
+    out = _graft_honest_contract_refusal(INVENTED_DATE, rag, msgs)
+    assert "10th January 2024" not in out
+    assert "will not invent" in out.lower()
+    out_abbrev = _graft_honest_contract_refusal(INVENTED_DATE_ABBREV, rag, msgs)
+    assert "10 Jan 2024" not in out_abbrev
+    assert "will not invent" in out_abbrev.lower()
+
+
+def test_graft_refuses_invented_date_when_rag_is_empty():
+    msgs = [{"role": "user", "content": LIVE_G6}]
+    out = _graft_honest_contract_refusal(INVENTED_DATE, None, msgs)
+    assert "10th January 2024" not in out
+    assert "will not invent" in out.lower()
+
+
+def test_graft_refuses_tba_and_blank_cd_inventions():
+    for excerpt in (COMMENCEMENT_TBA, COMMENCEMENT_BLANK):
+        rag = _sys(excerpt)
+        msgs = [{"role": "user", "content": LIVE_G6}]
+        out = _graft_honest_contract_refusal(INVENTED_DATE_ABBREV, rag, msgs)
+        assert "10 Jan 2024" not in out, excerpt
+        assert "not populated" in out.lower() or "will not invent" in out.lower()
+
+
+def test_graft_g6_kill_switch_keeps_pack_invention(monkeypatch):
+    monkeypatch.setenv("RAG_COMMENCEMENT_DATE_RESCUE", "0")
+    rag = _sys(COMMENCEMENT_PACK)
+    msgs = [{"role": "user", "content": LIVE_G6}]
+    assert _graft_honest_contract_refusal(INVENTED_DATE, rag, msgs) == INVENTED_DATE
+
+
+def test_postprocess_g6_pack_only_strips_invented_date():
+    rag = _sys(COMMENCEMENT_PACK)
+    msgs = [{"role": "user", "content": LIVE_G6}]
+    out = _postprocess_answer(INVENTED_DATE_ABBREV, rag, msgs)
+    assert "10 Jan 2024" not in out
+    assert "will not invent" in out.lower()
+    assert out != _CG_REFUSAL
+
+
+def test_g6_contract_commencement_phrasing_is_detected():
+    from app.core.rag.retriever import (
+        answer_invents_commencement_date,
+        query_asks_for_contract_commencement_date,
+    )
+
+    assert query_asks_for_contract_commencement_date(
+        "What is the contract commencement?"
+    )
+    assert answer_invents_commencement_date(INVENTED_DATE_ABBREV)
+    assert answer_invents_commencement_date(
+        "Site start was 2024-01-10 according to the pack."
+    )
