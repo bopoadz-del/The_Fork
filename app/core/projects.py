@@ -1399,8 +1399,9 @@ def stamp_document_index(
     """Write ledger columns after a successful (re)index. Never deletes.
 
     ``stamp_extractor_version=False`` leaves the existing extractor_version
-    untouched. Text-extracted-but-not-embedded must not advance the stamp
-    that ``docx_stale_extractor_open`` treats as settled.
+    untouched. Text-extracted-but-not-embedded, and TEXT_SPARSE after a
+    1-chunk embed, must not advance the stamp that
+    ``docx_stale_extractor_open`` treats as settled.
     """
     if not doc_id:
         return None
