@@ -5456,7 +5456,6 @@ def _graft_honest_contract_refusal(
             answer_invents_pcg_value,
             answer_states_commencement_not_populated,
             answer_states_pcg_not_required,
-            chunk_states_commencement_contract_data,
             chunk_states_commencement_filled_date,
             chunk_states_commencement_not_populated,
             chunk_states_pcg_contract_data,
@@ -5464,6 +5463,7 @@ def _graft_honest_contract_refusal(
             chunk_states_pcg_not_required,
             commencement_date_rescue_enabled,
             format_commencement_honest_line,
+            format_commencement_unsupported_line,
             format_pcg_honest_line,
             pcg_value_rescue_enabled,
             query_asks_for_contract_commencement_date,
@@ -5507,39 +5507,51 @@ def _graft_honest_contract_refusal(
         if (
             commencement_date_rescue_enabled()
             and query_asks_for_contract_commencement_date(user)
-            and chunk_states_commencement_contract_data(rag)
         ):
-            line = format_commencement_honest_line(rag)
+            # Filled Contract Data date still wins. Anything else — empty
+            # CD, TBA, pack-only RAG, or no CD row at all — must not
+            # ship an invented calendar date (floor-all G6 after #563).
+            if chunk_states_commencement_filled_date(rag):
+                line = format_commencement_honest_line(rag)
+                already_filled = (
+                    not chunk_states_commencement_not_populated(rag)
+                    and line.split(" is ", 1)[-1].rstrip(".").lower() in raw.lower()
+                )
+                if already_filled:
+                    return text
+                if (
+                    not raw.strip()
+                    or _GENERIC_ACK_RE.search(raw)
+                    or raw.strip() == _CG_REFUSAL
+                    or _MISSING_PARTICULAR_RE.search(raw)
+                    or (
+                        answer_invents_commencement_date(raw)
+                        and line.split(" is ", 1)[-1].rstrip(".").lower()
+                        not in raw.lower()
+                    )
+                ):
+                    return line
+                return f"{line}\n\n{raw.strip()}" if raw.strip() else line
+            line = (
+                format_commencement_honest_line(rag)
+                if chunk_states_commencement_not_populated(rag)
+                else format_commencement_unsupported_line()
+            )
             already_honest = (
-                chunk_states_commencement_not_populated(rag)
-                and answer_states_commencement_not_populated(raw)
+                answer_states_commencement_not_populated(raw)
                 and not answer_invents_commencement_date(raw)
             )
-            already_filled = (
-                chunk_states_commencement_filled_date(rag)
-                and not chunk_states_commencement_not_populated(rag)
-                and line.split(" is ", 1)[-1].rstrip(".").lower() in raw.lower()
-            )
-            if already_honest or already_filled:
+            if already_honest:
                 return text
             if (
                 not raw.strip()
                 or _GENERIC_ACK_RE.search(raw)
                 or raw.strip() == _CG_REFUSAL
                 or _MISSING_PARTICULAR_RE.search(raw)
-                or (
-                    chunk_states_commencement_not_populated(rag)
-                    and answer_invents_commencement_date(raw)
-                )
-                or (
-                    chunk_states_commencement_filled_date(rag)
-                    and answer_invents_commencement_date(raw)
-                    and line.split(" is ", 1)[-1].rstrip(".").lower()
-                    not in raw.lower()
-                )
+                or answer_invents_commencement_date(raw)
             ):
                 return line
-            return f"{line}\n\n{raw.strip()}" if raw.strip() else line
+            return text
         return text
     except Exception:  # noqa: BLE001 — graft must never break a turn
         _LOG.exception("honest-contract-refusal graft failed; passing answer through")

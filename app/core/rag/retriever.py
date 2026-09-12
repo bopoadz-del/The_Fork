@@ -774,6 +774,16 @@ class _ContractScope:
         if self._commencement_cd_in_pool:
             if not chunk_states_commencement_contract_data(chunk_text):
                 return False
+        # G6: a commencement pack is never the contract particular, even
+        # when Contract Data never reached the pool. Floor-all still
+        # invented 10 Jan 2024 from the pack after #563 when the CD
+        # row was missing. Kill-switch restores the pack.
+        elif (
+            commencement_date_rescue_enabled()
+            and query_asks_for_contract_commencement_date(self.query)
+            and chunk_states_commencement_pack(chunk_text)
+        ):
+            return False
         if self.named:
             return filename_matches_named_contracts(
                 filename, self.named, chunk_text=chunk_text,
@@ -2095,6 +2105,7 @@ _PCG_FILLED_VALUE_RE = re.compile(
 _PCG_CLAUSE_RE = re.compile(r"(?i)\b4\.3\.7\b")
 _COMMENCEMENT_DATE_ASK_RE = re.compile(
     r"(?i)(?:\bcommencement\s+date\b|"
+    r"\bcontract\s+commencement\b|"
     r"when\s+does\s+(?:the\s+|this\s+)?contract\s+commence|"
     r"when\s+(?:does|is)\s+(?:the\s+|this\s+)?contract\s+"
     r"(?:start|begin))",
@@ -2105,8 +2116,17 @@ _COMMENCEMENT_PACK_ASK_RE = re.compile(
 )
 _COMMENCEMENT_NOT_POPULATED_RE = re.compile(
     r"(?i)(?:not\s+populated|not\s+stated|not\s+completed|"
+    r"not\s+inserted|left\s+blank|no\s+date\s+(?:is\s+)?(?:given|stated)|"
+    r"to\s+be\s+(?:advised|agreed|confirmed|issued|notified|inserted)|"
+    r"\btba\b|\btbc\b|"
+    r"as\s+stated\s+in\s+(?:the\s+)?(?:letter\s+of\s+acceptance|loa)|"
+    r"notified\s+under\s+(?:sub-?clause\s+)?8\.1|"
+    r"shall\s+be\s+notified|"
     r"tied\s+to\s+(?:the\s+)?(?:loa|noa|letter\s+of\s+acceptance|"
     r"notice\s+of\s+(?:award|acceptance)))",
+)
+_COMMENCEMENT_EMPTY_FIELD_RE = re.compile(
+    r"(?i)commencement\s+date\s*[:|]\s*(?:[-—–]+|n/?a|nil|none)?\s*(?:\n|$)",
 )
 _COMMENCEMENT_PACK_RE = re.compile(
     r"(?i)(?:construction\s+commencement\s+pack|"
@@ -2121,7 +2141,12 @@ _COMMENCEMENT_FILLED_DATE_RE = re.compile(
     r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
     r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
     r"dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\b|"
-    r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b)",
+    r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|"
+    r"\b\d{4}-\d{2}-\d{2}\b)",
+)
+_COMMENCEMENT_UNSUPPORTED_LINE = (
+    "The contract Commencement Date is not stated in the Contract Data "
+    "retrieved for this project. I will not invent a calendar date."
 )
 _PCG_VALUE_RESCUE_PHRASES = (
     "parent company guarantee",
@@ -2249,14 +2274,17 @@ def chunk_states_commencement_pack(text: str) -> bool:
 def chunk_states_commencement_not_populated(text: str) -> bool:
     """True when Contract Data says the commencement field is empty.
 
-    Tied-to-LOA/NOA is the same class. A pack report that happens to
+    Tied-to-LOA/NOA, TBA/TBC, FIDIC 8.1 notification, and a labelled
+    blank cell are the same class. A pack report that happens to
     mention LOA is not this row.
     """
     if not text or not _COMMENCEMENT_LABEL_RE.search(text):
         return False
     if chunk_states_commencement_pack(text):
         return False
-    return bool(_COMMENCEMENT_NOT_POPULATED_RE.search(text))
+    if _COMMENCEMENT_NOT_POPULATED_RE.search(text):
+        return True
+    return bool(_COMMENCEMENT_EMPTY_FIELD_RE.search(text))
 
 
 def chunk_states_commencement_filled_date(text: str) -> bool:
@@ -2301,10 +2329,17 @@ def format_commencement_honest_line(excerpt: str = "") -> str:
         value = (match.group(0) or "").strip() if match else ""
         if value:
             return f"The Commencement Date of the contract is {value}."
-    return (
-        "The Commencement Date is not populated in the Contract Data; "
-        "it is tied to LOA/NOA issuance."
-    )
+    if chunk_states_commencement_not_populated(excerpt):
+        return (
+            "The Commencement Date is not populated in the Contract Data; "
+            "it is tied to LOA/NOA issuance."
+        )
+    return format_commencement_unsupported_line()
+
+
+def format_commencement_unsupported_line() -> str:
+    """G6 refuse when Contract Data does not support a calendar date."""
+    return _COMMENCEMENT_UNSUPPORTED_LINE
 
 
 def answer_states_pcg_not_required(text: str) -> bool:
@@ -2320,8 +2355,20 @@ def answer_states_commencement_not_populated(text: str) -> bool:
     blob = text or ""
     if _COMMENCEMENT_NOT_POPULATED_RE.search(blob):
         return True
+    if answer_states_commencement_unsupported(blob):
+        return True
     return bool(re.search(r"(?i)\b(?:loa|noa)\b", blob) and re.search(
         r"(?i)(?:tied|issuance|not\s+populated|not\s+stated)", blob,
+    ))
+
+
+def answer_states_commencement_unsupported(text: str) -> bool:
+    """True when the answer already refuses to invent a G6 date."""
+    blob = text or ""
+    return bool(re.search(
+        r"(?i)(?:will not invent|not stated in the contract data|"
+        r"cannot confirm the (?:contract )?commencement)",
+        blob,
     ))
 
 
