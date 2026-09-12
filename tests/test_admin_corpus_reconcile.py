@@ -192,15 +192,13 @@ def _wipe_all():
     ensure_user_exists(SYSTEM_USER_ID, role="admin")
     from app.core import projects as store
     for pid in protected:
-        if store.get_project(pid):
-            continue
-        try:
-            store.create_project(
-                pid, user_id=SYSTEM_USER_ID, project_id=pid, origin="system_seed",
-            )
-        except Exception:
-            if store.get_project(pid) is None:
-                raise
+        # Isolation TRUNCATE + a live TestClient knowledge-seed can both
+        # see a missing GK/master row and INSERT the same PK. Use the
+        # race-safe helper (IntegrityError → re-fetch) instead of
+        # check-then-create.
+        store.get_or_create_project(
+            pid, user_id=SYSTEM_USER_ID, project_id=pid, origin="system_seed",
+        )
 
 
 def _seed_misplaced_chunks():
@@ -341,13 +339,12 @@ def test_wipe_all_keeps_training_material_project(client):
     from app.core.users import SYSTEM_USER_ID, ensure_user_exists
 
     ensure_user_exists(SYSTEM_USER_ID, role="admin")
-    if store.get_project("training_material") is None:
-        store.create_project(
-            "General Knowledge",
-            user_id=SYSTEM_USER_ID,
-            project_id="training_material",
-            origin="system_seed",
-        )
+    store.get_or_create_project(
+        "General Knowledge",
+        user_id=SYSTEM_USER_ID,
+        project_id="training_material",
+        origin="system_seed",
+    )
     _wipe_all()
     assert store.get_project("training_material") is not None
 
