@@ -17,9 +17,13 @@ from __future__ import annotations
 from app.core.rag.retriever import reserve_contract_synonym_row
 from app.core.rag.vector_store import Chunk
 
+# OCR/scan-spaced, exactly as Contract Data arrives ("Accepted \nContract
+# \nAmount"). The first cut of the fix used a raw substring match, which fails
+# on this spacing and silently no-ops — leaving ACA "contract sum" at 0/3 in
+# production. The reserve must collapse whitespace before matching the heading.
 ACA_TEXT = (
-    "CONTRACT DATA 1.1.1 Accepted Contract Amount (excluding VAT) "
-    "SAR 1,754,504,456.25"
+    "CONTRACT DATA\n1.1.1\nAccepted \nContract \nAmount (excluding VAT)\n"
+    "SAR 1,754,504,456.25\n"
 )
 
 
@@ -80,14 +84,14 @@ def test_respects_contract_scope_allow():
 
 
 def test_reserves_delay_cap_and_defects_headings():
-    cap = _c("cap", "Maximum Amount of Delay Damages 10% of the Contract Price")
+    cap = _c("cap", "Maximum \nAmount of \nDelay Damages\n10% of the Contract Price")
     kept = _kept_without_aca()
     assert reserve_contract_synonym_row(
         "What is the cap on delay damages?", kept, kept + [cap]
     )
     assert any(c.chunk_id == "cap" for c in kept)
 
-    dnp = _c("dnp", "Defects Notification Period 365 days from Taking Over")
+    dnp = _c("dnp", "Defects \nNotification \nPeriod\n365 days from Taking Over")
     kept2 = _kept_without_aca()
     assert reserve_contract_synonym_row(
         "What is the maintenance period?", kept2, kept2 + [dnp]
