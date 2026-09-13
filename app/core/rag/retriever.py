@@ -6283,6 +6283,66 @@ def _cd_particulars_boost_enabled() -> bool:
     )
 
 
+def _contract_synonym_boost_enabled() -> bool:
+    return (os.getenv("RAG_SYNONYM_BOOST") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+# Canonical FIDIC / contract-term equivalences. When a user phrasing on the
+# LEFT (any lowercase substring) appears in the query, the canonical term(s)
+# on the RIGHT are appended to a SUPPLEMENTARY retrieval query — the primary
+# query is never altered. A synonym like "contract sum before VAT" then still
+# surfaces the "Accepted Contract Amount" Contract Data line it would otherwise
+# miss. Additive-only, mirroring the Contract Data particulars boost.
+#
+# Live gap (2026-09-13): synonym phrasings honestly declined facts that ARE in
+# the corpus — "contract sum"/"net contract value" -> Accepted Contract Amount
+# was not retrieved at all; probing showed appending the canonical term lifts
+# that chunk to rank 0. Terms are canonical contract headings, not values, so
+# the query is never "led" toward a specific figure.
+_CONTRACT_SYNONYMS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("contract sum", "contract value", "contract worth", "net contract",
+      "total contract value", "worth of the contract", "contract price before"),
+     "Accepted Contract Amount"),
+    (("retention", "held back", "withheld", "retained from the"),
+     "Percentage of Retention Retention Money"),
+    (("time for completion", "completion period", "duration of the works",
+      "how long to complete"),
+     "Time for Completion"),
+    (("delay damages", "liquidated damages", "penalty for late completion",
+      "late completion penalty"),
+     "Delay Damages Maximum Amount of Delay Damages Contract Price"),
+    (("defects notification", "defects liability", "maintenance period",
+      "warranty period", "defects period"),
+     "Defects Notification Period"),
+)
+
+
+def expand_contract_synonyms(query: str) -> str:
+    """Canonical contract terms to APPEND for any synonym present in ``query``.
+
+    Returns a space-joined, de-duplicated string (empty when nothing triggers).
+    Definition questions are left alone — they belong on the glossary path, not
+    a Contract Data particulars lookup."""
+    q = (query or "").strip().lower()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return ""
+    out: list[str] = []
+    for triggers, canonical in _CONTRACT_SYNONYMS:
+        if any(t in q for t in triggers) and canonical.lower() not in q:
+            out.append(canonical)
+    # De-dup while preserving order (a term may recur across groups).
+    seen: set[str] = set()
+    parts: list[str] = []
+    for term in " ".join(out).split():
+        key = term.lower()
+        if key not in seen:
+            seen.add(key)
+            parts.append(term)
+    return " ".join(parts)
+
+
 def query_asks_for_contract_particulars(query: str) -> bool:
     """True when the question wants a filled-in Contract Data particular.
 
@@ -7170,6 +7230,34 @@ def retrieve_with_filter(
                 "primary results stand",
                 project_id, exc,
             )
+
+    # Contract-term synonym boost: a supplementary search whose wording adds
+    # the canonical FIDIC heading for any synonym the user used ("contract sum"
+    # -> "Accepted Contract Amount"). Additive to the primary + particulars
+    # legs; the primary query is unchanged. Failures never break primary.
+    if _contract_synonym_boost_enabled():
+        synonym_terms = expand_contract_synonyms(query)
+        if synonym_terms:
+            synonym_q = f"{query.strip()} {synonym_terms}"
+            try:
+                svec = embedder.encode_queries([synonym_q])[0]
+                s_hits = store.search(
+                    project_id, svec, k=over_fetch, query_text=synonym_q,
+                )
+                by_id = {c.chunk_id: c for c in raw_active}
+                for c in s_hits:
+                    prev = by_id.get(c.chunk_id)
+                    if prev is None or (c.score or 0.0) > (prev.score or 0.0):
+                        by_id[c.chunk_id] = c
+                raw_active = sorted(
+                    by_id.values(), key=lambda c: -(c.score or 0.0),
+                )
+            except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+                logger.warning(
+                    "contract-synonym retrieval for %s failed: %s; "
+                    "primary results stand",
+                    project_id, exc,
+                )
 
     # STEP 0b — empty/thin detection for the labeled Master-Corpus fallback.
     # "Thin" reuses RAG_CONFIDENCE_THRESHOLD (the same bar rag_inject applies):
