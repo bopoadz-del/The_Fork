@@ -5456,7 +5456,6 @@ def _graft_honest_contract_refusal(
             answer_invents_pcg_value,
             answer_states_commencement_not_populated,
             answer_states_pcg_not_required,
-            chunk_states_commencement_contract_data,
             chunk_states_commencement_filled_date,
             chunk_states_commencement_not_populated,
             chunk_states_pcg_contract_data,
@@ -5464,6 +5463,7 @@ def _graft_honest_contract_refusal(
             chunk_states_pcg_not_required,
             commencement_date_rescue_enabled,
             format_commencement_honest_line,
+            format_commencement_unsupported_line,
             format_pcg_honest_line,
             pcg_value_rescue_enabled,
             query_asks_for_contract_commencement_date,
@@ -5507,39 +5507,51 @@ def _graft_honest_contract_refusal(
         if (
             commencement_date_rescue_enabled()
             and query_asks_for_contract_commencement_date(user)
-            and chunk_states_commencement_contract_data(rag)
         ):
-            line = format_commencement_honest_line(rag)
+            # Filled Contract Data date still wins. Anything else — empty
+            # CD, TBA, pack-only RAG, or no CD row at all — must not
+            # ship an invented calendar date (floor-all G6 after #563).
+            if chunk_states_commencement_filled_date(rag):
+                line = format_commencement_honest_line(rag)
+                already_filled = (
+                    not chunk_states_commencement_not_populated(rag)
+                    and line.split(" is ", 1)[-1].rstrip(".").lower() in raw.lower()
+                )
+                if already_filled:
+                    return text
+                if (
+                    not raw.strip()
+                    or _GENERIC_ACK_RE.search(raw)
+                    or raw.strip() == _CG_REFUSAL
+                    or _MISSING_PARTICULAR_RE.search(raw)
+                    or (
+                        answer_invents_commencement_date(raw)
+                        and line.split(" is ", 1)[-1].rstrip(".").lower()
+                        not in raw.lower()
+                    )
+                ):
+                    return line
+                return f"{line}\n\n{raw.strip()}" if raw.strip() else line
+            line = (
+                format_commencement_honest_line(rag)
+                if chunk_states_commencement_not_populated(rag)
+                else format_commencement_unsupported_line()
+            )
             already_honest = (
-                chunk_states_commencement_not_populated(rag)
-                and answer_states_commencement_not_populated(raw)
+                answer_states_commencement_not_populated(raw)
                 and not answer_invents_commencement_date(raw)
             )
-            already_filled = (
-                chunk_states_commencement_filled_date(rag)
-                and not chunk_states_commencement_not_populated(rag)
-                and line.split(" is ", 1)[-1].rstrip(".").lower() in raw.lower()
-            )
-            if already_honest or already_filled:
+            if already_honest:
                 return text
             if (
                 not raw.strip()
                 or _GENERIC_ACK_RE.search(raw)
                 or raw.strip() == _CG_REFUSAL
                 or _MISSING_PARTICULAR_RE.search(raw)
-                or (
-                    chunk_states_commencement_not_populated(rag)
-                    and answer_invents_commencement_date(raw)
-                )
-                or (
-                    chunk_states_commencement_filled_date(rag)
-                    and answer_invents_commencement_date(raw)
-                    and line.split(" is ", 1)[-1].rstrip(".").lower()
-                    not in raw.lower()
-                )
+                or answer_invents_commencement_date(raw)
             ):
                 return line
-            return f"{line}\n\n{raw.strip()}" if raw.strip() else line
+            return text
         return text
     except Exception:  # noqa: BLE001 — graft must never break a turn
         _LOG.exception("honest-contract-refusal graft failed; passing answer through")
@@ -8063,6 +8075,90 @@ _MISSING_INPUT_NUDGE = (
     "the gap you already reported."
 )
 
+# Default UI agent. Specialty agents already bind hats in frontmatter;
+# project-assistant is the /v1/chat/stream front door and was unhatted.
+_DEFAULT_UI_AGENT = "project-assistant"
+
+
+def hats_activation_enabled() -> bool:
+    """True when FORK_HATS_ENABLED is live. Default off."""
+    from app.agents.activation import hats_enabled
+    return hats_enabled()
+
+
+def hat_scores_sse(message: str) -> dict[str, Any] | None:
+    """SSE ``hat_scores`` payload, or None when the flag is off.
+
+    Lives on the default chat path so the UI can show discipline scores
+    when hats are enabled on the live service.
+    """
+    if not hats_activation_enabled():
+        return None
+    from app.agents.activation import HatActivationAdapter
+    adapter = HatActivationAdapter()
+    scores = adapter.score_all_hats(message)
+    selected = adapter.select_hat_for_message(message)
+    return {
+        "type": "hat_scores",
+        "scores": scores,
+        "selected": getattr(selected, "id", None),
+        "selected_name": getattr(selected, "name", None),
+        "enabled": True,
+    }
+
+
+def hat_turn_system_note(message: str) -> dict[str, str] | None:
+    """Steer the default UI turn toward the winning discipline hat."""
+    event = hat_scores_sse(message)
+    if not event:
+        return None
+    scores = event.get("scores") or {}
+    ranked = ", ".join(
+        f"{name}={float(score):.2f}"
+        for name, score in sorted(scores.items(), key=lambda kv: -float(kv[1]))
+    )
+    selected = event.get("selected")
+    if selected:
+        return {
+            "role": "system",
+            "content": (
+                f"Active discipline hat this turn: {event.get('selected_name')} "
+                f"({selected}). Hat scores: {ranked}."
+            ),
+        }
+    if ranked:
+        return {
+            "role": "system",
+            "content": (
+                "Discipline hat scores for this turn (none above routing "
+                f"threshold): {ranked}."
+            ),
+        }
+    return None
+
+
+def _apply_hat_activation(
+    messages: list[dict[str, Any]],
+    user_message: str,
+    agent_name: str,
+) -> dict[str, Any] | None:
+    """Score hats and, on the default UI agent, append a turn note.
+
+    Returns the SSE event (or None when the flag is off). Specialty
+    agents already carry their kernels; they get scores only.
+    """
+    event = hat_scores_sse(user_message)
+    if not event:
+        return None
+    if agent_name == _DEFAULT_UI_AGENT:
+        note = hat_turn_system_note(user_message)
+        if note:
+            if messages and messages[-1].get("role") == "user":
+                messages.insert(-1, note)
+            else:
+                messages.append(note)
+    return event
+
 
 @dataclass
 class Agent:
@@ -8672,6 +8768,8 @@ class Agent:
                 user_data_authoritative=self.user_data_authoritative,
             )
 
+        _apply_hat_activation(messages, user_message, self.name)
+
         # Capability / self-introspection short-circuit: a question ABOUT this
         # agent (its tools, abilities, accessible documents) is answered from the
         # REAL tool roster + REAL document list, not from matched document text.
@@ -9254,7 +9352,7 @@ class Agent:
         _depth: int = 0,
         _call_stack: list[str] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Generator: yields {type, ...} events. Types: start, tool_call, tool_result, token, end, error, heartbeat.
+        """Generator: yields {type, ...} events. Types: start, hat_scores, tool_call, tool_result, token, end, error, heartbeat.
 
         Tool-calling is non-streamed (we collect the whole assistant turn before deciding),
         but the FINAL assistant answer streams token-by-token.
@@ -9523,6 +9621,10 @@ class Agent:
 
         yield {"type": "start", "agent": self.name}
 
+        _hat_evt = hat_scores_sse(user_message)
+        if _hat_evt:
+            yield _hat_evt
+
         # Zero-chunk project guardrail: refuse before spending LLM budget
         # unless the project has other (non-RAG) context such as facts.
         if (
@@ -9587,6 +9689,8 @@ class Agent:
                 messages, _rag_sys_msg,
                 user_data_authoritative=self.user_data_authoritative,
             )
+
+        _apply_hat_activation(messages, user_message, self.name)
 
         # Capability / self-introspection short-circuit: a question ABOUT this
         # agent (its tools, abilities, accessible documents) is answered from the
