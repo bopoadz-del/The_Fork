@@ -2430,10 +2430,7 @@ _ROUTING_PREAMBLE_LINE_RE = re.compile(
     r"SCHEDULE REGISTER|PRICED BOQ ROW|RATE ONLY|PART SUMMARY TOTAL|"
     r"ACCEPTED CONTRACT AMOUNT INCLUDING VAT|"
     r"DELAY DAMAGES PER CALENDAR DAY|PARENT COMPANY GUARANTEE|"
-    r"COMMENCEMENT DATE|SOURCE CLASS|SCOPE OF ABSENCE|"
-    r"FILENAMES ARE EVIDENCE|CONTRACT ATTRIBUTION|"
-    r"AUTHORITATIVE REFERENCE CONTEXT|PLATFORM PRE-DISPATCH|"
-    r"APPOINTMENT)"
+    r"COMMENCEMENT DATE|APPOINTMENT)"
     r"\s*[—\-].*$"
 )
 _GRAFT_APPOINTMENT_LEAK_RE = re.compile(
@@ -2553,21 +2550,9 @@ class _EmitLeakGuard:
                 probe = "".join(self._acc)
             else:
                 probe = content
-            # Routing notes are stripped, not nuked — JACOBS must survive
-            # a prepended ENGINEER APPOINTMENT hint (live e24aee4).
-            if answer_contains_routing_preamble(content) or (
-                kind == "end" and answer_contains_routing_preamble(probe)
-            ):
-                if kind == "end":
-                    content = _strip_answer_routing_preamble(probe)
-                    event = {**event, "content": content}
-                    probe = content
-                else:
-                    stripped = _strip_answer_routing_preamble(content)
-                    if not stripped:
-                        return None
-                    event = {**event, "content": stripped}
-                    probe = _strip_answer_routing_preamble(probe)
+            # Nuclear first: a full inject dump still falls back. Routing
+            # notes are stripped afterwards so JACOBS survives a prepended
+            # ENGINEER APPOINTMENT hint (live e24aee4).
             if _looks_like_internal_context_leak(probe):
                 self.tripped = True
                 _LOG.warning(
@@ -2575,6 +2560,17 @@ class _EmitLeakGuard:
                     "on a %s event -- suppressing the rest of this turn",
                     kind,
                 )
+            elif answer_contains_routing_preamble(content) or (
+                kind == "end" and answer_contains_routing_preamble(probe)
+            ):
+                if kind == "end":
+                    content = _strip_answer_routing_preamble(probe)
+                    event = {**event, "content": content}
+                else:
+                    stripped = _strip_answer_routing_preamble(content)
+                    if not stripped:
+                        return None
+                    event = {**event, "content": stripped}
 
         if not self.tripped:
             return event
