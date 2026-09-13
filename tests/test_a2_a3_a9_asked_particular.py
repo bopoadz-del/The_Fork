@@ -24,6 +24,9 @@ from app.agents.runtime import (
     _CG_REFUSAL,
     _graft_asked_contract_particular,
     _postprocess_answer,
+    _sanitize_final_text,
+    _strip_answer_routing_preamble,
+    answer_contains_routing_preamble,
 )
 from app.core.rag.vector_store import Chunk
 
@@ -579,6 +582,84 @@ def test_inject_hints_are_marked_internal_and_precede_the_routing_notes():
     prefix = a9[: a9.index("ENGINEER APPOINTMENT")]
     assert "SOURCE CLASS" not in prefix
     assert "TIME FOR COMPLETION" not in prefix
+
+
+LIVE_A9_PREAMBLE_LEAK = (
+    "The Engineer is APPOINTMENT — an excerpt below names the Engineer. "
+    "That IS the answer. State the appointed firm. Do not say "
+    "the identity is absent, and do not answer from a Conditions "
+    "of Contract glossary or drawing note instead."
+)
+
+
+def _real_a9_inject():
+    from app.core.rag.inject import format_chunks_as_system_message
+
+    eng = _chunk("eng", ENG_DOC, 0.9, SCANNED_ENGINEER)
+    return format_chunks_as_system_message([eng], 1, query=LIVE_A9)
+
+
+def test_extract_from_real_inject_elects_jacobs_not_the_appointment_heading():
+    """Live e24aee4: extract read ENGINEER APPOINTMENT as the firm."""
+    from app.core.rag.retriever import extract_engineer_identity
+
+    rag = _real_a9_inject()["content"]
+    assert "ENGINEER APPOINTMENT" in rag
+    assert extract_engineer_identity(rag) == A9_FIRM
+    assert extract_engineer_identity(LIVE_A9_PREAMBLE_LEAK) is None
+    assert extract_engineer_identity(
+        "ENGINEER APPOINTMENT — an excerpt below names the Engineer. "
+        "That IS the answer. State the appointed firm."
+    ) is None
+
+
+def test_graft_a9_on_real_inject_does_not_leak_routing_preamble():
+    """THE live regression: graft prepended the inject heading to JACOBS."""
+    rag = _real_a9_inject()
+    msgs = [{"role": "user", "content": LIVE_A9}]
+    out = _graft_asked_contract_particular(A9_FIRM, rag, msgs)
+    assert "JACOBS" in out
+    assert "CH2M" in out
+    assert not answer_contains_routing_preamble(out)
+    assert "That IS the answer" not in out
+    assert "INTERNAL GUIDANCE" not in out
+    assert "State the appointed firm" not in out
+    assert "The Engineer is APPOINTMENT" not in out
+
+    missing = (
+        "I could not confirm the identity of the Engineer in the "
+        "retrieved excerpts."
+    )
+    recovered = _graft_asked_contract_particular(missing, rag, msgs)
+    assert "JACOBS" in recovered
+    assert "CH2M" in recovered
+    assert not answer_contains_routing_preamble(recovered)
+
+
+def test_answer_must_not_contain_guard_preamble():
+    """Fails if user-visible text still carries inject-guard wording."""
+    leaked = f"{LIVE_A9_PREAMBLE_LEAK}\n\n{A9_FIRM}"
+    assert answer_contains_routing_preamble(leaked)
+    cleaned = _strip_answer_routing_preamble(leaked)
+    assert A9_FIRM in cleaned
+    assert not answer_contains_routing_preamble(cleaned)
+    assert "That IS the answer" not in cleaned
+    assert "INTERNAL GUIDANCE" not in cleaned
+    assert "State the appointed firm" not in cleaned
+
+    sanitized = _sanitize_final_text(leaked)
+    assert A9_FIRM in sanitized
+    assert not answer_contains_routing_preamble(sanitized)
+
+    rag = _real_a9_inject()
+    msgs = [{"role": "user", "content": LIVE_A9}]
+    out = _postprocess_answer(leaked, rag, msgs)
+    assert "JACOBS" in out
+    assert "CH2M" in out
+    assert not answer_contains_routing_preamble(out)
+    assert "That IS the answer" not in out
+    assert "INTERNAL GUIDANCE" not in out
+    assert "State the appointed firm" not in out
 
 
 def test_extract_elects_852_over_sectional_and_spec_90():

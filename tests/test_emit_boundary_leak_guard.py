@@ -22,6 +22,7 @@ from app.agents.runtime import (
     _TOOL_FORMAT_FALLBACK,
     Agent,
     _EmitLeakGuard,
+    answer_contains_routing_preamble,
 )
 
 BRIEF = "AUTHORITATIVE REFERENCE CONTEXT \u2014 the material below was retrieved"
@@ -118,6 +119,26 @@ def test_non_content_events_are_never_touched(event):
     """The guard reads token/end content and nothing else -- a tool_call whose
     args mention doc_id is not a leak to the user."""
     assert _EmitLeakGuard().check(event) is event
+
+
+def test_a9_routing_preamble_is_stripped_and_jacobs_survives():
+    """Live e24aee4: graft leak must not nuke the appointed firm."""
+    leaked = (
+        "The Engineer is APPOINTMENT — an excerpt below names the Engineer. "
+        "That IS the answer. State the appointed firm. Do not say "
+        "the identity is absent.\n\n"
+        "JACOBS (CH2M Saudi Limited)"
+    )
+    guard = _EmitLeakGuard()
+    end = guard.check({"type": "end", "content": leaked, "iterations": 1})
+    assert end["content"]
+    assert "JACOBS" in end["content"]
+    assert "CH2M" in end["content"]
+    assert not answer_contains_routing_preamble(end["content"])
+    assert "That IS the answer" not in end["content"]
+    assert "INTERNAL GUIDANCE" not in end["content"]
+    assert "State the appointed firm" not in end["content"]
+    assert guard.tripped is False
 
 
 def test_a_real_answer_is_never_suppressed():
