@@ -6555,7 +6555,11 @@ def reserve_contract_synonym_row(
         return False
 
     def _has_head(text: str) -> bool:
-        low = (text or "").lower()
+        # Collapse OCR/scan whitespace first: Contract Data text arrives as
+        # "Accepted \nContract \nAmount", so a raw substring test for the
+        # canonical heading silently fails and the reservation no-ops (the bug
+        # that left ACA "contract sum" at 0/3 after the first cut of this fix).
+        low = _collapse_retrieval_ws((text or "")).lower()
         return any(head in low for head in heads)
 
     if any(_has_head(c.text or "") for c in kept):
