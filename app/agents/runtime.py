@@ -2415,6 +2415,71 @@ _INTERNAL_CONTEXT_MARKERS = (
     "PLATFORM PRE-DISPATCH",
 )
 
+# Answer-routing notes the model (or the A9 graft) must never show the
+# user. Distinct from ``_INTERNAL_CONTEXT_MARKERS``: those trip a nuclear
+# fallback that would drop JACOBS if the hint was prepended to a good
+# answer. These are STRIPPED so the appointed firm survives.
+_ROUTING_PREAMBLE_PHRASES = (
+    "That IS the answer",
+    "INTERNAL GUIDANCE",
+    "State the appointed firm",
+)
+_ROUTING_PREAMBLE_LINE_RE = re.compile(
+    r"(?im)^[ \t]*(?:The Engineer is\s+)?"
+    r"(?:INTERNAL GUIDANCE|ENGINEER APPOINTMENT|TIME FOR COMPLETION|"
+    r"SCHEDULE REGISTER|PRICED BOQ ROW|RATE ONLY|PART SUMMARY TOTAL|"
+    r"ACCEPTED CONTRACT AMOUNT INCLUDING VAT|"
+    r"DELAY DAMAGES PER CALENDAR DAY|PARENT COMPANY GUARANTEE|"
+    r"COMMENCEMENT DATE|SOURCE CLASS|SCOPE OF ABSENCE|"
+    r"FILENAMES ARE EVIDENCE|CONTRACT ATTRIBUTION|"
+    r"AUTHORITATIVE REFERENCE CONTEXT|PLATFORM PRE-DISPATCH|"
+    r"APPOINTMENT)"
+    r"\s*[—\-].*$"
+)
+_GRAFT_APPOINTMENT_LEAK_RE = re.compile(
+    r"(?im)^[ \t]*The Engineer is APPOINTMENT\s*[—\-].*$"
+)
+_ROUTING_PREAMBLE_SENTENCE_RE = re.compile(
+    r"(?i)(?:INTERNAL GUIDANCE\s*[—\-][^\n]*|"
+    r"That IS the answer\.?\s*|"
+    r"State the appointed firm\.?\s*|"
+    r"Do not say the identity is absent[^.]*\.?\s*|"
+    r"an excerpt below names the Engineer\.?\s*)"
+)
+
+
+def _strip_answer_routing_preamble(text: str) -> str:
+    """Remove A9/answer-routing guard text; keep the real particular.
+
+    Live e24aee4: graft prepended ``The Engineer is APPOINTMENT — an
+    excerpt below names the Engineer. That IS the answer. State the
+    appointed firm…`` then JACOBS. Nuclear leak replacement would drop
+    the firm. Strip the steering; leave the answer.
+    """
+    if not text:
+        return text
+    out = _GRAFT_APPOINTMENT_LEAK_RE.sub("", text)
+    out = _ROUTING_PREAMBLE_LINE_RE.sub("", out)
+    out = _ROUTING_PREAMBLE_SENTENCE_RE.sub("", out)
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
+
+
+def answer_contains_routing_preamble(text: str) -> bool:
+    """True when user-visible text still carries inject-guard wording.
+
+    Regression pin for the A9 leak. Tests (and emit checks) fail closed
+    on these phrases so a future heading rename cannot silently re-leak.
+    """
+    if not text:
+        return False
+    if any(phrase in text for phrase in _ROUTING_PREAMBLE_PHRASES):
+        return True
+    if _GRAFT_APPOINTMENT_LEAK_RE.search(text):
+        return True
+    return bool(_ROUTING_PREAMBLE_LINE_RE.search(text))
+
 # Per-excerpt retrieval telemetry, e.g. "[doc_id=cbca195d chunk=11 score=2.199
 # src=...]". Internal by construction: the user never asked for a cosine.
 _RETRIEVAL_MARKER_RE = re.compile(
@@ -2488,6 +2553,21 @@ class _EmitLeakGuard:
                 probe = "".join(self._acc)
             else:
                 probe = content
+            # Routing notes are stripped, not nuked — JACOBS must survive
+            # a prepended ENGINEER APPOINTMENT hint (live e24aee4).
+            if answer_contains_routing_preamble(content) or (
+                kind == "end" and answer_contains_routing_preamble(probe)
+            ):
+                if kind == "end":
+                    content = _strip_answer_routing_preamble(probe)
+                    event = {**event, "content": content}
+                    probe = content
+                else:
+                    stripped = _strip_answer_routing_preamble(content)
+                    if not stripped:
+                        return None
+                    event = {**event, "content": stripped}
+                    probe = _strip_answer_routing_preamble(probe)
             if _looks_like_internal_context_leak(probe):
                 self.tripped = True
                 _LOG.warning(
@@ -2800,6 +2880,7 @@ def _sanitize_final_text(
         cleaned = ""
     else:
         cleaned = _strip_dsml(text).strip()
+        cleaned = _strip_answer_routing_preamble(cleaned)
 
     if cleaned:
         # Unwrap a sole markdown fence / BOM before the tool-JSON detector so
@@ -5116,6 +5197,7 @@ def _graft_asked_contract_particular(
         )
         user = _latest_operator_ask(messages)
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        text = _strip_answer_routing_preamble(text)
         if not user:
             return text
         # Live leftover E1: compose already owns rate × ACA. The A2
@@ -5220,7 +5302,8 @@ def _graft_asked_contract_particular(
             ):
                 return line
             body = (text or "").strip()
-            return line if not body else f"{line}\n\n{body}"
+            out = line if not body else f"{line}\n\n{body}"
+            return _strip_answer_routing_preamble(out)
         if query_asks_for_defects_notification_period(user):
             days = extract_defects_notification_period(rag)
             if not days:
@@ -6041,7 +6124,10 @@ def _postprocess_answer(
         project_id=project_id or (audit_rec or {}).get("project_id"),
         coverage=coverage,
     )
-    return text
+    # After graft: #587's INTERNAL GUIDANCE did not stop extract from
+    # electing the ENGINEER APPOINTMENT heading. Strip leftover steering
+    # so JACOBS (or any other particular) is what the user sees.
+    return _strip_answer_routing_preamble(text)
 
 
 _INGEST_NEXT_RE = re.compile(r"(?im)^Next:\s*\S+")
@@ -10152,6 +10238,7 @@ class Agent:
                         if nl >= 0:
                             seg, pending = pending[: nl + 1], pending[nl + 1:]
                             seg = _sanitize_inline_paths(_sanitize_citation_labels(seg))
+                            seg = _strip_answer_routing_preamble(seg)
                             if seg and not _looks_like_internal_tool_json(seg):
                                 yield {"type": "token", "content": seg}
                 except _SynthStreamError as _se:
@@ -10243,6 +10330,7 @@ class Agent:
                     # streaming used to emit tool JSON/XML here before sanitize.
                     if pending and not tool_leak and not promise_hold:
                         seg = _sanitize_inline_paths(_sanitize_citation_labels(pending))
+                        seg = _strip_answer_routing_preamble(seg)
                         if seg and not _looks_like_internal_tool_json(seg):
                             yield {"type": "token", "content": seg}
                     # Recover-from-tools lives in _postprocess_answer. Do not

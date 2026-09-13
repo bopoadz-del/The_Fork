@@ -2996,6 +2996,30 @@ _ENGINEER_POINTER_VAL_RE = re.compile(
     r"(?i)^(?:named|stated|identified|appointed|set\s+out|specified|"
     r"defined|described|referred\s+to)\s+(?:in|as|under)\b"
 )
+# Inject routing notes ("ENGINEER APPOINTMENT — an excerpt below… That
+# IS the answer. State the appointed firm.") are steering, not a firm
+# name. Live e24aee4 / #587: extract_engineer_identity elected that
+# heading as the Engineer and graft prepended it to JACOBS.
+_ROUTING_HINT_VAL_RE = re.compile(
+    r"(?i)(?:that is the answer|an excerpt below|"
+    r"state the appointed firm|internal guidance|"
+    r"do not say the identity is absent|"
+    r"do not answer from a conditions of contract|"
+    r"do not invent|do not open with|do not give a generic|"
+    r"do not search further|do not replace it)"
+)
+
+
+def _client_excerpt_text(text: str) -> str:
+    """Drop inject-header routing notes; keep ``[doc_id=…]`` excerpt bodies.
+
+    Extractors that scan the formatted RAG system message must not treat
+    ALL-CAPS routing headings as Contract Data. When there is no excerpt
+    marker the caller passed raw chunk text — leave it unchanged.
+    """
+    t = text or ""
+    marker = t.find("[doc_id=")
+    return t[marker:] if marker >= 0 else t
 
 
 def _looks_like_appointed_party(val: str) -> bool:
@@ -3004,6 +3028,8 @@ def _looks_like_appointed_party(val: str) -> bool:
     if len(name) < 4 or _NOT_A_PARTY_NAME_RE.match(name):
         return False
     if _ENGINEER_POINTER_VAL_RE.search(name):
+        return False
+    if _ROUTING_HINT_VAL_RE.search(name):
         return False
     if _PARTY_FIRM_RE.search(name):
         return True
@@ -3929,7 +3955,7 @@ def extract_time_for_completion_days(text: str) -> Optional[str]:
 
 def extract_engineer_identity(text: str) -> Optional[str]:
     """Appointed Engineer firm/name from client text, or None."""
-    t = text or ""
+    t = _client_excerpt_text(text or "")
     if not t:
         return None
     for key, val in filled_particulars_rows(t):
@@ -3939,6 +3965,8 @@ def extract_engineer_identity(text: str) -> Optional[str]:
             return re.sub(r"\s+", " ", val).strip(" \t.:;,-")
     lines = t.splitlines()
     for i, line in enumerate(lines):
+        if _ROUTING_HINT_VAL_RE.search(line):
+            continue
         m = _SCANNED_ENGINEER_LINE_RE.match(line)
         if not m:
             continue
