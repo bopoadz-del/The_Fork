@@ -168,6 +168,28 @@ def _looks_like_unit(token: str) -> bool:
     return False
 
 
+# A small integer joined to a time word — "28-day", "7 day", "90-days",
+# "56 week" — is a concrete-age / cure / duration spec, never a document
+# reference code. Live find: "28-day cube strength" extracted ['28-day'],
+# which the missing-reference short-circuit could not match to any chunk, so
+# it false-declined ("could not confirm this reference") even though the
+# C35/45 concrete chunk sat in the top-5. This mirrors the decimal-quantity
+# and unit-ratio exclusions already applied in extract_query_identifiers.
+_DURATION_RE = re.compile(
+    r"^\d{1,3}[-\s]?"
+    r"(?:day|days|week|weeks|hour|hours|hr|hrs|"
+    r"month|months|year|years|yr|yrs)$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_duration(token: str) -> bool:
+    """True for a duration/age spec like '28-day' or '90 days' — a spec value,
+    not a document reference. Drawing refs ('054-0009') and codes never match:
+    their tail is not a time word."""
+    return bool(_DURATION_RE.match(token.strip()))
+
+
 def extract_query_identifiers(query: str) -> List[str]:
     """Pull construction reference identifiers out of a user query.
 
@@ -253,6 +275,7 @@ def extract_query_identifiers(query: str) -> List[str]:
     result = [
         t for t in found
         if len(t) >= 2 and t not in _STOPWORDS and not _looks_like_unit(t)
+        and not _looks_like_duration(t)
     ]
     # Prefer longer, more specific identifiers first.
     result.sort(key=lambda t: (-len(t), t))
