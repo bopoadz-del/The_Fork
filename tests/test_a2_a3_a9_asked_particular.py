@@ -557,6 +557,25 @@ def test_inject_hints_name_the_asked_particular():
     assert "90 days" in a3.lower()
 
 
+def test_inject_hints_are_marked_internal_and_precede_the_routing_notes():
+    """A9 leak guard (2026-09-13).
+
+    The answer-routing hints ("… That IS the answer. State the appointed
+    firm.") are steering for the model, not answer text — but the live Engineer
+    answer opened by parroting the raw ENGINEER APPOINTMENT hint verbatim. An
+    INTERNAL GUIDANCE directive that forbids echoing the notes must be present
+    and must come BEFORE the hints it governs.
+    """
+    from app.core.rag.inject import format_chunks_as_system_message
+
+    eng = _chunk("eng", ENG_DOC, 0.9, SCANNED_ENGINEER)
+    a9 = format_chunks_as_system_message([eng], 1, query=LIVE_A9)["content"]
+    assert "INTERNAL GUIDANCE" in a9
+    assert "NEVER quote" in a9
+    assert a9.index("INTERNAL GUIDANCE") < a9.index("ENGINEER APPOINTMENT")
+    assert a9.index("INTERNAL GUIDANCE") < a9.index("That IS the answer")
+
+
 def test_extract_elects_852_over_sectional_and_spec_90():
     from app.core.rag.retriever import extract_time_for_completion_days
 
