@@ -186,6 +186,51 @@ def _audit_chunk(c) -> Dict[str, Any]:
     }
 
 
+# TERM EQUIVALENCE (answer-mapping). Retrieval may surface the right Contract
+# Data document, yet the model still declines when the user's wording is a
+# synonym of the formal FIDIC heading (live 2026-09-13: the Accepted Contract
+# Amount doc was retrieved at High confidence, but "what is the contract sum
+# before VAT?" answered "I don't have the contract sum"). This maps everyday
+# synonyms onto the formal term so the model uses the retrieved figure. Emitted
+# ONLY when the question uses such a synonym, and governed by INTERNAL GUIDANCE
+# (never quoted). Kept separate from the retriever's synonym expansion on
+# purpose: that widens RECALL; this fixes ANSWER MAPPING once the chunk is in
+# hand.
+_TERM_EQUIVALENCE_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("contract sum", "contract value", "contract worth", "net contract value",
+      "contract price before", "total contract value", "worth of the contract"),
+     "the 'Accepted Contract Amount' IS the contract sum / contract value / "
+     "contract price of the Works — its excluding-VAT figure answers 'before "
+     "VAT' or 'net of tax'"),
+    (("maximum amount of delay", "cap on delay", "ceiling on delay",
+      "cap on liquidated", "maximum liquidated", "ld cap", "delay damages cap",
+      "maximum delay damages"),
+     "the 'Maximum Amount of Delay Damages' in the Contract Data IS the cap / "
+     "ceiling on delay (liquidated) damages"),
+    (("defects liability", "maintenance period", "warranty period",
+      "defects period"),
+     "the 'Defects Notification Period' is the defects liability / maintenance "
+     "/ warranty period"),
+)
+
+
+def _term_equivalence_note(query: str) -> str:
+    """Internal answer-mapping note for any contract-term synonym in ``query``
+    (empty when none). Governed by the INTERNAL GUIDANCE directive — its wording
+    is for the model alone and must never be quoted into the reply."""
+    q = (query or "").lower()
+    hits = [note for triggers, note in _TERM_EQUIVALENCE_HINTS
+            if any(t in q for t in triggers)]
+    if not hits:
+        return ""
+    return (
+        "TERM EQUIVALENCE — the user's wording is a synonym of a formal "
+        "contract term: " + "; ".join(hits) + ". Answer from the retrieved "
+        "figure even though the label differs; do not decline merely because "
+        "the exact synonym is not printed verbatim in an excerpt.\n"
+    )
+
+
 def format_chunks_as_system_message(
     chunks: List[Chunk],
     total_candidates: int,
@@ -291,6 +336,12 @@ def format_chunks_as_system_message(
             "not applicable, that IS the answer — do not describe what such "
             "a section contains in a standard form.\n"
         )
+
+    # TERM EQUIVALENCE — map a synonym in the question onto the formal contract
+    # term so the model answers from the retrieved figure instead of declining
+    # because the exact synonym is not printed. Empty (no-op) unless the query
+    # uses such a synonym; the INTERNAL GUIDANCE directive above governs it.
+    header += _term_equivalence_note(query)
 
     # OLD-pack G1: even on a single-class set, a retrieved register row
     # that says Not Used is the answer. Without this the model restated
