@@ -6501,6 +6501,82 @@ def reserve_monetary_base_row(
     return False
 
 
+# Reservation heads for the synonym boost. A user asking with a synonym
+# ("contract sum before VAT") triggers the retriever's synonym expansion, which
+# pulls the canonical chunk into the candidate pool — but its cosine to the
+# diluted synonym query is lower than the primary query's own top hits, so the
+# score-based top-k cut drops it before the model sees it (live 2026-09-13: ACA
+# "contract sum" answered "I don't have it" though the doc was retrieved). Each
+# entry maps the synonym triggers to the CANONICAL HEADING substring to look
+# for in a pool chunk. Headings are specific enough not to over-match; retention
+# is intentionally omitted (its rate chunk is already surfaced by the retriever
+# synonym leg, and "retention" alone is too broad to reserve safely).
+_SYNONYM_RESERVE_HEADS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("contract sum", "contract value", "contract worth", "net contract value",
+      "contract price before", "total contract value", "worth of the contract"),
+     "accepted contract amount"),
+    (("maximum amount of delay", "cap on delay", "ceiling on delay",
+      "cap on liquidated", "maximum liquidated", "ld cap", "delay damages cap",
+      "maximum delay damages"),
+     "maximum amount of delay damages"),
+    (("defects liability", "maintenance period", "warranty period",
+      "defects period"),
+     "defects notification period"),
+)
+
+
+def reserve_contract_synonym_row(
+    query: str,
+    kept: List[Chunk],
+    ranked: List[Chunk],
+    *,
+    allow=None,
+) -> bool:
+    """Give a synonym-named Contract Data figure one slot in the top-k.
+
+    Mirrors ``reserve_monetary_base_row``: a reservation, not a bonus, so no
+    constant fitted to one corpus's cosine spread can regress. ``kept`` is
+    modified in place (the lowest-ranked survivor is replaced, k unchanged).
+    Returns True on a swap. No-op unless the query uses a synonym whose
+    canonical heading is present in the pool but missing from ``kept``.
+
+    ``allow`` is the caller's contract-scope test, so a reserved row cannot
+    re-enter a contract the fence already excluded."""
+    if not kept or not _contract_synonym_boost_enabled():
+        return False
+    q = (query or "").strip().lower()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    heads = [
+        head for triggers, head in _SYNONYM_RESERVE_HEADS
+        if any(t in q for t in triggers)
+    ]
+    if not heads:
+        return False
+
+    def _has_head(text: str) -> bool:
+        low = (text or "").lower()
+        return any(head in low for head in heads)
+
+    if any(_has_head(c.text or "") for c in kept):
+        return False
+    present = {c.chunk_id for c in kept}
+    for chunk in ranked:
+        if chunk.chunk_id in present:
+            continue
+        if not _has_head(chunk.text or ""):
+            continue
+        if allow is not None and not allow(chunk):
+            continue
+        kept[len(kept) - 1] = chunk
+        logger.debug(
+            "reserved a canonical-heading row for a contract-term synonym ask; "
+            "the score-based cut had dropped it below top-k",
+        )
+        return True
+    return False
+
+
 def _e1_non_operand_index(
     kept: List[Chunk],
     *,
@@ -7840,6 +7916,14 @@ def retrieve_with_filter(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
     ensure_a2_kept_has_including_vat(
+        query, kept, [c for _, c in scored], allow=_allow_final,
+    )
+    # Synonym boost survival: a synonym-named Contract Data figure ("contract
+    # sum" -> Accepted Contract Amount) that the score-based cut dropped below
+    # top-k gets one reserved slot, so the answer layer sees the figure it
+    # would otherwise decline on. Runs last, on the final k, like the reserves
+    # above; no-op unless the query uses such a synonym.
+    reserve_contract_synonym_row(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
 
