@@ -574,6 +574,11 @@ def test_inject_hints_are_marked_internal_and_precede_the_routing_notes():
     assert "NEVER quote" in a9
     assert a9.index("INTERNAL GUIDANCE") < a9.index("ENGINEER APPOINTMENT")
     assert a9.index("INTERNAL GUIDANCE") < a9.index("That IS the answer")
+    # The prefix must not hardcode inactive heading names — those belong
+    # only on the rule they name (single-class SOURCE CLASS asserts).
+    prefix = a9[: a9.index("ENGINEER APPOINTMENT")]
+    assert "SOURCE CLASS" not in prefix
+    assert "TIME FOR COMPLETION" not in prefix
 
 
 def test_extract_elects_852_over_sectional_and_spec_90():
