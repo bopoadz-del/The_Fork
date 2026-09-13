@@ -468,6 +468,48 @@ def test_sources_follow_contract_named_in_answer(monkeypatch):
     assert not any("DD-2022" in n for n in names), names
 
 
+# ── Hardening: equal-score ties must resolve deterministically ───────────
+# Kimi K2 is pinned to temperature=1, so the answer text (and its citations)
+# vary run-to-run. Retrieval is deterministic, so the panel must be too: two
+# chunks that tie on score can never flip which one survives the top-N
+# truncation. The tie-break is chunk_id asc.
+
+def test_fallback_top3_is_deterministic_under_equal_scores(monkeypatch):
+    """Equal-score chunks must land in the top-3 in a stable chunk_id order
+    regardless of the order they arrive in the audit."""
+    _stub_get_document(monkeypatch, "x.pdf")
+    base = [
+        {"doc_id": "d1", "chunk_index": 0, "chunk_id": "p:z", "score": 0.80},
+        {"doc_id": "d2", "chunk_index": 1, "chunk_id": "p:a", "score": 0.80},
+        {"doc_id": "d3", "chunk_index": 2, "chunk_id": "p:m", "score": 0.80},
+        {"doc_id": "d4", "chunk_index": 3, "chunk_id": "p:q", "score": 0.80},
+    ]
+    text = "answer with no citations"
+    forward = _build_sources_from_audit({"chunks": list(base)}, text)
+    reverse = _build_sources_from_audit({"chunks": list(reversed(base))}, text)
+    # Same set and same order irrespective of arrival order — chunk_id asc.
+    assert [s["chunk_id"] for s in forward] == ["p:a", "p:m", "p:q"]
+    assert [s["chunk_id"] for s in forward] == [s["chunk_id"] for s in reverse]
+
+
+def test_mention_fallback_is_deterministic_under_equal_scores(monkeypatch):
+    """Filename-mention fallback dedups by doc, keeping the first chunk seen.
+    With equal scores the survivor must be chunk_id-stable, not arrival-order."""
+    def doc_lookup(did):
+        return {"original_name": "Spec.pdf"}
+    monkeypatch.setattr("app.core.projects.get_document", doc_lookup)
+    base = [
+        {"doc_id": "d1", "chunk_index": 9, "chunk_id": "p:z", "score": 0.7},
+        {"doc_id": "d1", "chunk_index": 1, "chunk_id": "p:a", "score": 0.7},
+    ]
+    text = "The detail comes from Spec.pdf."
+    forward = _build_sources_from_audit({"chunks": list(base)}, text)
+    reverse = _build_sources_from_audit({"chunks": list(reversed(base))}, text)
+    assert len(forward) == 1
+    assert forward[0]["chunk_id"] == "p:a"  # lowest chunk_id wins the tie
+    assert forward[0]["chunk_id"] == reverse[0]["chunk_id"]
+
+
 def test_sources_match_src_marker_to_injected_chunk(monkeypatch):
     _patch_doc_names(monkeypatch, {"d23": DD23, "d22": DD22})
     audit = {

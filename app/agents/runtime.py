@@ -6468,6 +6468,15 @@ def _build_sources_from_audit(
                 seen.add(key)
                 matched.append(_format(c, _doc_name(doc_id)))
         if matched:
+            # The append order above follows the model's citation order in the
+            # answer text, which the LLM emits non-deterministically (Kimi K2 is
+            # pinned to temperature=1). Sort to a deterministic total order
+            # (score desc, chunk_id asc) so the panel row order is stable across
+            # identical runs. Membership still faithfully reflects what the
+            # answer cited (PR-110); only the ordering is made reproducible.
+            matched.sort(
+                key=lambda s: (-(s.get("score") or 0), s.get("chunk_id") or "")
+            )
             return _sources_one_contract(matched)
 
     # 2) Filename-mention fallback: the model may have named a source in
@@ -6478,7 +6487,12 @@ def _build_sources_from_audit(
         text_n = _normalise_filename(final_text)
         mention_hits: list[dict[str, Any]] = []
         seen_mentions: set = set()
-        for c in sorted(chunks, key=lambda x: -(x.get("score") or 0)):
+        # Deterministic total order (score desc, chunk_id asc): dedup-by-doc
+        # keeps the FIRST chunk seen per doc, so an equal-score tie flip would
+        # otherwise change which doc's chunk represents it in mention_hits[:3].
+        for c in sorted(
+            chunks, key=lambda x: (-(x.get("score") or 0), x.get("chunk_id") or "")
+        ):
             doc_id = c.get("doc_id")
             name = _doc_name(doc_id)
             name_n = _normalise_filename(name)
@@ -6493,7 +6507,14 @@ def _build_sources_from_audit(
             return _sources_one_contract(mention_hits[:3])
 
     # 3) Final fallback: top-3 retrieved chunks by score.
-    by_score = sorted(chunks, key=lambda c: -(c.get("score") or 0))[:3]
+    # Deterministic total order: score desc, then chunk_id asc so two chunks
+    # that tie on score can never flip across runs and change which doc lands
+    # inside the top-3 truncation (the source-panel wobble). chunk_id is the
+    # stable per-chunk key; where absent (bare audit dicts) it is "" for all,
+    # leaving the pure-score order unchanged.
+    by_score = sorted(
+        chunks, key=lambda c: (-(c.get("score") or 0), c.get("chunk_id") or "")
+    )[:3]
     return _sources_one_contract(
         [_format(c, _doc_name(c["doc_id"])) for c in by_score]
     )
