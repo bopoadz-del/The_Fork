@@ -37,9 +37,9 @@ import pytest
 
 from app.infra.monitoring import MonitoringBlock
 
-# Providers `_llm_config` can actually return. DeepSeek / OpenRouter /
-# Kimi / Groq on cloud, Ollama on-prem.
-LIVE_LADDER = {"kimi", "groq", "ollama", "openrouter", "deepseek"}
+# Providers `_llm_config` can actually return: DeepSeek (primary) and
+# OpenRouter (fallback). Kimi / Groq / Ollama / OpenAI were removed.
+LIVE_LADDER = {"openrouter", "deepseek"}
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def test_the_roster_matches_what_llm_config_can_actually_return():
     """Derived from the code rather than from LIVE_LADDER, so the constant
     above cannot become its own stale twin.
 
-    `_llm_config` resolves an unset/unrecognised LLM_PROVIDER to kimi, so
+    `_llm_config` resolves an unset/unrecognised LLM_PROVIDER to deepseek, so
     driving it with each name is a complete enumeration of what the platform
     can be pointed at.
     """
@@ -76,7 +76,7 @@ def test_the_roster_matches_what_llm_config_can_actually_return():
     from app.agents.runtime import _llm_config
 
     resolvable = set()
-    for name in ("kimi", "groq", "ollama", "openrouter", "deepseek", "", "nonsense"):
+    for name in ("kimi", "groq", "ollama", "openai", "openrouter", "deepseek", "", "nonsense"):
         with mock.patch.dict(os.environ, {"LLM_PROVIDER": name}, clear=False):
             resolvable.add(_llm_config()["provider"])
 
@@ -86,11 +86,15 @@ def test_the_roster_matches_what_llm_config_can_actually_return():
     )
 
 
-@pytest.mark.parametrize("dead", ["openai", "anthropic", "local_ollama"])
+@pytest.mark.parametrize(
+    "dead",
+    ["openai", "anthropic", "local_ollama", "kimi", "groq", "ollama"],
+)
 def test_a_removed_provider_is_not_monitored(dead):
-    """Named explicitly, because these lingered on the roster after the
-    2026-07-25 purge. DeepSeek was restored 2026-09-06 and is live again;
-    OpenAI / Anthropic / the old ``local_ollama`` alias stay off."""
+    """Named explicitly, because these lingered on the roster after prior
+    purges. DeepSeek and OpenRouter are the only live providers; OpenAI /
+    Anthropic / Kimi / Groq / Ollama (and the old ``local_ollama`` alias)
+    stay off."""
     assert dead not in MonitoringBlock(None, {}).providers
 
 
@@ -116,7 +120,7 @@ async def test_a_genuinely_degraded_provider_still_raises_the_alarm(monitor):
     the alarm. Once there IS evidence, it must fire."""
     for _ in range(10):
         await monitor.execute({
-            "action": "record_call", "provider": "kimi",
+            "action": "record_call", "provider": "deepseek",
             "latency_ms": 9000, "success": False, "error_type": "timeout",
         })
 
@@ -127,7 +131,7 @@ async def test_a_genuinely_degraded_provider_still_raises_the_alarm(monitor):
         "ten failed calls did not raise the alarm: " + str(result)
     )
     assert result.get("observed") is True, result
-    assert "kimi" in result["reason"], result["reason"]
+    assert "deepseek" in result["reason"], result["reason"]
 
 
 @pytest.mark.asyncio
@@ -136,13 +140,13 @@ async def test_a_healthy_provider_is_recommended(monitor):
     a function that never recommends anything."""
     for _ in range(10):
         await monitor.execute({
-            "action": "record_call", "provider": "kimi",
+            "action": "record_call", "provider": "deepseek",
             "latency_ms": 120, "success": True,
         })
 
     result = await monitor.execute({"action": "recommend"})
 
-    assert result["recommended"] == "kimi", result
+    assert result["recommended"] == "deepseek", result
     assert result["confidence"] is not None and result["confidence"] >= 70, result
 
 
@@ -157,13 +161,13 @@ async def test_top_provider_names_an_observed_winner_or_nothing(monitor):
 
     for _ in range(5):
         await monitor.execute({
-            "action": "record_call", "provider": "groq",
+            "action": "record_call", "provider": "openrouter",
             "latency_ms": 100, "success": True,
         })
     monitor.leaderboard_cache = None          # the endpoint caches for 60s
 
     observed = await monitor.execute({"action": "leaderboard"})
-    assert observed["top_provider"] == "groq", observed["top_provider"]
+    assert observed["top_provider"] == "openrouter", observed["top_provider"]
 
 
 @pytest.mark.asyncio

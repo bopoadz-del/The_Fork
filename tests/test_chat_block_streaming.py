@@ -123,9 +123,10 @@ async def test_upstream_error_is_reported_as_an_error_event():
 
 @pytest.mark.asyncio
 async def test_empty_api_key_omits_the_authorization_header():
-    """The documented Ollama guard: an empty Bearer makes httpx raise
-    "Illegal header value" before the request leaves the client, silently
-    breaking the whole fast chat path under LLM_PROVIDER=ollama."""
+    """The documented empty-Bearer guard: an empty key must send no
+    Authorization header, because ``Bearer `` makes httpx raise "Illegal
+    header value" before the request leaves the client, silently breaking the
+    whole fast chat path for a keyless configuration."""
     seen: dict = {}
     fake = _FakeStream([_sse("x"), "data: [DONE]"])
     block = ChatBlock()
@@ -148,18 +149,21 @@ async def test_a_real_api_key_does_send_the_authorization_header():
 
 
 @pytest.mark.asyncio
-async def test_stream_payload_pins_kimi_temperature():
-    """Streaming ChatBlock must send temperature=1 for K2, same as non-stream."""
+async def test_stream_payload_honours_a_provider_fixed_temperature():
+    """Streaming ChatBlock must apply a provider's ``fixed_temperature`` pin,
+    same as the non-stream path. Neither live provider (DeepSeek/OpenRouter)
+    pins one today, but the generic hook must keep working for a future
+    constrained provider."""
     seen: dict = {}
     fake = _FakeStream([_sse("x"), "data: [DONE]"])
     block = ChatBlock()
-    kimi_cfg = {
-        "url": "https://api.moonshot.ai/v1/chat/completions",
-        "provider": "kimi",
+    pinned_cfg = {
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "provider": "deepseek",
         "fixed_temperature": 1,
     }
     with _patch_stream(fake, recorder=seen):
         await _drain(await block._call_cloud(
-            "hi", "kimi-k2.6", 10, 0.7, True, "sk-live", kimi_cfg, None))
+            "hi", "deepseek-chat", 10, 0.7, True, "sk-live", pinned_cfg, None))
     assert (seen.get("json") or {}).get("temperature") == 1
     assert (seen.get("json") or {}).get("stream") is True

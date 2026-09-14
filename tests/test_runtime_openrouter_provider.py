@@ -96,7 +96,7 @@ def test_openrouter_paid_slug_in_config_falls_back_to_free_router(monkeypatch):
 
 
 def test_openrouter_has_no_fixed_temperature(monkeypatch):
-    """OpenRouter is Groq-shaped: the agent keeps its own temperature."""
+    """OpenRouter is OpenAI-shaped: the agent keeps its own temperature."""
     monkeypatch.setenv("LLM_PROVIDER", "openrouter")
     assert "fixed_temperature" not in _llm_config()
 
@@ -131,11 +131,12 @@ def test_openrouter_max_tokens_invalid_env_falls_back_to_default(monkeypatch):
 
 
 def test_openrouter_ceiling_does_not_touch_other_providers(monkeypatch):
-    """Kimi still wants high caps; the ceiling is OpenRouter-only."""
+    """DeepSeek keeps its full budget; the ceiling is OpenRouter-only."""
     monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "2000")
-    assert _provider_max_tokens({"provider": "kimi"}, 8192) == 8192
-    assert _provider_max_tokens({"provider": "groq"}, 8192) == 8192
-    assert _provider_max_tokens({"provider": "kimi", "reasoning_min_tokens": 4096}, 8192) == 8192
+    assert _provider_max_tokens({"provider": "deepseek"}, 8192) == 8192
+    # The generic reasoning floor still lifts a starving budget, but never
+    # applies the OpenRouter ceiling to a non-OpenRouter provider.
+    assert _provider_max_tokens({"provider": "deepseek", "reasoning_min_tokens": 4096}, 8192) == 8192
 
 
 def test_openrouter_tool_and_fetch_caps_are_tighter(monkeypatch):
@@ -147,16 +148,17 @@ def test_openrouter_tool_and_fetch_caps_are_tighter(monkeypatch):
 
 
 def test_openrouter_caps_do_not_change_other_providers(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     assert _effective_tool_result_max_chars() == _TOOL_RESULT_MAX_CHARS
     assert _effective_fetch_document_max_chars() == _FETCH_DOCUMENT_MAX_CHARS
-    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    # Unset LLM_PROVIDER resolves to DeepSeek — still no OpenRouter caps.
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     assert _effective_tool_result_max_chars() == _TOOL_RESULT_MAX_CHARS
     assert _effective_fetch_document_max_chars() == _FETCH_DOCUMENT_MAX_CHARS
 
 
 def test_openrouter_tool_result_truncates_under_tighter_cap(monkeypatch):
-    """A mid-size payload fits Kimi's 8k cap but not OpenRouter's 4k cap."""
+    """A mid-size payload fits DeepSeek's budget but not OpenRouter's 4k cap."""
     monkeypatch.setenv("LLM_PROVIDER", "openrouter")
     payload = {"text": "A" * 5000, "source": "extracted"}
     out = _tool_result_content(payload)

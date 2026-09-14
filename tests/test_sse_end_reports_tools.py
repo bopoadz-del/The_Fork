@@ -27,8 +27,8 @@ def _stub_llm_key(monkeypatch):
     these tests never make a network call. Pin the provider so the guard checks
     a key we control regardless of the developer's LLM_PROVIDER."""
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
-    monkeypatch.setenv("LLM_PROVIDER", "kimi")
-    monkeypatch.setenv("KIMI_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
 
 
 def _agent():
