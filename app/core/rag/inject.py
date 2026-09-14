@@ -485,10 +485,17 @@ def format_chunks_as_system_message(
     if query and query_asks_who_the_engineer_is(query):
         if any(chunk_states_engineer_identity(c.text or "") for c in chunks):
             header += (
-                "ENGINEER APPOINTMENT — an excerpt below names the Engineer. "
-                "That IS the answer. State the appointed firm. Do not say "
-                "the identity is absent, and do not answer from a Conditions "
-                "of Contract glossary or drawing note instead.\n"
+                # Deepseek-flash conflated identity with the appointment-timing
+                # excerpt ("The Engineer is 90 days of the effective date of a
+                # Letter of Award…", 4/5 live 2026-09-14) because the old
+                # heading/word "APPOINTMENT" + "State the appointed firm" pulled
+                # the timing row. Name the answer explicitly: the FIRM, never the
+                # date/period.
+                "ENGINEER IDENTITY — an excerpt below names the Engineer (a "
+                "firm/company). State ONLY that firm's name. Do NOT state the "
+                "appointment date or period, and do NOT say the identity is "
+                "absent or answer from a Conditions of Contract glossary or "
+                "drawing note instead.\n"
             )
     if query and query_asks_for_parent_company_guarantee(query):
         _pcg_texts = [c.text or "" for c in chunks]
