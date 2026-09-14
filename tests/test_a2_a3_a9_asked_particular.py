@@ -556,7 +556,7 @@ def test_inject_hints_name_the_asked_particular():
     assert "Lead with that including-VAT figure" in a2
     assert "delay damages" in a2.lower()
     assert "TIME FOR COMPLETION" in a3
-    assert "ENGINEER APPOINTMENT" in a9
+    assert "ENGINEER IDENTITY" in a9
     assert "90 days" in a3.lower()
 
 
@@ -575,11 +575,11 @@ def test_inject_hints_are_marked_internal_and_precede_the_routing_notes():
     a9 = format_chunks_as_system_message([eng], 1, query=LIVE_A9)["content"]
     assert "INTERNAL GUIDANCE" in a9
     assert "NEVER quote" in a9
-    assert a9.index("INTERNAL GUIDANCE") < a9.index("ENGINEER APPOINTMENT")
+    assert a9.index("INTERNAL GUIDANCE") < a9.index("ENGINEER IDENTITY")
     assert a9.index("INTERNAL GUIDANCE") < a9.index("That IS the answer")
     # The prefix must not hardcode inactive heading names — those belong
     # only on the rule they name (single-class SOURCE CLASS asserts).
-    prefix = a9[: a9.index("ENGINEER APPOINTMENT")]
+    prefix = a9[: a9.index("ENGINEER IDENTITY")]
     assert "SOURCE CLASS" not in prefix
     assert "TIME FOR COMPLETION" not in prefix
 
@@ -604,7 +604,7 @@ def test_extract_from_real_inject_elects_jacobs_not_the_appointment_heading():
     from app.core.rag.retriever import extract_engineer_identity
 
     rag = _real_a9_inject()["content"]
-    assert "ENGINEER APPOINTMENT" in rag
+    assert "ENGINEER IDENTITY" in rag
     assert extract_engineer_identity(rag) == A9_FIRM
     assert extract_engineer_identity(LIVE_A9_PREAMBLE_LEAK) is None
     assert extract_engineer_identity(
@@ -660,6 +660,30 @@ def test_answer_must_not_contain_guard_preamble():
     assert "That IS the answer" not in out
     assert "INTERNAL GUIDANCE" not in out
     assert "State the appointed firm" not in out
+
+
+NEW_ENGINEER_HINT_LEAK = (
+    "The Engineer is ENGINEER IDENTITY — an excerpt below names the Engineer "
+    "(a firm/company). State ONLY that firm's name. Do NOT state the "
+    "appointment date or period."
+)
+
+
+def test_new_engineer_identity_hint_wording_is_leak_guarded():
+    """The reworded ENGINEER IDENTITY hint (2026-09-14, deepseek fix) must be
+    caught by the same leak guards as the old ENGINEER APPOINTMENT wording, and
+    must never be read as the firm name."""
+    from app.core.rag.retriever import extract_engineer_identity
+
+    leaked = f"{NEW_ENGINEER_HINT_LEAK}\n\n{A9_FIRM}"
+    assert answer_contains_routing_preamble(leaked)
+    cleaned = _strip_answer_routing_preamble(leaked)
+    assert A9_FIRM in cleaned  # JACOBS survives the strip
+    assert not answer_contains_routing_preamble(cleaned)
+    assert "State ONLY that firm" not in cleaned
+    assert "ENGINEER IDENTITY" not in cleaned
+    # The new heading must not be elected as the Engineer (the e24aee4 bug class).
+    assert extract_engineer_identity(NEW_ENGINEER_HINT_LEAK) is None
 
 
 def test_extract_elects_852_over_sectional_and_spec_90():

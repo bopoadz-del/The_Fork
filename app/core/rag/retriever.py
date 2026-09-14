@@ -3025,7 +3025,8 @@ _ENGINEER_POINTER_VAL_RE = re.compile(
 # heading as the Engineer and graft prepended it to JACOBS.
 _ROUTING_HINT_VAL_RE = re.compile(
     r"(?i)(?:that is the answer|an excerpt below|"
-    r"state the appointed firm|internal guidance|"
+    r"state the appointed firm|state only that firm|"  # old + new hint wording
+    r"do not state the appointment|internal guidance|"
     r"do not say the identity is absent|"
     r"do not answer from a conditions of contract|"
     r"do not invent|do not open with|do not give a generic|"
