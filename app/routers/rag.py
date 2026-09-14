@@ -128,6 +128,42 @@ async def rag_search(
     )
 
 
+@router.get("/v1/rag/synonym-debug")
+async def rag_synonym_debug(
+    q: str,
+    project_id: str = "master_corpus",
+    k: int = 5,
+    auth: dict = Depends(require_api_key),
+):
+    """Trace the contract-term synonym boost through the chat grounding path.
+
+    Read-only. Runs ``retrieve_with_filter`` exactly as chat does, with a debug
+    sink, and returns whether the synonym leg fired, the candidate pool after
+    the leg, where the canonical-heading chunk ranks in the scored pool, and
+    whether the reservation fired. Added to diagnose why a synonym phrasing
+    ("contract sum before VAT") still declined a fact that is in the corpus.
+    """
+    from app.core.rag import retriever as _r
+
+    search_project_id = _searchable_project_or_404(project_id, auth)
+    if not _r.available():
+        return {"available": False}
+    dbg: dict = {}
+    try:
+        chunks, _noise = _r.retrieve_with_filter(
+            q, search_project_id, k=k, _debug=dbg,
+        )
+        dbg["final_kept"] = [
+            {"chunk_index": c.chunk_index,
+             "score": round(float(c.score or 0.0), 3),
+             "snippet": _r._collapse_retrieval_ws(c.text or "")[:90]}
+            for c in chunks
+        ]
+    except Exception as e:  # noqa: BLE001
+        dbg["error"] = str(e)
+    return {"query": q, "project_id": search_project_id, "k": k, "debug": dbg}
+
+
 @router.get("/v1/rag/gk-status")
 async def rag_gk_status(
     q: str = "FIDIC 2017 Golden Principles Contractor claim time-bar",

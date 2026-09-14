@@ -221,6 +221,32 @@ def test_definition_question_is_not_forced_onto_contract_data(monkeypatch):
     assert all(c.doc_id != CD_DOC for c in chunks)
 
 
+CONTRACT_SUM_SYNONYM = "What is the contract sum before VAT as a number?"
+
+
+def test_synonym_debug_sink_is_populated(monkeypatch):
+    """The _debug trace records the synonym-boost pipeline (diagnostic)."""
+    ret = _install_a2_corpus(monkeypatch, cd_in_semantic=True)
+    dbg: dict = {}
+    ret.retrieve_with_filter(CONTRACT_SUM_SYNONYM, ACTIVE, k=5, _debug=dbg)
+    assert dbg.get("synonym_boost_enabled") is True
+    assert dbg.get("synonym_terms")  # "Accepted Contract Amount"
+    assert "reserve_fired" in dbg
+    assert "kept_before_reserve" in dbg
+    assert "canonical_in_scored" in dbg
+
+
+def test_contract_sum_synonym_surfaces_the_aca_row(monkeypatch):
+    """A synonym ("contract sum") must still surface the Accepted Contract
+    Amount Contract Data row — via the reservation, since query_asks_for_
+    accepted_contract_amount is False for this phrasing and the CD chunk sits
+    at a low semantic score behind PSA/CPM."""
+    ret = _install_a2_corpus(monkeypatch, cd_in_semantic=True)
+    chunks, _ = ret.retrieve_with_filter(CONTRACT_SUM_SYNONYM, ACTIVE, k=5)
+    assert any(c.doc_id == CD_DOC for c in chunks), [c.doc_id for c in chunks]
+    assert ACA_EXCL in " ".join(c.text for c in chunks)
+
+
 def test_mutation_filename_bonus_is_what_lifts_contract_data(monkeypatch):
     ret = _install_a2_corpus(monkeypatch, cd_in_semantic=True)
     monkeypatch.setattr(ret, "filename_looks_like_contract_data", lambda *_a, **_k: False)
