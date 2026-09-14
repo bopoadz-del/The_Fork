@@ -8526,9 +8526,9 @@ class Agent:
             }
 
         cfg = _llm_config()
-        # Ollama (local / self-hosted) has no auth — skip the env-key
-        # check entirely. The empty bearer token sent later is ignored
-        # by Ollama's OAI-compatible endpoint.
+        # A provider with no env_key (none today) would need no auth — the
+        # empty-bearer guard downstream omits the header. DeepSeek/OpenRouter
+        # both declare an env_key, so this check requires their API key.
         if cfg["env_key"]:
             api_key = api_key or os.getenv(cfg["env_key"])
             if not api_key:
@@ -9440,8 +9440,8 @@ class Agent:
             }
             return
 
-        # Ollama (local / self-hosted) has no auth — skip the env-key
-        # check. The empty bearer is ignored by Ollama's OAI endpoint.
+        # A provider with no env_key (none today) would need no auth. Both
+        # DeepSeek and OpenRouter declare an env_key, so require their API key.
         if cfg["env_key"]:
             api_key = api_key or os.getenv(cfg["env_key"])
             if not api_key:

@@ -23,13 +23,10 @@ from app.blocks.chat import ChatBlock
 
 @pytest.mark.asyncio
 async def test_offline_template_when_no_provider_available(monkeypatch):
-    """No cloud key, unreachable local LLM → graceful offline template."""
+    """No cloud key configured → graceful offline template."""
 
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("LLAMA_CPP_MODEL_PATH", raising=False)
-    # Point Ollama at an unreachable port so the local path fails fast.
-    monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:1")
 
     block = ChatBlock()
     result = await block.process("Hello, what is 2+2?", {"stream": False})
@@ -40,9 +37,8 @@ async def test_offline_template_when_no_provider_available(monkeypatch):
     assert "offline mode" in text.lower()
     # The user's message must be echoed back so they know the chat is alive.
     assert "Hello, what is 2+2?" in text
-    # The template must surface the cloud + local restore paths.
+    # The template must surface the cloud restore path.
     assert "DEEPSEEK_API_KEY" in text or "OPENROUTER_API_KEY" in text
-    assert "ollama" in text.lower() or "llama" in text.lower()
 
 
 @pytest.mark.asyncio
@@ -200,21 +196,6 @@ def test_chat_block_metadata():
     assert ChatBlock.version.startswith("3.")
     assert "ai" in ChatBlock.tags
     assert "chat" in ChatBlock.tags
-
-
-def test_native_ollama_url_does_not_double_api_chat():
-    """Render sets OLLAMA_URL to a full /api/chat path; appending again 404s."""
-    from app.blocks.chat import _native_ollama_chat_url
-
-    assert _native_ollama_chat_url("https://ollama.example/api/chat") == (
-        "https://ollama.example/api/chat"
-    )
-    assert _native_ollama_chat_url("https://ollama.example/api/chat/") == (
-        "https://ollama.example/api/chat"
-    )
-    assert _native_ollama_chat_url("http://127.0.0.1:11434") == (
-        "http://127.0.0.1:11434/api/chat"
-    )
 
 
 def test_shaped_cloud_payload_honours_a_provider_fixed_temperature():

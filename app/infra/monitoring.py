@@ -21,7 +21,7 @@ request_id_ctx: ContextVar[Optional[str]] = ContextVar("request_id", default=Non
 _sentry_enabled = False
 _structured_logging_enabled = False
 
-# Dead-tunnel / DNS / connect failures when calling local Ollama or cloud LLM APIs.
+# Dead-tunnel / DNS / connect failures when calling the cloud LLM API.
 _LLM_TRANSPORT_MARKERS = (
     "name or service not known",
     "errno -2",
@@ -32,8 +32,6 @@ _LLM_TRANSPORT_MARKERS = (
     "failed to resolve",
     "temporary failure in name resolution",
     "getaddrinfo failed",
-    "ollama not reachable",
-    "ollama request timed out",
 )
 
 
@@ -133,10 +131,6 @@ def get_request_id() -> str:
     return rid
 
 
-def current_ollama_url() -> str:
-    return os.getenv("OLLAMA_URL", "http://localhost:11434")
-
-
 def is_llm_transport_failure(message: str) -> bool:
     if not message:
         return False
@@ -149,7 +143,7 @@ def capture_llm_transport_failure(
     *,
     request_id: Optional[str] = None,
     path: Optional[str] = None,
-    provider: str = "ollama",
+    provider: str = "",
 ) -> Optional[str]:
     """Report dead-tunnel / DNS / connect LLM failures to Sentry with endpoint context."""
     if not is_llm_transport_failure(error_message):
@@ -157,8 +151,8 @@ def capture_llm_transport_failure(
 
     rid = request_id or get_request_id()
     endpoint_ctx = {
-        "OLLAMA_URL": current_ollama_url(),
-        "LOCAL_LLM_MODEL": os.getenv("LOCAL_LLM_MODEL", ""),
+        "llm_provider": os.getenv("LLM_PROVIDER") or "deepseek",
+        "llm_fallback_provider": os.getenv("LLM_FALLBACK_PROVIDER") or "",
     }
     logger.error(
         "llm_transport_failure",

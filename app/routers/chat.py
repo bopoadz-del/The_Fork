@@ -38,13 +38,13 @@ def _report_sse_llm_failure(error_message: str, *, path: str) -> None:
         str(error_message),
         request_id=get_request_id(),
         path=path,
-        provider="ollama",
+        provider=os.getenv("LLM_PROVIDER") or "deepseek",
     )
 
 
 class ChatRequest(BaseModel):
     message: str
-    model: str = "kimi-k2.6"
+    model: str = "deepseek-chat"
     stream: bool = False
     project_id: Optional[str] = None
 
@@ -720,9 +720,9 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
         })
 
         # Report the ACTUAL provider/model that served the turn, not the
-        # request's placeholder default ("kimi-k2.6"). The placeholder is
+        # request's placeholder default ("deepseek-chat"). The placeholder is
         # remapped onto the active provider's model inside the chat block, so
-        # echoing request.model misreported Ollama responses as the wrong provider.
+        # echoing request.model misreported responses as the wrong provider.
         inner = result.get("result", {}) if isinstance(result, dict) else {}
         answer = inner.get("text", "")
         # Cost-grounding gate (§3.2 coverage): refuse an ungrounded cost/rate
@@ -864,7 +864,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
         raise HTTPException(
             413, f"message exceeds {CHAT_MAX_PROMPT_CHARS} characters"
         )
-    model = body.get("model", body.get("provider", "kimi-k2.6"))
+    model = body.get("model", body.get("provider", "deepseek-chat"))
     session_id = body.get("session_id", "default")
     history = body.get("history", []) or []
     project_id = body.get("project_id")

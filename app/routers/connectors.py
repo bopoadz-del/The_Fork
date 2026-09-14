@@ -23,7 +23,6 @@ from app.core.cde import (
     process_cde_events,
     sync_cde_documents,
 )
-from app.core.deployment_profile import forbid_onprem
 from app.dependencies import require_user
 from app.routers.projects import _owned_or_404
 
@@ -142,7 +141,6 @@ async def list_connectors(project_id: str, auth: dict = Depends(require_user)):
 
 @router.post(
     "/v1/projects/{project_id}/connectors/aconex/sync",
-    dependencies=[Depends(forbid_onprem("Aconex / CDE"))],
 )
 async def sync_aconex(
     project_id: str,
@@ -185,7 +183,6 @@ async def sync_aconex(
 
 @router.post(
     "/v1/projects/{project_id}/connectors/aconex/rfi",
-    dependencies=[Depends(forbid_onprem("Aconex / CDE"))],
 )
 async def post_aconex_rfi(
     project_id: str,
@@ -222,7 +219,6 @@ async def post_aconex_rfi(
 
 @router.post(
     "/v1/projects/{project_id}/connectors/aconex/events",
-    dependencies=[Depends(forbid_onprem("Aconex / CDE"))],
 )
 async def poll_aconex_events(
     project_id: str,

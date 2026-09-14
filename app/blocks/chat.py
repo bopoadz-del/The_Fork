@@ -1,22 +1,19 @@
-"""Chat Block — active cloud provider (Kimi/Groq via _llm_config) + local-inference fallback.
+"""Chat Block — active cloud provider (DeepSeek/OpenRouter via _llm_config).
 
 The chat must never go completely dark on the user. Order of attempts:
 
-1. **Active cloud provider** (Kimi primary / Groq fallback, via _llm_config).
-2. **Local LLM** (kept *inside* the platform — no third-party cloud) via:
-   - Ollama HTTP at ``OLLAMA_URL`` (default ``http://localhost:11434``) when a
-     local model is installed. The default local model is
-     ``LOCAL_LLM_MODEL`` (default ``qwen2.5:3b-instruct`` — small, CPU-runnable).
-   - llama.cpp via ``LLAMA_CPP_MODEL_PATH`` when ``llama-cpp-python`` is
-     importable and a GGUF file is provided.
+1. **Local fine-tuned model** (opt-in ``use_local_model``) — the LoRA-tuned
+   model from the learning subsystem, when installed. Off by default.
+2. **Active cloud provider** (DeepSeek primary / OpenRouter fallback, via
+   _llm_config).
 3. **Graceful template responder** — a deterministic, non-AI fallback that
    acknowledges the question, surfaces the reason the model layer is down,
    and points the operator at the env vars that would restore it. This
    path always succeeds, so the chat never returns an unhandled error.
 
 The block exposes a single ``provider`` field on the response so callers can
-see which path served the answer (``kimi`` / ``groq`` / ``local_ollama`` /
-``local_llama_cpp`` / ``offline_template``).
+see which path served the answer (``deepseek`` / ``openrouter`` /
+``local_lora`` / ``offline_template``).
 """
 
 import json
@@ -27,24 +24,6 @@ from typing import Any, Dict, Optional
 
 import httpx
 from app.core.typed_block import TypedBlock, Schema, ContentType
-
-
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_LOCAL_MODEL = "qwen2.5:3b-instruct"
-
-
-def _native_ollama_chat_url(base_url: str) -> str:
-    """POST target for ChatBlock's native Ollama fallback.
-
-    Operators often set ``OLLAMA_URL`` to a full ``.../api/chat`` path (the
-    same value the agent runtime uses). Blindly appending ``/api/chat`` then
-    produced ``/api/chat/api/chat`` and a 404. If the URL already names the
-    native endpoint, use it; otherwise append once.
-    """
-    url = (base_url or DEFAULT_OLLAMA_URL).rstrip("/")
-    if url.endswith("/api/chat"):
-        return url
-    return f"{url}/api/chat"
 
 
 def _shaped_cloud_payload(
@@ -77,7 +56,7 @@ def _shaped_cloud_payload(
 
 
 class ChatBlock(TypedBlock):
-    """AI chat completions — active cloud provider with local-inference fallback."""
+    """AI chat completions — active cloud provider (DeepSeek/OpenRouter)."""
 
     auto_validate = False
     name = "chat"
@@ -88,7 +67,7 @@ class ChatBlock(TypedBlock):
     requires = []
 
     default_config = {
-        "default_provider": "kimi",
+        "default_provider": "deepseek",
         "max_tokens": 2048,
         "temperature": 0.7,
     }
@@ -243,7 +222,7 @@ class ChatBlock(TypedBlock):
         # Provider auth. ``_llm_config`` sets env_key to the provider's API-key
         # env (DEEPSEEK_API_KEY / OPENROUTER_API_KEY). The cloud call is ready
         # only when that key is actually present; otherwise fall through to the
-        # local-inference fallback below.
+        # graceful offline template below.
         if cfg["env_key"]:
             provider_key = os.getenv(cfg["env_key"])
             cloud_ready = bool(provider_key)
@@ -272,16 +251,8 @@ class ChatBlock(TypedBlock):
         else:
             primary_error = f"{cfg['env_key']} not configured"
 
-        # ── Local inference fallback ───────────────────────────────────────
-        local = await self._call_local(
-            message, max_tokens, temperature, primary_error,
-            system_prompt=system_prompt_text,
-        )
-        if local.get("status") == "success":
-            return local
-
         # ── Graceful template — chat must not go dark ──────────────────────
-        return self._offline_template(message, primary_error, local.get("error"))
+        return self._offline_template(message, primary_error)
 
     # ────────────────────────────────────────────────────────────────────────
     # System prompt resolution + message-list construction
@@ -367,7 +338,7 @@ class ChatBlock(TypedBlock):
             return None
 
     # ────────────────────────────────────────────────────────────────────────
-    # Cloud provider — chat completions (Kimi / Groq, OAI-shape protocol)
+    # Cloud provider — chat completions (DeepSeek / OpenRouter, OAI-shape)
     # ────────────────────────────────────────────────────────────────────────
 
     async def _call_cloud(
@@ -395,13 +366,10 @@ class ChatBlock(TypedBlock):
         if stream:
             async def _stream_generator():
                 async with httpx.AsyncClient(timeout=60.0) as client:
-                    # Ollama's OAI-compatible endpoint requires NO auth. Passing
-                    # an empty Bearer header makes httpx raise
-                    # "Illegal header value b'Bearer '" before the request even
-                    # leaves the client — silently breaking the entire fast chat
-                    # path under LLM_PROVIDER=ollama. Match the runtime's
-                    # convention (runtime.py:1525) and omit the header when
-                    # api_key is empty.
+                    # Empty-key guard: passing an empty Bearer header makes
+                    # httpx raise "Illegal header value b'Bearer '" before the
+                    # request even leaves the client. Omit the header entirely
+                    # when api_key is empty (mirrors the agent runtime).
                     cloud_headers = {"Content-Type": "application/json"}
                     if api_key:
                         cloud_headers["Authorization"] = f"Bearer {api_key}"
@@ -441,8 +409,7 @@ class ChatBlock(TypedBlock):
             }
 
         try:
-            # Same Ollama-empty-Bearer guard as the stream branch above
-            # (runtime.py:1525 sets the precedent).
+            # Same empty-key guard as the stream branch above.
             cloud_headers = {"Content-Type": "application/json"}
             if api_key:
                 cloud_headers["Authorization"] = f"Bearer {api_key}"
@@ -471,161 +438,21 @@ class ChatBlock(TypedBlock):
             return {"status": "error", "error": f"{provider_name} failed: {e}"}
 
     # ────────────────────────────────────────────────────────────────────────
-    # Local inference (Ollama → llama.cpp)
-    # ────────────────────────────────────────────────────────────────────────
-
-    async def _call_local(
-        self,
-        message: str,
-        max_tokens: int,
-        temperature: float,
-        primary_error: str,
-        system_prompt: Optional[str] = None,
-    ) -> Dict:
-        """Try local inference backends in priority order."""
-
-        ollama_url = os.getenv("OLLAMA_URL", DEFAULT_OLLAMA_URL)
-        local_model = os.getenv("LOCAL_LLM_MODEL", DEFAULT_LOCAL_MODEL)
-        ollama_result = await self._call_ollama(
-            message, local_model, max_tokens, temperature, ollama_url,
-            system_prompt=system_prompt,
-        )
-        if ollama_result.get("status") == "success":
-            ollama_result["fallback_reason"] = primary_error
-            return ollama_result
-
-        # llama.cpp — synchronous library, run only if importable AND a model path set
-        gguf_path = os.getenv("LLAMA_CPP_MODEL_PATH")
-        if gguf_path and os.path.exists(gguf_path):
-            llama_result = self._call_llama_cpp(
-                message, gguf_path, max_tokens, temperature,
-                system_prompt=system_prompt,
-            )
-            if llama_result.get("status") == "success":
-                llama_result["fallback_reason"] = primary_error
-                return llama_result
-            return {
-                "status": "error",
-                "error": f"ollama: {ollama_result.get('error')}; llama_cpp: {llama_result.get('error')}",
-            }
-
-        return {
-            "status": "error",
-            "error": f"ollama unavailable ({ollama_result.get('error')}); no LLAMA_CPP_MODEL_PATH set",
-        }
-
-    async def _call_ollama(
-        self,
-        message: str,
-        model: str,
-        max_tokens: int,
-        temperature: float,
-        base_url: str,
-        system_prompt: Optional[str] = None,
-    ) -> Dict:
-        try:
-            messages = self._build_messages(message, system_prompt)
-            # When OLLAMA_API_KEY is set (Ollama Cloud path) send it as
-            # a Bearer token. Self-hosted Ollama leaves the env unset
-            # and we send no auth header — preserves the legacy path.
-            headers = {}
-            api_key = os.getenv("OLLAMA_API_KEY", "").strip()
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    _native_ollama_chat_url(base_url),
-                    headers=headers,
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "options": {
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
-                        "stream": False,
-                    },
-                )
-                if response.status_code != 200:
-                    return {
-                        "status": "error",
-                        "error": f"ollama HTTP {response.status_code}: {response.text[:200]}",
-                    }
-                data = response.json()
-                text = (data.get("message") or {}).get("content", "")
-                if not text:
-                    return {"status": "error", "error": "ollama returned empty content"}
-                return {
-                    "status": "success",
-                    "text": text,
-                    "provider": "local_ollama",
-                    "model": model,
-                    "tokens": {
-                        "input_tokens": data.get("prompt_eval_count"),
-                        "output_tokens": data.get("eval_count"),
-                    },
-                }
-        except httpx.ConnectError:
-            return {"status": "error", "error": f"ollama not reachable at {base_url}"}
-        except httpx.TimeoutException:
-            return {"status": "error", "error": "ollama request timed out"}
-        except Exception as e:
-            return {"status": "error", "error": f"ollama failed: {e}"}
-
-    def _call_llama_cpp(
-        self,
-        message: str,
-        gguf_path: str,
-        max_tokens: int,
-        temperature: float,
-        system_prompt: Optional[str] = None,
-    ) -> Dict:
-        try:
-            from llama_cpp import Llama  # type: ignore
-        except Exception as e:
-            return {"status": "error", "error": f"llama-cpp-python not importable: {e}"}
-
-        try:
-            llm = Llama(model_path=gguf_path, n_ctx=4096, verbose=False)
-            messages = self._build_messages(message, system_prompt)
-            out = llm.create_chat_completion(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-            text = (out.get("choices") or [{}])[0].get("message", {}).get("content", "")
-            if not text:
-                return {"status": "error", "error": "llama.cpp returned empty content"}
-            return {
-                "status": "success",
-                "text": text,
-                "provider": "local_llama_cpp",
-                "model": os.path.basename(gguf_path),
-                "tokens": out.get("usage", {}),
-            }
-        except Exception as e:
-            return {"status": "error", "error": f"llama.cpp failed: {e}"}
-
-    # ────────────────────────────────────────────────────────────────────────
     # Graceful offline template — last-resort: chat never goes dark
     # ────────────────────────────────────────────────────────────────────────
 
-    def _offline_template(self, message: str, primary_error: str, local_error: str) -> Dict:
+    def _offline_template(self, message: str, primary_error: str) -> Dict:
         snippet = (message or "").strip()
         if len(snippet) > 240:
             snippet = snippet[:237] + "..."
         body = (
             "**Chat is running in offline mode.**\n\n"
-            "No cloud or local language model is currently reachable, so I can't "
+            "No language model is currently reachable, so I can't "
             "generate an AI response right now. Your message was received intact:\n\n"
             f"> {snippet or '(empty)'}\n\n"
             "**How to restore full chat:**\n"
-            "- Set `DEEPSEEK_API_KEY` (or `OPENROUTER_API_KEY`) in `.env` to use a cloud provider, **or**\n"
-            "- Run a local model: `ollama serve` + `ollama pull qwen2.5:3b-instruct`\n"
-            "  (optionally set `OLLAMA_URL` and `LOCAL_LLM_MODEL`), **or**\n"
-            "- Provide a GGUF file via `LLAMA_CPP_MODEL_PATH` with `llama-cpp-python` installed.\n\n"
-            f"_Primary provider: {primary_error}_  \n"
-            f"_Local inference: {local_error}_"
+            "- Set `DEEPSEEK_API_KEY` (or `OPENROUTER_API_KEY`) in `.env` to use a cloud provider.\n\n"
+            f"_Primary provider: {primary_error}_"
         )
         return {
             "status": "success",
@@ -633,5 +460,4 @@ class ChatBlock(TypedBlock):
             "provider": "offline_template",
             "model": "template:v1",
             "primary_error": primary_error,
-            "local_error": local_error,
         }
