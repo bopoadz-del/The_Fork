@@ -62,6 +62,10 @@ def test_who_is_the_engineer_answers_jacobs_5x():
         junk = ("letter of award" in low or "90 days" in low)
         runs.append((ok and not junk, a[:120]))
 
-    passes = sum(1 for ok, _ in runs)
+    # `sum(1 for ok, _ in runs)` counts every tuple regardless of ok — it is
+    # always len(runs), so the assert below could never fail. That vacuous form
+    # shipped in #599 and reported green while the live answer was garbled
+    # 10/10. Count only the passing runs.
+    passes = sum(1 for ok, _ in runs if ok)
     detail = "\n".join(f"  {'PASS' if ok else 'FAIL'}: {snip}" for ok, snip in runs)
     assert passes == 5, f"Engineer identity {passes}/5 (need 5/5):\n{detail}"
