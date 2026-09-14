@@ -47,12 +47,46 @@ def test_reserves_aca_chunk_for_contract_sum_synonym():
     assert len(kept) == 5  # k unchanged — a reservation, not an append
 
 
-def test_no_swap_when_canonical_already_present():
+# A chunk that MENTIONS the heading but carries no figure — must never be the
+# one reserved (live trace 2026-09-14: reserving idx 90, a mention, left the
+# model unable to state the amount while the figure chunk sat deeper in scored).
+MENTION_ONLY = (
+    "Clause 14.1 refers the reader to the Accepted Contract Amount stated in "
+    "the Contract Data particulars. The value itself is set out there."
+)
+
+
+def test_no_swap_when_figure_row_already_present():
     aca = _c("aca", ACA_TEXT)
     kept = [aca] + _kept_without_aca(4)
     assert reserve_contract_synonym_row(
         "contract sum before VAT", kept, kept
     ) is False
+
+
+def test_mention_only_row_is_not_reserved():
+    """A heading mention with no figure cannot answer — do not reserve it."""
+    kept = _kept_without_aca()
+    mention = _c("mention", MENTION_ONLY)
+    assert reserve_contract_synonym_row(
+        "What is the contract sum before VAT?", kept, kept + [mention]
+    ) is False
+    assert not any(c.chunk_id == "mention" for c in kept)
+
+
+def test_figure_row_wins_over_a_higher_ranked_mention():
+    """When both a mention (earlier/higher-ranked) and the figure chunk are in
+    the pool, the reservation must pick the FIGURE chunk — the exact production
+    failure (mention idx 90 reserved, figure idx 0 skipped)."""
+    kept = _kept_without_aca()
+    mention = _c("mention", MENTION_ONLY)      # earlier in ranked
+    figure = _c("figure", ACA_TEXT)            # later, but carries the amount
+    ranked = kept + [mention, figure]
+    assert reserve_contract_synonym_row(
+        "What is the contract sum before VAT?", kept, ranked
+    )
+    assert any(c.chunk_id == "figure" for c in kept)
+    assert not any(c.chunk_id == "mention" for c in kept)
 
 
 def test_no_swap_for_unrelated_query():
