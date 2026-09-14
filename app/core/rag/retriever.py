@@ -7201,14 +7201,8 @@ def retrieve_with_filter(
     k: int = 5,
     *,
     intent: Optional[str] = None,
-    _debug: Optional[dict] = None,
 ) -> tuple:
     """Returns ``(chunks, noise_filtered_count)``.
-
-    ``_debug`` (opt-in, default None): a dict populated in place with a trace of
-    the synonym-boost pipeline (leg firing, canonical-head chunk rank in the
-    candidate pool, reserve outcome). No behaviour change when None; used only
-    by the /v1/rag/synonym-debug diagnostic.
 
     Pulls ``candidate_overfetch(k)`` raw candidates (floor 60, so
     production k=5 yields a pool of 60) from the active project's
@@ -7352,26 +7346,12 @@ def retrieve_with_filter(
                 raw_active = sorted(
                     by_id.values(), key=lambda c: -(c.score or 0.0),
                 )
-                if _debug is not None:
-                    _debug["synonym_leg_ran"] = True
-                    _debug["synonym_terms"] = synonym_terms
-                    _debug["leg_hit_count"] = len(s_hits)
-                    _debug["raw_active_after_leg"] = [
-                        (c.chunk_index, round(c.score or 0.0, 3))
-                        for c in raw_active[:30]
-                    ]
             except Exception as exc:  # noqa: BLE001 — extras must not break the turn
                 logger.warning(
                     "contract-synonym retrieval for %s failed: %s; "
                     "primary results stand",
                     project_id, exc,
                 )
-                if _debug is not None:
-                    _debug["synonym_leg_error"] = str(exc)
-    if _debug is not None:
-        _debug.setdefault("synonym_boost_enabled",
-                          _contract_synonym_boost_enabled())
-        _debug.setdefault("synonym_leg_ran", False)
 
     # STEP 0b — empty/thin detection for the labeled Master-Corpus fallback.
     # "Thin" reuses RAG_CONFIDENCE_THRESHOLD (the same bar rag_inject applies):
@@ -7858,11 +7838,6 @@ def retrieve_with_filter(
     # Sort by fused score descending; active-project chunks naturally come
     # first when scores are equal because they were inserted first.
     scored.sort(key=lambda x: -x[0])
-    if _debug is not None:
-        _debug["scored_top"] = [
-            (c.chunk_index, round(s, 3)) for s, c in scored[:35]
-        ]
-        _debug["scored_size"] = len(scored)
 
     # Revision currency (§5.2 step 2): highest COMPARABLE revision retrieved per
     # drawing number, bucketed by revision kind ((drawing_number, kind) -> max
@@ -7966,33 +7941,9 @@ def retrieve_with_filter(
     # top-k gets one reserved slot, so the answer layer sees the figure it
     # would otherwise decline on. Runs last, on the final k, like the reserves
     # above; no-op unless the query uses such a synonym.
-    if _debug is not None:
-        _debug["kept_before_reserve"] = [c.chunk_index for c in kept]
-    _syn_reserved = reserve_contract_synonym_row(
+    reserve_contract_synonym_row(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
-    if _debug is not None:
-        _debug["reserve_fired"] = bool(_syn_reserved)
-        _debug["kept_after_reserve"] = [c.chunk_index for c in kept]
-        # Did any scored chunk match the reserve heads at all, and did the
-        # contract-scope fence reject it? Rank in scored if present.
-        heads = [
-            (head, value_re)
-            for triggers, head, value_re in _SYNONYM_RESERVE_HEADS
-            if any(t in (query or "").lower() for t in triggers)
-        ]
-        _debug["reserve_heads"] = [h for h, _v in heads]
-        canon_ranks = []
-        for i, (_s, c) in enumerate(scored):
-            low = _collapse_retrieval_ws(c.text or "").lower()
-            if any(h in low for h, _v in heads):
-                has_val = any(
-                    h in low and re.search(v, low) for h, v in heads
-                )
-                canon_ranks.append(
-                    (i, c.chunk_index, bool(_allow_final(c)), has_val)
-                )
-        _debug["canonical_in_scored"] = canon_ranks[:12]
 
     # Tag each returned chunk with its retrieval layer so the chat runtime can
     # disclose a Master-Corpus fallback (STEP 0b). "own" is the active project;
