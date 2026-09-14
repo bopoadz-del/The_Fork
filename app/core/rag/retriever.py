@@ -6511,17 +6511,29 @@ def reserve_monetary_base_row(
 # for in a pool chunk. Headings are specific enough not to over-match; retention
 # is intentionally omitted (its rate chunk is already surfaced by the retriever
 # synonym leg, and "retention" alone is too broad to reserve safely).
-_SYNONYM_RESERVE_HEADS: tuple[tuple[tuple[str, ...], str], ...] = (
+# Each entry: (synonym triggers, canonical heading, VALUE regex). The value
+# regex is essential: the pool holds BOTH the figure chunk ("Accepted Contract
+# Amount ... SAR 1,754,504,456.25") and mention-only chunks ("...the Accepted
+# Contract Amount stated in the Contract Data..."). Reserving on the heading
+# alone grabbed the FIRST match in score order — a mention with no amount — and
+# the answer layer still declined (live trace 2026-09-14: reserved idx 90, a
+# mention; the figure chunk idx 0 sat at scored rank 47). Requiring a value
+# alongside the heading makes the reservation pick a chunk that can answer.
+_SYNONYM_RESERVE_HEADS: tuple[tuple[tuple[str, ...], str, str], ...] = (
     (("contract sum", "contract value", "contract worth", "net contract value",
       "contract price before", "total contract value", "worth of the contract"),
-     "accepted contract amount"),
+     "accepted contract amount",
+     # a thousands-separated money figure (>= millions: two+ comma groups)
+     r"\d{1,3}(?:,\d{3}){2,}"),
     (("maximum amount of delay", "cap on delay", "ceiling on delay",
       "cap on liquidated", "maximum liquidated", "ld cap", "delay damages cap",
       "maximum delay damages"),
-     "maximum amount of delay damages"),
+     "maximum amount of delay damages",
+     r"\d+(?:\.\d+)?\s*%|\d{1,3}(?:,\d{3})+"),  # a percentage or a money figure
     (("defects liability", "maintenance period", "warranty period",
       "defects period"),
-     "defects notification period"),
+     "defects notification period",
+     r"\d+\s*(?:day|days|month|months|year|years)"),  # a duration
 )
 
 
@@ -6548,27 +6560,29 @@ def reserve_contract_synonym_row(
     if not q or _DEFINITION_QUESTION_RE.search(q):
         return False
     heads = [
-        head for triggers, head in _SYNONYM_RESERVE_HEADS
+        (head, value_re) for triggers, head, value_re in _SYNONYM_RESERVE_HEADS
         if any(t in q for t in triggers)
     ]
     if not heads:
         return False
 
-    def _has_head(text: str) -> bool:
+    def _has_answer(text: str) -> bool:
         # Collapse OCR/scan whitespace first: Contract Data text arrives as
-        # "Accepted \nContract \nAmount", so a raw substring test for the
-        # canonical heading silently fails and the reservation no-ops (the bug
-        # that left ACA "contract sum" at 0/3 after the first cut of this fix).
+        # "Accepted \nContract \nAmount". Require the canonical heading AND a
+        # value (figure / percentage / duration) — a heading-only mention
+        # cannot answer the ask, and reserving it leaves the model declining.
         low = _collapse_retrieval_ws((text or "")).lower()
-        return any(head in low for head in heads)
+        return any(
+            head in low and re.search(value_re, low) for head, value_re in heads
+        )
 
-    if any(_has_head(c.text or "") for c in kept):
+    if any(_has_answer(c.text or "") for c in kept):
         return False
     present = {c.chunk_id for c in kept}
     for chunk in ranked:
         if chunk.chunk_id in present:
             continue
-        if not _has_head(chunk.text or ""):
+        if not _has_answer(chunk.text or ""):
             continue
         if allow is not None and not allow(chunk):
             continue
@@ -7963,16 +7977,22 @@ def retrieve_with_filter(
         # Did any scored chunk match the reserve heads at all, and did the
         # contract-scope fence reject it? Rank in scored if present.
         heads = [
-            head for triggers, head in _SYNONYM_RESERVE_HEADS
+            (head, value_re)
+            for triggers, head, value_re in _SYNONYM_RESERVE_HEADS
             if any(t in (query or "").lower() for t in triggers)
         ]
-        _debug["reserve_heads"] = heads
+        _debug["reserve_heads"] = [h for h, _v in heads]
         canon_ranks = []
         for i, (_s, c) in enumerate(scored):
             low = _collapse_retrieval_ws(c.text or "").lower()
-            if any(h in low for h in heads):
-                canon_ranks.append((i, c.chunk_index, bool(_allow_final(c))))
-        _debug["canonical_in_scored"] = canon_ranks[:10]
+            if any(h in low for h, _v in heads):
+                has_val = any(
+                    h in low and re.search(v, low) for h, v in heads
+                )
+                canon_ranks.append(
+                    (i, c.chunk_index, bool(_allow_final(c)), has_val)
+                )
+        _debug["canonical_in_scored"] = canon_ranks[:12]
 
     # Tag each returned chunk with its retrieval layer so the chat runtime can
     # disclose a Master-Corpus fallback (STEP 0b). "own" is the active project;
