@@ -2,9 +2,8 @@
 dynamic reasoning uses for UNDERSTAND / PLAN.
 
 Reuses `runtime._llm_config()` so it follows whatever provider is configured:
-DeepSeek / OpenRouter free / Kimi / Groq on cloud, or Ollama on-prem. The
-reasoner never hardcodes a provider — "on the cloud" is a config choice,
-not a code change.
+DeepSeek (primary) or OpenRouter free (fallback). The reasoner never hardcodes
+a provider — which one is active is a config choice, not a code change.
 """
 from __future__ import annotations
 

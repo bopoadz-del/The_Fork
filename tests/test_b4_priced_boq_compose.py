@@ -381,8 +381,8 @@ async def test_chat_short_circuits_b4_without_calling_llm(monkeypatch):
     When RAG already has priced D599.5, do not call the LLM. Health can
     stay 49/49 while OpenRouter is owner-gated — compose from excerpts.
     """
-    monkeypatch.setenv("LLM_PROVIDER", "kimi")
-    monkeypatch.setenv("KIMI_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
     monkeypatch.setattr(
         "app.agents.runtime.project_is_rag_ready", lambda _pid: True,
     )
@@ -430,8 +430,8 @@ async def test_chat_short_circuits_b4_without_calling_llm(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_stream_short_circuits_b4_without_calling_llm(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "kimi")
-    monkeypatch.setenv("KIMI_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
     monkeypatch.setattr(
         "app.agents.runtime.project_is_rag_ready", lambda _pid: True,
     )
@@ -517,8 +517,8 @@ def test_short_circuit_b5_kill_switch_restores_provider_hop(monkeypatch):
 @pytest.mark.asyncio
 async def test_chat_short_circuits_b5_without_calling_llm(monkeypatch):
     """Same provider-unavailable fix as #547 B4, for D549.2."""
-    monkeypatch.setenv("LLM_PROVIDER", "kimi")
-    monkeypatch.setenv("KIMI_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
     monkeypatch.setattr(
         "app.agents.runtime.project_is_rag_ready", lambda _pid: True,
     )

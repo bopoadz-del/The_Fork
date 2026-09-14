@@ -1,7 +1,7 @@
 """True token streaming for the forced synthesis call (SYNTHESIS_STREAMING=1).
 
 After a deliverable tool returns, force_synthesis makes the next call tool-free.
-When streaming is enabled (Groq + flag on), that synthesis call streams provider
+When streaming is enabled (DeepSeek/OpenRouter + flag on), that synthesis call streams provider
 deltas as token events instead of computing the whole answer then re-chunking it.
 These tests cover: the happy path (deltas stream, line-buffered + sanitised),
 pre-first-token fallback to the non-streaming path, citation sanitisation on
@@ -19,12 +19,12 @@ import pytest
 from app.agents.runtime import Agent, _SynthStreamError
 
 
-# ── Groq-like config so the streaming gate (provider == "groq") opens ─────────
-_GROQ_CFG = {
-    "provider": "groq",
-    "url": "https://api.groq.com/openai/v1/chat/completions",
-    "env_key": "GROQ_API_KEY",
-    "default_model": "meta-llama/llama-4-scout-17b-16e-instruct",
+# ── DeepSeek config so the streaming gate (provider in the allowlist) opens ──
+_DEEPSEEK_CFG = {
+    "provider": "deepseek",
+    "url": "https://api.deepseek.com/v1/chat/completions",
+    "env_key": "DEEPSEEK_API_KEY",
+    "default_model": "deepseek-chat",
 }
 
 
@@ -39,11 +39,11 @@ def _disable_commissioning_remaining(monkeypatch):
 
 
 @pytest.fixture
-def groq_streaming(monkeypatch):
-    """Enable the streaming path deterministically: groq provider, flag on,
+def deepseek_streaming(monkeypatch):
+    """Enable the streaming path deterministically: deepseek provider, flag on,
     an api key present."""
-    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_GROQ_CFG))
-    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
 
 
@@ -118,7 +118,7 @@ def _tokens(events):
 
 # ── happy path ────────────────────────────────────────────────────────────────
 
-def test_streamed_synthesis_emits_progressive_tokens(groq_streaming):
+def test_streamed_synthesis_emits_progressive_tokens(deepseek_streaming):
     call_llm = _tool_then_final()
     deltas = ["- Verify ", "electrical ", "isolation\n", "- Check ", "earthing\n", "Done."]
     with patch.object(Agent, "_call_llm", call_llm), \
@@ -141,7 +141,7 @@ def test_streamed_synthesis_emits_progressive_tokens(groq_streaming):
 
 # ── pre-first-token fallback ──────────────────────────────────────────────────
 
-def test_pretoken_stream_error_falls_back_to_non_streaming(groq_streaming):
+def test_pretoken_stream_error_falls_back_to_non_streaming(deepseek_streaming):
     call_llm = _tool_then_final()
     with patch.object(Agent, "_call_llm", call_llm), \
          patch.object(Agent, "_run_tool_call", _tool_ok), \
@@ -156,7 +156,7 @@ def test_pretoken_stream_error_falls_back_to_non_streaming(groq_streaming):
 
 # ── citation sanitisation on streamed lines ───────────────────────────────────
 
-def test_streamed_lines_are_citation_sanitised(groq_streaming):
+def test_streamed_lines_are_citation_sanitised(deepseek_streaming):
     call_llm = _tool_then_final()
     deltas = ["See [source: C:\\\\Users\\\\shimm\\\\data\\\\PRC-406_HSE.pdf, chunk 3]\n"]
     with patch.object(Agent, "_call_llm", call_llm), \
@@ -170,7 +170,7 @@ def test_streamed_lines_are_citation_sanitised(groq_streaming):
 
 # ── empty-final forced retry preserved ────────────────────────────────────────
 
-def test_empty_stream_triggers_forced_retry(groq_streaming):
+def test_empty_stream_triggers_forced_retry(deepseek_streaming):
     call_llm = _tool_then_final()
     with patch.object(Agent, "_call_llm", call_llm), \
          patch.object(Agent, "_run_tool_call", _tool_ok), \
@@ -185,8 +185,8 @@ def test_empty_stream_triggers_forced_retry(groq_streaming):
 # ── default off: streaming never engaged ──────────────────────────────────────
 
 def test_flag_off_never_streams(monkeypatch):
-    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_GROQ_CFG))
-    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.delenv("SYNTHESIS_STREAMING", raising=False)  # OFF
     call_llm = _tool_then_final()
 
@@ -222,23 +222,22 @@ def test_an_unlisted_provider_never_streams(monkeypatch):
     assert call_llm.state["n"] == 2
 
 
-def test_kimi_the_production_primary_reaches_the_streaming_path(monkeypatch):
+def test_deepseek_the_production_primary_reaches_the_streaming_path(monkeypatch):
     """The gate that matters in production. SYNTHESIS_STREAMING=1 and
-    LLM_PROVIDER=kimi are both set on the live service, so gating this on Groq
-    alone meant the flag was on and did nothing — every live turn silently took
-    the non-streaming fallback.
+    LLM_PROVIDER=deepseek are both set on the live service; the outer gate's
+    provider allowlist must include the primary or the flag is on and does
+    nothing — every live turn would silently take the non-streaming fallback.
 
-    Asserted at the OUTER gate specifically: `_stream_synthesis` having a Kimi
-    allowlist entry is not enough if this gate never calls it.
+    Asserted at the OUTER gate specifically: `_stream_synthesis` having a
+    DeepSeek allowlist entry is not enough if this gate never calls it.
     """
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: {
-        "provider": "kimi",
-        "url": "https://api.moonshot.ai/v1/chat/completions",
-        "env_key": "KIMI_API_KEY",
-        "default_model": "kimi-k2.6",
-        "fixed_temperature": 1,
+        "provider": "deepseek",
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "env_key": "DEEPSEEK_API_KEY",
+        "default_model": "deepseek-chat",
     })
-    monkeypatch.setenv("KIMI_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
     call_llm = _tool_then_final()
 
@@ -251,8 +250,8 @@ def test_kimi_the_production_primary_reaches_the_streaming_path(monkeypatch):
     assert "Isolate the panel." in _tokens(events)
 
 
-def test_streamed_xml_tool_leak_is_not_flushed(groq_streaming):
-    """Leftover L4 class: Groq SYNTHESIS_STREAMING must not emit XML tool calls."""
+def test_streamed_xml_tool_leak_is_not_flushed(deepseek_streaming):
+    """Leftover L4 class: SYNTHESIS_STREAMING must not emit XML tool calls."""
     from app.agents.runtime import _TOOL_FORMAT_FALLBACK
 
     call_llm = _tool_then_final()
@@ -276,7 +275,7 @@ def test_streamed_xml_tool_leak_is_not_flushed(groq_streaming):
     assert events[-1]["type"] == "end"
 
 
-def test_streamed_json_tool_leak_is_not_flushed(groq_streaming):
+def test_streamed_json_tool_leak_is_not_flushed(deepseek_streaming):
     """UI-PHYS A5: SYNTHESIS_STREAMING must not flush raw tool-call JSON."""
     import json
     from app.agents.runtime import _TOOL_FORMAT_FALLBACK
@@ -347,7 +346,7 @@ class _FakeAsyncClient:
 
 
 def test_stream_synthesis_parses_sse_and_sanitises_outbound(monkeypatch):
-    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_GROQ_CFG))
+    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
     monkeypatch.setattr("app.agents.runtime.httpx.AsyncClient", _FakeAsyncClient)
     agent = _pa_agent()
     # A contaminated message with a non-standard `reasoning` field must be

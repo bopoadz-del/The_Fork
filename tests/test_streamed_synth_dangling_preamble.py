@@ -34,11 +34,11 @@ import pytest
 
 from app.agents.runtime import _EMPTY_RESPONSE_FALLBACK, Agent
 
-_GROQ_CFG = {
-    "provider": "groq",
-    "url": "https://api.groq.com/openai/v1/chat/completions",
-    "env_key": "GROQ_API_KEY",
-    "default_model": "llama-3.3-70b-versatile",
+_DEEPSEEK_CFG = {
+    "provider": "deepseek",
+    "url": "https://api.deepseek.com/v1/chat/completions",
+    "env_key": "DEEPSEEK_API_KEY",
+    "default_model": "deepseek-chat",
 }
 
 LIVE_D1 = (
@@ -56,9 +56,9 @@ def _no_predispatch(monkeypatch):
 
 
 @pytest.fixture
-def groq_streaming(monkeypatch):
-    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_GROQ_CFG))
-    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+def deepseek_streaming(monkeypatch):
+    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
     monkeypatch.setenv("CHAT_STREAM_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("CHAT_STREAM_HEARTBEAT_SECONDS", "20")
@@ -127,7 +127,7 @@ def _tokens(events):
 # ── the live failure ─────────────────────────────────────────────────────────
 
 
-def test_the_promise_is_never_flushed_to_the_client(groq_streaming):
+def test_the_promise_is_never_flushed_to_the_client(deepseek_streaming):
     """D1, verbatim. The user must not see the promise at all."""
     events, _ = _run(_pa_agent(), LIVE_D1, REAL_ANSWER)
     shown = _tokens(events)
@@ -135,14 +135,14 @@ def test_the_promise_is_never_flushed_to_the_client(groq_streaming):
     assert "I don't have the Engineer's Representative's name" not in shown, shown
 
 
-def test_the_retry_answer_is_what_the_user_sees(groq_streaming):
+def test_the_retry_answer_is_what_the_user_sees(deepseek_streaming):
     events, state = _run(_pa_agent(), LIVE_D1, REAL_ANSWER)
     assert "Barry Muir" in _tokens(events)
     assert state["n"] >= 2, "the forced retry never ran"
     assert False in state["with_tools"], "the retry must disable tools"
 
 
-def test_e1_shape_is_caught_too(groq_streaming):
+def test_e1_shape_is_caught_too(deepseek_streaming):
     """The other live string of the same class."""
     events, _ = _run(_pa_agent(), LIVE_E1, "Delay Damages are SAR 1,754,504.46/day.")
     shown = _tokens(events)
@@ -150,7 +150,7 @@ def test_e1_shape_is_caught_too(groq_streaming):
     assert "1,754,504.46" in shown
 
 
-def test_a_retry_that_also_promises_falls_back(groq_streaming):
+def test_a_retry_that_also_promises_falls_back(deepseek_streaming):
     """Two promises in a row must not ship the second one either."""
     events, _ = _run(_pa_agent(), LIVE_D1, LIVE_E1)
     shown = _tokens(events)
@@ -161,7 +161,7 @@ def test_a_retry_that_also_promises_falls_back(groq_streaming):
 # ── what must NOT change ─────────────────────────────────────────────────────
 
 
-def test_a_real_streamed_answer_is_untouched(groq_streaming):
+def test_a_real_streamed_answer_is_untouched(deepseek_streaming):
     """No retry, no held tokens, for an answer that answers."""
     events, state = _run(_pa_agent(), REAL_ANSWER, "SHOULD NOT BE USED")
     shown = _tokens(events)
@@ -170,7 +170,7 @@ def test_a_real_streamed_answer_is_untouched(groq_streaming):
     assert state["n"] == 1, "synthesis should not have gone through _call_llm"
 
 
-def test_an_answer_that_merely_mentions_searching_is_not_a_promise(groq_streaming):
+def test_an_answer_that_merely_mentions_searching_is_not_a_promise(deepseek_streaming):
     """'Search results show...' is a finding, not a dead end."""
     answer = "Search results show the Engineer's Representative is Barry Muir."
     events, state = _run(_pa_agent(), answer, "SHOULD NOT BE USED")
@@ -178,7 +178,7 @@ def test_an_answer_that_merely_mentions_searching_is_not_a_promise(groq_streamin
     assert state["n"] == 1
 
 
-def test_an_empty_stream_still_retries(groq_streaming):
+def test_an_empty_stream_still_retries(deepseek_streaming):
     """The behaviour this branch already had must survive."""
     events, state = _run(_pa_agent(), "", REAL_ANSWER)
     assert "Barry Muir" in _tokens(events)

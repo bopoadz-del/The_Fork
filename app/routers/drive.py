@@ -22,7 +22,6 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.dependencies import require_user
-from app.core.deployment_profile import forbid_onprem
 from app.core import audit, doc_index, drive_auth, file_crypto, jwt_auth, projects as store
 from app.routers import projects as projects_router
 from app.routers.projects import ALLOWED_DOC_EXTENSIONS
@@ -147,7 +146,7 @@ async def _fetch_email(access_token: str) -> str:
     return resp.json().get("user", {}).get("emailAddress", "")
 
 
-@router.get("/v1/drive/connect", dependencies=[Depends(forbid_onprem("Google Drive"))])
+@router.get("/v1/drive/connect")
 async def drive_connect(return_to: str = Query("", description="SPA path to land back on"),
                         auth: dict = Depends(require_user)):
     # Returns the Google consent URL as JSON — NOT a redirect. A browser cannot
@@ -240,7 +239,7 @@ async def drive_disconnect(auth: dict = Depends(require_user)):
     return {"status": "ok", "was_connected": cleared}
 
 
-@router.get("/v1/drive/files", dependencies=[Depends(forbid_onprem("Google Drive"))])
+@router.get("/v1/drive/files")
 async def drive_files(q: str = Query(""),
                       folder_id: str = Query("", description="Drive folder id; empty = root"),
                       auth: dict = Depends(require_user)):
@@ -362,8 +361,7 @@ async def _run_index_folder_bg(
             job["error"] = f"{type(exc).__name__}: {exc}"
 
 
-@router.post("/v1/projects/{project_id}/drive/index-folder", status_code=202,
-             dependencies=[Depends(forbid_onprem("Google Drive"))])
+@router.post("/v1/projects/{project_id}/drive/index-folder", status_code=202)
 async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
                              background_tasks: BackgroundTasks,
                              auth: dict = Depends(require_user)):
@@ -642,8 +640,7 @@ async def _walk_drive_folder_into_project(
     }
 
 
-@router.post("/v1/projects/{project_id}/drive/import", status_code=201,
-             dependencies=[Depends(forbid_onprem("Google Drive"))])
+@router.post("/v1/projects/{project_id}/drive/import", status_code=201)
 async def drive_import(project_id: str, req: DriveImportRequest,
                        background_tasks: BackgroundTasks,
                        auth: dict = Depends(require_user)):

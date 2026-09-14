@@ -23,13 +23,10 @@ from app.blocks.chat import ChatBlock
 
 @pytest.mark.asyncio
 async def test_offline_template_when_no_provider_available(monkeypatch):
-    """No cloud key, unreachable local LLM → graceful offline template."""
+    """No cloud key configured → graceful offline template."""
 
-    monkeypatch.delenv("KIMI_API_KEY", raising=False)
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("LLAMA_CPP_MODEL_PATH", raising=False)
-    # Point Ollama at an unreachable port so the local path fails fast.
-    monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:1")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
     block = ChatBlock()
     result = await block.process("Hello, what is 2+2?", {"stream": False})
@@ -40,79 +37,26 @@ async def test_offline_template_when_no_provider_available(monkeypatch):
     assert "offline mode" in text.lower()
     # The user's message must be echoed back so they know the chat is alive.
     assert "Hello, what is 2+2?" in text
-    # The template must surface BOTH error reasons so the operator knows what to fix.
-    assert "KIMI_API_KEY" in text or "GROQ_API_KEY" in text
-    assert "ollama" in text.lower() or "llama" in text.lower()
+    # The template must surface the cloud restore path.
+    assert "DEEPSEEK_API_KEY" in text or "OPENROUTER_API_KEY" in text
 
 
 @pytest.mark.asyncio
-async def test_ollama_primary_path_calls_cloud_without_api_key(monkeypatch):
-    """LLM_PROVIDER=ollama must hit _call_cloud even when env_key is empty."""
+async def test_cloud_path_routes_through_llm_config_provider(monkeypatch):
+    """process() selects the cloud provider via _llm_config and forwards that
+    provider's key, URL and default model to _call_cloud."""
 
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://my-pc.tunnel.cf")
-    monkeypatch.setenv("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("KIMI_API_KEY", raising=False)
-
-    calls: list[dict] = []
-
-    async def fake_call(
-        self,
-        message,
-        model,
-        max_tokens,
-        temperature,
-        stream,
-        api_key,
-        cfg,
-        **kwargs,
-    ):
-        calls.append({"api_key": api_key, "url": cfg["url"], "model": model})
-        return {
-            "status": "success",
-            "text": "hello from ollama",
-            "provider": "ollama",
-            "model": model,
-        }
-
-    monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
-
-    block = ChatBlock()
-    result = await block.process("hi", {"stream": False})
-
-    assert result["status"] == "success"
-    assert result["text"] == "hello from ollama"
-    assert len(calls) == 1
-    assert calls[0]["api_key"] == ""
-    assert calls[0]["url"] == "http://my-pc.tunnel.cf/v1/chat/completions"
-    assert calls[0]["model"] == "qwen3-coder:480b-cloud"
-
-
-@pytest.mark.asyncio
-async def test_ollama_cloud_forwards_api_key_when_set(monkeypatch):
-    """Ollama CLOUD (ollama.com) requires Bearer auth — HTTP 401 without it.
-
-    Regression (2026-06-30 pilot): with LLM_PROVIDER=ollama the chat block
-    hardcoded ``provider_key=""``, so the general /v1/chat surface called
-    ollama.com UNAUTHENTICATED, got 401, and fell back off Ollama. When
-    OLLAMA_API_KEY is set, the key MUST be forwarded to _call_cloud so the
-    general chat routes through Ollama Cloud like the agent path does.
-    Self-hosted Ollama (no key) keeps api_key="" — see the test above.
-    """
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "https://ollama.com")
-    monkeypatch.setenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
-    monkeypatch.setenv("OLLAMA_API_KEY", "sk-ollama-secret")
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-secret")
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
 
     calls: list[dict] = []
 
     async def fake_call(self, message, model, max_tokens, temperature,
                         stream, api_key, cfg, **kwargs):
         calls.append({"api_key": api_key, "url": cfg["url"], "model": model})
-        return {"status": "success", "text": "hi", "provider": "ollama", "model": model}
+        return {"status": "success", "text": "hi from deepseek",
+                "provider": "deepseek", "model": model}
 
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
 
@@ -120,13 +64,12 @@ async def test_ollama_cloud_forwards_api_key_when_set(monkeypatch):
     result = await block.process("hi", {"stream": False})
 
     assert result["status"] == "success"
+    assert result["text"] == "hi from deepseek"
     assert len(calls) == 1
-    assert calls[0]["api_key"] == "sk-ollama-secret", (
-        "Ollama Cloud key must be forwarded so ollama.com auth succeeds"
-    )
-    assert calls[0]["url"] == "https://ollama.com/v1/chat/completions"
-    # Unpinned model uses the active provider default (OLLAMA_MODEL here).
-    assert calls[0]["model"] == "gpt-oss:120b-cloud"
+    assert calls[0]["api_key"] == "ds-secret"
+    assert calls[0]["url"] == "https://api.deepseek.com/v1/chat/completions"
+    # Unpinned model uses the active provider default.
+    assert calls[0]["model"] == "deepseek-chat"
 
 
 @pytest.mark.asyncio
@@ -194,7 +137,7 @@ async def test_call_cloud_omits_authorization_header_when_api_key_empty(monkeypa
 
 @pytest.mark.asyncio
 async def test_call_cloud_includes_bearer_when_api_key_set(monkeypatch):
-    """Counterpart: Kimi/Groq path must still send the Bearer token."""
+    """Counterpart: a keyed cloud provider must still send the Bearer token."""
 
     import httpx
 
@@ -225,12 +168,12 @@ async def test_call_cloud_includes_bearer_when_api_key_set(monkeypatch):
     block = ChatBlock()
     await block._call_cloud(
         message="hi",
-        model="kimi-k2.6",
+        model="deepseek-chat",
         max_tokens=64,
         temperature=0.2,
         stream=False,
         api_key="sk-xxx",
-        cfg={"provider": "kimi", "url": "https://api.moonshot.ai/v1/chat/completions"},
+        cfg={"provider": "deepseek", "url": "https://api.deepseek.com/v1/chat/completions"},
     )
 
     assert captured["headers"].get("Authorization") == "Bearer sk-xxx"
@@ -255,48 +198,36 @@ def test_chat_block_metadata():
     assert "chat" in ChatBlock.tags
 
 
-def test_native_ollama_url_does_not_double_api_chat():
-    """Render sets OLLAMA_URL to a full /api/chat path; appending again 404s."""
-    from app.blocks.chat import _native_ollama_chat_url
-
-    assert _native_ollama_chat_url("https://ollama.example/api/chat") == (
-        "https://ollama.example/api/chat"
-    )
-    assert _native_ollama_chat_url("https://ollama.example/api/chat/") == (
-        "https://ollama.example/api/chat"
-    )
-    assert _native_ollama_chat_url("http://127.0.0.1:11434") == (
-        "http://127.0.0.1:11434/api/chat"
-    )
-
-
-def test_shaped_cloud_payload_pins_kimi_temperature():
-    """K2 400s on any temperature but 1. ChatBlock used to send 0.7."""
+def test_shaped_cloud_payload_honours_a_provider_fixed_temperature():
+    """A provider that declares ``fixed_temperature`` / ``reasoning_min_tokens``
+    gets them applied; a provider without pins keeps the agent's own values.
+    Neither live provider (DeepSeek/OpenRouter) pins today, but the generic
+    hook must keep working for a future constrained provider."""
     from app.blocks.chat import _shaped_cloud_payload
 
-    kimi = {
-        "provider": "kimi",
-        "url": "https://api.moonshot.ai/v1/chat/completions",
+    pinned = {
+        "provider": "deepseek",
+        "url": "https://api.deepseek.com/v1/chat/completions",
         "fixed_temperature": 1,
         "reasoning_min_tokens": 4096,
     }
     payload = _shaped_cloud_payload(
-        kimi, model="kimi-k2.6", messages=[], max_tokens=128, temperature=0.7,
+        pinned, model="deepseek-chat", messages=[], max_tokens=128, temperature=0.7,
     )
     assert payload["temperature"] == 1
     assert payload["max_tokens"] >= 4096
 
-    groq = {"provider": "groq", "url": "https://api.groq.com/openai/v1/chat/completions"}
-    groq_payload = _shaped_cloud_payload(
-        groq, model="llama", messages=[], max_tokens=128, temperature=0.7,
+    deepseek = {"provider": "deepseek", "url": "https://api.deepseek.com/v1/chat/completions"}
+    ds_payload = _shaped_cloud_payload(
+        deepseek, model="deepseek-chat", messages=[], max_tokens=128, temperature=0.7,
     )
-    assert groq_payload["temperature"] == 0.7
-    assert groq_payload["max_tokens"] == 128
+    assert ds_payload["temperature"] == 0.7
+    assert ds_payload["max_tokens"] == 128
 
 
 @pytest.mark.asyncio
-async def test_call_cloud_posts_temperature_1_for_kimi(monkeypatch):
-    """Live /v1/chat 400'd with invalid temperature until the payload chokepoint."""
+async def test_call_cloud_posts_a_provider_fixed_temperature(monkeypatch):
+    """The payload chokepoint applies a provider's fixed_temperature on the wire."""
     import httpx
 
     captured: dict = {}
@@ -326,14 +257,14 @@ async def test_call_cloud_posts_temperature_1_for_kimi(monkeypatch):
     block = ChatBlock()
     result = await block._call_cloud(
         message="hi",
-        model="kimi-k2.6",
+        model="deepseek-chat",
         max_tokens=64,
         temperature=0.7,
         stream=False,
         api_key="sk-xxx",
         cfg={
-            "provider": "kimi",
-            "url": "https://api.moonshot.ai/v1/chat/completions",
+            "provider": "deepseek",
+            "url": "https://api.deepseek.com/v1/chat/completions",
             "fixed_temperature": 1,
         },
     )

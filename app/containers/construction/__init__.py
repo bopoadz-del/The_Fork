@@ -1037,11 +1037,6 @@ class ConstructionContainer(
             return {"location": location, "date": date,
                     "status": "unavailable", "reason": reason, "source": "open-meteo"}
 
-        # On-prem: no egress to Open-Meteo. Honest-unavailable, never fabricate.
-        from app.core.deployment_profile import is_onprem
-        if is_onprem():
-            return unavailable("weather lookup is offline in the on-prem profile")
-
         if not location:
             return unavailable("no site location provided")
         try:

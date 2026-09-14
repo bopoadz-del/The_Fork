@@ -42,11 +42,6 @@ class AconexBlock(UniversalBlock):
     }
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
-        from app.core.deployment_profile import is_onprem, onprem_unavailable
-
-        if is_onprem():
-            return onprem_unavailable("Aconex / CDE")
-
         from app.core.cde import (
             CdeError,
             CdeNotConfiguredError,

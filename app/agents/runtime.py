@@ -5,9 +5,9 @@ markdown body for the system prompt). Each agent can call any block in its
 `allowed_blocks` list as a tool. The runtime handles the back-and-forth with the
 LLM: turn → optional tool call(s) → run blocks → return results → continue.
 
-Provider: OpenAI-compatible `/v1/chat/completions` JSON protocol (OpenRouter /
-Kimi / Groq / Ollama). A local-inference adapter is wired into the chat block
-as a fallback; see ``app/blocks/chat.py``.
+Provider: OpenAI-compatible `/v1/chat/completions` JSON protocol (DeepSeek
+primary / OpenRouter fallback). A local-inference adapter is wired into the
+chat block as a fallback; see ``app/blocks/chat.py``.
 """
 
 from __future__ import annotations
@@ -6683,28 +6683,8 @@ def _build_exports_from_audit(
 
 
 
-# Groq provides an OpenAI-compatible chat-completions endpoint, so the only
-# things that differ from DeepSeek are the base URL, the env-var name, and the
-# default model id. Tool-calling payload shape is identical.
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Groq retired llama-3.3-70b-versatile / llama-3.1-8b-instant on 2026-08-16
-# (free/developer tier). Live M9/M10/M13 then 404'd every Groq hop.
-GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
-GROQ_RETIRED_MODELS = {
-    "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
-    "llama-3.1-8b-instant": "openai/gpt-oss-20b",
-}
-
-# Kimi / Moonshot native API — OpenAI-compatible chat-completions. Same payload
-# shape as Groq/DeepSeek (verified: tool-calling + streaming accepted). K2 models
-# (kimi-k2.6 default) are reasoning models: the response carries a separate
-# `reasoning_content` chain-of-thought and the real answer in `content`; we read
-# `content` and the outbound sanitiser strips `reasoning_content` on replay.
-KIMI_API_URL = "https://api.moonshot.ai/v1/chat/completions"
-KIMI_DEFAULT_MODEL = "kimi-k2.6"
-
-# DeepSeek — OpenAI-compatible chat-completions at the native API.
-# Same payload shape as Groq/Kimi (tool-calling + streaming). Default
+# DeepSeek — OpenAI-compatible chat-completions at the native API, the
+# platform primary. Default
 # model is ``deepseek-chat``; ``DEEPSEEK_MODEL`` may pin ``deepseek-reasoner``
 # or a current catalogue id (e.g. deepseek-v4-flash). Temperature is NOT
 # pinned: the API accepts 0–2 on non-thinking models and ignores it in
@@ -6712,7 +6692,7 @@ KIMI_DEFAULT_MODEL = "kimi-k2.6"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 
-# OpenRouter — OpenAI-compatible chat-completions. Same payload shape as Groq.
+# OpenRouter — OpenAI-compatible chat-completions, the platform fallback.
 # Default model is the free router (`openrouter/free`); any `:free` slug is
 # allowed. Paid slugs are refused unless OPENROUTER_ALLOW_PAID=1.
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -6721,7 +6701,7 @@ OPENROUTER_DEFAULT_MODEL = "openrouter/free"
 # credit even for :free / openrouter/free models. A $0-balance account
 # 402s 8192 (live: "can only afford 2454"). Default 2048 fits that
 # affordance; override with OPENROUTER_MAX_TOKENS. Agent YAML stays
-# high for Kimi — the ceiling is applied only on the OpenRouter hop.
+# high for DeepSeek — the ceiling is applied only on the OpenRouter hop.
 OPENROUTER_DEFAULT_MAX_TOKENS = 2048
 # Free-tier OpenRouter derives a tiny prompt budget from remaining credit
 # (live Wave1: 18398 > 10335 after search + fetch). Keep the outbound
@@ -6730,7 +6710,7 @@ OPENROUTER_DEFAULT_MAX_TOKENS = 2048
 # OPENROUTER_PROMPT_TOKEN_CEILING.
 OPENROUTER_DEFAULT_PROMPT_TOKEN_CEILING = 8000
 _OPENROUTER_CHARS_PER_TOKEN = 3
-# Tighter than the Kimi/Groq defaults: a 24k fetch + 8k search already
+# Tighter than the DeepSeek defaults: a 24k fetch + 8k search already
 # blows the free prompt budget. These still hold a Contract Data clause.
 _OPENROUTER_TOOL_RESULT_MAX_CHARS = 4000
 _OPENROUTER_FETCH_DOCUMENT_MAX_CHARS = 8000
@@ -6749,12 +6729,12 @@ _OPENROUTER_429_MAX_RETRIES = 2
 def _llm_http_timeout() -> float:
     """Per-call HTTP timeout for an LLM request (seconds).
 
-    Kimi k2.6 is a REASONING model: on a large grounded turn (~12k-token
-    context) its first token can land well past 120s. The old hardcoded
-    120s httpx timeout gave up on Kimi prematurely and fell back to Groq —
-    whose free tier then 413'd the same large payload, so the turn produced
-    NOTHING (the "Kimi hiccup"). Give the primary room to finish, capped
-    below the CHAT_STREAM deadline so the stream still ends cleanly.
+    A reasoning model (e.g. deepseek-reasoner) on a large grounded turn
+    (~12k-token context) can land its first token well past 120s. The old
+    hardcoded 120s httpx timeout gave up on the primary prematurely and fell
+    back before it could answer, so the turn produced NOTHING. Give the
+    primary room to finish, capped below the CHAT_STREAM deadline so the
+    stream still ends cleanly.
     Default 200s (stream deadline default is 240s). Override with
     LLM_HTTP_TIMEOUT_SECONDS.
     """
@@ -6791,17 +6771,6 @@ def _forced_retry_min_seconds() -> float:
     except ValueError:
         return 45.0
 
-# OpenAI native API — standard chat-completions endpoint. Tool-calling and
-# streaming are first-class; we keep the same payload shape as Groq/DeepSeek.
-
-# Ollama exposes an OpenAI-compatible endpoint at /v1/chat/completions
-# (v0.1.31+). Self-hosted on the operator's PC or a VPS. No auth, no token
-# cost, no TPM rate limits — bounded by local hardware. Used when the
-# operator wants to escape cloud rate limits entirely.
-OLLAMA_DEFAULT_URL = "http://localhost:11434/v1/chat/completions"
-OLLAMA_DEFAULT_MODEL = "qwen2.5:7b-instruct"
-
-
 def _openrouter_model_is_free(name: str) -> bool:
     """True for ``openrouter/free`` or any catalogue slug ending in ``:free``."""
     slug = (name or "").strip()
@@ -6813,11 +6782,11 @@ def _openrouter_model_is_free(name: str) -> bool:
 def _resolve_attempt_model(cfg: dict[str, Any], agent_model: str | None) -> str:
     """Provider default unless the agent pin belongs on this provider.
 
-    Every hat YAML still pins ``kimi-k2.6``. That is a live Moonshot id.
-    Sending it to DeepSeek (or leaving a dead ``gpt-4*`` / leftover
-    ``deepseek-*`` pin on Kimi) 404s the turn. DeepSeek keeps only
-    ``deepseek-*`` pins; every other provider keeps the historical
-    placeholder remap (empty / ``deepseek-*`` / ``gpt-4*`` / ``gpt-3*``
+    Every hat YAML still pins ``kimi-k2.6`` (a legacy Moonshot id). Sending
+    that — or a dead ``gpt-4*`` / leftover ``deepseek-*`` pin — to the wrong
+    provider 404s the turn. DeepSeek keeps only ``deepseek-*`` pins; every
+    other provider (OpenRouter) keeps the placeholder remap (empty /
+    ``deepseek-*`` / ``kimi*`` / ``moonshot*`` / ``gpt-4*`` / ``gpt-3*``
     → ``default_model``).
     """
     default = str(cfg.get("default_model") or "")
@@ -6826,7 +6795,9 @@ def _resolve_attempt_model(cfg: dict[str, Any], agent_model: str | None) -> str:
         if model.startswith("deepseek-"):
             return model
         return default
-    if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
+    if not model or model.startswith(
+        ("deepseek-", "kimi", "moonshot", "gpt-4", "gpt-3")
+    ):
         return default
     return model
 
@@ -6856,136 +6827,42 @@ def _resolve_openrouter_model(name: str | None) -> str:
 def _llm_config() -> dict[str, Any]:
     """Pick the active LLM provider's URL + env-key + default model.
 
-    Precedence:
-      1. Explicit ``LLM_PROVIDER`` env var (``deepseek`` | ``openrouter`` |
-         ``kimi`` | ``groq`` | ``ollama``) wins.
-      2. Otherwise: Kimi when a KIMI_API_KEY is set, else Groq when a
-         GROQ_API_KEY is set, else Kimi (the historical primary).
-    OpenAI stays removed (2026-07-25). DeepSeek is restored as an
-    explicit-only cloud primary (``LLM_PROVIDER=deepseek`` /
-    ``LLM_FALLBACK_PROVIDER=deepseek``); it is never auto-picked from a
-    bare ``DEEPSEEK_API_KEY``. Cloud production may also use OpenRouter
-    free models (``OPENROUTER_MODEL=openrouter/free`` or any ``:free``
-    slug); Kimi and Groq stay optional. Ollama is the on-prem provider.
-    Do not point ``OLLAMA_URL`` at OpenRouter — use
-    ``LLM_PROVIDER=openrouter``.
+    Two providers are supported:
+      * ``deepseek`` — the primary. Unset or unrecognised ``LLM_PROVIDER``
+        resolves here, and it is the recommended ``LLM_PROVIDER``.
+      * ``openrouter`` — the free-tier fallback, selected with
+        ``LLM_PROVIDER=openrouter`` and, as the cross-provider degrade
+        target, with ``LLM_FALLBACK_PROVIDER=openrouter``.
+
+    Removed cloud providers (OpenAI, Kimi/Moonshot, Groq) and the on-prem
+    Ollama branch stay removed: an ``LLM_PROVIDER`` naming any of them (or
+    any junk) falls through to DeepSeek rather than reviving a dead path.
 
     Per-provider override envs let the operator pin a specific model
-    without code changes:
-      - ``DEEPSEEK_MODEL`` / ``OPENROUTER_MODEL`` / ``GROQ_MODEL`` /
-        ``KIMI_MODEL`` / ``OLLAMA_MODEL``
-      - ``OLLAMA_URL`` overrides the localhost default — set this to your
-        Cloudflare Tunnel / Tailscale / VPS URL so the Render deploy can
-        reach your self-hosted Ollama.
-
-    Ollama can run in two modes:
-      * Self-hosted (localhost / your tunnel) — no auth required.
-        ``env_key`` is empty so the caller skips the Bearer header.
-      * Ollama Cloud (https://ollama.com) — Bearer-token auth via
-        ``OLLAMA_API_KEY``. When that env var is set we expose env_key
-        so the downstream auth path adds the header just like Groq
-        or DeepSeek.
+    without code changes: ``DEEPSEEK_MODEL`` / ``OPENROUTER_MODEL``.
     """
-    # Unset or unrecognized LLM_PROVIDER resolves to Kimi (historical primary),
-    # with Groq as the auto-pick only when a Kimi key is absent but a Groq key
-    # exists. DeepSeek and OpenRouter are explicit-only (LLM_PROVIDER /
-    # LLM_FALLBACK_PROVIDER).
+    # Unset or unrecognized LLM_PROVIDER resolves to DeepSeek (primary).
     provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
-    if not provider:
-        provider = "kimi" if os.getenv("KIMI_API_KEY") else (
-            "groq" if os.getenv("GROQ_API_KEY") else "kimi")
-    if provider == "ollama":
-        url = os.getenv("OLLAMA_URL", OLLAMA_DEFAULT_URL).rstrip("/")
-        # Native Ollama protocol (/api/chat) is explicit — leave it alone.
-        # Otherwise accept both the bare host (http://host:11434) and the
-        # full OAI-shape path; append the canonical suffix when missing.
-        if not url.endswith("/api/chat"):
-            if not url.endswith("/v1/chat/completions"):
-                if url.endswith("/v1"):
-                    url = url + "/chat/completions"
-                elif "/v1/" not in url:
-                    url = url + "/v1/chat/completions"
-        return {
-            "provider": "ollama",
-            "url": url,
-            "env_key": "OLLAMA_API_KEY" if os.getenv("OLLAMA_API_KEY") else "",
-            "default_model": os.getenv("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
-        }
     if provider == "openrouter":
         # max_tokens ceiling is applied in _provider_max_tokens (env
-        # OPENROUTER_MAX_TOKENS), not here — same chokepoint as Kimi's
-        # reasoning floor, including fallback / streaming hops.
+        # OPENROUTER_MAX_TOKENS), not here — the same chokepoint on every
+        # fallback / streaming hop.
         return {
             "provider": "openrouter",
             "url": OPENROUTER_API_URL,
             "env_key": "OPENROUTER_API_KEY",
             "default_model": _resolve_openrouter_model(os.getenv("OPENROUTER_MODEL")),
         }
-    if provider == "deepseek":
-        # No fixed_temperature: DeepSeek accepts the agent's temperature
-        # on deepseek-chat and ignores it on thinking/reasoner rather
-        # than 400ing. Do not copy Kimi's temperature=1 pin.
-        return {
-            "provider": "deepseek",
-            "url": DEEPSEEK_API_URL,
-            "env_key": "DEEPSEEK_API_KEY",
-            "default_model": (
-                (os.getenv("DEEPSEEK_MODEL") or "").strip() or DEEPSEEK_DEFAULT_MODEL
-            ),
-        }
-    if provider == "groq":
-        return {
-            "provider": "groq",
-            "url": GROQ_API_URL,
-            "env_key": "GROQ_API_KEY",
-            "default_model": _resolve_groq_model(os.getenv("GROQ_MODEL")),
-        }
-    if provider == "kimi":
-        return {
-            "provider": "kimi",
-            "url": KIMI_API_URL,
-            "env_key": "KIMI_API_KEY",
-            "default_model": os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL),
-            # Moonshot's K2 reasoning models reject any temperature but 1
-            # ("invalid temperature: only 1 is allowed for this model"). Declare
-            # that constraint HERE so the outbound payload is shaped per-provider
-            # (see _provider_temperature) rather than hardcoding 1 globally — a
-            # global constant would just become the next provider's 400.
-            "fixed_temperature": 1,
-            # K2 spends the SHARED max_tokens budget on chain-of-thought before
-            # any content. Measured with the validation agent's own prompt:
-            # max_tokens=1024 -> finish=length, content=0c, reasoning=3940c.
-            # Any cap below the reasoning burn makes content structurally
-            # impossible — the empty-final retry then fails the same way and
-            # the user sees the canned "unable to generate" message. Floor it
-            # here (see _provider_max_tokens), like fixed_temperature.
-            "reasoning_min_tokens": int(os.getenv("KIMI_REASONING_MIN_TOKENS", "4096")),
-        }
-    # Default / fallthrough = Kimi (primary). Unrecognised names (including
-    # leftover ``openai``) must not steal a different cloud provider.
+    # Default / fallthrough = DeepSeek (primary). No fixed_temperature:
+    # DeepSeek accepts the agent's temperature on deepseek-chat and ignores
+    # it on thinking/reasoner rather than 400ing.
     return {
-        "provider": "kimi",
-        "url": KIMI_API_URL,
-        "env_key": "KIMI_API_KEY",
-        "default_model": os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL),
-        "fixed_temperature": 1,
-        "reasoning_min_tokens": int(os.getenv("KIMI_REASONING_MIN_TOKENS", "4096")),
-    }
-
-
-def _kimi_model_fallback(primary: dict[str, Any]) -> dict[str, Any] | None:
-    """Same-Moonshot-key fast model, or None. No ``fixed_temperature`` so
-    moonshot-v1 accepts the caller's temperature."""
-    if primary.get("provider") != "kimi":
-        return None
-    fb_model = (os.getenv("KIMI_FALLBACK_MODEL") or "").strip()
-    if not fb_model or fb_model == primary.get("default_model"):
-        return None
-    return {
-        "provider": "kimi",
-        "url": KIMI_API_URL,
-        "env_key": "KIMI_API_KEY",
-        "default_model": fb_model,
+        "provider": "deepseek",
+        "url": DEEPSEEK_API_URL,
+        "env_key": "DEEPSEEK_API_KEY",
+        "default_model": (
+            (os.getenv("DEEPSEEK_MODEL") or "").strip() or DEEPSEEK_DEFAULT_MODEL
+        ),
     }
 
 
@@ -7011,16 +6888,9 @@ def _cross_provider_fallback(primary: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _llm_fallback_ladder(primary: dict[str, Any]) -> list[dict[str, Any]]:
-    """Every usable fallback, same-provider model first, then cross-provider.
-
-    A Kimi conversation-shape 400 (orphaned ``tool_call_id``s, tokenization)
-    cannot be fixed by another Moonshot model — Groq must still be on the
-    ladder even when ``KIMI_FALLBACK_MODEL`` is set.
-    """
+    """Every usable fallback. With only two providers this is the single
+    cross-provider degrade target named by ``LLM_FALLBACK_PROVIDER``."""
     out: list[dict[str, Any]] = []
-    same = _kimi_model_fallback(primary)
-    if same:
-        out.append(same)
     cross = _cross_provider_fallback(primary)
     if cross:
         out.append(cross)
@@ -7031,22 +6901,11 @@ def _llm_fallback_config(primary: dict[str, Any]) -> dict[str, Any] | None:
     """First fallback only — callers that want the full ladder use
     ``_llm_fallback_ladder``.
 
-    Two fallback shapes, checked in order:
-
-    1. SAME-PROVIDER MODEL fallback (``KIMI_FALLBACK_MODEL``): when the Kimi
-       primary (kimi-k2.6, a slow reasoning model that forces temperature=1)
-       times out or errors on a large grounded turn, retry the SAME Moonshot
-       key/endpoint with a fast, temperature-flexible, big-context model
-       (moonshot-v1-128k). This is the RECOMMENDED fallback — it survives the
-       payloads Groq's free tier 413s on (verified: 19.5k tokens OK), needs no
-       new key, and has no fixed-temperature constraint. Set
-       KIMI_FALLBACK_MODEL=moonshot-v1-128k.
-
-    2. CROSS-PROVIDER fallback (``LLM_FALLBACK_PROVIDER`` = ``deepseek`` |
-       ``openrouter`` | ``kimi`` | ``groq`` | ``ollama``): degrade to another
-       provider on a retryable failure (413/429/5xx/network). Returns
-       ``None`` when unset, names the primary provider, or its API-key env
-       is missing.
+    CROSS-PROVIDER fallback (``LLM_FALLBACK_PROVIDER`` = ``deepseek`` |
+    ``openrouter``): degrade to the other provider on a retryable failure
+    (413/429/5xx/network). ``openrouter`` is the intended value when the
+    primary is DeepSeek. Returns ``None`` when unset, when it names the
+    primary provider, or when its API-key env is missing.
 
     Reuses ``_llm_config`` for URL/suffix normalisation by pinning the provider
     through the env for the duration of one synchronous call.
@@ -7058,12 +6917,13 @@ def _llm_fallback_config(primary: dict[str, Any]) -> dict[str, Any] | None:
 def _provider_temperature(cfg: dict[str, Any], default: float) -> float:
     """The temperature this provider will actually accept.
 
-    Some providers pin temperature. Moonshot's K2 reasoning models 400 on any
-    value but 1. Rather than hardcode 1 globally (which would become the NEXT
-    provider's 400), each constrained provider declares ``fixed_temperature`` in
-    ``_llm_config``; every other provider keeps the agent's own temperature.
-    Applied at the same outbound chokepoint as message sanitisation so every
-    caller (_call_llm and _stream_synthesis) shapes the payload identically.
+    Neither DeepSeek nor OpenRouter pins temperature, so this passes the
+    agent's own value through. The generic ``fixed_temperature`` hook is kept
+    so a future constrained provider can declare its pin in ``_llm_config``
+    rather than hardcoding a value globally (which would become the NEXT
+    provider's 400). Applied at the same outbound chokepoint as message
+    sanitisation so every caller (_call_llm and _stream_synthesis) shapes the
+    payload identically.
     """
     fixed = cfg.get("fixed_temperature")
     return default if fixed is None else float(fixed)
@@ -7092,17 +6952,17 @@ def _openrouter_max_tokens_ceiling() -> int:
 def _provider_max_tokens(cfg: dict[str, Any], configured: int) -> int:
     """Adjust the agent's ``max_tokens`` for this provider.
 
-    Reasoning providers declare ``reasoning_min_tokens``: the shared budget is
-    spent on chain-of-thought first, so a configured cap below the model's
-    reasoning burn yields finish_reason=length with EMPTY content every time
-    (measured: 1024 -> 0 chars content, 3,940 chars reasoning). The floor only
-    LIFTS a starving budget; a generous agent budget passes through, and
-    providers without the field keep the agent's own value.
+    A provider may declare ``reasoning_min_tokens`` (generic hook): the shared
+    budget is spent on chain-of-thought first, so a configured cap below the
+    model's reasoning burn yields finish_reason=length with EMPTY content every
+    time. The floor only LIFTS a starving budget; a generous agent budget
+    passes through, and providers without the field (DeepSeek) keep the agent's
+    own value.
 
     OpenRouter additionally applies a CEILING (``OPENROUTER_MAX_TOKENS``,
     default 2048). OpenRouter reserves the full requested max_tokens against
     remaining credit even for :free models, so an agent YAML of 8192 402s a
-    $0-balance free account. Kimi / Groq / Ollama are unchanged.
+    $0-balance free account. DeepSeek is unchanged.
     """
     tokens = int(configured)
     floor = cfg.get("reasoning_min_tokens")
@@ -7234,133 +7094,13 @@ def _compact_messages_for_openrouter(
     )
 
 
-def _is_native_ollama(cfg: dict[str, Any]) -> bool:
-    """True when the configured Ollama endpoint uses the native /api/chat
-    protocol rather than the OpenAI-compatible /v1/chat/completions path."""
-    return cfg.get("provider") == "ollama" and str(cfg.get("url", "")).endswith("/api/chat")
-
-
-def _sanitize_messages_for_ollama_native(
-    messages: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Adapt OpenAI-shaped messages for Ollama's native /api/chat protocol.
-
-    Native Ollama does not accept the ``tool`` role; tool responses must be
-    sent as ``user`` messages. It also expects ``function.arguments`` inside
-    assistant ``tool_calls`` to be a parsed dict, not a JSON string.
-    """
-    out: list[dict[str, Any]] = []
-    for m in messages:
-        if not isinstance(m, dict):
-            out.append(m)
-            continue
-        role = m.get("role")
-        if role == "tool":
-            out.append({
-                "role": "user",
-                "content": f"Tool result: {m.get('content', '')}",
-            })
-            continue
-        if role == "assistant":
-            cm = {"role": "assistant", "content": m.get("content", "")}
-            tcs = m.get("tool_calls")
-            if isinstance(tcs, list):
-                clean_tcs: list[dict[str, Any]] = []
-                for tc in tcs:
-                    if not isinstance(tc, dict):
-                        clean_tcs.append(tc)
-                        continue
-                    fn = tc.get("function") or {}
-                    raw_args = fn.get("arguments") or "{}"
-                    if isinstance(raw_args, str):
-                        try:
-                            args = json.loads(raw_args)
-                        except json.JSONDecodeError:
-                            args = {}
-                    else:
-                        args = raw_args
-                    clean_tcs.append({
-                        "id": tc.get("id") or "",
-                        "type": tc.get("type") or "function",
-                        "function": {
-                            "name": fn.get("name") or "",
-                            "arguments": args,
-                        },
-                    })
-                if clean_tcs:
-                    cm["tool_calls"] = clean_tcs
-            out.append(cm)
-            continue
-        out.append(m)
-    return out
-
-
-def _native_ollama_payload(
-    model: str,
-    messages: list[dict[str, Any]],
-    temperature: float,
-    max_tokens: int,
-    tools: list[dict[str, Any]] | None = None,
-    stream: bool = False,
-) -> dict[str, Any]:
-    """Build an Ollama-native /api/chat payload from our OpenAI-shaped inputs.
-
-    Ollama's native protocol expects ``options.temperature`` and
-    ``options.num_predict`` (token limit), and ``tools`` in OpenAI format.
-    ``tool_choice`` is not supported natively, so the caller omits it.
-    """
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "stream": stream,
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-        },
-    }
-    if tools:
-        payload["tools"] = tools
-    return payload
-
-
-def _ollama_message_to_openai(message: dict[str, Any]) -> dict[str, Any]:
-    """Convert an Ollama-native ``message`` dict into an OpenAI-style message.
-
-    Native tool_calls carry ``function.arguments`` as a parsed dict; we
-    serialise it back to JSON so the rest of the runtime stays unchanged.
-    """
-    out: dict[str, Any] = {
-        "role": message.get("role", "assistant"),
-        "content": message.get("content", ""),
-    }
-    tool_calls = message.get("tool_calls")
-    if isinstance(tool_calls, list):
-        clean: list[dict[str, Any]] = []
-        for i, tc in enumerate(tool_calls):
-            fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
-            name = fn.get("name") or ""
-            args = fn.get("arguments")
-            if isinstance(args, dict):
-                args = json.dumps(args)
-            elif not isinstance(args, str):
-                args = "{}"
-            clean.append({
-                "id": tc.get("id") or f"ollama_{i+1}",
-                "type": "function",
-                "function": {"name": name, "arguments": args},
-            })
-        if clean:
-            out["tool_calls"] = clean
-    return out
-
-
 # Outbound message sanitiser — the single chokepoint that protects every
 # provider from non-standard fields our own (reasoning-capable) models add.
 # Reasoning models (gpt-oss / GLM) attach a `reasoning` field to the assistant
 # message that carries a tool call; runtime appends that message wholesale and
-# it is persisted to agent memory. When the array is later POSTed to Groq it
-# 400s: "messages[N].reasoning: reasoning is not supported with this model" and
-# the whole (tool-calling) turn errors. We WHITELIST allowed keys rather than
+# it is persisted to agent memory. When the array is later POSTed to a strict
+# provider it 400s: "messages[N].reasoning: reasoning is not supported with
+# this model" and the whole (tool-calling) turn errors. We WHITELIST allowed keys rather than
 # blacklist `reasoning`, so whatever field the next provider invents is dropped
 # too. Applied only in _call_llm so already-contaminated history is neutralised
 # on replay — no persistence migration.
@@ -7377,7 +7117,7 @@ class _SynthStreamError(Exception):
     one-way door away from the working behaviour."""
 
 
-_GROQ_TPM_CHAR_BUDGET = 16000  # ~4k tokens; leave headroom under 8000 TPM
+_TPM_CHAR_BUDGET = 16000  # ~4k tokens; the default prompt-compaction budget
 
 
 def _approx_message_chars(messages: list[dict[str, Any]] | None) -> int:
@@ -7427,7 +7167,7 @@ def _compacted_tool_payload(
     return json.dumps(
         {
             "truncated": True,
-            "note": note or "Compacted for Groq TPM 8000.",
+            "note": note or "Compacted to fit the provider prompt budget.",
             "chars_shown": min(kept, len(content)),
             "chars_dropped": dropped,
             "chars_total": len(content),
@@ -7522,13 +7262,14 @@ def _compact_retrieval_message(content: str, budget: int) -> str:
 
 def _compact_messages_for_tpm(
     messages: list[dict[str, Any]],
-    budget: int = _GROQ_TPM_CHAR_BUDGET,
+    budget: int = _TPM_CHAR_BUDGET,
     compact_note: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Shrink a Groq hop so on-demand TPM 8000 is not blown by tool dumps.
+    """Shrink a hop so a provider's prompt/TPM budget is not blown by tool dumps.
 
-    Live M1/M3/M7/M9/M12/M14: Kimi empty/filter → Groq 413 on 9–12k tokens.
-    Keep roles and tool-call pairing; truncate contents only.
+    Used for the OpenRouter free-tier prompt budget (see
+    ``_compact_messages_for_openrouter``). Keep roles and tool-call pairing;
+    truncate contents only.
 
     Tool results are compacted OLDEST FIRST and only while the hop is still
     over budget. The previous pass cut every tool result over 1200 chars to
@@ -7654,16 +7395,6 @@ def _compact_messages_for_tpm(
     kept.extend(systems[:2])
     kept.extend(rest[-8:])
     return kept or out
-
-
-def _resolve_groq_model(name: str | None) -> str:
-    """Map retired Groq ids so a stale ``GROQ_MODEL`` env still serves.
-
-    Render still pins ``GROQ_MODEL=llama-3.3-70b-versatile``. Changing only
-    ``GROQ_DEFAULT_MODEL`` would leave that override 404ing.
-    """
-    raw = (name or "").strip() or GROQ_DEFAULT_MODEL
-    return GROQ_RETIRED_MODELS.get(raw, raw)
 
 
 def _http_400_is_retryable(body: str) -> bool:
@@ -8271,7 +8002,7 @@ class Agent:
     description: str
     system_prompt: str
     allowed_blocks: list[str] = field(default_factory=list)
-    model: str = KIMI_DEFAULT_MODEL
+    model: str = DEEPSEEK_DEFAULT_MODEL
     temperature: float = 0.3
     max_tokens: int = 2048
     icon: str = ""
@@ -8795,9 +8526,9 @@ class Agent:
             }
 
         cfg = _llm_config()
-        # Ollama (local / self-hosted) has no auth — skip the env-key
-        # check entirely. The empty bearer token sent later is ignored
-        # by Ollama's OAI-compatible endpoint.
+        # A provider with no env_key (none today) would need no auth — the
+        # empty-bearer guard downstream omits the header. DeepSeek/OpenRouter
+        # both declare an env_key, so this check requires their API key.
         if cfg["env_key"]:
             api_key = api_key or os.getenv(cfg["env_key"])
             if not api_key:
@@ -9709,8 +9440,8 @@ class Agent:
             }
             return
 
-        # Ollama (local / self-hosted) has no auth — skip the env-key
-        # check. The empty bearer is ignored by Ollama's OAI endpoint.
+        # A provider with no env_key (none today) would need no auth. Both
+        # DeepSeek and OpenRouter declare an env_key, so require their API key.
         if cfg["env_key"]:
             api_key = api_key or os.getenv(cfg["env_key"])
             if not api_key:
@@ -10153,17 +9884,16 @@ class Agent:
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
         # True token streaming for the FINAL synthesis call only. Gated to:
         #   * SYNTHESIS_STREAMING=1  (instant prod kill-switch; default off)
-        #   * provider == groq       (the only verified streaming path)
+        #   * provider in (openrouter, deepseek)  (the verified streaming paths)
         # When enabled, the force_synthesis iteration streams provider deltas as
         # token events instead of computing the whole answer then re-chunking it
         # (which made first_token ~= total). Any pre-first-token failure falls
         # back to the untouched non-streaming path below.
         _synth_stream_enabled = (
             os.getenv("SYNTHESIS_STREAMING") == "1"
-            # Kimi is the production primary; gating on Groq alone made
-            # SYNTHESIS_STREAMING=1 a dead switch in prod. Keep this list in
-            # step with the allowlist in _stream_synthesis.
-            and cfg["provider"] in ("groq", "kimi", "openrouter", "deepseek")
+            # DeepSeek and OpenRouter both stream the OpenAI SSE shape. Keep
+            # this list in step with the allowlist in _stream_synthesis.
+            and cfg["provider"] in ("openrouter", "deepseek")
             # rag_debug needs the whole final text to run its with/without-RAG
             # A/B in the non-streaming branch; don't stream those turns.
             and not rag_debug
@@ -10211,8 +9941,8 @@ class Agent:
                 _phase["since"] = time.monotonic()
         # Served model string of the LAST successful LLM call this turn, surfaced
         # in the `end` event so observability (fork_cli/smoke) can tell the
-        # configured provider apart from a silent fallback (e.g. Kimi K2 vs an
-        # Ollama fallback) per run. The model string alone is a sufficient
+        # configured provider apart from a silent fallback (e.g. DeepSeek vs an
+        # OpenRouter fallback) per run. The model string alone is a sufficient
         # discriminator; None until the first successful call.
         served_model: str | None = None
         for iteration in range(MAX_TOOL_ITERATIONS):
@@ -10929,8 +10659,8 @@ class Agent:
         # on DeepSeek) uses the active provider's default from _llm_config.
         model = _resolve_attempt_model(cfg, self.model)
         # Whitelist-sanitise every outbound message (drops `reasoning` and any
-        # other non-standard field that would make a strict provider — Groq —
-        # reject the request). Single chokepoint, covers all callers.
+        # other non-standard field that would make a strict provider reject
+        # the request). Single chokepoint, covers all callers.
         messages = _sanitize_messages_for_provider(messages)
         payload = {
             "model": model,
@@ -10991,22 +10721,13 @@ class Agent:
             return status in (408, 413, 429) or status >= 500
 
         def _tool_choice_for(provider: str):
-            # Forcing tool_choice HANGS/400s on Groq: Llama-4-Scout emits the
-            # tool as PROSE under a large prod context -> HTTP 400
-            # tool_use_failed -> the streaming tool-loop retries/loops. Forcing
-            # ALSO does nothing on gpt-oss, which ignores tool_choice outright.
-            # So only force on providers that honor it without hard-failing;
-            # Groq uses "auto", where Llama calls tools cleanly on its own and
-            # the turn always completes. Decided PER-ATTEMPT so a fallback to a
-            # different provider gets the right value.
-            if provider in ("groq", "kimi", "openrouter", "deepseek"):
-                # Groq: forcing tool_choice makes Llama-4-Scout emit the tool as
-                # PROSE -> HTTP 400 tool_use_failed. Kimi K2: forcing a specific
-                # tool 400s outright ("tool_choice 'specified' is incompatible
-                # with thinking enabled" — K2 is a reasoning model). OpenRouter
-                # is OpenAI-compatible like Groq; routed free models must not
-                # be forced. DeepSeek reasoner / thinking mode is the same
-                # class of constraint. All four call tools cleanly on "auto".
+            # Neither supported provider is forced. OpenRouter's routed free
+            # models must not be forced (OpenAI-compatible, but routing can
+            # 400/loop). DeepSeek reasoner / thinking mode 400s when a specific
+            # tool is forced. Both call tools cleanly on "auto". Decided
+            # PER-ATTEMPT so a fallback to a different provider gets the right
+            # value.
+            if provider in ("openrouter", "deepseek"):
                 return "auto"
             if forced_tool:
                 # Force THIS tool by name — "required" alone let the model pick
@@ -11067,75 +10788,22 @@ class Agent:
                 continue
             payload["model"] = a_model
             # Per-attempt like tool_choice: a fallback to a different provider
-            # must get that provider's accepted temperature (kimi -> 1, others ->
-            # the agent's own), not the primary's.
+            # must get that provider's accepted temperature (both DeepSeek and
+            # OpenRouter accept the agent's own), not the primary's.
             payload["temperature"] = _provider_temperature(a_cfg, self.temperature)
             payload["max_tokens"] = _provider_max_tokens(a_cfg, self.max_tokens)
-            if a_cfg.get("provider") == "groq":
-                payload["messages"] = _compact_messages_for_tpm(messages)
-                # Leave TPM headroom under the live on-demand 8000 cap.
-                payload["max_tokens"] = min(int(payload["max_tokens"] or 1024), 1024)
-            elif a_cfg.get("provider") == "openrouter":
+            if a_cfg.get("provider") == "openrouter":
                 payload["messages"] = _compact_messages_for_openrouter(messages)
             else:
                 payload["messages"] = messages
             if tools and with_tools:
                 payload["tool_choice"] = _tool_choice_for(a_cfg["provider"])
             try:
-                if _is_native_ollama(a_cfg):
-                    # Native Ollama path: different payload shape, no tool_choice,
-                    # and tool messages must be recast as user messages.
-                    native_messages = _sanitize_messages_for_ollama_native(messages)
-                    native_payload = _native_ollama_payload(
-                        model=a_model,
-                        messages=native_messages,
-                        temperature=payload["temperature"],
-                        max_tokens=self.max_tokens,
-                        tools=tools if (tools and with_tools) else None,
-                        stream=False,
-                    )
-                    async with httpx.AsyncClient(timeout=attempt_timeout) as client:
-                        r = await client.post(
-                            a_cfg["url"],
-                            json=native_payload,
-                            headers=(
-                                {"Authorization": f"Bearer {a_key}", "Content-Type": "application/json"}
-                                if a_key
-                                else {"Content-Type": "application/json"}
-                            ),
-                        )
-                    if r.status_code >= 400:
-                        body = r.text
-                        last_error = {"status": "error", "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
-                        if _is_retryable(r.status_code) and not is_last:
-                            _LOG.warning("llm: %s HTTP %s — falling back to %s", a_cfg["provider"], r.status_code, attempts[attempt_idx + 1][0]["provider"])
-                            continue
-                        _LOG.warning("llm: %s HTTP %s — no fallback taken: %s", a_cfg["provider"], r.status_code, body[:200])
-                        return last_error
-                    data = r.json()
-                    msg = _ollama_message_to_openai(data.get("message") or {})
-                    try:
-                        from app.core import usage_tracker
-                        usage_tracker.record(
-                            user_id=user_id,
-                            agent_name=self.name,
-                            provider=a_cfg.get("provider", ""),
-                            model=data.get("model") or a_model,
-                            usage=None,
-                        )
-                    except Exception:  # noqa: BLE001
-                        _LOG.warning(
-                            "swallowed %s in _call_llm() — continuing",
-                            "Exception", exc_info=True,
-                        )
-                    return {"status": "success", "choice": {"message": msg}, "raw": data}
-
                 headers = (
                     {"Authorization": f"Bearer {a_key}", "Content-Type": "application/json"}
                     if a_key
                     else {"Content-Type": "application/json"}
                 )
-                groq_413_retried = False
                 openrouter_402_retries = 0
                 openrouter_429_retries = 0
                 while True:
@@ -11145,28 +10813,6 @@ class Agent:
                             json=payload,
                             headers=headers,
                         )
-                    if (
-                        r.status_code == 413
-                        and a_cfg.get("provider") == "groq"
-                        and not groq_413_retried
-                    ):
-                        compact_model = (
-                            os.getenv("GROQ_COMPACT_MODEL") or "openai/gpt-oss-20b"
-                        ).strip()
-                        if compact_model and compact_model != payload.get("model"):
-                            groq_413_retried = True
-                            payload["model"] = compact_model
-                            payload["messages"] = _compact_messages_for_tpm(
-                                messages, budget=12000,
-                            )
-                            payload["max_tokens"] = min(
-                                int(payload.get("max_tokens") or 1024), 768,
-                            )
-                            _LOG.warning(
-                                "llm: groq HTTP 413 — retrying compacted payload on %s",
-                                compact_model,
-                            )
-                            continue
                     if (
                         r.status_code == 402
                         and a_cfg.get("provider") == "openrouter"
@@ -11390,8 +11036,8 @@ class Agent:
     ) -> AsyncIterator[str]:
         """Stream a tool-free synthesis completion, yielding content deltas.
 
-        Used ONLY for the forced (``with_tools=False``) synthesis call and only
-        on Groq (the verified provider). Mirrors ``_call_llm``'s setup — same
+        Used ONLY for the forced (``with_tools=False``) synthesis call, on the
+        DeepSeek / OpenRouter OpenAI SSE shape. Mirrors ``_call_llm``'s setup — same
         ``_llm_config``, same leftover-model-name remap, same soft daily-cap
         semantics, and critically the SAME ``_sanitize_messages_for_provider``
         chokepoint — but sets ``stream=True`` and offers NO tools, so no
@@ -11406,14 +11052,11 @@ class Agent:
         it has begun.
         """
         cfg = _llm_config()
-        native_ollama = _is_native_ollama(cfg)
-        if cfg["provider"] not in ("groq", "openai", "kimi", "openrouter", "deepseek") and not native_ollama:
-            # Groq / Kimi / OpenRouter / DeepSeek share the OpenAI SSE shape.
-            # Native Ollama is verified separately. Do not re-open OpenAI as
-            # a selectable provider — the leftover name only keeps old
-            # allowlist comments honest.
+        if cfg["provider"] not in ("openrouter", "deepseek"):
+            # DeepSeek and OpenRouter share the OpenAI SSE shape; nothing else
+            # is a selectable provider.
             raise _SynthStreamError(
-                "streaming synthesis only verified for groq/openai/kimi/openrouter/deepseek/native-ollama"
+                "streaming synthesis only verified for openrouter/deepseek"
             )
         # Soft daily cap: mirror _call_llm. Over cap -> fall back so the
         # non-streaming path emits the structured cap error the UI expects.
@@ -11447,82 +11090,52 @@ class Agent:
         content_deltas = 0
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(_llm_http_timeout(), read=_llm_http_timeout())) as client:
-                if native_ollama:
-                    payload = _native_ollama_payload(
-                        model=model,
-                        messages=_sanitize_messages_for_ollama_native(messages),
-                        temperature=temperature,
-                        max_tokens=stream_max_tokens,
-                        stream=True,
-                    )
-                    async with client.stream(
-                        "POST", cfg["url"], json=payload, headers=headers,
-                    ) as r:
-                        if r.status_code != 200:
-                            await r.aread()
-                            raise _SynthStreamError(
-                                f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
-                            )
-                        async for line in r.aiter_lines():
-                            if not line:
-                                continue
-                            try:
-                                evt = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            msg = evt.get("message") or {}
-                            delta = msg.get("content")
+                payload = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": stream_max_tokens,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+                async with client.stream(
+                    "POST", cfg["url"], json=payload, headers=headers,
+                ) as r:
+                    if r.status_code != 200:
+                        await r.aread()
+                        raise _SynthStreamError(
+                            f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
+                        )
+                    async for line in r.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            evt = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = evt.get("choices") or []
+                        if choices:
+                            _delta_obj = choices[0].get("delta") or {}
+                            # Reasoning models (e.g. deepseek-reasoner) stream a
+                            # THINKING phase as ``reasoning_content`` before
+                            # any ``content`` arrives. It is not the answer:
+                            # it contains discarded intermediate claims that
+                            # would read as authoritative in the UI, and it
+                            # is not what gets persisted. Count it so the
+                            # caller can tell "model is working" apart from
+                            # "provider returned nothing", but never yield
+                            # it as answer text.
+                            if _delta_obj.get("reasoning_content"):
+                                reasoning_deltas += 1
+                            delta = _delta_obj.get("content")
                             if delta:
+                                content_deltas += 1
                                 yield delta
-                            if evt.get("done"):
-                                break
-                else:
-                    payload = {
-                        "model": model,
-                        "messages": messages,
-                        "temperature": temperature,
-                        "max_tokens": stream_max_tokens,
-                        "stream": True,
-                        "stream_options": {"include_usage": True},
-                    }
-                    async with client.stream(
-                        "POST", cfg["url"], json=payload, headers=headers,
-                    ) as r:
-                        if r.status_code != 200:
-                            await r.aread()
-                            raise _SynthStreamError(
-                                f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
-                            )
-                        async for line in r.aiter_lines():
-                            if not line or not line.startswith("data:"):
-                                continue
-                            data = line[5:].strip()
-                            if data == "[DONE]":
-                                break
-                            try:
-                                evt = json.loads(data)
-                            except json.JSONDecodeError:
-                                continue
-                            choices = evt.get("choices") or []
-                            if choices:
-                                _delta_obj = choices[0].get("delta") or {}
-                                # Reasoning models (Kimi K2 thinking) stream a
-                                # THINKING phase as ``reasoning_content`` before
-                                # any ``content`` arrives. It is not the answer:
-                                # it contains discarded intermediate claims that
-                                # would read as authoritative in the UI, and it
-                                # is not what gets persisted. Count it so the
-                                # caller can tell "model is working" apart from
-                                # "provider returned nothing", but never yield
-                                # it as answer text.
-                                if _delta_obj.get("reasoning_content"):
-                                    reasoning_deltas += 1
-                                delta = _delta_obj.get("content")
-                                if delta:
-                                    content_deltas += 1
-                                    yield delta
-                            if evt.get("usage"):
-                                usage = evt["usage"]
+                        if evt.get("usage"):
+                            usage = evt["usage"]
         except _SynthStreamError:
             raise
         except Exception as e:  # noqa: BLE001 — network/transport/parse
@@ -12805,7 +12418,7 @@ def _parse_agent_file(path: Path) -> Agent:
         description=config.get("description", ""),
         system_prompt=body,
         allowed_blocks=list(config.get("allowed_blocks") or []),
-        model=config.get("model") or KIMI_DEFAULT_MODEL,
+        model=config.get("model") or DEEPSEEK_DEFAULT_MODEL,
         temperature=float(config.get("temperature", 0.3)),
         max_tokens=int(config.get("max_tokens", 2048)),
         icon=config.get("icon", ""),
