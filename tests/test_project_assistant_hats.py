@@ -82,8 +82,8 @@ def test_apply_hat_activation_steers_project_assistant_only(monkeypatch):
 
 def test_project_assistant_stream_emits_hat_scores(monkeypatch):
     monkeypatch.setenv("FORK_HATS_ENABLED", "1")
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
     agent = _pa()
     mock = AsyncMock(return_value={
         "status": "success",
@@ -108,8 +108,8 @@ def test_project_assistant_stream_emits_hat_scores(monkeypatch):
 
 def test_project_assistant_stream_no_hat_scores_when_flag_off(monkeypatch):
     monkeypatch.delenv("FORK_HATS_ENABLED", raising=False)
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
     agent = _pa()
     mock = AsyncMock(return_value={
         "status": "success",

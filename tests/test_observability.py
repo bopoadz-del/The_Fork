@@ -24,7 +24,7 @@ from app.infra.monitoring import (
 
 def test_is_llm_transport_failure_detects_dead_tunnel():
     assert is_llm_transport_failure("[Errno -2] Name or service not known")
-    assert is_llm_transport_failure("ollama not reachable at http://127.0.0.1:11434")
+    assert is_llm_transport_failure("deepseek not reachable at https://api.deepseek.com")
     assert not is_llm_transport_failure("validation failed: missing field")
 
 
@@ -32,16 +32,16 @@ def test_is_llm_transport_failure_detects_dead_tunnel():
     importlib.util.find_spec("sentry_sdk") is None,
     reason="sentry_sdk not installed",
 )
-@patch.dict(os.environ, {"SENTRY_DSN": "https://example@sentry.io/1", "OLLAMA_URL": "http://dead-tunnel:11434"})
+@patch.dict(os.environ, {"SENTRY_DSN": "https://example@sentry.io/1", "LLM_PROVIDER": "deepseek"})
 @patch("sentry_sdk.capture_message", return_value="evt-123")
 @patch("sentry_sdk.push_scope")
-def test_capture_llm_transport_failure_attaches_ollama_url(mock_scope, mock_capture):
+def test_capture_llm_transport_failure_attaches_provider_context(mock_scope, mock_capture):
     mock_scope.return_value.__enter__ = MagicMock(return_value=MagicMock())
     mock_scope.return_value.__exit__ = MagicMock(return_value=False)
 
     with patch("app.infra.monitoring._sentry_enabled", True):
         event_id = capture_llm_transport_failure(
-            "ollama failed: [Errno -2] Name or service not known",
+            "deepseek call failed: [Errno -2] Name or service not known",
             request_id="req-abc",
             path="/v1/chat/stream",
         )
@@ -51,7 +51,7 @@ def test_capture_llm_transport_failure_attaches_ollama_url(mock_scope, mock_capt
     scope = mock_scope.return_value.__enter__.return_value
     scope.set_context.assert_called_once()
     ctx = scope.set_context.call_args[0][1]
-    assert ctx["OLLAMA_URL"] == "http://dead-tunnel:11434"
+    assert ctx["llm_provider"] == "deepseek"
 
 
 def test_block_metrics_registry_snapshot():

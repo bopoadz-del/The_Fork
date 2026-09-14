@@ -136,11 +136,11 @@ def test_sanitize_leaves_a_real_answer_alone():
 
 # -- the streaming path ---------------------------------------------------
 
-_GROQ_CFG = {
-    "provider": "groq",
-    "url": "https://api.groq.com/openai/v1/chat/completions",
-    "env_key": "GROQ_API_KEY",
-    "default_model": "meta-llama/llama-4-scout-17b-16e-instruct",
+_DEEPSEEK_CFG = {
+    "provider": "deepseek",
+    "url": "https://api.deepseek.com/v1/chat/completions",
+    "env_key": "DEEPSEEK_API_KEY",
+    "default_model": "deepseek-chat",
 }
 
 
@@ -150,9 +150,9 @@ def _disable_commissioning_remaining(monkeypatch):
 
 
 @pytest.fixture
-def groq_streaming(monkeypatch):
-    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_GROQ_CFG))
-    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+def deepseek_streaming(monkeypatch):
+    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
 
 
@@ -220,7 +220,7 @@ def _sent_messages(call_llm):
     return call_llm.state.get("messages") or []
 
 
-def test_a_streamed_leak_never_reaches_the_client(groq_streaming):
+def test_a_streamed_leak_never_reaches_the_client(deepseek_streaming):
     """The bytes must not go out, not merely be scrubbed from what is saved.
 
     Chunked mid-marker on purpose: the guard tests the ACCUMULATED text, so a
@@ -260,7 +260,7 @@ def test_a_streamed_leak_never_reaches_the_client(groq_streaming):
     assert "AUTHORITATIVE" not in (events[-1].get("content") or "")
 
 
-def test_holding_the_leak_forces_a_retry_rather_than_ending_silent(groq_streaming):
+def test_holding_the_leak_forces_a_retry_rather_than_ending_silent(deepseek_streaming):
     """Suppression alone would trade a leak for a blank turn. The user must
     still get an answer -- here, the non-streamed retry's."""
     deltas = ["AUTHORITATIVE REFERENCE CONTEXT \u2014 retrieved material\n"]
@@ -284,7 +284,7 @@ def test_holding_the_leak_forces_a_retry_rather_than_ending_silent(groq_streamin
     assert nudges, "the retry must carry the context-leak instruction"
 
 
-def test_a_clean_stream_is_untouched(groq_streaming):
+def test_a_clean_stream_is_untouched(deepseek_streaming):
     deltas = [
         "Delay Damages for the whole of the Works are 0.1% of the ",
         "Contract Price per calendar day.\n",
@@ -301,7 +301,7 @@ def test_a_clean_stream_is_untouched(groq_streaming):
     assert "10% of the Contract Price" in text
 
 
-def test_a_leak_forces_the_retry_on_its_own(groq_streaming, monkeypatch):
+def test_a_leak_forces_the_retry_on_its_own(deepseek_streaming, monkeypatch):
     """Not by borrowing the search-promise detector's verdict.
 
     Today a leak also sets promise_hold, but only by accident: the chokepoint
@@ -330,7 +330,7 @@ def test_a_leak_forces_the_retry_on_its_own(groq_streaming, monkeypatch):
     assert text.strip() != _TOOL_FORMAT_FALLBACK
 
 
-def test_a_retry_that_leaks_again_is_refused_too(groq_streaming):
+def test_a_retry_that_leaks_again_is_refused_too(deepseek_streaming):
     """One chance. A retry that hands back the context as well must not ship
     it just because it is the second attempt."""
     state = {"n": 0}

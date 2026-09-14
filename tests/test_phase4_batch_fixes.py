@@ -333,7 +333,7 @@ async def test_health_report_ignores_never_used_providers():
     # the whole system "degraded" -- crying wolf on a healthy deployment.
     from app.infra.monitoring import MonitoringBlock
     b = MonitoringBlock(hal_block=None, config={})
-    await b.execute({"action": "record_call", "provider": "kimi",
+    await b.execute({"action": "record_call", "provider": "deepseek",
                      "latency_ms": 800, "success": True})
     rep = await b.execute({"action": "health_report"})
     assert rep["overall_status"] == "healthy", rep["overall_status"]

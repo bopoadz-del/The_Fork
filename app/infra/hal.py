@@ -150,22 +150,22 @@ class HALBlock:
     def get_recommendations(self) -> Dict[str, Any]:
         """Get block recommendations based on hardware"""
         recs = {
-            "chat_provider": "kimi",
+            "chat_provider": "deepseek",
             "vector_backend": "pgvector",  # The Fork uses Postgres pgvector
             "use_local_embeddings": False,
             "use_local_ocr": False,
             "max_concurrent_requests": 10,
         }
-        
+
         if self.profile == HardwareProfile.CLOUD_HIGH:
             recs.update({
-                "chat_provider": "openai",
+                "chat_provider": "deepseek",
                 "use_local_embeddings": True,
                 "max_concurrent_requests": 100,
             })
         elif self.profile == HardwareProfile.EDGE_GPU:
             recs.update({
-                "chat_provider": "local_ollama",
+                "chat_provider": "openrouter",
                 "use_local_embeddings": True,
                 "use_local_ocr": True,
             })

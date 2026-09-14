@@ -61,8 +61,8 @@ def _collect(gen: AsyncIterator[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _setup_provider(monkeypatch) -> None:
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
 
 
 def _ok(content: str) -> Dict[str, Any]:

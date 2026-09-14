@@ -469,8 +469,8 @@ def test_chat_stream_injects_rag_system_message_for_project_assistant(monkeypatc
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("MAX_RAG_TOKENS", "1500")
     monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
-    monkeypatch.setenv("LLM_PROVIDER", "groq")
-    monkeypatch.setenv("GROQ_API_KEY", "test")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
 
     captured = {}
 

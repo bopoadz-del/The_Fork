@@ -43,8 +43,8 @@ def _collect(gen: AsyncIterator[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _setup_provider(monkeypatch) -> None:
     """Bypass the api-key gate so the agent loop actually starts."""
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
 
 
 # ── test 1: hung LLM → wall-clock timeout fires ──────────────────────────────

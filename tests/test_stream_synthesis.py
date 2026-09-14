@@ -43,9 +43,6 @@ _LLM_ENV = (
     "USAGE_DAILY_CAP_USD",
 )
 
-NATIVE_OLLAMA_URL = "http://test-ollama:11434/api/chat"
-
-
 @pytest.fixture(autouse=True)
 def clean_llm_env(monkeypatch):
     """Same load-bearing isolation as the `_call_llm` suite: `_llm_config`
@@ -81,14 +78,6 @@ def _reasoning_sse(thinking=(), answer=(), done=True):
         lines.append("data: " + json.dumps({"choices": [{"delta": {"content": a}}]}))
     if done:
         lines.append("data: [DONE]")
-    return lines
-
-
-def _native(*deltas, done=True):
-    """Ollama's native /api/chat line sequence -- bare JSON, no `data:`."""
-    lines = [json.dumps({"message": {"content": d}}) for d in deltas]
-    if done:
-        lines.append(json.dumps({"message": {"content": ""}, "done": True}))
     return lines
 
 
@@ -148,7 +137,7 @@ def stream(monkeypatch):
     return _install
 
 
-def _agent(model="llama-3.3-70b-versatile", temperature=0.3):
+def _agent(model="deepseek-chat", temperature=0.3):
     return Agent(
         name="project-assistant",
         description="test agent",
@@ -159,20 +148,15 @@ def _agent(model="llama-3.3-70b-versatile", temperature=0.3):
     )
 
 
-def _groq(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "groq")
-    monkeypatch.setenv("GROQ_API_KEY", "groq-test-key")
-
-
-def _kimi(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "kimi")
-    monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
+def _deepseek(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
 
 
 async def _drain(agent, **kw):
     return [chunk async for chunk in agent._stream_synthesis(
         [{"role": "user", "content": "summarise the findings"}],
-        kw.pop("api_key", "groq-test-key"), **kw)]
+        kw.pop("api_key", "ds-test-key"), **kw)]
 
 
 # ── the provider gate ────────────────────────────────────────────────────
@@ -198,33 +182,20 @@ async def test_deepseek_streams_like_groq(monkeypatch, stream):
 
 
 @pytest.mark.asyncio
-async def test_kimi_the_production_primary_streams(monkeypatch, stream):
-    """Kimi is the configured production primary, so gating streaming on Groq
-    alone made SYNTHESIS_STREAMING=1 a switch that did nothing: every live turn
-    silently took the non-streaming fallback.
-
-    The inverse of this test used to pin "Kimi does not stream" as a deliberate
-    decision. It was, until Kimi streaming was verified against the live
-    Moonshot API (2026-08-24). Kept as the positive assertion so the gate can't
-    quietly close again.
-    """
-    _kimi(monkeypatch)
-    stream(_StreamResponse(_sse("28 ", "days.")))
-
-    assert await _drain(_agent(), api_key="kimi-test-key") == ["28 ", "days."]
-
-
-@pytest.mark.asyncio
 async def test_an_unverified_provider_is_refused_before_the_call(monkeypatch, stream):
     """The allowlist is what keeps an unverified provider's stream shape from
     reaching the user as answer text. It must fire before any network call.
 
-    Ollama behind an OpenAI-shaped URL is the real remaining unverified path:
-    `_llm_config` resolves any UNRECOGNISED provider name to Kimi, so a made-up
-    name would not exercise this gate at all.
+    `_llm_config` can only return deepseek/openrouter, so an unverified
+    provider is synthesised here by patching `_llm_config` directly -- the gate
+    must still refuse anything outside the allowlist.
     """
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://test-ollama:11434/v1/chat/completions")
+    monkeypatch.setattr(runtime, "_llm_config", lambda: {
+        "provider": "someone-elses-cloud",
+        "url": "http://test:11434/v1/chat/completions",
+        "env_key": "",
+        "default_model": "x",
+    })
     calls = stream(_StreamResponse(_sse("never")))
 
     with pytest.raises(_SynthStreamError, match="only verified"):
@@ -245,13 +216,13 @@ async def test_reasoning_deltas_are_never_yielded_as_answer_text(monkeypatch, st
     user as though it were the answer, and it is not what gets persisted, so
     the streamed and stored answers would disagree.
     """
-    _kimi(monkeypatch)
+    _deepseek(monkeypatch)
     stream(_StreamResponse(_reasoning_sse(
         thinking=["The user asks about retention. ", "Maybe 20%? No, that is wrong. "],
         answer=["Retention is ", "typically 5% to 10%."],
     )))
 
-    assert await _drain(_agent(), api_key="kimi-test-key") == [
+    assert await _drain(_agent(), api_key="ds-test-key") == [
         "Retention is ", "typically 5% to 10%.",
     ]
 
@@ -273,11 +244,11 @@ async def test_a_thinking_only_response_yields_nothing_and_says_why(
     reconfigures this logger, so a caplog assertion passes alone and fails in
     CI depending on what ran before it.
     """
-    _kimi(monkeypatch)
+    _deepseek(monkeypatch)
     stream(_StreamResponse(_reasoning_sse(thinking=["thinking ", "hard "], answer=[])))
 
     with mock.patch.object(runtime._LOG, "warning") as warn:
-        assert await _drain(_agent(), api_key="kimi-test-key") == []
+        assert await _drain(_agent(), api_key="ds-test-key") == []
     logged = " ".join(str(c.args[0]) for c in warn.call_args_list if c.args)
     assert "reasoning deltas and no content" in logged, (
         "a thinking-only response was indistinguishable from a dead provider"
@@ -291,7 +262,7 @@ async def test_a_thinking_only_response_yields_nothing_and_says_why(
 
 @pytest.mark.asyncio
 async def test_content_deltas_are_yielded_in_order(monkeypatch, stream):
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     stream(_StreamResponse(_sse("The ", "notice ", "period is 28 days.")))
 
     assert await _drain(_agent()) == ["The ", "notice ", "period is 28 days."]
@@ -301,7 +272,7 @@ async def test_content_deltas_are_yielded_in_order(monkeypatch, stream):
 async def test_the_stream_stops_at_done(monkeypatch, stream):
     """Anything after [DONE] is not part of the answer. Emitting it would
     append provider bookkeeping to the user's text."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     lines = _sse("answer") + [
         "data: " + json.dumps({"choices": [{"delta": {"content": "LEAKED"}}]})
     ]
@@ -314,7 +285,7 @@ async def test_the_stream_stops_at_done(monkeypatch, stream):
 async def test_blank_and_unparseable_lines_do_not_break_the_stream(monkeypatch, stream):
     """Keep-alives and partial frames are routine. Treating one as fatal would
     truncate an answer mid-sentence for a transport artefact."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     lines = ["", "data: {not json", ": keep-alive",
              "data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
              "data: [DONE]"]
@@ -328,7 +299,7 @@ async def test_no_tools_are_offered_and_streaming_is_requested(monkeypatch, stre
     """"Tool iterations stay non-streaming" is the documented contract. A tool
     definition here would let a tool_call delta appear mid-stream, which this
     path has no way to dispatch."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     calls = stream(_StreamResponse(_sse("x")))
 
     await _drain(_agent())
@@ -344,14 +315,16 @@ async def test_it_mirrors_call_llm_on_model_and_temperature(monkeypatch, stream)
     """The docstring commits to mirroring `_call_llm`'s setup. Drift means the
     streamed answer and the fallback answer come from different models -- the
     user sees a different voice depending on transport."""
-    _groq(monkeypatch)
-    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    _deepseek(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-reasoner")
     calls = stream(_StreamResponse(_sse("x")))
 
-    await _drain(_agent(model="deepseek-chat", temperature=0.3))
+    # A legacy/foreign hat pin is replaced by the provider default, exactly as
+    # _call_llm does it, so the streamed model matches the non-streaming hop.
+    await _drain(_agent(model="kimi-k2.6", temperature=0.3))
 
-    assert calls[0]["payload"]["model"] == "openai/gpt-oss-120b", (
-        "a dead provider's model name was streamed to Groq"
+    assert calls[0]["payload"]["model"] == "deepseek-reasoner", (
+        "a dead provider's model name was streamed instead of the provider default"
     )
     assert calls[0]["payload"]["temperature"] == 0.3
 
@@ -360,12 +333,12 @@ async def test_it_mirrors_call_llm_on_model_and_temperature(monkeypatch, stream)
 async def test_non_standard_message_fields_never_reach_the_provider(monkeypatch, stream):
     """The same `reasoning`-field 400 that hung deliverable generation. The
     docstring calls this chokepoint critical, so it is asserted at the wire."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     calls = stream(_StreamResponse(_sse("x")))
 
     messages = [{"role": "assistant", "content": "t", "reasoning": "chain of thought"},
                 {"role": "user", "content": "and now?"}]
-    async for _ in _agent()._stream_synthesis(messages, "groq-test-key"):
+    async for _ in _agent()._stream_synthesis(messages, "ds-test-key"):
         pass
 
     sent = calls[0]["payload"]["messages"]
@@ -377,7 +350,7 @@ async def test_non_standard_message_fields_never_reach_the_provider(monkeypatch,
 @pytest.mark.asyncio
 async def test_a_non_200_raises_before_any_token(monkeypatch, stream):
     """Pre-first-token, so the caller may safely fall back to `_call_llm`."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     response = _StreamResponse([], status_code=503, text="service unavailable")
     stream(response)
 
@@ -391,7 +364,7 @@ async def test_a_non_200_raises_before_any_token(monkeypatch, stream):
 
 @pytest.mark.asyncio
 async def test_a_connect_error_raises_before_any_token(monkeypatch, stream):
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     stream(httpx.ConnectError("dns failure"))
 
     with pytest.raises(_SynthStreamError, match="stream error"):
@@ -409,7 +382,7 @@ async def test_a_mid_stream_drop_surfaces_after_the_tokens_already_emitted(
     caller would treat it as pre-first-token and re-run the whole turn through
     `_call_llm` -- the user sees the answer twice.
     """
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     stream(_StreamResponse(
         _sse("The notice ", "period is ", done=False),
         mid_stream_error=httpx.ReadError("connection reset"),
@@ -418,7 +391,7 @@ async def test_a_mid_stream_drop_surfaces_after_the_tokens_already_emitted(
     emitted = []
     with pytest.raises(_SynthStreamError):
         async for chunk in _agent()._stream_synthesis(
-                [{"role": "user", "content": "q"}], "groq-test-key"):
+                [{"role": "user", "content": "q"}], "ds-test-key"):
             emitted.append(chunk)
 
     assert emitted == ["The notice ", "period is "], (
@@ -431,7 +404,7 @@ async def test_the_synth_stream_error_is_not_rewrapped(monkeypatch, stream):
     """`except _SynthStreamError: raise` sits above the catch-all so the
     specific message survives. Wrapping it would bury the HTTP status the
     operator needs in a generic "stream error"."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     stream(_StreamResponse([], status_code=429, text="rate limited"))
 
     with pytest.raises(_SynthStreamError) as exc:
@@ -448,7 +421,7 @@ async def test_a_user_over_the_daily_cap_falls_back_instead_of_streaming(
     """Raising sends the turn to `_call_llm`, which emits the structured cap
     error the UI expects. Streaming past the cap would spend money the cap
     exists to stop."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     monkeypatch.setenv("USAGE_DAILY_CAP_USD", "5.00")
     from app.core import usage_tracker
     monkeypatch.setattr(usage_tracker, "is_over_cap", lambda user_id, cap: True)
@@ -464,7 +437,7 @@ async def test_a_broken_usage_tracker_does_not_block_the_stream(monkeypatch, str
     """Explicit in the code: a broken tracker must not block. The failure it
     prevents is every turn silently losing streaming because a bookkeeping
     table is unreachable."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     monkeypatch.setenv("USAGE_DAILY_CAP_USD", "5.00")
     from app.core import usage_tracker
 
@@ -484,7 +457,7 @@ async def test_usage_is_recorded_after_a_completed_stream(monkeypatch, stream):
     """`stream_options.include_usage` is requested for exactly this. Without
     the record, streamed turns are free as far as the cap is concerned -- the
     cap above becomes unenforceable for the transport it mostly runs on."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     recorded = {}
     from app.core import usage_tracker
     monkeypatch.setattr(usage_tracker, "record",
@@ -494,7 +467,7 @@ async def test_usage_is_recorded_after_a_completed_stream(monkeypatch, stream):
     await _drain(_agent(), user_id="u1")
 
     assert recorded.get("usage") == {"total_tokens": 412}, recorded
-    assert recorded.get("provider") == "groq", recorded
+    assert recorded.get("provider") == "deepseek", recorded
     assert recorded.get("user_id") == "u1", recorded
 
 
@@ -502,7 +475,7 @@ async def test_usage_is_recorded_after_a_completed_stream(monkeypatch, stream):
 async def test_a_broken_recorder_does_not_fail_a_completed_stream(monkeypatch, stream):
     """Best-effort by design -- the answer has already reached the user, so
     raising here would turn a delivered turn into an error."""
-    _groq(monkeypatch)
+    _deepseek(monkeypatch)
     from app.core import usage_tracker
 
     def _boom(**kw):
@@ -512,23 +485,3 @@ async def test_a_broken_recorder_does_not_fail_a_completed_stream(monkeypatch, s
     stream(_StreamResponse(_sse("ok", usage={"total_tokens": 5})))
 
     assert await _drain(_agent(), user_id="u1") == ["ok"]
-
-
-# ── the native Ollama protocol ───────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_native_ollama_uses_its_own_line_protocol(monkeypatch, stream):
-    """On-prem streams bare JSON with no `data:` prefix and terminates on
-    `done`, not `[DONE]`. Parsing it with the OpenAI reader yields nothing at
-    all -- the air-gapped deployment would silently never stream."""
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", NATIVE_OLLAMA_URL)
-    calls = stream(_StreamResponse(_native("The ", "answer.")))
-
-    chunks = await _drain(_agent(), api_key="")
-
-    assert chunks == ["The ", "answer."], chunks
-    assert calls[0]["url"] == NATIVE_OLLAMA_URL, calls[0]["url"]
-    assert "stream_options" not in calls[0]["payload"], (
-        "an OpenAI-only field was sent to the native protocol"
-    )

@@ -54,8 +54,8 @@ def test_empty_llm_content_emits_token_and_end(monkeypatch):
     """When the LLM returns empty content AND the forced retry also returns
     empty, the generator must substitute the fallback string AND yield at
     least one ``token`` event before ``end``."""
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
     a = _agent()
     mock = _mock_llm_empty_content()
     with patch.object(a, "_call_llm", mock):
@@ -71,8 +71,8 @@ def test_empty_llm_content_emits_token_and_end(monkeypatch):
 
 
 def test_llm_error_emits_structured_error(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
     a = _agent()
     with patch.object(a, "_call_llm", _mock_llm_error()):
         events = _collect(a.chat_stream(user_message="hello"))
@@ -89,8 +89,8 @@ def test_llm_error_emits_structured_error(monkeypatch):
 def test_inner_generator_exception_becomes_error_event(monkeypatch):
     """A bug somewhere downstream that raises should NOT bubble up to the SSE
     consumer as a 500 — the wrapper must convert it into a clean error event."""
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
     a = _agent()
 
     async def _boom(*_a, **_kw):
@@ -111,14 +111,14 @@ def test_inner_generator_exception_becomes_error_event(monkeypatch):
 
 
 def test_missing_provider_key_yields_error(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "kimi")
-    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     a = _agent()
     events = _collect(a.chat_stream(user_message="hello"))
     types = [e["type"] for e in events]
     assert "error" in types
     err = next(e for e in events if e["type"] == "error")
-    assert "KIMI_API_KEY" in err["message"]
+    assert "DEEPSEEK_API_KEY" in err["message"]
 
 
 # ── Wrapper invariant: terminal_emitted is always satisfied ───────────────
@@ -127,8 +127,8 @@ def test_missing_provider_key_yields_error(monkeypatch):
 def test_every_run_emits_a_terminal_event(monkeypatch):
     """Regardless of the inner generator's outcome, the wrapper must always
     yield either ``end`` or ``error`` as the closing event class."""
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
     a = _agent()
     with patch.object(a, "_call_llm", _mock_llm_empty_content()):
         events = _collect(a.chat_stream(user_message="hello"))
