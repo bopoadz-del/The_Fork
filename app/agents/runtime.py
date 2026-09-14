@@ -2422,26 +2422,34 @@ _INTERNAL_CONTEXT_MARKERS = (
 _ROUTING_PREAMBLE_PHRASES = (
     "That IS the answer",
     "INTERNAL GUIDANCE",
+    # Old ENGINEER APPOINTMENT hint wording (heading reworded to ENGINEER
+    # IDENTITY 2026-09-14) plus the new directive — both kept so neither can
+    # silently re-leak.
     "State the appointed firm",
+    "State ONLY that firm's name",
 )
 _ROUTING_PREAMBLE_LINE_RE = re.compile(
     r"(?im)^[ \t]*(?:The Engineer is\s+)?"
-    r"(?:INTERNAL GUIDANCE|ENGINEER APPOINTMENT|TIME FOR COMPLETION|"
+    r"(?:INTERNAL GUIDANCE|ENGINEER IDENTITY|ENGINEER APPOINTMENT|"
+    r"TIME FOR COMPLETION|"
     r"SCHEDULE REGISTER|PRICED BOQ ROW|RATE ONLY|PART SUMMARY TOTAL|"
     r"ACCEPTED CONTRACT AMOUNT INCLUDING VAT|"
     r"DELAY DAMAGES PER CALENDAR DAY|PARENT COMPANY GUARANTEE|"
-    r"COMMENCEMENT DATE|APPOINTMENT)"
+    r"COMMENCEMENT DATE|APPOINTMENT|IDENTITY)"
     r"\s*[—\-].*$"
 )
 _GRAFT_APPOINTMENT_LEAK_RE = re.compile(
-    r"(?im)^[ \t]*The Engineer is APPOINTMENT\s*[—\-].*$"
+    r"(?im)^[ \t]*The Engineer is (?:APPOINTMENT|IDENTITY|ENGINEER IDENTITY)"
+    r"\s*[—\-].*$"
 )
 _ROUTING_PREAMBLE_SENTENCE_RE = re.compile(
     r"(?i)(?:INTERNAL GUIDANCE\s*[—\-][^\n]*|"
     r"That IS the answer\.?\s*|"
     r"State the appointed firm\.?\s*|"
+    r"State ONLY that firm'?s name\.?\s*|"
+    r"Do NOT state the appointment date[^.]*\.?\s*|"
     r"Do not say the identity is absent[^.]*\.?\s*|"
-    r"an excerpt below names the Engineer\.?\s*)"
+    r"an excerpt below names the Engineer(?:\s*\([^)]*\))?\.?\s*)"
 )
 
 

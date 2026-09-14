@@ -62,10 +62,13 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:1936": "baseline 2026-09-10",
     "app/agents/runtime.py:1999": "baseline 2026-09-10",
     "app/agents/runtime.py:2005": "baseline 2026-09-10",
-    "app/agents/runtime.py:2651": "baseline 2026-09-10",
-    "app/agents/runtime.py:3601": "baseline 2026-09-10",
-    "app/agents/runtime.py:4716": "baseline 2026-09-10",
-    "app/agents/runtime.py:5097": "baseline 2026-09-10",
+    # Re-indexed 2026-09-14: the ENGINEER IDENTITY leak-guard regex (#599)
+    # inserted 8 net lines above these four pre-existing sites. Same sites,
+    # same handlers — only the line numbers moved. No new silent returns.
+    "app/agents/runtime.py:2659": "baseline 2026-09-10",
+    "app/agents/runtime.py:3609": "baseline 2026-09-10",
+    "app/agents/runtime.py:4724": "baseline 2026-09-10",
+    "app/agents/runtime.py:5105": "baseline 2026-09-10",
     "app/agents/runtime.py:608": "baseline 2026-09-10",
     "app/agents/runtime.py:839": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
