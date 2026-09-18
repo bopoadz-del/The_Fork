@@ -96,6 +96,50 @@ _INTERROGATIVE_RE = re.compile(
     r"is|are|was|were|can|could|should|would|will|has|have)\b", re.IGNORECASE)
 
 
+# A DEFINITION question asks what a concept IS. It names the concept, which is
+# exactly why the keyword classifier scores it HIGH: "What is a forensic delay
+# analysis?" matches both "forensic" and "delay analysis" and lands at 0.6.
+# So the confidence that was meant to signal "this user wants the tool run"
+# is, for this shape, only signalling "this user said the tool's name".
+_DEFINITIONAL_RE = re.compile(
+    r"^\s*(?:"
+    r"what\s+(?:is|are)\s+(?:a|an)\b"           # What is a/an X
+    r"|what(?:'s|\s+is)\s+meant\s+by\b"        # What is meant by X
+    r"|what\s+does\s+.+?\s+(?:mean|stand\s+for)\b"
+    r"|(?:define|explain|describe)\b"
+    r"|how\s+does\s+.+?\s+work\b"
+    r"|(?:is|are)\s+.+?\s+the\s+same\s+as\b"
+    r")"
+    r"|\bdifference\s+between\b",
+    re.IGNORECASE,
+)
+
+# ...unless it points at the user's own material. "Explain the delay on MY
+# project" and "What is the critical path of THIS schedule?" have data behind
+# them and a real tool to run; they are analysis, not definition.
+_POINTS_AT_PROJECT_DATA_RE = re.compile(
+    r"\b(?:this|these|that|those|my|our|uploaded|attached|above|below)\b"
+    r"|\bthe\s+(?:project|schedule|programme|program|baseline|contract|boq|"
+    r"bill|model|drawing|drawings|file|files|xer|tender|site)\b"
+    r"|\.(?:xer|ifc|dxf|dwg|xlsx|pdf)\b",
+    re.IGNORECASE,
+)
+
+
+def is_definition_question(message: str) -> bool:
+    """True for "what is X" asked about a concept, not about project data.
+
+    Reads the message only. It must never learn which project it was asked
+    in: the corpus is one-to-all and a definition is a definition anywhere.
+    """
+    msg = (message or "").strip()
+    if not msg or not _DEFINITIONAL_RE.search(msg):
+        return False
+    if _POINTS_AT_PROJECT_DATA_RE.search(msg):
+        return False
+    return not is_deliverable_request(msg)
+
+
 def lookup_question_hijack(message: str, confidence: float) -> bool:
     """True when a LOW-confidence route is about to intercept a lookup QUESTION.
 
@@ -119,6 +163,11 @@ def lookup_question_hijack(message: str, confidence: float) -> bool:
         return True
     from app.core.conversation_wbs import message_wants_wbs_export
     if message_wants_wbs_export(message):
+        return True
+    # Checked BEFORE the confidence cut-off, deliberately. For every other
+    # shape a confident route is evidence the user wants the tool. For a
+    # definition it is only evidence they named it -- see _DEFINITIONAL_RE.
+    if is_definition_question(message):
         return True
     if confidence >= 0.5:
         return False

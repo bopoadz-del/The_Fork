@@ -12431,7 +12431,12 @@ async def select_agent_for_message(
     # confident routes are untouched, exactly as on the other path.
     try:
         from app.core.predefined_reasoning import lookup_question_hijack
-        if action and lookup_question_hijack(user_message, float(confidence or 0.0)):
+        # Only where it changes the outcome. A non-generative action already
+        # stays put and keeps its own reason (below_routing_gate), which
+        # tests/test_smart_orchestrator_routing.py pins.
+        if needs_planning(action, confidence) and lookup_question_hijack(
+            user_message, float(confidence or 0.0)
+        ):
             info["reason"] = "lookup_question"
             return requested_agent, info
     except Exception:  # noqa: BLE001 - routing is best-effort; never break chat

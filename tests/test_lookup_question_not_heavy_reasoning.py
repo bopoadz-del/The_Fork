@@ -128,20 +128,82 @@ def test_a_deliverable_ask_at_the_same_confidence_still_swaps(registry, classify
     assert routing["reason"] == "needs_planning", routing
 
 
-def test_a_confident_route_is_left_alone(registry, classify_as):
-    """The guard stands aside at >= 0.5 by design. Pinned so that widening it
-    is a decision somebody makes on purpose, with this test in front of them."""
+@pytest.mark.parametrize(
+    "message",
+    [
+        "What is a forensic delay analysis?",
+        "Explain concurrent delay in a forensic delay analysis",
+        "Is a resource histogram the same as a manpower curve?",
+    ],
+)
+def test_a_definition_stays_put_even_when_the_classifier_is_confident(
+    registry, classify_as, message
+):
+    """The real classifier scores these at 0.6, not 0.2.
+
+    Naming a concept is what makes the keyword classifier confident, so for
+    this one shape a high score is evidence the user *said the tool's name*,
+    not that they want it run. An earlier revision pinned the opposite -- that
+    0.6 is left alone -- and CI on the production-like job proved it wrong
+    against the real classifier: "What is a forensic delay analysis?" came
+    back 0.6 and was handed to heavy-reasoning.
+    """
+    pa, _heavy = registry
+    classify_as("forensic_delay_analysis", 0.6)
+
+    final, routing = _run(select_agent_for_message(message, pa))
+
+    assert final is pa, routing
+    assert routing["reason"] == "lookup_question", routing
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "What is the critical path of this schedule?",
+        "Explain the delay on my project",
+        "Run a forensic delay analysis on the uploaded baseline.xer",
+    ],
+)
+def test_a_confident_ask_about_the_users_own_data_still_swaps(
+    registry, classify_as, message
+):
+    """The boundary that keeps the rule honest.
+
+    These are question- or explain-shaped too, but they point at material the
+    user actually has. There is data behind them and a real tool to run, so
+    they are analysis, not definition, and heavy-reasoning is the right home.
+    A definition rule that swallowed these would be a worse bug than the one
+    it fixes, because it would fail silently: the user would simply get a
+    shallower answer and never know a tool existed.
+    """
     pa, heavy = registry
     classify_as("forensic_delay_analysis", 0.6)
 
-    final, routing = _run(
-        select_agent_for_message(
-            "Explain concurrent delay in a forensic delay analysis", pa
-        )
-    )
+    final, routing = _run(select_agent_for_message(message, pa))
 
     assert final is heavy, routing
     assert routing["reason"] == "needs_planning", routing
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("What is a forensic delay analysis?", True),
+        ("What is the difference between EOT and prolongation cost?", True),
+        ("How does earned value management work?", True),
+        # "What is THE ..." asks for a value out of project data.
+        ("What is the BOQ total for the demolition section?", False),
+        ("what mix design should we use for the raft?", False),
+        # A deliverable verb always wins, whatever the shape.
+        ("Explain how to build a WBS and generate one", False),
+        ("", False),
+    ],
+)
+def test_is_definition_question(message, expected):
+    from app.core.predefined_reasoning import is_definition_question
+
+    assert is_definition_question(message) is expected
 
 
 @requires_construction_kit
