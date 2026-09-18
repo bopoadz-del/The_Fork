@@ -68,29 +68,33 @@ def _predefined_may_intercept(requested_agent_name: str) -> bool:
 
 
 def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
-    """Authoritative ownership check for a conversation, on both read and write.
+    """Authoritative access check for a conversation, on both read and write.
 
     Workspace conversations use the id ``ws-{projectId}`` — the project id is IN
-    the id, so ownership is derived from the id itself, NOT from the (spoofable)
+    the id, so access is derived from the id itself, NOT from the (spoofable)
     stored ``project_id`` column on the conversation row.
 
-    - ``ws-{pid}`` id  → caller must own project ``pid`` (else 404). Covers both
-      "project doesn't exist" and "project belongs to someone else".
+    - ``ws-{pid}`` id  → caller must be able to read project ``pid`` under the
+      same grant as ``GET /v1/projects/{pid}``: owner, or an approved
+      platform-shared row (``admin_drive_approved``, boot-seeded
+      ``system_seed``, or an id in ``RAG_GENERAL_KNOWLEDGE_PROJECTS``).
+      Covers both "project doesn't exist" and "private project belongs to
+      someone else". The physical master-corpus source id stays owner-only
+      (UI-PHYS H1); only the alias is shared.
     - non-``ws-`` id   → not a project-scoped workspace conversation. If a stored
-      conversation row exists with a ``project_id``, that ownership is checked;
-      a stored row with NO ``project_id`` has no ownership binding → 404; a
-      non-existent row is allowed (ad-hoc API conversation).
-
-    Pilot: the master-corpus alias is treated as an admin-approved platform
-    project for conversation access.
+      conversation row exists with a ``project_id``, that same read grant is
+      checked; a stored row with NO ``project_id`` has no ownership binding → 404;
+      a non-existent row is allowed (ad-hoc API conversation).
 
     Raises HTTPException(404) when access is denied.
     """
     if conversation_id.startswith(_WS_PREFIX):
         for project_id in _workspace_project_candidates(conversation_id):
-            include_admin = project_id == store.MASTER_CORPUS_PROJECT_ID
+            # Same include_admin_approved grant as project GET / documents /
+            # rag search (PR #586). Master-corpus-only was the leftover that
+            # 404'd New chat on curated_kb for every non-owner.
             if store.get_project(
-                project_id, user_id=auth["user_id"], include_admin_approved=include_admin
+                project_id, user_id=auth["user_id"], include_admin_approved=True
             ) is not None:
                 return
         raise HTTPException(404, "Conversation not found")
@@ -103,7 +107,9 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
     if stored_pid is None:
         # No ownership binding at all — do not serve it.
         raise HTTPException(404, "Conversation not found")
-    if store.get_project(stored_pid, user_id=auth["user_id"]) is None:
+    if store.get_project(
+        stored_pid, user_id=auth["user_id"], include_admin_approved=True
+    ) is None:
         raise HTTPException(404, "Conversation not found")
 
 
@@ -186,9 +192,10 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     if _reason:
         raise HTTPException(503, f"Agent '{name}' is unavailable: {_reason}")
 
-    # Authoritative ownership check: a ws-{pid} conversation_id binds to a
-    # project; the caller must own it. This runs BEFORE the agent so an attacker
-    # cannot even create/write a victim's ws-{pid} conversation.
+    # Authoritative access check: a ws-{pid} conversation_id binds to a
+    # project; the caller must be able to read it (owner or approved
+    # platform-shared). This runs BEFORE the agent so an attacker cannot
+    # create/write a victim's private ws-{pid} conversation.
     if req.conversation_id is not None:
         _enforce_conversation_access(req.conversation_id, auth)
 
@@ -286,9 +293,10 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     # RAG system message and surfaces both responses in the SSE end event.
     rag_debug = request.query_params.get("rag_debug", "").lower() in ("true", "1", "yes")
 
-    # Authoritative ownership check: a ws-{pid} conversation_id binds to a
-    # project; the caller must own it. Raised here (before StreamingResponse) so
-    # an attacker cannot create/write a victim's ws-{pid} conversation.
+    # Authoritative access check: a ws-{pid} conversation_id binds to a
+    # project; the caller must be able to read it (owner or approved
+    # platform-shared). Raised here (before StreamingResponse) so an
+    # attacker cannot create/write a victim's private ws-{pid} conversation.
     if conversation_id is not None:
         _enforce_conversation_access(conversation_id, auth)
 
