@@ -7929,24 +7929,54 @@ def hats_activation_enabled() -> bool:
 
 
 def hat_scores_sse(message: str) -> dict[str, Any] | None:
-    """SSE ``hat_scores`` payload, or None when the flag is off.
+    """SSE ``hat_signals`` payload, or None when the flag is off.
 
-    Lives on the default chat path so the UI can show discipline scores
-    when hats are enabled on the live service.
+    Mid-stream event the floor scorer counts, plus the same list stamped
+    onto the terminal ``end`` event. ``scores`` stays for older readers.
     """
     if not hats_activation_enabled():
         return None
     from app.agents.activation import HatActivationAdapter
+    from app.agents.catalog import list_hats
     adapter = HatActivationAdapter()
     scores = adapter.score_all_hats(message)
     selected = adapter.select_hat_for_message(message)
+    selected_id = getattr(selected, "id", None)
+    signals: list[dict[str, Any]] = []
+    for hat in list_hats():
+        discipline = hat.discipline.value
+        score = float(hat.score_message(message) or 0.0)
+        signals.append({
+            "id": hat.id,
+            "discipline": discipline,
+            "score": score,
+            "selected": bool(selected_id) and (
+                selected_id == hat.id or hat.id in str(selected_id)
+            ),
+        })
+    signals.sort(key=lambda row: (-float(row["score"]), str(row["id"])))
     return {
-        "type": "hat_scores",
+        "type": "hat_signals",
+        "hat_signals": signals,
+        "hats": signals,
         "scores": scores,
-        "selected": getattr(selected, "id", None),
+        "selected": selected_id,
         "selected_name": getattr(selected, "name", None),
         "enabled": True,
     }
+
+
+def _with_hat_signals(
+    event: dict[str, Any],
+    hat_evt: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Stamp hat activation onto a terminal ``end`` event for the floor scorer."""
+    if not hat_evt or not isinstance(event, dict):
+        return event
+    stamped = dict(event)
+    stamped["hat_signals"] = list(hat_evt.get("hat_signals") or [])
+    stamped["hat_selected"] = hat_evt.get("selected")
+    return stamped
 
 
 def hat_turn_system_note(message: str) -> dict[str, str] | None:
@@ -9194,7 +9224,7 @@ class Agent:
         _depth: int = 0,
         _call_stack: list[str] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Generator: yields {type, ...} events. Types: start, hat_scores, tool_call, tool_result, token, end, error, heartbeat.
+        """Generator: yields {type, ...} events. Types: start, hat_signals, tool_call, tool_result, token, end, error, heartbeat.
 
         Tool-calling is non-streamed (we collect the whole assistant turn before deciding),
         but the FINAL assistant answer streams token-by-token.
@@ -9216,6 +9246,10 @@ class Agent:
         agent_name = self.name
         token_emitted = False
         terminal_emitted = False  # True once we yield an `end` or `error` event
+        # Floor scorer reads hat_signals on the stream (event + end metadata).
+        # Compute once so early-return impl paths still record activation.
+        _hat_evt = hat_scores_sse(user_message)
+        _hat_emitted = False
         # Tool names seen on the way out, so the synthetic `end` below can
         # still report them when the inner generator dies before its own end.
         tools_seen: list[str] = []
@@ -9355,6 +9389,18 @@ class Agent:
                 event = _leak_guard.check(event)
                 if event is None:
                     continue
+                if (
+                    isinstance(event, dict)
+                    and event.get("type") == "start"
+                    and _hat_evt
+                    and not _hat_emitted
+                ):
+                    yield event
+                    yield _hat_evt
+                    _hat_emitted = True
+                    continue
+                if isinstance(event, dict) and event.get("type") == "end":
+                    event = _with_hat_signals(event, _hat_evt)
                 yield event
         except Exception as exc:  # noqa: BLE001 - last-line safety net
             _LOG.exception("chat_stream: generator escaped with exception")
@@ -9378,8 +9424,11 @@ class Agent:
             )
             if not token_emitted:
                 yield {"type": "token", "content": _EMPTY_RESPONSE_FALLBACK}
-            yield {"type": "end", "iterations": 0, "sources": [],
-                   "tools": list(tools_seen)}
+            yield _with_hat_signals(
+                {"type": "end", "iterations": 0, "sources": [],
+                 "tools": list(tools_seen)},
+                _hat_evt,
+            )
 
     async def _chat_stream_impl(
         self,
@@ -9463,9 +9512,9 @@ class Agent:
 
         yield {"type": "start", "agent": self.name}
 
-        _hat_evt = hat_scores_sse(user_message)
-        if _hat_evt:
-            yield _hat_evt
+        # hat_signals is injected by chat_stream after this start so every
+        # early-return path (answer report, WBS export, capability) still
+        # records activation on the SSE the floor scorer reads.
 
         # Zero-chunk project guardrail: refuse before spending LLM budget
         # unless the project has other (non-RAG) context such as facts.

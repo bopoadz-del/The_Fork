@@ -1,8 +1,7 @@
 """Default UI (project-assistant) gets hat kernels + SSE scores when live.
 
-FORK_HATS_ENABLED=1 is on the live service, but project-assistant had no
-``hats:`` frontmatter and the activation adapter was never called from the
-default chat path. Specialty agents already bind kernels in config.
+FORK_HATS_ENABLED=1 is on the live service. Kernels bind at load (#585);
+the floor scorer reads ``hat_signals`` on the chat stream (event + end).
 """
 from __future__ import annotations
 
@@ -20,6 +19,8 @@ from app.agents.runtime import (
 
 
 PLANNING_ASK = "What is the critical path for this project?"
+SAFETY_ASK = "Check the scaffold load and trench shoring for this excavation"
+CONTRACTS_ASK = "Draft a variation order under FIDIC clause"
 
 
 def _collect(gen: AsyncIterator[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -37,6 +38,33 @@ def _pa() -> Agent:
     )
 
 
+def _hat_activation_recorded(events: List[Dict[str, Any]]) -> bool:
+    """True when the stream recorded hat activation the floor scorer can see."""
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("type")
+        if kind in ("hat_signals", "hats", "hat_scores"):
+            if event.get("hat_signals") or event.get("scores") or event.get("hats"):
+                return True
+        if kind == "end" and (event.get("hat_signals") or event.get("hats")):
+            return True
+    return False
+
+
+def _stream_with_mock(monkeypatch, message: str):
+    monkeypatch.setenv("FORK_HATS_ENABLED", "1")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    agent = _pa()
+    mock = AsyncMock(return_value={
+        "status": "success",
+        "choice": {"message": {"content": "ok", "tool_calls": []}},
+    })
+    with patch.object(agent, "_call_llm", mock):
+        return _collect(agent.chat_stream(user_message=message)), mock
+
+
 def test_hat_scores_sse_absent_when_flag_off(monkeypatch):
     monkeypatch.delenv("FORK_HATS_ENABLED", raising=False)
     assert hats_activation_enabled() is False
@@ -49,12 +77,13 @@ def test_hat_scores_sse_when_flag_on(monkeypatch):
     assert hats_activation_enabled() is True
     evt = hat_scores_sse(PLANNING_ASK)
     assert evt is not None
-    assert evt["type"] == "hat_scores"
-    assert evt["enabled"] is True
+    assert evt["type"] == "hat_signals"
+    assert evt["hat_signals"]
     assert evt["scores"]
     assert "planning" in evt["scores"]
     assert evt["selected"]
     assert evt["selected"].startswith("fork.hat.")
+    assert any(row["discipline"] == "planning" for row in evt["hat_signals"])
 
 
 def test_hat_turn_note_names_the_winning_hat(monkeypatch):
@@ -71,7 +100,8 @@ def test_apply_hat_activation_steers_project_assistant_only(monkeypatch):
     monkeypatch.setenv("FORK_HATS_ENABLED", "1")
     pa_msgs = [{"role": "user", "content": PLANNING_ASK}]
     evt = _apply_hat_activation(pa_msgs, PLANNING_ASK, "project-assistant")
-    assert evt and evt["type"] == "hat_scores"
+    assert evt and evt["type"] == "hat_signals"
+    assert evt["hat_signals"]
     assert pa_msgs[0]["role"] == "system"
     assert pa_msgs[-1]["role"] == "user"
 
@@ -80,25 +110,22 @@ def test_apply_hat_activation_steers_project_assistant_only(monkeypatch):
     assert qs_msgs == [{"role": "user", "content": PLANNING_ASK}]
 
 
-def test_project_assistant_stream_emits_hat_scores(monkeypatch):
-    monkeypatch.setenv("FORK_HATS_ENABLED", "1")
-    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
-    agent = _pa()
-    mock = AsyncMock(return_value={
-        "status": "success",
-        "choice": {"message": {"content": "Critical path runs through piling.", "tool_calls": []}},
-    })
-    with patch.object(agent, "_call_llm", mock):
-        events = _collect(agent.chat_stream(user_message=PLANNING_ASK))
+def test_project_assistant_stream_emits_hat_signals(monkeypatch):
+    events, mock = _stream_with_mock(monkeypatch, PLANNING_ASK)
     types = [e["type"] for e in events]
     assert "start" in types
-    assert "hat_scores" in types
-    assert types.index("hat_scores") == types.index("start") + 1
-    hat = next(e for e in events if e["type"] == "hat_scores")
-    assert hat["scores"]
+    assert _hat_activation_recorded(events), (
+        "hats enabled but the stream path never recorded hat activation metadata"
+    )
+    assert "hat_signals" in types
+    assert types.index("hat_signals") == types.index("start") + 1
+    hat = next(e for e in events if e["type"] == "hat_signals")
+    assert hat["hat_signals"]
     assert hat["enabled"] is True
-    # The turn note must reach the model on the default UI agent.
+    end = next(e for e in events if e["type"] == "end")
+    assert end.get("hat_signals"), (
+        "hats enabled but the SSE end event has no hat_signals"
+    )
     sent = mock.await_args.args[0]
     assert any(
         m.get("role") == "system" and "Active discipline hat this turn" in (m.get("content") or "")
@@ -106,7 +133,47 @@ def test_project_assistant_stream_emits_hat_scores(monkeypatch):
     )
 
 
-def test_project_assistant_stream_no_hat_scores_when_flag_off(monkeypatch):
+def test_safety_question_produces_nonempty_hat_signals(monkeypatch):
+    events, _mock = _stream_with_mock(monkeypatch, SAFETY_ASK)
+    assert _hat_activation_recorded(events), (
+        "hats enabled but the stream path never recorded hat activation metadata"
+    )
+    hat = next(e for e in events if e["type"] == "hat_signals")
+    assert hat["hat_signals"]
+    assert any(
+        row["discipline"] == "safety" and float(row["score"]) > 0
+        for row in hat["hat_signals"]
+    )
+    selected = [row for row in hat["hat_signals"] if row.get("selected")]
+    assert selected and selected[0]["id"] == "fork.hat.safety"
+    end = next(e for e in events if e["type"] == "end")
+    assert any(
+        row.get("id") == "fork.hat.safety" and float(row.get("score") or 0) > 0
+        for row in (end.get("hat_signals") or [])
+    )
+
+
+def test_contracts_question_produces_nonempty_hat_signals(monkeypatch):
+    events, _mock = _stream_with_mock(monkeypatch, CONTRACTS_ASK)
+    assert _hat_activation_recorded(events), (
+        "hats enabled but the stream path never recorded hat activation metadata"
+    )
+    hat = next(e for e in events if e["type"] == "hat_signals")
+    assert hat["hat_signals"]
+    assert any(
+        row["discipline"] == "contracts" and float(row["score"]) > 0
+        for row in hat["hat_signals"]
+    )
+    selected = [row for row in hat["hat_signals"] if row.get("selected")]
+    assert selected and selected[0]["id"] == "fork.hat.contracts"
+    end = next(e for e in events if e["type"] == "end")
+    assert any(
+        row.get("id") == "fork.hat.contracts" and float(row.get("score") or 0) > 0
+        for row in (end.get("hat_signals") or [])
+    )
+
+
+def test_project_assistant_stream_no_hat_signals_when_flag_off(monkeypatch):
     monkeypatch.delenv("FORK_HATS_ENABLED", raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
@@ -117,7 +184,10 @@ def test_project_assistant_stream_no_hat_scores_when_flag_off(monkeypatch):
     })
     with patch.object(agent, "_call_llm", mock):
         events = _collect(agent.chat_stream(user_message=PLANNING_ASK))
-    assert all(e["type"] != "hat_scores" for e in events)
+    assert all(e["type"] not in ("hat_signals", "hat_scores", "hats") for e in events)
+    assert not _hat_activation_recorded(events)
+    end = next(e for e in events if e["type"] == "end")
+    assert "hat_signals" not in end
     sent = mock.await_args.args[0]
     assert not any(
         "Active discipline hat this turn" in (m.get("content") or "")
