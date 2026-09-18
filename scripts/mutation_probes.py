@@ -118,6 +118,28 @@ PROBES: tuple[Probe, ...] = (
         why="revert GK/system_seed share to Drive-approved-only; QA 404 must return",
     ),
     Probe(
+        name="gk_conversation_acl",
+        path="app/routers/agents.py",
+        old=(
+            "            if store.get_project(\n"
+            "                project_id, user_id=auth[\"user_id\"], "
+            "include_admin_approved=True\n"
+            "            ) is not None:"
+        ),
+        new=(
+            "            include_admin = project_id == store.MASTER_CORPUS_PROJECT_ID\n"
+            "            if store.get_project(\n"
+            "                project_id, user_id=auth[\"user_id\"], "
+            "include_admin_approved=include_admin\n"
+            "            ) is not None:"
+        ),
+        test=(
+            "tests/test_chat_open_access_gate.py::"
+            "test_regular_user_can_open_system_seed_gk_conversation"
+        ),
+        why="revert conversation ACL to master-corpus-only; GK New chat 404s again",
+    ),
+    Probe(
         name="search_preamble_detector",
         path="app/agents/runtime.py",
         old=(
