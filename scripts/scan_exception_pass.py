@@ -120,7 +120,9 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/lib/pm_computations.py:340": "baseline 2026-09-10",
     "app/lib/wbs_duration_overrides.py:147": "baseline 2026-09-10",
     "app/main.py:455": "baseline 2026-09-10",
-    "app/routers/chat.py:364": "baseline 2026-09-10",
+    # Re-indexed 2026-09-18: #607 imported with_hat_signals at the top of
+    # chat.py (one line). Same handler — only the line number moved.
+    "app/routers/chat.py:365": "baseline 2026-09-10",
     "app/routers/chat_watchdog.py:97": "baseline 2026-09-10",
     "app/routers/mcp.py:61": "baseline 2026-09-10",
     "app/worker/ingest_queue.py:33": "baseline 2026-09-10",

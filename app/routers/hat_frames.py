@@ -52,6 +52,7 @@ def _decode(frame: Any) -> Optional[dict[str, Any]]:
     try:
         payload = json.loads(frame[len(_DATA_PREFIX):].strip())
     except (ValueError, TypeError):
+        _LOG.debug("hat_frames: non-JSON SSE frame; passing through", exc_info=True)
         return None
     return payload if isinstance(payload, dict) else None
 
