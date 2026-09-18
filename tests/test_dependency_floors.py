@@ -32,6 +32,7 @@ FLOORS = {
     "pytest": ((9, 0, 3), "PYSEC-2026-1845"),
     "h2": ((4, 4, 1), "GHSA h2 < 4.4.1 (2026-08-08, both requirements files)"),
     "restrictedpython": ((8, 3), "CVE-2026-55830 (sandbox escape via positional-only args; 8.3+ stable on PyPI)"),
+    "soupsieve": ((2, 9), "CVE-2026-85999 + CVE-2026-86000 (fixed in 2.9; Dependabot #601 dropped the uvloop marker)"),
 }
 
 REQUIREMENT_FILES = ["requirements.txt", "requirements-ml.txt"]

@@ -22,6 +22,9 @@ requests>=2.25.0
 
 # Web Scraping
 beautifulsoup4>=4.12.0
+# CVE-2026-85999 / CVE-2026-86000 fixed in soupsieve 2.9. Floor the
+# transitive pin so a later pip-compile cannot walk it back to 2.8.4.
+soupsieve>=2.9
 ddgs>=1.0.0
 
 # Image Processing
