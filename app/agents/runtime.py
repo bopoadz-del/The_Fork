@@ -8020,18 +8020,27 @@ def _apply_hat_activation(
 
     Returns the SSE event (or None when the flag is off). Specialty
     agents already carry their kernels; they get scores only.
+
+    Scoring is telemetry. A catalog/score crash must skip hats and let
+    the turn answer; it must not become a stream ``error``.
     """
-    event = hat_scores_sse(user_message)
-    if not event:
+    try:
+        event = hat_scores_sse(user_message)
+        if not event:
+            return None
+        if agent_name == _DEFAULT_UI_AGENT:
+            note = hat_turn_system_note(user_message)
+            if note:
+                if messages and messages[-1].get("role") == "user":
+                    messages.insert(-1, note)
+                else:
+                    messages.append(note)
+        return event
+    except Exception:  # noqa: BLE001 - telemetry must never take down chat
+        _LOG.exception(
+            "hat activation failed; continuing without hat_signals"
+        )
         return None
-    if agent_name == _DEFAULT_UI_AGENT:
-        note = hat_turn_system_note(user_message)
-        if note:
-            if messages and messages[-1].get("role") == "user":
-                messages.insert(-1, note)
-            else:
-                messages.append(note)
-    return event
 
 
 @dataclass
