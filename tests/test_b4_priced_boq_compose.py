@@ -226,6 +226,21 @@ def test_graft_keeps_an_already_priced_answer():
     assert _graft_priced_boq_item(already, rag, _msgs(LIVE_B4)) == already
 
 
+def test_priced_b5_drops_rate_only_label_when_amount_is_present():
+    """B5 D549.2 has an amount. Rate Only on that line is the wrong half."""
+    rag = _sys(LIVE_B5_SAR)
+    parsed = compose_priced_boq_row(LIVE_B5, LIVE_B5_SAR)
+    contradictory = (
+        "D549.2 Removal of existing chain link fence is Rate Only. "
+        "Quantity 3,504 m @ 80.00 = 280,320."
+    )
+    assert parsed
+    assert answer_states_priced_boq(contradictory, parsed) is False
+    out = _graft_priced_boq_item(contradictory, rag, _msgs(LIVE_B5))
+    assert _has_b5_figures(out)
+    assert "Rate Only" not in out
+
+
 def test_graft_replaces_storm_water_rate_only_misroute():
     rag = _sys(SOUP)
     wrong = "D599.5 (removal of storm water culverts) is Rate Only."
