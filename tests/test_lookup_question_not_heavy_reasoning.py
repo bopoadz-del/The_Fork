@@ -1,6 +1,12 @@
-"""A General Knowledge question must not be swapped onto heavy-reasoning.
+"""A lookup question must not be swapped onto heavy-reasoning.
 
-Live on 467d7a7, ``POST /v1/chat/stream`` with ``project_id=curated_kb``:
+This is about the SHAPE OF THE MESSAGE, never about which project it was asked
+in. The corpus is one-to-all at this stage of the platform: there is no
+"general knowledge" tier and no per-project tier, and nothing here may
+introduce one. The guard reads the message and the classifier confidence and
+nothing else -- a test below pins that it never looks at a project id.
+
+Live on 467d7a7, ``POST /v1/chat/stream``:
 
     "What is the difference between EOT and prolongation cost?"
 
@@ -32,7 +38,7 @@ from app.agents.runtime import Agent, select_agent_for_message
 from tests.conftest import requires_construction_kit
 
 # Exact live wording. Do not paraphrase.
-GK_EOT_VS_PROLONGATION = "What is the difference between EOT and prolongation cost?"
+LIVE_EOT_VS_PROLONGATION = "What is the difference between EOT and prolongation cost?"
 
 
 def _make_agent(name: str) -> Agent:
@@ -63,9 +69,9 @@ def registry(monkeypatch):
 
 
 @requires_construction_kit
-def test_the_live_gk_question_stays_on_project_assistant(registry):
+def test_the_live_question_stays_on_project_assistant(registry):
     pa, _heavy = registry
-    final, routing = _run(select_agent_for_message(GK_EOT_VS_PROLONGATION, pa))
+    final, routing = _run(select_agent_for_message(LIVE_EOT_VS_PROLONGATION, pa))
 
     assert final is pa, routing
     assert routing["final"] == "project-assistant", routing
@@ -119,7 +125,20 @@ def test_a_guard_failure_cannot_break_routing(registry, monkeypatch):
 
     monkeypatch.setattr(predefined, "lookup_question_hijack", boom)
     pa, _heavy = registry
-    final, routing = _run(select_agent_for_message(GK_EOT_VS_PROLONGATION, pa))
+    final, routing = _run(select_agent_for_message(LIVE_EOT_VS_PROLONGATION, pa))
 
     assert final is not None
     assert "reason" in routing
+
+
+def test_the_guard_never_looks_at_which_project_was_asked():
+    """One-to-all corpus: routing a lookup question must not depend on the
+    project. Pinned on the signature, so nobody can add a project-aware branch
+    here without this test naming what they just introduced."""
+    import inspect
+
+    from app.core.predefined_reasoning import lookup_question_hijack
+
+    params = set(inspect.signature(lookup_question_hijack).parameters)
+    assert params == {"message", "confidence"}, params
+    assert not any("project" in name for name in params)

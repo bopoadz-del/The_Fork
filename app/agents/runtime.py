@@ -12350,11 +12350,13 @@ async def select_agent_for_message(
     # interception in app/routers/agents.py, from the 2026-07-24 repro where
     # "eot" sent a notice-period question to forensic_delay_analysis. It never
     # guarded THIS decision, which is the one that changes agents -- so the
-    # same class kept happening one layer down. Live on 467d7a7, project
-    # curated_kb: "What is the difference between EOT and prolongation cost?"
-    # classified forensic_delay_analysis at confidence 0.2 and was handed to
-    # heavy-reasoning with reason=needs_planning. A General Knowledge question
-    # is not a planning task. Deliverable-verbed asks ("generate...") and
+    # same class kept happening one layer down. Live on 467d7a7: "What is
+    # the difference between EOT and prolongation cost?" classified
+    # forensic_delay_analysis at confidence 0.2 and was handed to
+    # heavy-reasoning with reason=needs_planning. A definition question is
+    # not a planning task -- in ANY project. This reads the message and the
+    # confidence only; the corpus is one-to-all and nothing here may branch
+    # on which project was asked. Deliverable-verbed asks ("generate...") and
     # confident routes are untouched, exactly as on the other path.
     try:
         from app.core.predefined_reasoning import lookup_question_hijack
