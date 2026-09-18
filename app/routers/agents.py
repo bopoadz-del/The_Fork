@@ -411,8 +411,12 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
             logger.warning("agent chat stream failed: %s", e)
             yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.'})}\n\n"
 
+    # Local import: keeps this router's import graph unchanged for the
+    # non-streaming endpoints.
+    from app.routers.hat_frames import with_hat_signals
+
     return StreamingResponse(
-        event_stream(),
+        with_hat_signals(event_stream(), message),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

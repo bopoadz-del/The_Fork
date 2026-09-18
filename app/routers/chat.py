@@ -20,6 +20,7 @@ from app.dependencies import require_user
 from app.dependencies import block_instances
 from app.infra.monitoring import capture_llm_transport_failure, get_request_id
 from app.routers.chat_watchdog import guarantee_terminal
+from app.routers.hat_frames import with_hat_signals
 
 #: Upper bound on one chat message. Above this the turn is refused with 413
 #: before any retrieval, tool or model work starts. Generous enough for a
@@ -823,8 +824,13 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
     # F-SILENT-1 (B6): the agent's own guard begins inside chat_stream, so a
     # turn that dies in the router's frame -- past `route` -- ends with no
     # answer, no error and HTTP 200. This wraps the whole turn instead.
+    # with_hat_signals sits INSIDE the terminal guard, so hat activation is on
+    # the stream whichever of the three paths above answered the turn.
     return StreamingResponse(
-        guarantee_terminal(event_stream(), request_id=get_request_id()),
+        guarantee_terminal(
+            with_hat_signals(event_stream(), request.message),
+            request_id=get_request_id(),
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1019,9 +1025,13 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
             _report_sse_llm_failure(str(e), path="/v1/chat/stream")
             yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.', 'request_id': rid})}\n\n"
 
-    # Same guard on the v1 path -- B6 was measured here.
+    # Same guard on the v1 path -- B6 was measured here. And the same hat
+    # wrapper: the predefined-dispatch zero was measured here too.
     return StreamingResponse(
-        guarantee_terminal(event_stream(), request_id=get_request_id()),
+        guarantee_terminal(
+            with_hat_signals(event_stream(), prompt),
+            request_id=get_request_id(),
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
