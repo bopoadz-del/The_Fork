@@ -186,6 +186,140 @@ def test_archived_projects_stay_invisible(client, world):
     assert store.get_project_accessible(pid, world["admin"]["id"]) is None
 
 
+def test_regular_user_can_open_system_seed_gk_conversation(client, world, monkeypatch):
+    """Live tip f8d6e65: GET /v1/projects/curated_kb is 200 for role=user,
+    but POST chat/stream with ws-curated_kb-<ms> was 404 Conversation not
+    found. Conversation ACL must use the same include_admin_approved grant
+    as project GET. Private user_create stays fail-closed.
+    """
+    import uuid
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+    from app.agents.runtime import Agent
+
+    async def _fake_llm(self, messages, api_key, project_id=None, **kwargs):
+        return {
+            "status": "success",
+            "choice": {"message": {"content": "gk-ok", "tool_calls": []}},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(Agent, "_call_llm", _fake_llm)
+    monkeypatch.setattr(
+        "app.agents.runtime.project_is_rag_ready", lambda _pid: True
+    )
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+
+    gk_id = f"oag_gkchat_{uuid.uuid4().hex[:10]}"
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", gk_id)
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG General Knowledge chat",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=gk_id,
+        origin="system_seed",
+    )
+    try:
+        headers = _h(world["stranger"])
+        cid = f"ws-{gk_id}-1740000000000"
+
+        hist = client.get(
+            f"/v1/agents/conversations/{cid}/messages", headers=headers
+        )
+        assert hist.status_code == 200, hist.text
+        assert hist.json()["conversation_id"] == cid
+        assert hist.json()["messages"] == []
+
+        chat = client.post(
+            "/v1/agents/project-assistant/chat/stream",
+            headers=headers,
+            json={
+                "message": "hello general knowledge",
+                "project_id": gk_id,
+                "conversation_id": cid,
+            },
+        )
+        assert chat.status_code != 404, chat.text
+        assert "Conversation not found" not in chat.text
+
+        # Alice's private project stays invisible to the stranger.
+        private_cid = f"ws-{world['private']}-1740000000000"
+        priv = client.get(
+            f"/v1/agents/conversations/{private_cid}/messages",
+            headers=headers,
+        )
+        assert priv.status_code == 404, priv.text
+        assert "Conversation not found" in priv.text
+        priv_chat = client.post(
+            "/v1/agents/project-assistant/chat/stream",
+            headers=headers,
+            json={
+                "message": "probe",
+                "project_id": world["private"],
+                "conversation_id": private_cid,
+            },
+        )
+        assert priv_chat.status_code == 404, priv_chat.text
+        assert "Conversation not found" in priv_chat.text
+
+        # Physical master-corpus source id stays owner-only (UI-PHYS H1).
+        source = store.MASTER_CORPUS_SOURCE_PROJECT_ID
+        src = client.get(
+            f"/v1/agents/conversations/ws-{source}-1740000000000/messages",
+            headers=headers,
+        )
+        assert src.status_code == 404, src.text
+    finally:
+        store.delete_project(gk_id)
+
+
+def test_non_ws_conversation_uses_shared_platform_grant(client, world, monkeypatch):
+    """Non-ws ids fall back to the stored project_id (agents.py line ~110).
+
+    That lookup must use include_admin_approved: a GK-bound ad-hoc
+    conversation is readable by a role=user non-owner, a private-project
+    binding stays 404. Virgin #602 failed diff-cover on this branch.
+    """
+    import uuid
+    from app.core import agent_memory as am
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    gk_id = f"oag_gknonws_{uuid.uuid4().hex[:10]}"
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", gk_id)
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG GK non-ws",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=gk_id,
+        origin="system_seed",
+    )
+    gk_cid = f"hr-gk-{uuid.uuid4().hex[:8]}"
+    priv_cid = f"hr-priv-{uuid.uuid4().hex[:8]}"
+    am.get_or_create_conversation(gk_cid, "project-assistant", project_id=gk_id)
+    am.append_message(gk_cid, "user", "gk note")
+    am.get_or_create_conversation(
+        priv_cid, "project-assistant", project_id=world["private"]
+    )
+    am.append_message(priv_cid, "user", "secret")
+    try:
+        headers = _h(world["stranger"])
+        gk = client.get(
+            f"/v1/agents/conversations/{gk_cid}/messages", headers=headers
+        )
+        assert gk.status_code == 200, gk.text
+        assert "gk note" in [m["content"] for m in gk.json()["messages"]]
+
+        priv = client.get(
+            f"/v1/agents/conversations/{priv_cid}/messages", headers=headers
+        )
+        assert priv.status_code == 404, priv.text
+        assert "Conversation not found" in priv.text
+    finally:
+        store.delete_project(gk_id)
+
+
 def test_stranger_http_surfaces_reach_system_seed_gk(client, world, monkeypatch):
     """Live QA 404s: GET project, documents, and rag/search on curated_kb."""
     import uuid
