@@ -274,6 +274,52 @@ def test_regular_user_can_open_system_seed_gk_conversation(client, world, monkey
         store.delete_project(gk_id)
 
 
+def test_non_ws_conversation_uses_shared_platform_grant(client, world, monkeypatch):
+    """Non-ws ids fall back to the stored project_id (agents.py line ~110).
+
+    That lookup must use include_admin_approved: a GK-bound ad-hoc
+    conversation is readable by a role=user non-owner, a private-project
+    binding stays 404. Virgin #602 failed diff-cover on this branch.
+    """
+    import uuid
+    from app.core import agent_memory as am
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    gk_id = f"oag_gknonws_{uuid.uuid4().hex[:10]}"
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", gk_id)
+    ensure_user_exists(SYSTEM_USER_ID, role="admin")
+    store.create_project(
+        name="OAG GK non-ws",
+        user_id=SYSTEM_USER_ID,
+        is_approved=True,
+        project_id=gk_id,
+        origin="system_seed",
+    )
+    gk_cid = f"hr-gk-{uuid.uuid4().hex[:8]}"
+    priv_cid = f"hr-priv-{uuid.uuid4().hex[:8]}"
+    am.get_or_create_conversation(gk_cid, "project-assistant", project_id=gk_id)
+    am.append_message(gk_cid, "user", "gk note")
+    am.get_or_create_conversation(
+        priv_cid, "project-assistant", project_id=world["private"]
+    )
+    am.append_message(priv_cid, "user", "secret")
+    try:
+        headers = _h(world["stranger"])
+        gk = client.get(
+            f"/v1/agents/conversations/{gk_cid}/messages", headers=headers
+        )
+        assert gk.status_code == 200, gk.text
+        assert "gk note" in [m["content"] for m in gk.json()["messages"]]
+
+        priv = client.get(
+            f"/v1/agents/conversations/{priv_cid}/messages", headers=headers
+        )
+        assert priv.status_code == 404, priv.text
+        assert "Conversation not found" in priv.text
+    finally:
+        store.delete_project(gk_id)
+
+
 def test_stranger_http_surfaces_reach_system_seed_gk(client, world, monkeypatch):
     """Live QA 404s: GET project, documents, and rag/search on curated_kb."""
     import uuid
