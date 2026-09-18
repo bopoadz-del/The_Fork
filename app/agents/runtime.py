@@ -7950,9 +7950,11 @@ def hat_scores_sse(message: str) -> dict[str, Any] | None:
             "id": hat.id,
             "discipline": discipline,
             "score": score,
-            "selected": bool(selected_id) and (
-                selected_id == hat.id or hat.id in str(selected_id)
-            ),
+            # Multi-hat mode merges two manifests into "<primary>__<secondary>"
+            # (activation._merge_multi_hat), so compare against the parts. An
+            # `in` on the raw string would also match any hat whose id happens
+            # to be a substring of another's.
+            "selected": bool(selected_id) and hat.id in str(selected_id).split("__"),
         })
     signals.sort(key=lambda row: (-float(row["score"]), str(row["id"])))
     return {
@@ -9248,7 +9250,18 @@ class Agent:
         terminal_emitted = False  # True once we yield an `end` or `error` event
         # Floor scorer reads hat_signals on the stream (event + end metadata).
         # Compute once so early-return impl paths still record activation.
-        _hat_evt = hat_scores_sse(user_message)
+        #
+        # Guarded, because this line runs BEFORE the first yield and outside
+        # the last-line safety net below. Hat scoring walks the whole catalog
+        # and is telemetry: if it raises here the generator dies with no
+        # `error` event and the user gets a dead stream instead of an answer.
+        # Losing the scores for one turn is the correct price of a bug in
+        # scoring; losing the chat is not.
+        try:
+            _hat_evt = hat_scores_sse(user_message)
+        except Exception:  # noqa: BLE001 - telemetry must never take down chat
+            _LOG.exception("chat_stream: hat scoring failed; continuing without hat_signals")
+            _hat_evt = None
         _hat_emitted = False
         # Tool names seen on the way out, so the synthetic `end` below can
         # still report them when the inner generator dies before its own end.

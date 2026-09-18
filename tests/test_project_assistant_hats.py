@@ -193,3 +193,46 @@ def test_project_assistant_stream_no_hat_signals_when_flag_off(monkeypatch):
         "Active discipline hat this turn" in (m.get("content") or "")
         for m in sent
     )
+
+
+def test_a_crash_in_hat_scoring_does_not_take_down_the_chat(monkeypatch):
+    """Hat scoring runs before the stream's first yield, outside the safety
+    net. It is telemetry; a bug in it must cost the turn its scores, never
+    the user their answer."""
+    from app.agents import runtime
+
+    def boom(_message):
+        raise RuntimeError("planted: catalog blew up")
+
+    monkeypatch.setattr(runtime, "hat_scores_sse", boom)
+    # hat_turn_system_note calls the same function from inside the impl;
+    # neutralise it so this test isolates the unguarded call site.
+    monkeypatch.setattr(runtime, "hat_turn_system_note", lambda _m: None)
+
+    events, _mock = _stream_with_mock(monkeypatch, PLANNING_ASK)
+    types = [e["type"] for e in events]
+
+    assert "end" in types, f"the stream died instead of answering: {types}"
+    assert "error" not in types
+    assert "hat_signals" not in types
+    assert any(e["type"] == "token" for e in events)
+
+
+def test_multi_hat_selection_marks_both_parts_and_nothing_else(monkeypatch):
+    """`selected` must match the parts of a merged "<a>__<b>" id exactly."""
+    from types import SimpleNamespace
+
+    from app.agents import runtime
+
+    monkeypatch.setenv("FORK_HATS_ENABLED", "1")
+    merged = SimpleNamespace(
+        id="fork.hat.planning__fork.hat.contracts", name="planning+contracts"
+    )
+    monkeypatch.setattr(
+        "app.agents.activation.HatActivationAdapter.select_hat_for_message",
+        lambda self, _m: merged,
+    )
+    payload = runtime.hat_scores_sse(PLANNING_ASK)
+    chosen = {row["id"] for row in payload["hat_signals"] if row["selected"]}
+
+    assert chosen == {"fork.hat.planning", "fork.hat.contracts"}
