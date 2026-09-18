@@ -54,6 +54,39 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+class _FixedClassifier:
+    """Stands in for SmartOrchestratorBlock with one fixed classification.
+
+    The first version of this file leaned on @requires_construction_kit for
+    every routing test. The `virgin` CI job has no kit, so all of them
+    SKIPPED there, the guard never executed, and diff-cover reported 0% on
+    the new lines -- correctly. A guard that is only ever tested where the
+    kit happens to be installed is not tested. Stubbing the classifier pins
+    the decision itself and runs everywhere; the kit-gated tests below remain
+    as the end-to-end check against the real classifier.
+    """
+
+    def __init__(self, action: str, confidence: float) -> None:
+        self._result = {
+            "matched_actions": [{"action": action, "confidence": confidence}]
+        }
+
+    async def process(self, _payload):
+        return self._result
+
+
+@pytest.fixture
+def classify_as(monkeypatch):
+    def install(action: str, confidence: float) -> None:
+        monkeypatch.setattr(
+            runtime_module,
+            "_SMART_ORCH_BLOCK_CACHE",
+            _FixedClassifier(action, confidence),
+        )
+
+    return install
+
+
 @pytest.fixture
 def registry(monkeypatch):
     pa = _make_agent("project-assistant")
@@ -66,6 +99,49 @@ def registry(monkeypatch):
         yield pa, heavy
     finally:
         runtime_module.AGENT_REGISTRY.clear()
+
+
+def test_a_low_confidence_lookup_question_is_not_swapped(registry, classify_as):
+    """The live case, with the classification pinned to what production
+    returned: forensic_delay_analysis at 0.2. Runs in every CI job."""
+    pa, _heavy = registry
+    classify_as("forensic_delay_analysis", 0.2)
+
+    final, routing = _run(select_agent_for_message(LIVE_EOT_VS_PROLONGATION, pa))
+
+    assert final is pa, routing
+    assert routing["final"] == "project-assistant", routing
+    assert routing["reason"] == "lookup_question", routing
+
+
+def test_a_deliverable_ask_at_the_same_confidence_still_swaps(registry, classify_as):
+    """The control, also kit-free. Same action, same 0.2 -- but the message
+    asks for the artifact, so heavy-reasoning is the right home for it."""
+    pa, heavy = registry
+    classify_as("forensic_delay_analysis", 0.2)
+
+    final, routing = _run(
+        select_agent_for_message("Generate a forensic delay analysis report", pa)
+    )
+
+    assert final is heavy, routing
+    assert routing["reason"] == "needs_planning", routing
+
+
+def test_a_confident_route_is_left_alone(registry, classify_as):
+    """The guard stands aside at >= 0.5 by design. Pinned so that widening it
+    is a decision somebody makes on purpose, with this test in front of them."""
+    pa, heavy = registry
+    classify_as("forensic_delay_analysis", 0.6)
+
+    final, routing = _run(
+        select_agent_for_message(
+            "Explain concurrent delay in a forensic delay analysis", pa
+        )
+    )
+
+    assert final is heavy, routing
+    assert routing["reason"] == "needs_planning", routing
 
 
 @requires_construction_kit
@@ -115,7 +191,7 @@ def test_deliverable_asks_still_reach_heavy_reasoning(registry, message):
     assert routing["reason"] == "needs_planning", routing
 
 
-def test_a_guard_failure_cannot_break_routing(registry, monkeypatch):
+def test_a_guard_failure_cannot_break_routing(registry, classify_as, monkeypatch):
     """Routing is best-effort. If the guard itself raises, the message must
     still be routed by the rules that were there before it."""
     import app.core.predefined_reasoning as predefined
@@ -124,11 +200,15 @@ def test_a_guard_failure_cannot_break_routing(registry, monkeypatch):
         raise RuntimeError("planted")
 
     monkeypatch.setattr(predefined, "lookup_question_hijack", boom)
-    pa, _heavy = registry
+    pa, heavy = registry
+    classify_as("forensic_delay_analysis", 0.2)
     final, routing = _run(select_agent_for_message(LIVE_EOT_VS_PROLONGATION, pa))
 
-    assert final is not None
-    assert "reason" in routing
+    # With the guard broken the OLD rules apply, so this swaps again. That is
+    # the correct degraded behaviour: a broken guard must cost the fix, never
+    # the routing.
+    assert final is heavy, routing
+    assert routing["reason"] == "needs_planning", routing
 
 
 def test_the_guard_never_looks_at_which_project_was_asked():
