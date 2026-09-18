@@ -264,7 +264,12 @@ def test_both_streaming_endpoints_are_wrapped():
     import app.routers.chat as chat_mod
 
     source = open(chat_mod.__file__, encoding="utf-8").read()
-    assert source.count("guarantee_terminal(event_stream()") == 2
+    # Hat activation sits INSIDE the terminal guard, so the call is
+    # guarantee_terminal(with_hat_signals(event_stream(), ...)). The old
+    # contiguous substring no longer matches; both wrappers must still
+    # wrap both endpoints.
+    assert source.count("guarantee_terminal(") == 2
+    assert source.count("with_hat_signals(event_stream()") == 2
     assert source.count("StreamingResponse(") == 2
 
 
