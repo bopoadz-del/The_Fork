@@ -5644,10 +5644,17 @@ def format_priced_boq_line(parsed: Dict[str, Any]) -> str:
 
 
 def answer_states_priced_boq(text: str, parsed: Dict[str, Any]) -> bool:
-    """True when ``text`` already names the elected quantity and amount."""
+    """True when ``text`` already names the elected quantity and amount.
+
+    A priced CESMM row that still wears a Rate Only label is not an
+    election — Rate Only means no quantity and therefore no extended
+    amount (live B5 D549.2). The graft then emits the priced line.
+    """
     if not text or not parsed:
         return False
-    blob = (text or "").replace(",", "").replace(" ", "")
+    if _RATE_ONLY_RE.search(text):
+        return False
+    blob = text.replace(",", "").replace(" ", "")
     return (
         _plain_boq_number(float(parsed["qty"])) in blob
         and _plain_boq_number(float(parsed["amount"])) in blob
