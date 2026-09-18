@@ -12415,6 +12415,33 @@ async def select_agent_for_message(
         info["reason"] = "named_calculator"
         return requested_agent, info
 
+    # A lookup QUESTION must not be swapped onto heavy-reasoning by a keyword.
+    #
+    # lookup_question_hijack already guards the predefined-dispatch
+    # interception in app/routers/agents.py, from the 2026-07-24 repro where
+    # "eot" sent a notice-period question to forensic_delay_analysis. It never
+    # guarded THIS decision, which is the one that changes agents -- so the
+    # same class kept happening one layer down. Live on 467d7a7: "What is
+    # the difference between EOT and prolongation cost?" classified
+    # forensic_delay_analysis at confidence 0.2 and was handed to
+    # heavy-reasoning with reason=needs_planning. A definition question is
+    # not a planning task -- in ANY project. This reads the message and the
+    # confidence only; the corpus is one-to-all and nothing here may branch
+    # on which project was asked. Deliverable-verbed asks ("generate...") and
+    # confident routes are untouched, exactly as on the other path.
+    try:
+        from app.core.predefined_reasoning import lookup_question_hijack
+        # Only where it changes the outcome. A non-generative action already
+        # stays put and keeps its own reason (below_routing_gate), which
+        # tests/test_smart_orchestrator_routing.py pins.
+        if needs_planning(action, confidence) and lookup_question_hijack(
+            user_message, float(confidence or 0.0)
+        ):
+            info["reason"] = "lookup_question"
+            return requested_agent, info
+    except Exception:  # noqa: BLE001 - routing is best-effort; never break chat
+        _LOG.debug("lookup-question guard skipped", exc_info=True)
+
     if not needs_planning(action, confidence):
         # No existing feature/workflow. A computation with no registered
         # calculator name is self-coding's job — one hop, then that agent
