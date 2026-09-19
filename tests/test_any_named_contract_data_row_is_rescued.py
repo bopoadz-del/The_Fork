@@ -505,3 +505,93 @@ def test_kill_switch_restores_the_old_ranking(ret, monkeypatch):
     monkeypatch.setenv("RAG_NAMED_PARTICULARS_ROW_RESCUE", "0")
     assert not any(t.startswith("CONTRACT DATA particulars")
                    for t in _texts(ret, A8))
+
+
+# ── a table that runs on into the next chunk is still one row ─────────────
+#
+# Unseen Set 3, live 5011b62 -- three failures, one cause:
+#   A4  "Which Milestones have a Time for Completion of 397 days?"  (M1 and M7)
+#   A5  "Which area does Milestone 9 cover and what is its Time for Completion?"
+#   F1  "Among the Northern Community milestones, which have the longest ...?"
+#
+# Row 1.1.75 lists ten milestones. The page breaks after Milestone 5, and so
+# does the chunk. The second half opens with the table's repeated header and
+# then "Milestone 7 | 397 days ..." -- it carries NO "Time for Completion"
+# label, so nothing that looks for the row by its label can find it. Every
+# answer stopped, honestly, at Milestone 5.
+
+CD_TIMES_CONTINUED = LABEL + (
+    "amended): | Description | Data | |\n"
+    "|: | Milestone 6 | | 640days from the date the Contractor is given right "
+    "of access to East Quarter 3b.\n"
+    "|: | Milestone 7 | | 300 days from the date the Contractor is given right "
+    "of access to Northern Quarter 4a.\n"
+    "|: | Milestone 9 | | 520days from the date the Contractor is given right "
+    "of access to Northern Quarter 4c.\n"
+    "1.1.78: | Nominated Subcontractor | Notapplicable | |\n"
+)
+CD_UNRELATED_NEXT = LABEL + (
+    "14.2.1: | Advance Payment: 10% of the Accepted Contract Amount | |\n"
+    "14.3(c): | Percentage of Retention: 10% | |\n"
+)
+
+
+def _sheet_with_continuation(monkeypatch):
+    chunks = [
+        _chunk("list", CD_DOC, 0.0, CD_MILESTONE_LIST, 0),
+        _chunk("times", CD_DOC, 0.0, CD_MILESTONE_TIMES, 1),
+        _chunk("cont", CD_DOC, 0.0, CD_TIMES_CONTINUED, 2),
+        _chunk("other", CD_DOC, 0.0, CD_UNRELATED_NEXT, 3),
+    ]
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_for_docs",
+        lambda self, pid, doc_ids, k_per_doc=12, **_kw: chunks,
+    )
+
+
+@pytest.mark.parametrize(
+    "question, needle",
+    [
+        ("Which area does Milestone 9 cover and what is its Time for Completion?",
+         "Milestone 9 | | 520days"),
+        ("Which Milestones have a Time for Completion of 300 days?",
+         "Milestone 7 | | 300 days"),
+        ("Among the Northern Quarter milestones, which has the longest Time for Completion?",
+         "Northern Quarter 4c"),
+    ],
+)
+def test_the_second_half_of_the_table_comes_with_the_first(ret, monkeypatch, question, needle):
+    _sheet_with_continuation(monkeypatch)
+    assert needle in "\n".join(_texts(ret, question)), question
+
+
+def test_the_first_half_is_still_there(ret, monkeypatch):
+    """300 days is Milestone 1 AND Milestone 7: both halves are the answer."""
+    _sheet_with_continuation(monkeypatch)
+    blob = "\n".join(_texts(ret, "Which Milestones have a Time for Completion of 300 days?"))
+    assert "Milestone 1 | 300 days" in blob and "Milestone 7 | | 300 days" in blob
+
+
+def test_a_chunk_that_merely_follows_is_not_a_continuation(ret, monkeypatch):
+    """The next chunk along is only part of the row if the NUMBERING runs on.
+    The retention rows that come after the milestones do not."""
+    _sheet_with_continuation(monkeypatch)
+    blob = "\n".join(_texts(ret, "Which area does Milestone 9 cover and what is its Time for Completion?"))
+    assert "Percentage of Retention" not in blob
+
+
+def test_a_question_about_another_row_does_not_drag_the_milestones_in(ret, monkeypatch):
+    _sheet_with_continuation(monkeypatch)
+    assert "Milestone 9" not in "\n".join(_texts(ret, A7))
+
+
+def test_another_documents_numbering_is_not_this_tables_second_half(ret):
+    """A different contract's sheet can open on "Milestone 6" too. The second
+    half of a table is in the same document as the first."""
+    parent = _chunk("times", CD_DOC, 0.0, CD_MILESTONE_TIMES, 1)
+    same_doc = _chunk("cont", CD_DOC, 0.0, CD_TIMES_CONTINUED, 2)
+    other_doc = _chunk("foreign", "another-contract", 0.0, CD_TIMES_CONTINUED, 2)
+
+    found = ret._enumeration_continuations(parent, [parent, other_doc, same_doc])
+
+    assert [c.chunk_id for c in found] == ["cont"]

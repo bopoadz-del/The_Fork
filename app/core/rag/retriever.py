@@ -2051,6 +2051,14 @@ _NAMED_ROW_MAX_CHUNKS = 2
 _NAMED_ROW_UBIQUITOUS_TERMS = frozenset({
     "contract", "contracts", "works", "applicable", "clause", "data",
     "under", "many", "much", "stated", "state", "states", "according",
+    # Operators of the QUESTION, not words of a label. "Among the Northern
+    # milestones, which have the longest Time for Completion and by how much
+    # over the shortest?" names the Time for Completion row; left in, these
+    # dilute coverage until that row no longer matches (unseen Set 3 F1).
+    "among", "between", "longest", "shortest", "longer", "shorter", "highest",
+    "lowest", "largest", "smallest", "greatest", "most", "least", "every",
+    "each", "both", "compare", "compared", "difference", "exceed", "exceeds",
+    "over", "than", "same", "combined", "total", "together",
 })
 _NAMED_ROW_SEPARATOR_RE = re.compile(r"[:|]")
 _NAMED_ROW_FILLED_CELL_RE = re.compile(r"[:|][^A-Za-z0-9]*[A-Za-z0-9]")
@@ -2198,6 +2206,68 @@ def named_particulars_row_match(query: str, text: str) -> int:
     return covered
 
 
+# Unseen Set 3, live 5011b62 — A4, A5, F1, one cause. Row 1.1.75 lists ten
+# milestones; the page breaks after Milestone 5 and so does the chunk. The
+# second half opens with the table's repeated header and then "Milestone 7 |
+# 397 days ..." — no "Time for Completion" label anywhere on it — so every
+# answer stopped, honestly, at Milestone 5.
+#
+# What marks a continuation is the NUMBERING: the first half ends on
+# "<Word> n" and a following chunk of the same document opens on "<Word> n+1"
+# (or n+2: a scan can drop a row). A chunk that merely comes next does not
+# qualify, so the retention rows after the milestones are not dragged along.
+_ENUMERATED_ITEM_RE = re.compile(r"(?m)^[\s|:]*([A-Z][a-z]{3,})\s+(\d{1,2})\b")
+_CONTINUATION_LOOKAHEAD_CHUNKS = 3
+_CONTINUATION_MAX_CHUNKS = 2
+_CONTINUATION_OPENING_CHARS = 400
+
+
+def _last_enumerated_item(text: str) -> Optional[Tuple[str, int]]:
+    items = [(w.lower(), int(n)) for w, n in
+             _ENUMERATED_ITEM_RE.findall(_cd_chunk_body(text or ""))]
+    if not items:
+        return None
+    word, number = items[-1]
+    # A LIST, not a lone numbered thing: "Milestone 4" then "Milestone 5".
+    # "Page 3 of 46" in a footer is numbered and is not an enumeration.
+    if (word, number - 1) not in items:
+        return None
+    return word, number
+
+
+def _enumeration_continuations(parent: Chunk, sheet: List[Chunk]) -> List[Chunk]:
+    """Following chunks of the same document whose numbering runs on."""
+    last = _last_enumerated_item(parent.text or "")
+    if last is None:
+        return []
+    word, number = last
+    following = sorted(
+        (
+            c for c in sheet
+            if c.doc_id == parent.doc_id
+            and parent.chunk_index < c.chunk_index
+            <= parent.chunk_index + _CONTINUATION_LOOKAHEAD_CHUNKS
+        ),
+        key=lambda c: c.chunk_index,
+    )
+    out: List[Chunk] = []
+    for chunk in following:
+        opening = _cd_chunk_body(chunk.text or "")[:_CONTINUATION_OPENING_CHARS]
+        first = next(
+            (
+                int(n) for w, n in _ENUMERATED_ITEM_RE.findall(opening)
+                if w.lower() == word
+            ),
+            None,
+        )
+        if first is None or not number < first <= number + 2:
+            continue
+        out.append(chunk)
+        if len(out) >= _CONTINUATION_MAX_CHUNKS:
+            break
+    return out
+
+
 def _rescue_named_particulars_rows(
     query: str,
     project_id: str,
@@ -2240,6 +2310,12 @@ def _rescue_named_particulars_rows(
                 matched.append((strength, chunk))
     matched.sort(key=lambda m: (-m[0], m[1].chunk_index))
     chosen = [chunk for _strength, chunk in matched[:_NAMED_ROW_MAX_CHUNKS]]
+    # A row that runs on into the next chunk is still one row. The second
+    # half carries no label, so it is found from the first half, not by name.
+    for parent in list(chosen):
+        for cont in _enumeration_continuations(parent, sheet):
+            if all(cont.chunk_id != c.chunk_id for c in chosen):
+                chosen.append(cont)
     recovered = 0
     # Live 24d1c0c E2, 0/3: the 0.015%-per-day row ranked first and the answer
     # stopped, correctly, at "0.45% of the Contract Price — which is not in
