@@ -3401,15 +3401,20 @@ _ENGINEER_GLOSSARY_RE = re.compile(
 )
 _ENGINEER_REP_RE = re.compile(r"(?i)engineer'?s\s+representative")
 _ENGINEER_KEY_RE = re.compile(r"(?i)\bengineer\b")
+_ENGINEER_KEY_MAX_CHARS = 80
 _NOT_A_PARTY_NAME_RE = re.compile(
     r"(?i)^(?:the\s+)?(?:person\s+appointed|consultant|client|"
-    r"employer|contractor|engineer)\s*$",
+    r"employer|contractor|engineer)\s*$"
+    # The Contract Data table's own header row: "Clause (as amended) |
+    # Description | Data". Capitalised, four letters, and nobody's name.
+    r"|^(?:sub-?clause|clause|description|data)\b",
 )
 _PARTY_FIRM_RE = re.compile(
     r"(?i)\b(?:limited|ltd\.?|llc|llp|gmbh|plc|inc\.?)\b",
 )
 _SCANNED_ENGINEER_LINE_RE = re.compile(
-    r"(?im)^[ \t]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?\s*)?"
+    # Table rows open with cell pipes: ``|: | Engineer JACOBS(CH2M ...) |``.
+    r"(?im)^[ \t|:]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?[ \t|:]*)?"
     r"(?:(?:the|name\s+of\s+the)\s+)?"
     r"engineer\b(?!\s*'?s\s+representative)[ \t]*[:|–-]?\s*(.*)$",
 )
@@ -4396,6 +4401,12 @@ def extract_engineer_identity(text: str) -> Optional[str]:
     for key, val in filled_particulars_rows(t):
         if _ENGINEER_REP_RE.search(key):
             continue
+        # Live bcb5bbf: a flattened page came through as ONE 400-character
+        # "key" that merely contained the word Engineer, with the table
+        # header as its value -- and "Clause (as" was returned as the firm.
+        # A row's key is a label; a label is short.
+        if len(key) > _ENGINEER_KEY_MAX_CHARS:
+            continue
         if _ENGINEER_KEY_RE.search(key) and _looks_like_appointed_party(val):
             return re.sub(r"\s+", " ", val).strip(" \t.:;,-")
     lines = t.splitlines()
@@ -4405,9 +4416,11 @@ def extract_engineer_identity(text: str) -> Optional[str]:
         m = _SCANNED_ENGINEER_LINE_RE.match(line)
         if not m:
             continue
-        rest = (m.group(1) or "").strip()
-        nxt = lines[i + 1].strip() if i + 1 < len(lines) else ""
-        nxt2 = lines[i + 2].strip() if i + 2 < len(lines) else ""
+        # The name is the first CELL after the role: drop the row's trailing
+        # empty cells and pipes before judging it.
+        rest = (m.group(1) or "").split("|")[0].strip(" \t|")
+        nxt = lines[i + 1].strip(" \t|") if i + 1 < len(lines) else ""
+        nxt2 = lines[i + 2].strip(" \t|") if i + 2 < len(lines) else ""
         for cand in (rest, f"{rest} {nxt}".strip(), nxt, f"{nxt} {nxt2}".strip()):
             if _looks_like_appointed_party(cand) and _PARTY_FIRM_RE.search(cand):
                 return re.sub(r"\s+", " ", cand).strip(" \t.:;,-")

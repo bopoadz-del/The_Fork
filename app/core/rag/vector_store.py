@@ -39,6 +39,7 @@ from app.core.db import _engine_for_url, _session_factory_for_url, get_database_
 from app.core.models import EMBEDDING_DIM, Document, Project
 from app.core.models import make_rag_chunk_class, rag_chunk_table_name
 from app.core.rag.embeddings import get_embedder
+from app.core.rag.text_repair import repair_fake_bold
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +227,16 @@ class Chunk:
     sha256: Optional[str] = None
     photo_url: Optional[str] = None
     photo_metadata: Optional[dict] = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        # ONE choke point, not the eight places a Chunk is built from a row.
+        # Some PDFs fake bold by printing each glyph twice and index as
+        # "EEnnggiinneeeerr JJAACCOOBBSS"; every rule downstream then reads
+        # junk (live: "Clause (as" was returned as the Engineer). Repairing
+        # here fixes documents already in the index, with no re-index, and no
+        # future read path can forget to. Clean text is returned untouched.
+        if self.text:
+            self.text = repair_fake_bold(self.text)
 
     def to_dict(self) -> dict:
         d = asdict(self)
