@@ -30,8 +30,9 @@ FIXTURE_PID = "proj_formula_fixture_scope"
 MASTER_PID = "master_src_formula_scope"
 GK_PID = "curated_kb_formula_scope"
 # Live UI project id is a hex slug; the name carries FIXTURE-.
-HEX_FIXTURE_PID = "b860981f"
-HEX_FIXTURE_NAME = "FIXTURE-c-2026-09-19-formula-fw"
+# Synthetic id/name only — no live fixture identifiers.
+HEX_FIXTURE_PID = "aa11bb22"
+HEX_FIXTURE_NAME = "FIXTURE-c-formula-pack"
 
 AVAILABLE = {"construction_calc", "search_project_documents"}
 
