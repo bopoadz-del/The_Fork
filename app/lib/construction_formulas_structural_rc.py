@@ -80,6 +80,8 @@ def rc_beam_shear_capacity(
         k = min(1.0 + math.sqrt(200.0 / d), 2.0)
         rho = min(rho_l, 0.02)
         vrd_n = 0.12 * k * (100.0 * rho * fc_mpa) ** (1.0 / 3.0) * bw * d
+        vmin = 0.035 * (k ** 1.5) * (fc_mpa ** 0.5)  # EN 1992-1-1 Eq. 6.3N
+        vrd_n = max(vrd_n, vmin * bw * d)
         std = "EN 1992-1-1 §6.2.2 (CRd,c=0.12)"
         note = (f"k=1+sqrt(200/d)={k:.3f}; VRd,c=0.12*k*(100*rho*fck)^(1/3)*bw*d "
                 f"= {vrd_n/1000.0:.2f} kN")
