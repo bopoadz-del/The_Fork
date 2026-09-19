@@ -5699,8 +5699,14 @@ def query_asks_for_boq_item_amount(query: str) -> bool:
 # the asked row — that was dropping 280,320 from D549.2. Pipe-led
 # rows still allow 2-3 digits (``| I12 |``). Four-digit quantities
 # fail ``\d{3}\b`` (the digit after the 3-digit prefix blocks ``\b``).
+#
+# The space-led branch is CASE-SENSITIVE. The two-digit guard above handles
+# ``m 80.00``; it does not handle a three-digit rate, and OCR glues the unit
+# to it: live ``D549.1 m240.00 Rate Only`` read ``m240.00`` as the next item
+# "M240.00" and cut the row off before its own "Rate Only". A bill prints its
+# item codes in capitals and its units in lower case.
 _NEXT_CESMM_ROW_RE = re.compile(
-    r"(?i)(?:\s*[|]\s*([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b"
+    r"(?:\s*[|]\s*([A-Za-z])\s*(\d{2,3}(?:\.\d{1,2})?)\b"
     r"|\s+([A-Z])\s*(\d{3}(?:\.\d{1,2})?)\b)",
 )
 _CESMM_ROW_TAIL_CHARS = 220
@@ -5852,6 +5858,33 @@ _PRICED_BOQ_TRIPLE_RE = re.compile(
 )
 
 
+# The same triple with the UNIT column before the quantity. A CESMM bill
+# prints Ref | Unit | Qty | Rate | Amount, so the live row is
+# ``D549.2 m 3,504 80.00 280,320.00`` — which the pattern above cannot see.
+# With nothing parsed, the model read the row itself and attached the
+# neighbouring row's "Rate Only" to it (live d8d9573 B5, 0/5). OCR glues the
+# unit to the quantity (``m3,504``), hence ``\s*``. Safe for the same reason
+# the first order is: the caller only accepts qty × rate == amount.
+_PRICED_BOQ_TRIPLE_UNIT_FIRST_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9.])"
+    r"(?P<unit>m[2²³3]|sq\.?\s*m|lin\.?\s*m|nr|no\.?|item|sum|ls|ha|kg|t|m)"
+    r"\s*"
+    r"(?P<qty>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+    r"\s+"
+    + _BOQ_CURRENCY_PREFIX
+    + r"(?P<rate>\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+    + r"\s+"
+    + _BOQ_CURRENCY_PREFIX
+    + r"(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d{2}|\d{4,})"
+)
+
+
+def _priced_boq_triples(blob: str):
+    """Every candidate (qty, unit, rate, amount) match, both column orders."""
+    yield from _PRICED_BOQ_TRIPLE_RE.finditer(blob)
+    yield from _PRICED_BOQ_TRIPLE_UNIT_FIRST_RE.finditer(blob)
+
+
 def priced_boq_compose_enabled() -> bool:
     """ON by default. ``COMPOSE_PRICED_BOQ_ROW=0`` restores the B4/B5 empty hang."""
     return _env_flag_on("COMPOSE_PRICED_BOQ_ROW")
@@ -5890,19 +5923,24 @@ def _parse_priced_cesmm_window(window: str, code: str) -> Optional[Dict[str, Any
     if not window:
         return None
     blob = _normalize_retrieval_ws((window or "").replace("|", " "))
-    match = _PRICED_BOQ_TRIPLE_RE.search(blob)
-    if not match:
-        return None
-    qty = _parse_boq_number(match.group("qty"))
-    rate = _parse_boq_number(match.group("rate"))
-    amount = _parse_boq_number(match.group("amount"))
-    if qty is None or rate is None or amount is None:
-        return None
-    if qty <= 0 or rate <= 0 or amount <= 0:
-        return None
-    product = qty * rate
-    tol = max(1.0, 0.015 * amount)
-    if abs(product - amount) > tol:
+    match = None
+    qty = rate = amount = None
+    # First candidate, in either column order, whose arithmetic holds. The
+    # arithmetic IS the test: a regex hit that does not multiply out is three
+    # numbers that happened to sit together.
+    for cand in _priced_boq_triples(blob):
+        c_qty = _parse_boq_number(cand.group("qty"))
+        c_rate = _parse_boq_number(cand.group("rate"))
+        c_amount = _parse_boq_number(cand.group("amount"))
+        if c_qty is None or c_rate is None or c_amount is None:
+            continue
+        if c_qty <= 0 or c_rate <= 0 or c_amount <= 0:
+            continue
+        if abs(c_qty * c_rate - c_amount) > max(1.0, 0.015 * c_amount):
+            continue
+        match, qty, rate, amount = cand, c_qty, c_rate, c_amount
+        break
+    if match is None:
         return None
     unit = _normalize_retrieval_ws(match.group("unit") or "")
     pretty = f"{code[0].upper()}{code[1:]}" if code and code[0].isalpha() else code
