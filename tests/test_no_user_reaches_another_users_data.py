@@ -171,6 +171,7 @@ def _assert_denied(resp, *, label: str) -> None:
     body = resp.text
     assert CANARY_B not in body, f"{label}: denial leaked B canary"
     assert "b-secret.txt" not in body.lower()
+    assert "B-SECRET-FOLDER" not in body
 
 
 def _assert_b_unchanged(client: TestClient, world: dict) -> None:
@@ -330,6 +331,21 @@ def _cross(client: TestClient, world: dict, name: str):
     if name == "drive_job":
         return client.get(
             f"/v1/projects/{b_pid}/drive/index-folder/job/not-a-real-job",
+            headers=h,
+        )
+    if name == "drive_job_seeded":
+        from app.routers import drive as drive_router
+
+        jid = f"iso-job-{_RUN}"
+        drive_router._DRIVE_FOLDER_JOBS[jid] = {
+            "job_id": jid,
+            "status": "queued",
+            "project_id": b_pid,
+            "folder_id": "B-SECRET-FOLDER",
+            "created_at": 0,
+        }
+        return client.get(
+            f"/v1/projects/{b_pid}/drive/index-folder/job/{jid}",
             headers=h,
         )
     if name == "rag_search":
@@ -535,6 +551,7 @@ CROSS_SURFACES = [
     "drive_import",
     "drive_index",
     "drive_job",
+    "drive_job_seeded",
     "rag_search",
     "rag_gk",
     "agent_messages",

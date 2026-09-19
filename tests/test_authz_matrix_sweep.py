@@ -7,10 +7,12 @@ fails a test instead of a tester.
 
 Callers: owner / admin / stranger.
 Projects: private (user_create) / admin-approved shared platform project.
-Surfaces: open detail, list documents, upload document, delete project.
+Surfaces: open detail, list documents, upload document, delete project,
+RAG search, project memory, execute-with-project_id.
 
 Expected access:
-  open+docs+upload -> owner: yes; admin: yes; stranger: shared only.
+  open+docs+upload+rag+execute -> owner: yes; stranger: shared only.
+  memory           -> owner only.
   delete           -> owner or admin (soft-archive curation); strangers denied.
 
 First run of this sweep found a live hole: document PAGINATION 404'd for
@@ -93,6 +95,24 @@ def _surface(client, name, pid, actor):
         ).status_code
     if name == "delete":
         return client.delete(f"/v1/projects/{pid}", headers=_h(actor)).status_code
+    if name == "rag":
+        return client.post(
+            "/v1/rag/search",
+            headers=_h(actor),
+            json={"query": "x", "project_id": pid, "k": 3},
+        ).status_code
+    if name == "memory":
+        return client.get(f"/v1/projects/{pid}/memory", headers=_h(actor)).status_code
+    if name == "execute":
+        return client.post(
+            "/v1/execute",
+            headers=_h(actor),
+            json={
+                "block": "translate",
+                "input": "hola",
+                "params": {"target": "en", "project_id": pid},
+            },
+        ).status_code
     raise AssertionError(name)
 
 
@@ -116,6 +136,21 @@ MATRIX = [
     ("upload", "stranger", "shared",  True),
     ("delete", "stranger", "private", False),
     ("delete", "stranger", "shared",  False),
+    # Same grant as open: owner / admin / shared-stranger. A new RAG
+    # door that skips get_project_accessible fails these cells.
+    ("rag",    "owner",    "private", True),
+    ("rag",    "stranger", "private", False),
+    ("rag",    "owner",    "shared",  True),
+    ("rag",    "stranger", "shared",  True),
+    # Project facts are owner-only (mutating-style _owned_or_404).
+    ("memory", "owner",    "private", True),
+    ("memory", "stranger", "private", False),
+    ("memory", "stranger", "shared",  False),
+    # Nested project_id on /v1/execute uses get_project_accessible.
+    ("execute", "owner",    "private", True),
+    ("execute", "stranger", "private", False),
+    ("execute", "owner",    "shared",  True),
+    ("execute", "stranger", "shared",  True),
     # Admin delete = documented curation feature (soft-archive, reversible);
     # covered separately in test_admin_delete_is_soft_archive below.
 ]
