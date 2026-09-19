@@ -1,4 +1,4 @@
-"""Phase 1 formula audit for calculators #43–84.
+"""Phase 1 + Phase 2 formula audit for calculators #43–84.
 
 Scope: ``sorted(available_calculations())[42:]``. Every case is hand-derived
 independently of the implementation; ``pytest.approx`` tolerances are justified
@@ -6,6 +6,11 @@ in the docstring (rounding in the calculator, or a physical constant).
 
 Call through ``run_calculation`` — that is the live dispatch envelope
 (``status`` / ``result`` / ``error``).
+
+Phase 2 routing: ``resolve_fw_calc`` remaps the two live wrong-name picks
+(``resource_line_cost`` vs ``unit_cost_total``, ``material_consumption`` vs
+``concrete_mix_proportions`` / E4 ``concrete_volume``) and the intent map
+forces ``construction_calc`` on distinctive F–W phrases.
 """
 from __future__ import annotations
 
@@ -14,6 +19,10 @@ import math
 import pytest
 
 from app.lib.construction_formulas import available_calculations, run_calculation
+from app.lib.construction_formulas_quantities import (
+    FW_ROUTE_NAMES,
+    resolve_fw_calc,
+)
 
 # Confirmed against live registry on this branch. STOP if this drifts.
 _AUDIT_SLICE = [
@@ -1046,3 +1055,212 @@ class TestUnitCostTotal:
     def test_zero_quantity(self):
         r = _ok("unit_cost_total", quantity=0, unit_rate=250)
         assert r["total_cost"] == pytest.approx(0.0, abs=1e-9)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 2 routing — wrong calculator / skip-tool / flake name-pin
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_fw_route_names_match_audit_slice():
+    assert set(FW_ROUTE_NAMES) == set(_AUDIT_SLICE)
+
+
+class TestResolveFwResourceLine:
+    """Live FAIL: resource_line_cost asked, model picked unit_cost_total."""
+
+    def test_unit_cost_total_plus_daily_output_remaps(self):
+        name, params = resolve_fw_calc(
+            "unit_cost_total",
+            {"quantity": 100, "unit_rate": 280, "daily_output": 10},
+        )
+        assert name == "resource_line_cost"
+        assert params["day_rate"] == 280
+        env = run_calculation(
+            "unit_cost_total",
+            {"quantity": 100, "unit_rate": 280, "daily_output": 10},
+        )
+        assert env["status"] == "success", env
+        assert env["calculation"] == "resource_line_cost"
+        assert env["result"]["labour_cost"] == pytest.approx(2800.0, abs=0.01)
+
+    def test_resource_line_language_remaps_even_without_daily_output_key(self):
+        name, _params = resolve_fw_calc(
+            "unit_cost_total",
+            {"quantity": 100, "unit_rate": 280,
+             "text": "resource line cost at 10 m2 daily output and 280 day rate"},
+        )
+        assert name == "resource_line_cost"
+
+    def test_true_qty_times_rate_is_not_stolen(self):
+        name, params = resolve_fw_calc(
+            "unit_cost_total",
+            {"quantity": 100, "unit_rate": 250},
+        )
+        assert name == "unit_cost_total"
+        assert params["unit_rate"] == 250
+        env = run_calculation("unit_cost_total", {"quantity": 100, "unit_rate": 250})
+        assert env["calculation"] == "unit_cost_total"
+        assert env["result"]["total_cost"] == pytest.approx(25_000.0, abs=0.01)
+
+
+class TestResolveFwMaterialConsumption:
+    """Live FAIL: material_consumption asked, model/E4 picked mix or volume."""
+
+    def test_mix_name_plus_consumption_params_remaps(self):
+        env = run_calculation(
+            "concrete_mix_proportions",
+            {"quantity_of_work": 100, "output_per_unit": 10, "waste_percent": 5},
+        )
+        assert env["status"] == "success", env
+        assert env["calculation"] == "material_consumption"
+        assert env["result"]["material_required"] == pytest.approx(10.5, abs=1e-6)
+
+    def test_e4_concrete_word_does_not_leave_consumption_on_volume(self):
+        env = run_calculation(
+            "concrete_mix_proportions",
+            {
+                "quantity_of_work": 100,
+                "output_per_unit": 10,
+                "waste_percent": 5,
+                "text": "material consumption of concrete, 100 m3 of work",
+            },
+        )
+        assert env["calculation"] == "material_consumption"
+        assert env["result"]["material_required"] == pytest.approx(10.5, abs=1e-6)
+
+    def test_e4_injected_waste_fraction_becomes_percent(self):
+        """E4 writes waste_factor=0.05; consumption treats that as ×0.05."""
+        name, params = resolve_fw_calc(
+            "concrete_volume",
+            {
+                "quantity_of_work": 100,
+                "output_per_unit": 10,
+                "waste_factor": 0.05,
+                "text": "material consumption",
+            },
+            original_name="concrete_mix_proportions",
+        )
+        assert name == "material_consumption"
+        assert params.get("waste_percent") == pytest.approx(5.0)
+        assert "waste_factor" not in params or params.get("waste_factor") is None
+
+    def test_true_1_2_4_mix_is_not_stolen(self):
+        env = run_calculation(
+            "concrete_mix_proportions",
+            {
+                "wet_volume": 10,
+                "cement_parts": 1,
+                "sand_parts": 2,
+                "aggregate_parts": 4,
+            },
+        )
+        assert env["status"] == "success", env
+        assert env["calculation"] == "concrete_mix_proportions"
+        assert env["result"]["dry_volume"] == pytest.approx(15.4, abs=1e-6)
+
+
+class TestResolveFwNamePin:
+    """1-of-2 flakes: text names the F–W calculator."""
+
+    def test_spaced_name_pins_after_e4_steal(self):
+        name, _params = resolve_fw_calc(
+            "concrete_volume",
+            {"text": "what is the unit weight of concrete, reinforced"},
+            original_name="excavation_volume",
+        )
+        assert name == "unit_weight_concrete"
+
+    def test_original_fw_name_restored_after_e4_steal(self):
+        name, _params = resolve_fw_calc(
+            "concrete_volume",
+            {"reinforced": True},
+            original_name="unit_weight_concrete",
+        )
+        assert name == "unit_weight_concrete"
+        env = run_calculation(
+            "unit_weight_concrete",
+            {"reinforced": True, "text": "unit weight of concrete"},
+        )
+        assert env["calculation"] == "unit_weight_concrete"
+
+    def test_e4_raft_volume_is_not_stolen(self):
+        env = run_calculation(
+            "excavation_volume",
+            {
+                "length_m": 30,
+                "width_m": 20,
+                "thickness_m": 1.5,
+                "text": (
+                    "Concrete volume for a raft 30x20x1.5 m including "
+                    "your documented waste factor."
+                ),
+            },
+        )
+        assert env["status"] == "success", env
+        assert env["calculation"] == "concrete_volume"
+        assert env["result"]["volume_m3"] == pytest.approx(945.0, abs=0.01)
+
+
+class TestFwIntentMapForcesConstructionCalc:
+    """Plain-engineer F–W asks have no calc-verb + ≥2 dims — force the tool."""
+
+    AVAILABLE = {"construction_calc", "search_project_documents"}
+
+    @pytest.mark.parametrize(
+        "q",
+        [
+            "What is the OSHA guardrail height for a top rail?",
+            "Give me the material consumption for 100 m2 at 10 m2 per unit",
+            "Resource line cost for 240 m2 plaster at 12 m2 daily output",
+            "What is the unit weight of concrete, reinforced?",
+            "Fineness modulus of this sand grading",
+            "Wind pressure on the formwork face",
+        ],
+    )
+    def test_fw_phrases_force_the_calculator(self, q):
+        from app.agents.runtime import _forced_specific_tool
+        assert _forced_specific_tool(
+            [{"role": "user", "content": q}], self.AVAILABLE,
+        ) == "construction_calc"
+
+    def test_document_lookup_without_fw_phrase_is_not_forced(self):
+        from app.agents.runtime import _forced_specific_tool
+        assert _forced_specific_tool(
+            [{"role": "user", "content": "what is the rebar specification"}],
+            self.AVAILABLE,
+        ) is None
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_routes_fw_resource_line_to_construction_calc():
+    from app.blocks.smart_orchestrator import SmartOrchestratorBlock
+
+    r = await SmartOrchestratorBlock().process(
+        {"user_message": (
+            "Resource line cost for 240 m2 plaster at 12 m2 daily output "
+            "and 280 day rate."
+        )},
+    )
+    assert r["status"] == "success"
+    assert "construction_calc" in (r.get("action_queue") or []), r
+
+
+@pytest.mark.asyncio
+async def test_container_construction_calc_remaps_resource_line():
+    from app.containers.construction import ConstructionContainer
+
+    r = await ConstructionContainer().construction_calc(
+        {"text": "resource line cost for 100 units"},
+        {
+            "action": "construction_calc",
+            "calculation": "unit_cost_total",
+            "quantity": 100,
+            "unit_rate": 280,
+            "daily_output": 10,
+        },
+    )
+    assert r.get("status") == "success", r
+    assert r.get("calculation") == "resource_line_cost"
+    inner = r.get("result") or {}
+    assert inner.get("labour_cost") == pytest.approx(2800.0, abs=0.01)

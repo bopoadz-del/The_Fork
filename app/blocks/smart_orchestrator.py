@@ -80,6 +80,25 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
         # "Concrete volume for a raft … waste factor" never reached the
         # calculator and the model reported net 900.
         "concrete volume", "raft volume", "waste factor",
+        # Phase 2 F–W (#43–84): beat construction_advisor / estimate_costs
+        # ("how much") so a named calculator ask reaches construction_calc.
+        "resource line", "daily output", "day rate",
+        "material consumption", "material required",
+        "guardrail height", "top rail height",
+        "fineness modulus", "grout pressure",
+        "interior finishes", "laser scan", "leed points",
+        "live load reduction", "masonry wall",
+        "mobilization cost", "modulus of elasticity",
+        "post tensioning", "precast beam",
+        "manpower duration", "productivity rate",
+        "progress quantity", "moment capacity", "shear capacity",
+        "rebar weight", "rebar by area", "lap length",
+        "scaffold load", "base shear", "shear stress",
+        "slab thickness", "slope stability",
+        "supervision ratio", "thermal shrinkage",
+        "unit weight of concrete", "weld capacity",
+        "wind load on formwork", "wind pressure",
+        "return on investment",
     ]),
     # BOQ / Cost
     ("boq_process",           ["boq", "bill of quantities", "bill of quantity", "quantities sheet", "cost sheet", "price list", ".xlsx", ".csv"]),

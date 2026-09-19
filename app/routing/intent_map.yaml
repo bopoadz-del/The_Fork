@@ -60,6 +60,56 @@ rows:
       - bid evaluation
       - risk score
       - probability and impact
+      # Phase 2 F–W (#43–84): plain-engineer asks skip construction_calc
+      # because _looks_like_self_contained_calculation needs a calc verb
+      # plus ≥2 unit-bearing dimensions. Distinctive two-word names force
+      # the tool without a runtime.py edit.
+      - fineness modulus
+      - grout pressure
+      - guardrail height
+      - top rail height
+      - top-rail height
+      - interior finishes
+      - finishes takeoff
+      - laser scan
+      - leed points
+      - live load reduction
+      - masonry wall
+      - material consumption
+      - material required
+      - mobilization cost
+      - modulus of elasticity
+      - unit convert
+      - plumbing flow
+      - post tensioning
+      - post-tensioning
+      - precast beam
+      - manpower duration
+      - productivity rate
+      - progress quantity
+      - moment capacity
+      - shear capacity
+      - rebar by area
+      - lap length
+      - rebar weight
+      - resource line
+      - daily output
+      - day rate
+      - return on investment
+      - scaffold load
+      - base shear
+      - shear stress
+      - slab thickness
+      - slope fos
+      - slope stability
+      - tension capacity
+      - supervision ratio
+      - thermal shrinkage
+      - unit cost total
+      - unit weight of concrete
+      - weld capacity
+      - wind load on formwork
+      - wind pressure
     phrasings:
       - run a dewatering uplift check for 23 m water depth
       - compute the earned value for this month
