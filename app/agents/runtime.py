@@ -260,7 +260,7 @@ def _apply_rag_context(
             m for m in messages[:-1]
             if m.get("role") in ("user", "assistant")
         ]
-        if _looks_like_self_contained_calculation(question):
+        if _wants_user_supplied_arithmetic_directive(question):
             # ARITHMETIC, not a lookup. Every input is IN the question, so the
             # strict-grounding directive below ("answer using ONLY the
             # reference context ... if it does not contain the answer, say you
@@ -2494,7 +2494,7 @@ _ROUTING_PREAMBLE_LINE_RE = re.compile(
     r"TIME FOR COMPLETION|"
     r"SCHEDULE REGISTER|PRICED BOQ ROW|RATE ONLY|PART SUMMARY TOTAL|"
     r"ACCEPTED CONTRACT AMOUNT INCLUDING VAT|"
-    r"DELAY DAMAGES PER CALENDAR DAY|DELAY DAMAGES OVER A PERIOD|"
+    r"DELAY DAMAGES PER CALENDAR DAY|DELAY DAMAGES OVER A PERIOD|HYPOTHETICAL MILESTONE ARITHMETIC|"
     r"PARENT COMPANY GUARANTEE|"
     r"COMMENCEMENT DATE|APPOINTMENT|IDENTITY)"
     r"\s*[—\-].*$"
@@ -5455,6 +5455,52 @@ def _graft_asked_contract_particular(
         return text
 
 
+def _wants_user_supplied_arithmetic_directive(text: str) -> bool:
+    """True when the RAG fold must not apply the strict lookup clamp.
+
+    Self-contained L×W×D / expression arithmetic already has this path.
+    A hypothetical milestone comparison (M#=Nd supplied in the question)
+    is the same class: the operands are not supposed to be in the corpus.
+    """
+    if _looks_like_self_contained_calculation(text):
+        return True
+    try:
+        from app.core.hypothetical_milestone_arithmetic import (
+            query_is_hypothetical_milestone_arithmetic,
+        )
+        return query_is_hypothetical_milestone_arithmetic(text)
+    except Exception:  # noqa: BLE001 — fold must still pick a directive
+        _LOG.debug(
+            "hypothetical-milestone directive check failed",
+            exc_info=True,
+        )
+        return False
+
+
+def _graft_hypothetical_milestone_arithmetic(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Lead with user-supplied milestone arithmetic, not a premise veto.
+
+    Live ~27d6940 rejected "M1=397d, M3=487d, M5=731d, same start" from
+    Contract Data access dates. The numbers in the question are the
+    operands. Kill-switch ``HYPOTHETICAL_MILESTONE_ARITHMETIC=0``.
+    """
+    try:
+        from app.core.hypothetical_milestone_arithmetic import (
+            graft_hypothetical_milestone_answer,
+        )
+        return graft_hypothetical_milestone_answer(
+            text, _latest_operator_ask(messages),
+        )
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        _LOG.exception(
+            "hypothetical-milestone compose failed; passing answer through"
+        )
+        return text
+
+
 def _graft_composed_delay_damages_daily(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -6221,6 +6267,8 @@ def _postprocess_answer(
     # Leftover E4: compose raft volume + documented waste when the model
     # hung on "Let me validate…" and never wrote 945 m³.
     text = _graft_composed_concrete_volume(text, messages)
+    # Live ~27d6940: user-supplied M#=Nd + common start is arithmetic.
+    text = _graft_hypothetical_milestone_arithmetic(text, messages)
     # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
     # text before the cost gate. A percentage-only excerpt still cannot
     # invent a daily figure; both operands must be in the excerpts or
