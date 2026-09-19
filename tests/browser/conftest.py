@@ -67,10 +67,10 @@ def live_app(tmp_path_factory):
         "CEREBRUM_UI_PHYS_STUB": "1",
         "PUBLIC_BASE_URL": "https://theshovel.ai",
         "PYTHONPATH": str(REPO),
-        # Pass the chat_stream env-key gate; the stub never dials Groq.
-        "GROQ_API_KEY": "ui-phys-stub-not-a-real-key",
-        "LLM_PROVIDER": "groq",
     })
+    # Pass the chat_stream env-key gate; the stub never dials a provider.
+    from tests.browser._llm_stub import stub_provider_env
+    env.update(stub_provider_env())
     # Dev registration auto-verifies; no email provider needed.
     env.pop("RESEND_API_KEY", None)
 
