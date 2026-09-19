@@ -1375,7 +1375,12 @@ class ConstructionDocumentsMixin:
         }
     async def intelligent_workflow(self, input_data: Any, params: Dict) -> Dict:
         """Smart orchestrator - auto-detects user intent and chains actions"""
-        user_goal = params.get("goal") or params.get("prompt", "process document")
+        user_goal = (
+            params.get("goal")
+            or params.get("prompt")
+            or self._joined_operator_text(input_data, params)
+            or "process document"
+        )
         data = input_data if isinstance(input_data, dict) else {}
         file_path = data.get("file_path") or data.get("url")
     
@@ -1395,6 +1400,26 @@ class ConstructionDocumentsMixin:
                 current_data = {**(current_data if isinstance(current_data, dict) else {}), "previous_result": result}
     
         next_action = self._suggest_next_action(results, user_goal)
+
+        goal_l = user_goal.lower()
+        if any(k in goal_l for k in ("variation order", "change order", "variation")):
+            vo_steps = [
+                r for r in results
+                if r["step"] in {"variation_order_manager", "change_order_impact"}
+            ]
+            if vo_steps and all(r.get("status") != "success" for r in vo_steps):
+                return {
+                    "status": "error",
+                    "action": "intelligent_workflow",
+                    "error": (
+                        "Cannot draft a variation order with no scope and no cost"
+                    ),
+                    "workflow_executed": [s["action"] for s in chain_steps],
+                    "step_results": results,
+                    "consolidated_summary": self._consolidate_results(results),
+                    "next_recommended_action": next_action,
+                    "user_query": user_goal,
+                }
     
         return {
             "status": "success",
@@ -1426,7 +1451,7 @@ class ConstructionDocumentsMixin:
         if any(k in goal for k in ["cost", "price", "budget", "estimate", "value"]):
             chain.append({"action": "estimate_costs", "params": {}})
     
-        if any(k in goal for k in ["buy", "purchase", "procure", "supplier", "enquiry", "order", "lead time"]):
+        if any(k in goal for k in ["buy", "purchase", "procure", "supplier", "enquiry", "purchase order", "lead time"]):
             if not any(s["action"] == "extract_quantities" for s in chain):
                 chain.append({"action": "extract_quantities", "params": {}})
             chain.append({"action": "procurement_optimizer", "params": {}})

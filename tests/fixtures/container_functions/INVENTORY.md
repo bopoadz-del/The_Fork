@@ -141,7 +141,7 @@ Central fail = `status=success` without a deliverable, or silent invention.
 | look_ahead | WORKS | inclusive 21-day window; missing/.xer/0 days error; skip when primavera_parser unavailable |
 | procurement_list_generator | WORKS | empty error; 140_000 / 16-week steel |
 | drawing_qto | WORKS | missing/wrong-type error; 10×5 DXF = 50 m²; skip when drawing_qto/ezdxf unavailable |
-| variation_order_manager | WORKS | no invented Clause XX |
+| variation_order_manager | WORKS | no invented Clause XX; "Draft a variation order" without facts is error |
 | payment_certificate | WORKS | IPC arithmetic |
 | generate_wbs | WORKS | building brief delivers tree; empty brief left as existing contract |
 | cash_flow_forecast | WORKS | S-curve month 1 |

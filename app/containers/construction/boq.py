@@ -22,6 +22,38 @@ _FIG_PCT = r"([0-9]+(?:\.[0-9]+)?)\s*(?:%|percent)"
 _CCY = r"(?:sar|aed|usd|qar|omr|bhd|kwd|\$)"
 _MONEY_SUFFIX = {"m": 1e6, "mn": 1e6, "million": 1e6, "b": 1e9, "bn": 1e9, "billion": 1e9}
 
+# Live: "Draft a variation order" succeeded with VO-001 / Total: 0.0 and
+# the ask as the description. A draft-ask is not a variation.
+_DRAFT_VO_ASK_RE = re.compile(
+    r"(?:draft|issue|create|generate|write|prepare|make)\s+"
+    r"(?:a(?:n)?\s+)?(?:variation(?:\s+order)?|vo\b|change\s+order)",
+    re.I,
+)
+
+
+def _vo_scope_after_ask(text: str) -> str:
+    """Strip a draft-VO ask so leftover is actual works scope, if any."""
+    cleaned = _DRAFT_VO_ASK_RE.sub(" ", text or "")
+    cleaned = re.sub(
+        r"\b(please|fidic|clause|under|a|an|the|for)\b",
+        " ",
+        cleaned,
+        flags=re.I,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip(" .:-")
+
+
+def _variation_has_draft_facts(vo_data: Any, text: str) -> bool:
+    """True only when there is a works description and a positive cost."""
+    data = vo_data if isinstance(vo_data, dict) else {}
+    desc = str(data.get("description") or "").strip()
+    try:
+        cost = float(data.get("direct_cost") or 0)
+    except (TypeError, ValueError):
+        cost = 0.0
+    scope = _vo_scope_after_ask(" ".join(x for x in (desc, text) if x))
+    return bool(scope) and cost > 0
+
 
 def _follow_on_rfi_from_text(text: str) -> Optional[Dict[str, Any]]:
     """Draft one follow-on RFI from the operator ask (live M10)."""
@@ -1632,9 +1664,28 @@ class ConstructionBoqMixin:
         existing_vos = data.get("existing_vos") or p.get("existing_vos", [])
         contract_file = data.get("contract_file") or p.get("contract_file")
         contract_value = data.get("contract_value") or p.get("contract_value") or 0
+        ask_text = " ".join(
+            str(x)
+            for x in (
+                data.get("message"),
+                data.get("text"),
+                data.get("user_message"),
+                p.get("user_message"),
+                p.get("text"),
+            )
+            if x
+        )
 
-        if not vo_data:
+        if not vo_data and not ask_text:
             return {"status": "error", "error": "Provide vo_data with at least one variation"}
+        if not _variation_has_draft_facts(vo_data, ask_text):
+            return {
+                "status": "error",
+                "action": "variation_order_manager",
+                "error": (
+                    "Cannot draft a variation order with no scope and no cost"
+                ),
+            }
 
         vo_number = vo_data.get("vo_number", f"VO-{len(existing_vos)+1:03d}")
         vo_description = vo_data.get("description", "")

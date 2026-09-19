@@ -225,6 +225,44 @@ class TestVariationOrderDeliver:
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
+    async def test_draft_a_variation_order_without_facts_is_error(self, container):
+        """Live: 'Draft a variation order' → Status: Success with nothing drafted.
+
+        The ask is not a variation. No works scope and no cost → error, not
+        VO-001 / Total: 0.0 with the prompt as the description.
+        """
+        envelopes = [
+            ({"message": "Draft a variation order"}, {}),
+            (
+                {
+                    "variation_data": {"description": "Draft a variation order"},
+                    "contract_value": 1_000_000,
+                },
+                {},
+            ),
+            ({"text": "Draft a variation order under FIDIC clause"}, {}),
+        ]
+        for payload, params in envelopes:
+            result = await container.variation_order_manager(payload, params)
+            assert result["status"] == "error", result
+            assert "scope" in result["error"].lower() or "vo_data" in result["error"].lower()
+            assert not result.get("document_content")
+            assert result.get("pricing") in (None, {})
+
+        routed = await container.route(
+            "variation_order_manager",
+            {"message": "Draft a variation order"},
+            {},
+        )
+        assert routed["status"] == "error"
+        iw = await container.intelligent_workflow(
+            {"message": "Draft a variation order"},
+            {},
+        )
+        assert iw["status"] == "error"
+        assert not iw.get("document_content")
+
+    @pytest.mark.asyncio
     async def test_missing_contract_value_is_error(self, container):
         result = await container.variation_order_manager(
             {"variation_data": {"description": "extra blockwork", "direct_cost": 1000}},
