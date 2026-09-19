@@ -133,6 +133,14 @@ def test_document_lookups_are_not_forced_onto_the_calculator(q):
     assert _forced_specific_tool(_tail(q), AVAILABLE) is None, q
 
 
+def test_schedule_critical_path_lookup_is_not_named_calculator():
+    """CI: 'What is the critical path of this schedule?' must stay a
+    schedule lookup (heavy-reasoning / primavera), not construction_calc."""
+    q = "What is the critical path of this schedule?"
+    assert _message_wants_named_calculator(q) is False
+    assert _forced_specific_tool(_tail(q), AVAILABLE) is None
+
+
 def test_formula_force_requires_the_tool_to_be_available():
     q = FORMULA_ASKS[0]
     assert _forced_specific_tool(_tail(q), {"search_project_documents"}) is None

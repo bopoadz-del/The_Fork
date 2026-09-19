@@ -12573,9 +12573,19 @@ def _message_matches_calculator_stem(text: str) -> bool:
         stem = " ".join(tokens[:2])
         if len(stem) < 8:
             continue
+        # ``critical_path_float`` stems to "critical path", which is a
+        # schedule lookup ("What is the critical path of this schedule?")
+        # not a construction_calc ask. Keep rebar lap / formwork striking.
+        if stem in _FORMULA_STEM_LOOKUP_COLLISIONS:
+            continue
         if stem in spaced:
             return True
     return False
+
+
+_FORMULA_STEM_LOOKUP_COLLISIONS = frozenset({
+    "critical path",
+})
 
 
 def _message_is_formula_style_ask(text: str) -> bool:
@@ -12723,7 +12733,11 @@ def _formula_calculator_name_from_message(text: str) -> str | None:
             continue
         if len(tokens) >= 3:
             stem = " ".join(tokens[:2])
-            if len(stem) >= 8 and stem in spaced:
+            if (
+                len(stem) >= 8
+                and stem in spaced
+                and stem not in _FORMULA_STEM_LOOKUP_COLLISIONS
+            ):
                 hits.append(name)
     uniq = list(dict.fromkeys(hits))
     return uniq[0] if len(uniq) == 1 else None
