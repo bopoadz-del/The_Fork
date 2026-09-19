@@ -8292,11 +8292,13 @@ class Agent:
         - ``delegate_to_agent`` — only when ``self.can_delegate``.
         """
 
+        from app.core.privileges import caller_may_use_block
+
         tools = []
         for block_name in self.allowed_blocks:
             block_class = BLOCK_REGISTRY.get(block_name)
-            if not block_class:
-                continue
+            if not block_class or not caller_may_use_block(block_name):
+                continue  # a tool the caller would be refused is not offered
             # File-consuming blocks get a typed schema with required file_path.
             override = _FILE_TOOL_SCHEMAS.get(block_name)
             if override:
