@@ -631,6 +631,10 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
     outside the RAG corpus.  Allows project-fact Q&A to keep working even
     when the project has no indexed chunks yet.
     """
+    # Formula asks do not need a corpus — construction_calc is the path.
+    # Empty FIXTURE projects must not early-return the unindexed refusal.
+    if _message_is_formula_style_ask(user_message):
+        return True
     try:
         from app.core.project_memory import build_project_context
 
@@ -6339,7 +6343,12 @@ def _postprocess_answer(
     # Disclosure banner goes on AFTER the scrub so it's never mangled, and only
     # when the banner isn't already present (idempotent across retries).
     if fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
-        text = _MASTER_CORPUS_FALLBACK_NOTE + text
+        ask = _latest_operator_ask(messages) or ""
+        # Formula asks on a fixture must not wear the Master Corpus
+        # banner even if retrieve leaked a fallback chunk. Live: named
+        # calculator ran and the answer still opened with the preamble.
+        if not _message_is_formula_style_ask(ask):
+            text = _MASTER_CORPUS_FALLBACK_NOTE + text
     from app.core.rag.coverage_honesty import apply_coverage_honesty
     text = apply_coverage_honesty(
         text,
@@ -8933,10 +8942,17 @@ class Agent:
             )
         if _more_pre:
             tool_calls_made.append(_more_pre)
+        _calc_pre = None
+        if not _locked:
+            _calc_pre = await _predispatch_formula_calc(
+                self, messages, project_id, operator_text=user_message,
+            )
+        if _calc_pre:
+            tool_calls_made.append(_calc_pre)
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and not _calc_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -8953,7 +8969,7 @@ class Agent:
                 "sources": [],
             }
         _has_pre = bool(
-            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
+            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre or _calc_pre
         )
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
         # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
@@ -10026,9 +10042,33 @@ class Agent:
                    "result": _more_summary,
                    "predispatched": True}
 
+        _calc_pre = None
+        if not _locked:
+            _calc_pre = await _predispatch_formula_calc(
+                self, messages, project_id, operator_text=user_message,
+            )
+        if _calc_pre:
+            _note_tool(_calc_pre["name"])
+            stream_tool_results.append(_calc_pre)
+            _calc_summary = _summarize_result(_calc_pre.get("result"))
+            yield {"type": "tool_call",
+                   "tool": _calc_pre["name"],
+                   "name": _calc_pre["name"],
+                   "args_preview": json.dumps({
+                       "action": "construction_calc",
+                   }, default=str)[:200],
+                   "predispatched": True}
+            yield {"type": "tool_result",
+                   "tool": _calc_pre["name"],
+                   "name": _calc_pre["name"],
+                   "ok": bool(_calc_pre.get("ok")),
+                   "summary": _calc_summary[:400],
+                   "result": _calc_summary,
+                   "predispatched": True}
+
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and not _calc_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -10041,7 +10081,7 @@ class Agent:
                    "tools": list(tools_invoked)}
             return
         _has_pre = bool(
-            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
+            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre or _calc_pre
         )
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
         # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
@@ -12559,6 +12599,97 @@ def _message_is_formula_style_ask(text: str) -> bool:
 def message_wants_formula_calculator(text: str) -> bool:
     """Public alias for retrieve / inject — skip Master Corpus fallback."""
     return _message_is_formula_style_ask(text)
+
+
+def _formula_calculator_name_from_message(text: str) -> str | None:
+    """Unique registry name implied by the message, or None.
+
+    Used only to invoke construction_calc. Does not invent a mapping
+    among audit #43–84 — if two names match, we pass no name and the
+    tool returns an honest unknown-calculation envelope.
+    """
+    try:
+        from app.lib.construction_formulas import CALCULATORS
+    except Exception:  # noqa: BLE001
+        _LOG.debug("CALCULATORS import failed", exc_info=True)
+        return None
+    raw = text or ""
+    underscored = raw.lower().replace("-", "_")
+    spaced = raw.lower().replace("-", " ").replace("_", " ")
+    hits: list[str] = []
+    for name in CALCULATORS:
+        if len(name) < 6:
+            continue
+        tokens = [t for t in name.lower().split("_") if t]
+        if name.lower() in underscored:
+            hits.append(name)
+            continue
+        if len(tokens) >= 3 and name.replace("_", " ") in spaced:
+            hits.append(name)
+            continue
+        if len(tokens) >= 3:
+            stem = " ".join(tokens[:2])
+            if len(stem) >= 8 and stem in spaced:
+                hits.append(name)
+    uniq = list(dict.fromkeys(hits))
+    return uniq[0] if len(uniq) == 1 else None
+
+
+async def _predispatch_formula_calc(
+    agent: "Agent",
+    messages: list,
+    project_id: str | None,
+    operator_text: str | None = None,
+) -> dict[str, Any] | None:
+    """Run construction_calc before the model can answer from Master Corpus.
+
+    Kimi/Groq reject named tool_choice, so `_forced_specific_tool` alone
+    left named_calculator turns with zero tool calls. Predispatch is the
+    provider-independent lever. Kill-switch: AGENT_FORMULA_PREDISPATCH=0.
+    """
+    if os.getenv("AGENT_FORMULA_PREDISPATCH", "1") == "0":
+        return None
+    if "construction" not in getattr(agent, "allowed_blocks", ()):
+        return None
+    try:
+        user_msg, _history = _messages_user_and_history(messages)
+        detect = (operator_text or user_msg or "").strip()
+        if not detect or not _message_is_formula_style_ask(detect):
+            return None
+        calc_name = _formula_calculator_name_from_message(detect)
+        tc = {
+            "id": "predispatch-construction_calc",
+            "function": {
+                "name": "construction_calc",
+                "arguments": json.dumps({
+                    "calculation": calc_name,
+                    "params": {"text": detect},
+                    "text": detect,
+                }),
+            },
+        }
+        result = await agent._run_tool_call(tc)
+        inner = result.get("result") if isinstance(result, dict) else result
+        rendered = json.dumps(inner, default=str)[:4000]
+        _inject_predispatch(
+            messages,
+            "construction_calc",
+            rendered,
+            "construction_calc has already been run. Answer from that "
+            "result. Do not answer from Master Corpus excerpts.",
+        )
+        return {
+            "name": "construction_calc",
+            "ok": bool(isinstance(result, dict) and result.get("ok")),
+            "predispatched": True,
+            "result": inner,
+        }
+    except Exception:  # noqa: BLE001
+        _LOG.warning(
+            "construction_calc pre-dispatch failed; continuing normally",
+            exc_info=True,
+        )
+        return None
 
 
 def _message_names_registered_calculator(text: str) -> bool:

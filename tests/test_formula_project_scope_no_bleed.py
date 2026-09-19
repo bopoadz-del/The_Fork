@@ -13,9 +13,14 @@ from __future__ import annotations
 import pytest
 
 from app.agents.runtime import (
+    _MASTER_CORPUS_FALLBACK_NOTE,
     _apply_rag_context,
     _build_sources_from_audit,
     _forced_specific_tool,
+    _message_wants_named_calculator,
+    _postprocess_answer,
+    _predispatch_formula_calc,
+    _project_has_non_rag_context,
 )
 
 
@@ -25,12 +30,15 @@ GK_PID = "curated_kb_formula_scope"
 
 AVAILABLE = {"construction_calc", "search_project_documents"}
 
-# Formula-shaped asks that do not carry L×W×D. The live miss class:
-# intent_map / dimension heuristic never forced construction_calc.
+# Formula-shaped asks that do not carry L×W×D. Includes the live
+# phone/UI phrasings (synthetic — no client names).
 FORMULA_ASKS = (
     "compute rebar lap for 20 mm bar fy 420",
+    "What is the typical rebar lap length for 16mm bars in tension?",
     "pe_unit_convert 10 m to ft",
+    "Convert 150 pe using pe_unit_convert",
     "formwork striking time for a slab",
+    "What is the formwork striking time for a slab?",
 )
 
 LOOKUP_ASKS = (
@@ -192,3 +200,62 @@ def test_formula_ask_is_not_told_to_answer_only_from_corpus(q):
     assert "using ONLY the reference context" not in folded
     assert "CALCULATION REQUEST" in folded
     assert q in folded
+
+
+@pytest.mark.parametrize("q", FORMULA_ASKS)
+def test_formula_ask_is_named_calculator_not_below_routing_gate(q):
+    """Live: 'typical rebar lap' routed reason=below_routing_gate."""
+    assert _message_wants_named_calculator(q), q
+
+
+@pytest.mark.parametrize("q", FORMULA_ASKS)
+def test_empty_fixture_formula_ask_is_not_an_unindexed_refusal(q):
+    """Empty FIXTURE-a must reach construction_calc, not the no-docs abort."""
+    assert _project_has_non_rag_context(FIXTURE_PID, q) is True
+
+
+@pytest.mark.parametrize("q", FORMULA_ASKS)
+def test_formula_ask_does_not_wear_master_corpus_banner(q):
+    """Live pe_unit_convert: tool ran and the answer still opened with MC."""
+    msgs = [{"role": "user", "content": q}]
+    out = _postprocess_answer(
+        "calculator result line", None, msgs, fallback_used=True,
+    )
+    assert _MASTER_CORPUS_FALLBACK_NOTE.strip() not in out
+
+
+def test_lookup_still_wears_master_corpus_banner_when_fallback_used():
+    msgs = [{"role": "user", "content": LOOKUP_ASKS[0]}]
+    out = _postprocess_answer(
+        "Here is the spec.", None, msgs, fallback_used=True,
+    )
+    assert out.startswith(_MASTER_CORPUS_FALLBACK_NOTE)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("q", (
+    "What is the typical rebar lap length for 16mm bars in tension?",
+    "What is the formwork striking time for a slab?",
+    "Convert 150 pe using pe_unit_convert",
+))
+async def test_named_calculator_route_actually_invokes_construction_calc(q):
+    """Kimi/Groq leave tool_choice=auto; predispatch must still call the tool."""
+    from app.agents.runtime import Agent
+
+    agent = Agent(
+        name="project-assistant",
+        description="t",
+        system_prompt="t",
+        allowed_blocks=["construction"],
+    )
+    msgs = [{"role": "user", "content": q}]
+    rec = await _predispatch_formula_calc(
+        agent, msgs, FIXTURE_PID, operator_text=q,
+    )
+    assert rec is not None, q
+    assert rec["name"] == "construction_calc"
+    assert rec.get("predispatched") is True
+    assert any(
+        "PLATFORM PRE-DISPATCH: construction_calc" in str(m.get("content") or "")
+        for m in msgs
+    )

@@ -58,20 +58,20 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    "app/agents/runtime.py:1990": "baseline 2026-09-10",
-    "app/agents/runtime.py:1996": "baseline 2026-09-10",
-    "app/agents/runtime.py:2059": "baseline 2026-09-10",
-    "app/agents/runtime.py:2065": "baseline 2026-09-10",
-    # Re-indexed 2026-09-19: formula-ask scope (no-tool + master_corpus
-    # bleed) inserted named-calculator / short-circuit / force-tool lines
-    # above these four pre-existing sites. Same sites, same handlers —
-    # only the line numbers moved. No new silent returns.
-    "app/agents/runtime.py:2721": "baseline 2026-09-10",
-    "app/agents/runtime.py:3713": "baseline 2026-09-10",
-    "app/agents/runtime.py:4834": "baseline 2026-09-10",
-    "app/agents/runtime.py:5215": "baseline 2026-09-10",
-    "app/agents/runtime.py:639": "baseline 2026-09-10",
-    "app/agents/runtime.py:870": "baseline 2026-09-10",
+    # Re-indexed 2026-09-19: formula-ask scope (empty-fixture non-RAG
+    # context + named-calculator force + Master Corpus skip) inserted
+    # lines above these pre-existing sites. Same handlers — only the
+    # line numbers moved. No new silent returns.
+    "app/agents/runtime.py:1994": "baseline 2026-09-10",
+    "app/agents/runtime.py:2000": "baseline 2026-09-10",
+    "app/agents/runtime.py:2063": "baseline 2026-09-10",
+    "app/agents/runtime.py:2069": "baseline 2026-09-10",
+    "app/agents/runtime.py:2725": "baseline 2026-09-10",
+    "app/agents/runtime.py:3717": "baseline 2026-09-10",
+    "app/agents/runtime.py:4838": "baseline 2026-09-10",
+    "app/agents/runtime.py:5219": "baseline 2026-09-10",
+    "app/agents/runtime.py:643": "baseline 2026-09-10",
+    "app/agents/runtime.py:874": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
