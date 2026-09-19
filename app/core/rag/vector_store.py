@@ -231,7 +231,7 @@ class Chunk:
     def __post_init__(self) -> None:
         # ONE choke point, not the eight places a Chunk is built from a row.
         # Some PDFs fake bold by printing each glyph twice and index as
-        # "EEnnggiinneeeerr JJAACCOOBBSS"; every rule downstream then reads
+        # "EEnnggiinneeeerr EEXXAAMMPPLLEECCOO"; every rule downstream then reads
         # junk (live: "Clause (as" was returned as the Engineer). Repairing
         # here fixes documents already in the index, with no re-index, and no
         # future read path can forget to. Clean text is returned untouched.

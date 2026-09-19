@@ -308,3 +308,47 @@ def test_the_same_row_quoted_twice_is_not_a_disagreement():
 
 def test_one_source_is_still_answered_directly():
     assert compose_priced_boq_row(POLES_ASK, POLES_DEMOLITION)["amount"] == 1143675.0
+
+
+# ── the graft must not delete a verdict ───────────────────────────────────
+#
+# Unseen Set 3 E4, live 5011b62 -- with the shortcut guard above already
+# deployed: "Verify: does 34,844 m at SAR 142.00/m equal the stated D529.2
+# amount?" still came back as the bare row. A second path: the post-answer
+# graft REPLACES any answer under 500 characters that does not restate the
+# row in its own format. A verdict is short. "Yes -- it matches exactly" is
+# the whole answer to a check, and the graft threw it away.
+
+VERIFY = "Verify: does 3,504 m at SAR 80.00/m equal the stated D549.2 amount?"
+
+
+def _graft(answer, ask):
+    from app.agents.runtime import _graft_priced_boq_item
+
+    rag = {"role": "system", "content": "Project excerpts:\n" + UNIT_FIRST}
+    return _graft_priced_boq_item(answer, rag, [{"role": "user", "content": ask}])
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        "Yes. 3,504 x 80.00 = 280,320.00, which matches the stated amount exactly.",
+        "Yes, it matches.",
+        "No -- the bill states Rate Only in one copy and Excluded in another, so the "
+        "figures cannot be confirmed from a single source.",
+    ],
+)
+def test_a_verdict_survives_the_graft(verdict):
+    out = _graft(verdict, VERIFY)
+    assert verdict in out, out
+
+
+def test_a_check_with_no_answer_at_all_still_gets_the_row():
+    assert "280,320" in _graft("", VERIFY)
+
+
+def test_a_lookup_is_still_grafted_as_before():
+    """The B5 behaviour this graft exists for: a short non-answer to a plain
+    lookup is replaced by the row."""
+    out = _graft("It appears as a rate-only or excluded item.", ASK)
+    assert "280,320" in out and "rate-only or excluded" not in out

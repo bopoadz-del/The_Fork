@@ -3,7 +3,7 @@
 One artefact so far: FAKE BOLD. Some PDF producers draw bold by printing each
 glyph twice (occasionally three times) at a tiny offset, and the text layer
 comes out as ``PPaarrttyy aanndd EEnnggiinneeeerr ddeettaaiillss``. Live, that
-turned a Contract Data row into key ``CCOOBBSS((CC: HH22MM SSaauuddii ...``
+turned a Contract Data row into key ``PPLLEECCOO((EE: XX22MM SSaauuddii ...``
 value ``Clause (as`` -- and "Clause (as" was then returned as the Engineer.
 
 Applied where chunk text is READ, so documents already in the index are
