@@ -5983,6 +5983,15 @@ def _should_short_circuit_priced_boq(
     """
     if has_predispatch:
         return ""
+    # The composed row answers "what is the amount". It does not answer
+    # "verify: does 158 ha at 186,328 equal the stated amount?" — live
+    # 5312551 sent back the row and no verdict. A check goes to the model.
+    try:
+        from app.core.rag.retriever import query_is_a_check_not_a_lookup
+        if query_is_a_check_not_a_lookup(_latest_operator_ask(messages)):
+            return ""
+    except Exception:  # noqa: BLE001 — never break a turn over an import
+        _LOG.warning("priced-boq shortcut: lookup check failed", exc_info=True)
     return _compose_priced_boq_instead_of_retry("", rag_sys_msg, messages)
 
 
