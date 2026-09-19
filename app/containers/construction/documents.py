@@ -1375,7 +1375,12 @@ class ConstructionDocumentsMixin:
         }
     async def intelligent_workflow(self, input_data: Any, params: Dict) -> Dict:
         """Smart orchestrator - auto-detects user intent and chains actions"""
-        user_goal = params.get("goal") or params.get("prompt", "process document")
+        user_goal = (
+            params.get("goal")
+            or params.get("prompt")
+            or self._joined_operator_text(input_data, params)
+            or "process document"
+        )
         data = input_data if isinstance(input_data, dict) else {}
         file_path = data.get("file_path") or data.get("url")
     
@@ -1395,6 +1400,26 @@ class ConstructionDocumentsMixin:
                 current_data = {**(current_data if isinstance(current_data, dict) else {}), "previous_result": result}
     
         next_action = self._suggest_next_action(results, user_goal)
+
+        goal_l = user_goal.lower()
+        if any(k in goal_l for k in ("variation order", "change order", "variation")):
+            vo_steps = [
+                r for r in results
+                if r["step"] in {"variation_order_manager", "change_order_impact"}
+            ]
+            if vo_steps and all(r.get("status") != "success" for r in vo_steps):
+                return {
+                    "status": "error",
+                    "action": "intelligent_workflow",
+                    "error": (
+                        "Cannot draft a variation order with no scope and no cost"
+                    ),
+                    "workflow_executed": [s["action"] for s in chain_steps],
+                    "step_results": results,
+                    "consolidated_summary": self._consolidate_results(results),
+                    "next_recommended_action": next_action,
+                    "user_query": user_goal,
+                }
     
         return {
             "status": "success",
@@ -1426,7 +1451,7 @@ class ConstructionDocumentsMixin:
         if any(k in goal for k in ["cost", "price", "budget", "estimate", "value"]):
             chain.append({"action": "estimate_costs", "params": {}})
     
-        if any(k in goal for k in ["buy", "purchase", "procure", "supplier", "enquiry", "order", "lead time"]):
+        if any(k in goal for k in ["buy", "purchase", "procure", "supplier", "enquiry", "purchase order", "lead time"]):
             if not any(s["action"] == "extract_quantities" for s in chain):
                 chain.append({"action": "extract_quantities", "params": {}})
             chain.append({"action": "procurement_optimizer", "params": {}})
@@ -2417,6 +2442,15 @@ class ConstructionDocumentsMixin:
         inventing commercial terms that were not supplied.
         """
         text = self._joined_operator_text(input_data, params)
+        if not (text or "").strip():
+            return {
+                "status": "error",
+                "action": "job_requisition",
+                "error": (
+                    "Provide the works scope in the message — cannot draft "
+                    "a job requisition with no facts"
+                ),
+            }
         noc = ""
         noc_m = re.search(
             r"(AM Rev Design NOC[^.]{0,80}|NOC[^.]*?expir\w+\s+\d{1,2}\s+\w+\s+\d{4})",
@@ -2464,7 +2498,11 @@ class ConstructionDocumentsMixin:
             "procedure_id": "PRC-601",
             "jr_number": "DRAFT-JR",
             "issued": False,
-            "title": "Job requisition — street-lighting installation",
+            "title": (
+                "Job requisition — street-lighting installation"
+                if re.search(r"street[-\s]?light", text, re.I)
+                else "Job requisition"
+            ),
             "scope": scope,
             "noc": noc,
             "noc_expiry": expiry,
@@ -2499,6 +2537,15 @@ class ConstructionDocumentsMixin:
         Live M14: the model called wir_form (refused) then Groq 413'd.
         """
         text = self._joined_operator_text(input_data, params)
+        if not (text or "").strip():
+            return {
+                "status": "error",
+                "action": "rfp_draft",
+                "error": (
+                    "Provide the works scope in the message — cannot draft "
+                    "an RFP with no facts"
+                ),
+            }
         refs = []
         for token in (
             "RFI002",
