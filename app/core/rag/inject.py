@@ -677,6 +677,39 @@ def followup_context_enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
+# A message can be long and still not stand alone. Live 24d1c0c, D3: "What
+# reason does the letter give for no longer needing a pre-cast factory?" has
+# seven content terms, so it was never "thin" — and it retrieved precast
+# SPECIFICATIONS two runs in three, because the only words with signal were
+# "pre-cast factory" and the word that says which document ("the letter")
+# points at turn one. Length was standing in for the real property: the
+# message refers to a document it does not identify.
+#
+# Only kinds of document that an earlier turn has to introduce. "the
+# contract", "the Specification", "the bill" are THE project's and mean the
+# same thing in every turn; treating them as pointers would splice the
+# previous question into every Contract Data ask in a conversation.
+_POINTED_AT_DOCUMENT_RE = re.compile(
+    r"(?i)\b(?:the|that|this|those|these|said)\s+(?:same\s+)?"
+    r"(?:letter|e-?mail|memo(?:randum)?|notice|minutes|report|document|"
+    r"transmittal|correspondence)s?\b"
+    r"(?P<after>[^.?!]{0,40})"
+)
+# "the letter about the batching plant" names its own document.
+_DOCUMENT_NAMES_ITSELF_RE = re.compile(
+    r"(?i)^\W*(?:about|regarding|re|on|from|to|dated|titled|entitled|"
+    r"concerning|called|named|ref(?:erence)?|no\.?|number|of)\b"
+)
+
+
+def message_points_back_at_a_document(message: str) -> bool:
+    """True when the message refers to a document only an earlier turn named."""
+    for match in _POINTED_AT_DOCUMENT_RE.finditer(message or ""):
+        if not _DOCUMENT_NAMES_ITSELF_RE.match(match.group("after") or ""):
+            return True
+    return False
+
+
 def build_retrieval_query(
     user_message: str,
     history: Optional[List[Dict[str, Any]]] = None,
@@ -699,7 +732,10 @@ def build_retrieval_query(
     message = user_message or ""
     if not followup_context_enabled():
         return message
-    if len(_content_terms(message)) >= _THIN_QUERY_MAX_TERMS:
+    if (
+        len(_content_terms(message)) >= _THIN_QUERY_MAX_TERMS
+        and not message_points_back_at_a_document(message)
+    ):
         return message
     if not history:
         return message
