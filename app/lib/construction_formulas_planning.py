@@ -18,12 +18,14 @@ def critical_path_float(
     """Total float TF = LS - ES = LF - EF; the activity is on the critical path
     when TF <= 0. (Free float needs the successor's ES; not computed here.)
 
-    NEGATIVE float is critical too -- MORE critical, not less: a real 2013 P6
+    NEGATIVE float is critical too -- MORE critical, not less:     a real 2013 P6
     baseline surfaced an activity at TF = -8.6 days (behind its constraint
     dates) that the old `TF == 0` test reported as NOT critical. On a live
     schedule, negative-float activities are exactly the ones driving the
     forecast delay; a planner asking "is this critical?" must never be told
     no about one of them."""
+    if float(early_finish) < float(early_start) or float(late_finish) < float(late_start):
+        return {"error": "finish dates must be >= the matching start dates."}
     es, ef = float(early_start), float(early_finish)
     ls, lf = float(late_start), float(late_finish)
     tf = ls - es

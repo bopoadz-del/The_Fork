@@ -39,7 +39,9 @@ def unit_cost_total(quantity: float, unit_rate: float) -> dict:
 def cost_per_area(total_cost: float, area: float, area_unit: str = "m2") -> dict:
     """Unit area cost = total_cost / area (per m2 or per sf, caller's unit)."""
     t, a = float(total_cost), float(area)
-    rate = (t / a) if a else 0.0
+    if a <= 0:
+        return {"error": "area must be > 0 — cannot compute a unit cost from a zero or negative area."}
+    rate = t / a
     return {
         "cost_per_area": round(rate, 2),
         "area_unit": area_unit,
@@ -432,6 +434,8 @@ def delay_damages_daily(
     """
     pct = float(rate_percent)
     base = float(contract_amount)
+    if pct < 0 or base < 0:
+        return {"error": "rate_percent and contract_amount must be >= 0."}
     daily = round(base * (pct / 100.0), 2)
     cur = (currency or "SAR").strip().upper() or "SAR"
     return {

@@ -2294,6 +2294,12 @@ _MISSING_REFERENCE_ANSWER = (
 )
 
 
+_UNIT_RATE_TOKEN_RE = re.compile(
+    r"(?i)\d[\d,]*(?:\.\d+)?\s*/\s*(?:m[23]?|lm|sqm|cum|t|tonnes?|kg|nr|no|ea|each|"
+    r"items?|days?|hrs?|hours?|wks?|weeks?|months?|mo|l|ltrs?)"
+)
+
+
 def _should_short_circuit_rag_miss(
     audit_rec: dict[str, Any] | None,
     rag_sys_msg: dict[str, str] | None,
@@ -2325,7 +2331,13 @@ def _should_short_circuit_rag_miss(
         or _asks_for_export(user_message)
     ):
         return False
-    identifiers = audit_rec.get("extracted_identifiers") or []
+    # A unit RATE ("SAR 62/m2") is not a reference: it looks like page
+    # "d/3/3" to the extractor, and a variance question carrying all its own
+    # numbers was refused as a missing document in 4 s.
+    identifiers = [
+        i for i in (audit_rec.get("extracted_identifiers") or [])
+        if not _UNIT_RATE_TOKEN_RE.fullmatch(i.strip())
+    ]
     # Require a digit to avoid short-circuiting generic phrases like
     # "contract value" that happen to match a reference label.
     if not any(re.search(r"\d", ident) for ident in identifiers):
@@ -8292,11 +8304,13 @@ class Agent:
         - ``delegate_to_agent`` — only when ``self.can_delegate``.
         """
 
+        from app.core.privileges import caller_may_use_block
+
         tools = []
         for block_name in self.allowed_blocks:
             block_class = BLOCK_REGISTRY.get(block_name)
-            if not block_class:
-                continue
+            if not block_class or not caller_may_use_block(block_name):
+                continue  # a tool the caller would be refused is not offered
             # File-consuming blocks get a typed schema with required file_path.
             override = _FILE_TOOL_SCHEMAS.get(block_name)
             if override:
@@ -11501,6 +11515,9 @@ class Agent:
                     },
                 }
             target = get_agent(agent_name)
+            from app.core.privileges import caller_may_use_agent
+            if target is not None and not caller_may_use_agent(target):
+                target = None
             if target is None:
                 return {
                     "name": name,
@@ -11508,7 +11525,7 @@ class Agent:
                     "result": {
                         "status": "error",
                         "error": f"Unknown agent: {agent_name}",
-                        "hint": f"Valid agents: {', '.join(sorted(AGENT_REGISTRY.keys())) or '(none)'}.",
+                        "hint": f"Valid agents: {', '.join(sorted(n for n, a in AGENT_REGISTRY.items() if caller_may_use_agent(a))) or '(none)'}.",
                     },
                 }
             if agent_name in _call_stack:
@@ -12101,6 +12118,17 @@ class Agent:
                     "status": "error",
                     "error": f"Block '{name}' not in agent's allowed_blocks.",
                     "hint": "This tool is not available to you; choose another.",
+                },
+            }
+        from app.core.privileges import caller_may_use_block, privileged_forbidden_detail
+        if not caller_may_use_block(name):
+            return {
+                "name": name,
+                "ok": False,
+                "result": {
+                    "status": "error",
+                    "error": privileged_forbidden_detail(name),
+                    "hint": "This tool is not available to this user; answer without it.",
                 },
             }
 

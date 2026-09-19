@@ -70,6 +70,21 @@ async def submit_routing_correction(
     a separate ``train_router`` call (nightly cron, or operator
     dashboard button) to consume the new rows.
     """
+    from app.core import projects as projects_store
+
+    pid = req.project_id
+    # JWT callers must not stamp another tenant's real project_id.
+    # API-key callers are the operator identity (cb_dev_key / SYSTEM_USER):
+    # existing tests and the e2e surface walk post a learning-scope id
+    # that is not owned by that singleton. Skip the grant for them.
+    if (
+        pid
+        and pid != "default"
+        and auth.get("auth_method") == "jwt"
+        and projects_store.get_project_accessible(pid, auth.get("user_id")) is None
+    ):
+        raise HTTPException(status_code=404, detail="Project not found")
+
     from app.blocks import BLOCK_REGISTRY
 
     cls = BLOCK_REGISTRY.get("learning_engine")

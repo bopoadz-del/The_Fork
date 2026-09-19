@@ -235,8 +235,7 @@ async def drive_status(auth: dict = Depends(require_user)):
 
 @router.post("/v1/drive/disconnect")
 async def drive_disconnect(auth: dict = Depends(require_user)):
-    cleared = drive_auth.clear_token(auth["user_id"])
-    return {"status": "ok", "was_connected": cleared}
+    return {"status": "ok", **await drive_auth.revoke_and_clear(auth["user_id"])}
 
 
 @router.get("/v1/drive/files")
@@ -423,6 +422,12 @@ async def drive_index_folder_status(
     auth: dict = Depends(require_user),
 ):
     """Poll the status of an async Drive-folder import job."""
+    # Same owner-only grant as POST index-folder. Job lookup alone is not
+    # enough: the registry is process-global, so a caller who knows
+    # project_id + job_id must still own the project.
+    proj = store.get_project(project_id, user_id=auth["user_id"])
+    if not proj:
+        raise HTTPException(404, "job not found")
     job = _DRIVE_FOLDER_JOBS.get(job_id)
     if not job or job.get("project_id") != project_id:
         raise HTTPException(404, "job not found")
