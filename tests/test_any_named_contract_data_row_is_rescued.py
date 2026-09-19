@@ -264,6 +264,63 @@ def test_the_base_amount_never_outranks_the_row_that_was_asked_for(ret):
     assert "0.015% of the Contract Price" in _texts(ret, E2)[0]
 
 
+def _crowd_the_pool_with_copies_of_the_rate_row(monkeypatch):
+    """Live 39d6b8d: the corpus holds the executed contract, the unsigned
+    one and an OCR of each. Every copy carries the same 8.8.1 row, every copy
+    earns the same lift, and together they fill all five slots."""
+    copies = [
+        _chunk(f"copy{i}", f"copy{i}", 0.90 - i / 100,
+               "8.8.1 Delay Damages (if applicable per Milestone) Milestone Delay "
+               "Damages Milestone 1 0.015% of the Contract Price per calendar day "
+               f"Milestone 2 0.015% of the Contract Price per calendar day copy {i}")
+        for i in range(6)
+    ]
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.search",
+        lambda self, pid, qvec, k, query_text=None: copies[:k],
+    )
+
+
+def test_e2_the_sum_keeps_a_slot_when_copies_of_the_rate_fill_the_rest(
+    ret, monkeypatch,
+):
+    """The first E2 fix fetched the sum and gave it a bonus. Live it still
+    came sixth of five. A reservation, not a bigger number: any constant
+    large enough to clear that crowd is fitted to one corpus."""
+    _crowd_the_pool_with_copies_of_the_rate_row(monkeypatch)
+    texts = _texts(ret, E2)
+    assert len(texts) == 5
+    assert any("Accepted Contract Amount: SAR 1,000,000,000.00" in t for t in texts)
+    assert "0.015% of the Contract Price" in texts[0]
+
+
+def test_a_plain_rate_question_in_the_same_crowd_reserves_nothing(
+    ret, monkeypatch,
+):
+    _crowd_the_pool_with_copies_of_the_rate_row(monkeypatch)
+    texts = _texts(ret, "What are the milestone Delay Damages for Milestone 1?")
+    assert not any("Accepted Contract Amount: SAR" in t for t in texts)
+
+
+def test_the_reservation_itself_takes_the_contract_sum_and_only_when_asked(ret):
+    """The reservation on its own, with no fence in front of it to mask a
+    mistake. Ranked: the rate, then an insurance row that is ALSO an amount of
+    money, then the sum."""
+    rate = _chunk("rate", CD_DOC, 4.0, CD_MILESTONE_DAMAGES, 8)
+    insurance = _chunk("ins", CD_DOC, 3.0, CD_INSURANCE, 9)
+    aca = _chunk("aca", CD_DOC, 2.0, CD_ACA, 0)
+    ranked = [rate, insurance, aca]
+
+    kept = [rate]
+    assert ret.reserve_monetary_base_row(E2, kept, ranked)
+    assert kept == [aca], "an insurance deductible is money, but not the sum"
+
+    kept = [rate]
+    plain = "What are the milestone Delay Damages for Milestone 1?"
+    assert not ret.reserve_monetary_base_row(plain, kept, ranked)
+    assert kept == [rate]
+
+
 def test_a_plain_rate_question_still_gets_the_rate_and_nothing_else(ret):
     """The control for the E2 exception. "What ARE the delay damages" is
     answered by the rate; only a question that applies a duration to it

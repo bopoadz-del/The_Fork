@@ -202,6 +202,31 @@ def test_identity_words_with_no_document_named_fetch_nothing(ret):
     assert not any("Prepared by:" in t for t in texts)
 
 
+def test_the_richest_control_block_wins_not_the_first_one(ret, monkeypatch):
+    """Live 39d6b8d: number, revision and date came back -- and "the excerpt
+    does not name the party that prepared it". A cover has a title block
+    (number, revision) BEFORE the full control block (number, revision,
+    prepared by, status, file name). Page order picked the thin one."""
+    title_block = (
+        "Example City 4000 Bill of Quantities (Priced) Document no: "
+        "XX-INF-000-BOQ-CA-000007 Revision no: B Example Client Limited"
+    )
+    contents = "Contents Revision no: see cover. Document no: see cover. Page 2"
+    pages = [
+        _chunk("p0", PRICED, 0.0, title_block, 1),
+        _chunk("p1", PRICED, 0.0, contents, 2),
+        _chunk("pc", PRICED, 0.0, COVER_PRICED, 3),
+    ]
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_for_docs",
+        lambda self, pid, doc_ids, k_per_doc=12, **_kw: (
+            pages if PRICED in doc_ids else []),
+    )
+    chunks, _ = ret.retrieve_with_filter(B6, ACTIVE, k=5)
+    lifted = [c for c in chunks if (c.score or 0.0) >= ret._DOC_IDENTITY_BONUS]
+    assert any("Prepared by: EXAMPLEQS" in c.text for c in lifted)
+
+
 def test_one_leftover_word_does_not_name_a_document(ret):
     """"Who prepared the quantities?" leaves one word. Every bill in the
     corpus has it in its name; that is a topic, not a title."""
