@@ -5774,6 +5774,71 @@ def _parse_part_summary_amount(raw: str) -> Optional[float]:
     return amount
 
 
+# A scanned bill prints, in this order: the page total, a footer naming THAT
+# page (``Classification - Public Page d/3/1 124 of 675``), then the NEXT
+# page's header (``PAGE Nr. d/3/2``). The chunker keeps all three together.
+# So the page a total belongs to is the first footer after it — not any ref
+# in the chunk, and never the ``PAGE Nr.`` header, which is printed above the
+# items that follow. OCR also glues the footer (``Paged/3/12``), which
+# ``_BOQ_PAGE_REF_RE``'s leading word boundary cannot see.
+_BOQ_FOOTER_PAGE_RE = re.compile(
+    r"(?i)page\s*([a-z])\s*[/\-]\s*(\d{1,3})\s*[/\-]\s*(\d{1,3})"
+)
+# Far enough to cross the date / RFP / classification line between a total
+# and its footer (~170 chars live); never past the next total.
+_PART_SUMMARY_FOOTER_REACH = 320
+
+
+def _part_summary_totals(blob: str) -> List[Dict[str, Any]]:
+    """Every printed Part Summary total in ``blob`` with the page it is for.
+
+    ``page`` is None when no page number survived next to the total. Such a
+    total is evidence for no page in particular: it must never be elected as
+    the page a question names.
+    """
+    labels = list(_PART_SUMMARY_LABEL_RE.finditer(blob))
+    out: List[Dict[str, Any]] = []
+    for i, label in enumerate(labels):
+        # Amount sits on the summary row (after the label). Looking
+        # behind the label elects a neighbor line-item rate (220.00).
+        # A wide window used to reach the next page's 1,370.00 Rate
+        # Only figure (S2 d/3/3) and elect that as the d/3/1 total.
+        start = max(0, label.start() - 24)
+        after_limit = min(len(blob), label.end() + 80)
+        cut = _PART_SUMMARY_ROW_CUT_RE.search(blob, label.end())
+        if cut:
+            after_limit = min(after_limit, cut.start())
+        window = blob[start:after_limit]
+        amount: Optional[float] = None
+        raw = ""
+        for match in _PART_SUMMARY_MONEY_RE.finditer(blob[label.end():after_limit]):
+            amount = _parse_part_summary_amount(match.group("amount"))
+            if amount is not None:
+                raw = match.group("amount")
+                break
+        if amount is None:
+            continue
+        # The row itself may name its page (``Part Summary total d/3/1``).
+        pages = extract_asked_boq_page_refs(window)
+        if not pages:
+            reach = min(len(blob), label.end() + _PART_SUMMARY_FOOTER_REACH)
+            if i + 1 < len(labels):
+                reach = min(reach, labels[i + 1].start())
+            footer = _BOQ_FOOTER_PAGE_RE.search(blob, label.end(), reach)
+            if footer:
+                pages = [
+                    f"{footer.group(1).lower()}/"
+                    f"{int(footer.group(2))}/{int(footer.group(3))}"
+                ]
+        out.append({
+            "pages": pages,
+            "amount": amount,
+            "raw": raw,
+            "currency": _part_summary_currency(window),
+        })
+    return out
+
+
 def compose_part_summary_total(
     query: str, excerpt: str,
 ) -> Optional[Dict[str, Any]]:
@@ -5793,53 +5858,17 @@ def compose_part_summary_total(
     )
     if not _PART_SUMMARY_LABEL_RE.search(blob):
         return None
-    candidates: List[Dict[str, Any]] = []
-    for label in _PART_SUMMARY_LABEL_RE.finditer(blob):
-        # Amount sits on the summary row (after the label). Looking
-        # behind the label elects a neighbor line-item rate (220.00).
-        # A wide window used to reach the next page's 1,370.00 Rate
-        # Only figure (S2 d/3/3) and elect that as the d/3/1 total.
-        start = max(0, label.start() - 24)
-        after_limit = min(len(blob), label.end() + 80)
-        cut = _PART_SUMMARY_ROW_CUT_RE.search(blob, label.end())
-        if cut:
-            after_limit = min(after_limit, cut.start())
-        window = blob[start:after_limit]
-        window_refs = extract_asked_boq_page_refs(window)
-        if window_refs and asked not in window_refs:
-            continue
-        after = blob[label.end():after_limit]
-        money = list(_PART_SUMMARY_MONEY_RE.finditer(after))
-        if not money:
-            continue
-        parsed_amt: Optional[float] = None
-        raw_amt = ""
-        for match in money:
-            amount = _parse_part_summary_amount(match.group("amount"))
-            if amount is None:
-                continue
-            parsed_amt = amount
-            raw_amt = match.group("amount")
-            break
-        if parsed_amt is None:
-            continue
-        candidates.append({
-            "page": asked,
-            "amount": parsed_amt,
-            "currency": _part_summary_currency(window) or _part_summary_currency(blob),
-            "raw": raw_amt,
-            "page_in_window": asked in window_refs,
-        })
-    if not candidates:
-        return None
-    pinned = [c for c in candidates if c.get("page_in_window")]
-    chosen = pinned[0] if pinned else (candidates[0] if len(candidates) == 1 else None)
+    # Only a total printed for the ASKED page. A lone total whose page number
+    # did not survive the scan used to be returned as the asked page's.
+    chosen = next(
+        (t for t in _part_summary_totals(blob) if asked in t["pages"]), None,
+    )
     if not chosen:
         return None
     return {
-        "page": chosen["page"],
+        "page": asked,
         "amount": chosen["amount"],
-        "currency": chosen.get("currency") or "",
+        "currency": chosen["currency"] or _part_summary_currency(blob),
     }
 
 
@@ -5880,11 +5909,14 @@ def chunk_states_part_summary_total(
         return False
     if not page_refs:
         return True
-    normalized = _normalize_boq_page_refs_in_text(blob)
-    found = extract_asked_boq_page_refs(normalized)
-    if found:
-        return any(ref in found for ref in page_refs)
-    return True
+    normalized = _normalize_boq_page_refs_in_text(
+        _normalize_retrieval_ws(blob.replace("|", " "))
+    )
+    return any(
+        ref in total["pages"]
+        for total in _part_summary_totals(normalized)
+        for ref in page_refs
+    )
 
 
 def _apply_part_summary_boost(
