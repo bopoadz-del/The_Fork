@@ -153,7 +153,11 @@ def test_a_tool_the_caller_would_be_refused_is_not_offered():
     set_caller_role("user")
     offered = {t["function"]["name"] for t in agent.tool_definitions()}
     assert not offered & PRIVILEGED_BLOCKS, offered
-    assert "formula_executor_v2" in offered
+    from app.blocks import BLOCK_REGISTRY
+
+    # Offered wherever it is loaded; a virgin boot (no domain kit) has none.
+    if "formula_executor_v2" in BLOCK_REGISTRY:
+        assert "formula_executor_v2" in offered
     set_caller_role("admin")
     offered = {t["function"]["name"] for t in agent.tool_definitions()}
     assert "code" in offered
