@@ -163,10 +163,30 @@ def _validate_startup_env() -> None:
         )
 
 
+def _warn_when_the_llm_has_no_fallback() -> None:
+    """Say it at boot: a chat with no usable fallback dies with its provider.
+
+    A fallback named after a removed provider, or one whose key is unset,
+    used to disable itself in silence (live 2026-09-19). This names the
+    variable to fix; it never prints a value."""
+    from app.core.health_probes import probe_llm
+
+    state = probe_llm()
+    if not state.get("primary_ready"):
+        logger.warning("LLM: the primary provider has no API key; every chat turn will fail.")
+    if not state.get("fallback_ready"):
+        logger.warning(
+            "LLM: NO USABLE FALLBACK -- check LLM_FALLBACK_PROVIDER names a supported "
+            "provider other than the primary, and that its API key is set. A primary "
+            "outage will fail every chat turn."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize all blocks + load runtime agents at startup."""
     _validate_startup_env()
+    _warn_when_the_llm_has_no_fallback()
     from app.blocks.learning_engine import assert_learning_engine_hard_off
     assert_learning_engine_hard_off()
     await init_blocks()
