@@ -3699,10 +3699,13 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     ``_user_intent_requires_tool``."""
     if not messages:
         return None
-    tail = messages[-1]
-    if tail.get("role") != "user":
+    if messages[-1].get("role") != "user":
         return None
-    text = _unwrap_rag_folded_operator_text(tail.get("content") or "")
+    # Predispatch / RAG fold can sit on messages[-1]. Recover the operator
+    # ask so named_calculator still forces construction_calc.
+    text = _latest_operator_ask(messages)
+    if not text:
+        return None
     low = text.lower()
     # Contract Data TfC / milestone Q&A must not force primavera_parser or
     # generate_wbs — those questions belong to RAG.
@@ -6342,13 +6345,17 @@ def _postprocess_answer(
     )
     # Disclosure banner goes on AFTER the scrub so it's never mangled, and only
     # when the banner isn't already present (idempotent across retries).
-    if fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
-        ask = _latest_operator_ask(messages) or ""
-        # Formula asks on a fixture must not wear the Master Corpus
-        # banner even if retrieve leaked a fallback chunk. Live: named
-        # calculator ran and the answer still opened with the preamble.
-        if not _message_is_formula_style_ask(ask):
-            text = _MASTER_CORPUS_FALLBACK_NOTE + text
+    ask = _latest_operator_ask(messages) or ""
+    if not ask:
+        ask = str((audit_rec or {}).get("user_message_preview") or "")
+    pid = project_id or (audit_rec or {}).get("project_id")
+    if should_suppress_master_corpus_fallback(pid, ask):
+        text = _strip_master_corpus_preamble(text)
+    elif fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
+        # Formula / user-FIXTURE calculator asks must not wear the
+        # Master Corpus banner even if retrieve leaked a fallback chunk.
+        # Live: pe_unit_convert ran and the answer still opened with it.
+        text = _MASTER_CORPUS_FALLBACK_NOTE + text
     from app.core.rag.coverage_honesty import apply_coverage_honesty
     text = apply_coverage_honesty(
         text,
@@ -6516,6 +6523,13 @@ def _build_sources_from_audit(
     Empty list when ``audit_rec`` has no chunks (fallback turn).
     """
     chunks = (audit_rec or {}).get("chunks") or []
+    ask = str((audit_rec or {}).get("user_message_preview") or "")
+    pid = (audit_rec or {}).get("project_id")
+    if chunks and should_suppress_master_corpus_fallback(pid, ask):
+        chunks = [
+            c for c in chunks
+            if (c.get("layer") or "own") != "master_corpus"
+        ]
     if not chunks:
         return []
 
@@ -12601,6 +12615,86 @@ def message_wants_formula_calculator(text: str) -> bool:
     return _message_is_formula_style_ask(text)
 
 
+def project_is_master_corpus(project_id: str | None) -> bool:
+    """True when ``project_id`` is the Master Corpus alias or its source."""
+    pid = (project_id or "").strip()
+    if not pid:
+        return False
+    if pid == "master_corpus":
+        return True
+    try:
+        from app.core.projects import (
+            MASTER_CORPUS_PROJECT_ID,
+            MASTER_CORPUS_SOURCE_PROJECT_ID,
+        )
+        if pid in (MASTER_CORPUS_PROJECT_ID, MASTER_CORPUS_SOURCE_PROJECT_ID):
+            return True
+    except Exception:  # noqa: BLE001
+        _LOG.debug("master-corpus id table unavailable", exc_info=True)
+    src = (os.getenv("MASTER_CORPUS_SOURCE_PROJECT_ID") or "").strip()
+    return bool(src) and pid == src
+
+
+def project_is_user_fixture(project_id: str | None) -> bool:
+    """True when the active project is a user FIXTURE (not Master Corpus).
+
+    Live UI ids are hex slugs (``b860981f``); the FIXTURE- prefix lives
+    on the project name. Synthetic test pids embed ``fixture`` too.
+    """
+    pid = (project_id or "").strip()
+    if not pid or project_is_master_corpus(pid):
+        return False
+    low = pid.lower()
+    if low.startswith("fixture") or "fixture" in low:
+        return True
+    try:
+        from app.core.projects import get_project
+        rec = get_project(pid, user_id=None, include_admin_approved=True)
+        name = str((rec or {}).get("name") or "").strip().lower()
+        return name.startswith("fixture")
+    except Exception:  # noqa: BLE001
+        _LOG.debug("user-fixture name lookup skipped", exc_info=True)
+        return False
+
+
+def should_suppress_master_corpus_fallback(
+    project_id: str | None, text: str | None,
+) -> bool:
+    """True when a calculator-shaped ask must not use Master Corpus RAG.
+
+    Any non-master project (including a user FIXTURE whose id is a hex
+    slug) skips fallback / banner / MC sources for formula-style and
+    named_calculator asks. Operator-selected Master Corpus is unchanged.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if project_is_master_corpus(project_id):
+        return False
+    if _message_is_formula_style_ask(raw):
+        return True
+    if _message_wants_named_calculator(raw):
+        return True
+    return False
+
+
+_MC_BLEED_PREAMBLE_RE = re.compile(
+    r"^\s*_?This project has no documents of its own for this question\s+"
+    r"[—–-]\s+answering from the Master Corpus\.?_?\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_master_corpus_preamble(text: str) -> str:
+    """Drop the official banner and the model's copy of the same line."""
+    raw = text or ""
+    if _MASTER_CORPUS_FALLBACK_NOTE.strip() in raw:
+        raw = raw.replace(_MASTER_CORPUS_FALLBACK_NOTE, "")
+        raw = raw.replace(_MASTER_CORPUS_FALLBACK_NOTE.strip(), "")
+    cleaned = _MC_BLEED_PREAMBLE_RE.sub("", raw, count=1)
+    return cleaned.lstrip()
+
+
 def _formula_calculator_name_from_message(text: str) -> str | None:
     """Unique registry name implied by the message, or None.
 
@@ -12654,7 +12748,12 @@ async def _predispatch_formula_calc(
     try:
         user_msg, _history = _messages_user_and_history(messages)
         detect = (operator_text or user_msg or "").strip()
-        if not detect or not _message_is_formula_style_ask(detect):
+        if not detect:
+            return None
+        if not (
+            _message_is_formula_style_ask(detect)
+            or _message_wants_named_calculator(detect)
+        ):
             return None
         calc_name = _formula_calculator_name_from_message(detect)
         tc = {

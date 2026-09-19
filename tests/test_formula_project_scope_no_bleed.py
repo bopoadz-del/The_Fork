@@ -21,17 +21,27 @@ from app.agents.runtime import (
     _postprocess_answer,
     _predispatch_formula_calc,
     _project_has_non_rag_context,
+    project_is_user_fixture,
+    should_suppress_master_corpus_fallback,
 )
 
 
 FIXTURE_PID = "proj_formula_fixture_scope"
 MASTER_PID = "master_src_formula_scope"
 GK_PID = "curated_kb_formula_scope"
+# Live UI project id is a hex slug; the name carries FIXTURE-.
+HEX_FIXTURE_PID = "b860981f"
+HEX_FIXTURE_NAME = "FIXTURE-c-2026-09-19-formula-fw"
 
 AVAILABLE = {"construction_calc", "search_project_documents"}
 
 # Formula-shaped asks that do not carry L×W×D. Includes the live
 # phone/UI phrasings (synthetic — no client names).
+SHORT_UI_ASKS = (
+    "rebar lap",
+    "pe_unit_convert",
+    "slab formwork striking",
+)
 FORMULA_ASKS = (
     "compute rebar lap for 20 mm bar fy 420",
     "What is the typical rebar lap length for 16mm bars in tension?",
@@ -39,7 +49,7 @@ FORMULA_ASKS = (
     "Convert 150 pe using pe_unit_convert",
     "formwork striking time for a slab",
     "What is the formwork striking time for a slab?",
-)
+) + SHORT_UI_ASKS
 
 LOOKUP_ASKS = (
     "what is the backfilling specification for soft ground",
@@ -325,6 +335,174 @@ async def test_live_empty_fixture_chat_calls_calc_without_mc_bleed(
     assert "construction_calc" in names, names
     answer = out.get("answer") or ""
     assert _MASTER_CORPUS_FALLBACK_NOTE.strip() not in answer
+    sources = out.get("sources") or []
+    assert all(s.get("layer") != "master_corpus" for s in sources)
+    assert all(s.get("project_id") != MASTER_PID for s in sources)
+
+
+def _install_hex_fixture_name(monkeypatch):
+    monkeypatch.setattr(
+        "app.core.projects.get_project",
+        lambda pid, user_id=None, **kw: (
+            {"id": pid, "name": HEX_FIXTURE_NAME}
+            if pid == HEX_FIXTURE_PID
+            else None
+        ),
+    )
+
+
+def test_hex_pid_with_fixture_name_is_a_user_fixture(monkeypatch):
+    """Live UI id is hex; FIXTURE- lives on the project name."""
+    _install_hex_fixture_name(monkeypatch)
+    assert project_is_user_fixture(HEX_FIXTURE_PID) is True
+    assert project_is_user_fixture("master_corpus") is False
+    assert project_is_user_fixture(MASTER_PID) is False
+
+
+@pytest.mark.parametrize("q", SHORT_UI_ASKS)
+def test_short_ui_ask_on_hex_fixture_suppresses_master_corpus(monkeypatch, q):
+    _install_hex_fixture_name(monkeypatch)
+    assert should_suppress_master_corpus_fallback(HEX_FIXTURE_PID, q) is True
+    assert should_suppress_master_corpus_fallback("master_corpus", q) is False
+
+
+@pytest.mark.parametrize("q", SHORT_UI_ASKS)
+def test_banner_recovers_short_ask_from_audit_when_messages_lose_it(q):
+    """Live pe_unit_convert: tool ran; postprocess still wore the MC banner
+    because the last user bubble was predispatch / folded and the ask
+    was only in the RAG audit preview."""
+    out = _postprocess_answer(
+        "calculator result line",
+        None,
+        [{"role": "user", "content": "PLATFORM PRE-DISPATCH: construction_calc"}],
+        fallback_used=True,
+        project_id=HEX_FIXTURE_PID,
+        audit_rec={
+            "project_id": HEX_FIXTURE_PID,
+            "user_message_preview": q,
+        },
+    )
+    assert _MASTER_CORPUS_FALLBACK_NOTE.strip() not in out
+    assert "Master Corpus" not in out
+
+
+@pytest.mark.parametrize("q", SHORT_UI_ASKS)
+def test_model_written_mc_preamble_is_stripped_on_fixture_formula(q, monkeypatch):
+    _install_hex_fixture_name(monkeypatch)
+    model = (
+        "_This project has no documents of its own for this question — "
+        "answering from the Master Corpus._\n\n"
+        "Typical lap is 40d from reference notes."
+    )
+    out = _postprocess_answer(
+        model,
+        None,
+        [{"role": "user", "content": q}],
+        fallback_used=True,
+        project_id=HEX_FIXTURE_PID,
+        audit_rec={"project_id": HEX_FIXTURE_PID, "user_message_preview": q},
+    )
+    assert "Master Corpus" not in out
+    assert "Typical lap is 40d" in out
+
+
+@pytest.mark.parametrize("q", SHORT_UI_ASKS)
+def test_inject_strips_leaked_mc_on_hex_fixture_formula(monkeypatch, q):
+    """Even if retrieve leaked a tagged fallback chunk, inject must drop
+    it for a user FIXTURE calculator ask (original user_message, not the
+    expanded retrieval_query)."""
+    from app.core.rag import inject as inj
+
+    leaked = [_chunk("m_bleed", MASTER_PID, 0.95, "generic formula notes")]
+    leaked[0].layer = "master_corpus"
+
+    def fake_retrieve(query, project_id, k=5, **kwargs):
+        return leaked, 0
+
+    monkeypatch.setattr(inj, "retrieve_with_filter", fake_retrieve)
+    _install_hex_fixture_name(monkeypatch)
+    monkeypatch.setenv("MASTER_CORPUS_SOURCE_PROJECT_ID", MASTER_PID)
+    monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
+
+    sys_msg, audit = inj.rag_inject(
+        user_message=q,
+        project_id=HEX_FIXTURE_PID,
+        conversation_id=None,
+        user_id=None,
+        agent_name="project-assistant",
+    )
+    assert audit.get("fallback_used") is not True
+    chunks = audit.get("chunks") or []
+    assert all(c.get("layer") != "master_corpus" for c in chunks)
+    assert all(c.get("project_id") != MASTER_PID for c in chunks)
+    if sys_msg and sys_msg.get("content"):
+        assert "master_corpus" not in (sys_msg.get("content") or "").lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("q", SHORT_UI_ASKS)
+async def test_short_ui_named_calculator_invokes_construction_calc(q):
+    from app.agents.runtime import Agent
+
+    agent = Agent(
+        name="project-assistant",
+        description="t",
+        system_prompt="t",
+        allowed_blocks=["construction"],
+    )
+    msgs = [{"role": "user", "content": q}]
+    rec = await _predispatch_formula_calc(
+        agent, msgs, HEX_FIXTURE_PID, operator_text=q,
+    )
+    assert rec is not None, q
+    assert rec["name"] == "construction_calc"
+    assert rec.get("predispatched") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("q", SHORT_UI_ASKS)
+async def test_hex_fixture_chat_calls_calc_without_mc_bleed(
+    q, tmp_path, monkeypatch,
+):
+    from app.agents.runtime import Agent, _MASTER_CORPUS_FALLBACK_NOTE
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ENV", "development")
+    monkeypatch.setattr(
+        "app.agents.runtime.project_is_rag_ready", lambda _pid: False,
+    )
+    _install_empty_fixture_with_master(monkeypatch)
+    _install_hex_fixture_name(monkeypatch)
+
+    async def _llm_no_tool(self, messages, api_key, project_id=None, **kwargs):
+        return {
+            "status": "success",
+            "choice": {
+                "message": {
+                    "content": (
+                        "This project has no documents of its own for this "
+                        "question — answering from the Master Corpus. "
+                        "Typical value from reference notes."
+                    ),
+                },
+            },
+            "raw": {},
+        }
+
+    monkeypatch.setattr(Agent, "_call_llm", _llm_no_tool)
+    agent = Agent(
+        name="project-assistant",
+        description="t",
+        system_prompt="t",
+        allowed_blocks=["construction"],
+    )
+    out = await agent.chat(q, api_key="cb_dev_key", project_id=HEX_FIXTURE_PID)
+    assert out["status"] == "success", out
+    names = [t.get("name") for t in (out.get("tool_calls") or [])]
+    assert "construction_calc" in names, names
+    answer = out.get("answer") or ""
+    assert _MASTER_CORPUS_FALLBACK_NOTE.strip() not in answer
+    assert "answering from the Master Corpus" not in answer
     sources = out.get("sources") or []
     assert all(s.get("layer") != "master_corpus" for s in sources)
     assert all(s.get("project_id") != MASTER_PID for s in sources)
