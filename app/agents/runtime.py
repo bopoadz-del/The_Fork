@@ -3549,6 +3549,10 @@ def _message_wants_named_calculator(text: str) -> bool:
     with no figures is a predefined IPC deliverable — do not steal it.
     """
     raw = text or ""
+    # "Build a plumbing flow programme" is a schedule deliverable.
+    # intent_map "plumbing flow" must not steal it onto named_calculator.
+    if _message_is_schedule_or_programme_deliverable(raw):
+        return False
     if _looks_like_self_contained_calculation(raw):
         return True
     low = raw.lower()
@@ -3753,6 +3757,11 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
         return "look_ahead"
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
+            if (
+                tool == "construction_calc"
+                and _message_is_schedule_or_programme_deliverable(text)
+            ):
+                continue
             return tool
     # Keyword phrases reach ~a dozen of the 76 registered calculators. Catch
     # the rest by SHAPE: a question that supplies its own dimensions and asks
@@ -6361,7 +6370,10 @@ def _postprocess_answer(
     if not ask:
         ask = str((audit_rec or {}).get("user_message_preview") or "")
     pid = project_id or (audit_rec or {}).get("project_id")
-    if should_suppress_master_corpus_fallback(pid, ask):
+    calc_ran = _turn_already_ran_construction_calc(messages)
+    if should_suppress_master_corpus_fallback(pid, ask) or (
+        calc_ran and not project_is_master_corpus(pid)
+    ):
         text = _strip_master_corpus_preamble(text)
     elif fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
         # Formula / user-FIXTURE calculator asks must not wear the
@@ -12600,6 +12612,37 @@ _FORMULA_STEM_LOOKUP_COLLISIONS = frozenset({
 })
 
 
+def _message_is_schedule_or_programme_deliverable(text: str) -> bool:
+    """True for a generate/build programme or schedule ask, not a formula.
+
+    Live FIXTURE-c: "Build a plumbing flow programme for a 20-storey tower"
+    is a schedule-builder path. intent_map.yaml maps "plumbing flow" to
+    construction_calc; that must not steal the deliverable.
+    """
+    raw = text or ""
+    if not _is_generative_request(raw):
+        return False
+    low = raw.lower()
+    return any(
+        p in low
+        for p in (
+            "programme", "program", "schedule", "wbs", "gantt",
+            "critical path",
+        )
+    )
+
+
+def _turn_already_ran_construction_calc(messages: list | None) -> bool:
+    """True when this turn already invoked construction_calc (predispatch)."""
+    for m in messages or []:
+        content = str((m or {}).get("content") or "")
+        if content.lstrip().startswith("PLATFORM PRE-DISPATCH: construction_calc"):
+            return True
+        if (m or {}).get("name") == "construction_calc":
+            return True
+    return False
+
+
 def _message_is_formula_style_ask(text: str) -> bool:
     """True when the turn is a formula / calculator ask, not a doc lookup.
 
@@ -12611,6 +12654,8 @@ def _message_is_formula_style_ask(text: str) -> bool:
         return False
     raw = text or ""
     if not raw.strip():
+        return False
+    if _message_is_schedule_or_programme_deliverable(raw):
         return False
     try:
         if message_is_contract_data_lookup(raw):
@@ -12775,6 +12820,8 @@ async def _predispatch_formula_calc(
         user_msg, _history = _messages_user_and_history(messages)
         detect = (operator_text or user_msg or "").strip()
         if not detect:
+            return None
+        if _message_is_schedule_or_programme_deliverable(detect):
             return None
         if not (
             _message_is_formula_style_ask(detect)

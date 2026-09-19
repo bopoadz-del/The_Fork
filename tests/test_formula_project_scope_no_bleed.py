@@ -58,6 +58,20 @@ LOOKUP_ASKS = (
     "list the documents in this project",
 )
 
+# Agent C Phase-2 re-probe on empty FIXTURE-c (synthetic asks only).
+# plumbing_flow_programme is a schedule-builder path — not in this set.
+REPROBE_BLEED_ASKS = (
+    "What is the rebar lap length for 16mm bars in tension?",
+    "Convert 150 pe using pe_unit_convert",
+    "What is the modulus of elasticity of concrete for fck 30 MPa?",
+    "What is a typical productivity rate for concrete pouring m3 per crew-day?",
+    "roi_calculator gain 1200000 cost 1000000",
+    "What is the unit weight of reinforced concrete?",
+)
+PLUMBING_PROGRAMME_ASK = (
+    "Build a plumbing flow programme for a 20-storey tower"
+)
+
 
 def _tail(text: str):
     return [{"role": "user", "content": text}]
@@ -139,6 +153,25 @@ def test_schedule_critical_path_lookup_is_not_named_calculator():
     q = "What is the critical path of this schedule?"
     assert _message_wants_named_calculator(q) is False
     assert _forced_specific_tool(_tail(q), AVAILABLE) is None
+
+
+@pytest.mark.parametrize("q", REPROBE_BLEED_ASKS)
+def test_reprobe_bleed_asks_force_construction_calc(q):
+    """FIXTURE-c re-probe: these six must call the calculator, not RAG."""
+    from app.agents.runtime import _message_is_formula_style_ask
+
+    assert _message_is_formula_style_ask(q), q
+    assert _message_wants_named_calculator(q), q
+    assert _forced_specific_tool(_tail(q), AVAILABLE) == "construction_calc", q
+
+
+def test_plumbing_flow_programme_is_not_stolen_onto_the_calculator():
+    """Schedule-builder path. intent_map 'plumbing flow' must not win."""
+    q = PLUMBING_PROGRAMME_ASK
+    assert _message_wants_named_calculator(q) is False
+    assert _forced_specific_tool(
+        _tail(q), AVAILABLE | {"generate_wbs"},
+    ) != "construction_calc"
 
 
 def test_formula_force_requires_the_tool_to_be_available():
@@ -515,3 +548,75 @@ async def test_hex_fixture_chat_calls_calc_without_mc_bleed(
     sources = out.get("sources") or []
     assert all(s.get("layer") != "master_corpus" for s in sources)
     assert all(s.get("project_id") != MASTER_PID for s in sources)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("q", REPROBE_BLEED_ASKS)
+async def test_reprobe_empty_fixture_chat_calls_calc_without_mc_bleed(
+    q, tmp_path, monkeypatch,
+):
+    """Re-probe six: construction_calc must appear; MC banner must not."""
+    from app.agents.runtime import Agent, _MASTER_CORPUS_FALLBACK_NOTE
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ENV", "development")
+    monkeypatch.setattr(
+        "app.agents.runtime.project_is_rag_ready", lambda _pid: False,
+    )
+    _install_empty_fixture_with_master(monkeypatch)
+
+    async def _llm_no_tool(self, messages, api_key, project_id=None, **kwargs):
+        return {
+            "status": "success",
+            "choice": {
+                "message": {
+                    "content": (
+                        "_This project has no documents of its own for this "
+                        "question — answering from the Master Corpus._ "
+                        "I have to stop here and report the failure plainly."
+                    ),
+                },
+            },
+            "raw": {},
+        }
+
+    monkeypatch.setattr(Agent, "_call_llm", _llm_no_tool)
+    agent = Agent(
+        name="project-assistant",
+        description="t",
+        system_prompt="t",
+        allowed_blocks=["construction"],
+    )
+    out = await agent.chat(q, api_key="cb_dev_key", project_id=FIXTURE_PID)
+    assert out["status"] == "success", out
+    names = [t.get("name") for t in (out.get("tool_calls") or [])]
+    assert "construction_calc" in names, names
+    assert names != ["search_project_documents"], names
+    answer = out.get("answer") or ""
+    assert _MASTER_CORPUS_FALLBACK_NOTE.strip() not in answer
+    assert "answering from the Master Corpus" not in answer
+    sources = out.get("sources") or []
+    assert all(s.get("layer") != "master_corpus" for s in sources)
+    assert all(s.get("project_id") != MASTER_PID for s in sources)
+
+
+def test_calc_already_fired_strips_mc_banner_even_without_ask():
+    """Live pe_unit_convert: tool ran; postprocess lost the ask and
+    still prepended the Master Corpus banner."""
+    out = _postprocess_answer(
+        (
+            "_This project has no documents of its own for this question — "
+            "answering from the Master Corpus._ "
+            "The pe_unit_convert calculator failed."
+        ),
+        None,
+        [{
+            "role": "user",
+            "content": "PLATFORM PRE-DISPATCH: construction_calc has ALREADY been run",
+        }],
+        fallback_used=True,
+        project_id=FIXTURE_PID,
+        audit_rec={"project_id": FIXTURE_PID, "user_message_preview": ""},
+    )
+    assert "Master Corpus" not in out
+    assert "pe_unit_convert calculator failed" in out
