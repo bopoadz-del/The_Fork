@@ -580,6 +580,8 @@ ADMIN_PATHS = [
     ("GET", "/v1/debug/env", None),
     ("GET", "/v1/auth/keys", None),
     ("POST", "/v1/auth/keys", None),
+    ("POST", "/v1/auth/keys/revoke", {"api_key": "cb_dev_key"}),
+    ("POST", "/v1/auth/keys/rotate", {"api_key": "cb_dev_key"}),
     ("GET", "/v1/metrics", None),
 ]
 
@@ -612,6 +614,8 @@ def test_plain_user_cannot_probe_other_api_keys(client, world):
         )
     usage = client.get("/v1/auth/usage", headers=h, params={"key": "cb_dev_key"})
     assert usage.status_code in (401, 403, 404)
+    stolen = client.delete("/v1/auth/keys/cb_dev_key", headers=h)
+    assert stolen.status_code in (401, 403, 404)
 
 
 def test_plain_user_cannot_read_foreign_memory_cache_key(client, world):
@@ -754,6 +758,52 @@ def test_revoked_style_deleted_user_token_stops(client, world):
     ghost = jwt_auth.create_token("no-such-user-" + _RUN)
     r = client.get("/v1/users/me", headers={"Authorization": f"Bearer {ghost}"})
     assert r.status_code == 401
+
+
+def test_jwt_signed_with_empty_or_other_secret_rejected(client, world):
+    """Unset/guessed SECRET_KEY must not authenticate (HS256 only)."""
+    payload = {"user_id": world["a"]["id"]}
+    empty = jwt.encode(payload, "", algorithm="HS256")
+    r = client.get("/v1/users/me", headers={"Authorization": f"Bearer {empty}"})
+    assert r.status_code == 401
+    other = jwt.encode(payload, "not-the-server-secret", algorithm="HS256")
+    r2 = client.get("/v1/users/me", headers={"Authorization": f"Bearer {other}"})
+    assert r2.status_code == 401
+
+
+def test_login_before_verify_is_403(client):
+    from app.core import users as users_store
+
+    email = f"unverified-{_RUN}@example.com"
+    users_store.create_user(email, "pw123456", email_verified=False)
+    r = client.post("/v1/users/login", json={"email": email, "password": "pw123456"})
+    assert r.status_code == 403
+    assert "verified" in r.text.lower()
+
+
+def test_verify_token_mismatch_does_not_verify(client):
+    from app.core import jwt_auth
+    from app.core import users as users_store
+
+    email = f"vtok-{_RUN}@example.com"
+    user = users_store.create_user(email, "pw123456", email_verified=False)
+    session = jwt_auth.create_token(user["id"])
+    garbage = client.get(
+        "/v1/users/verify-email",
+        params={"token": "not-a-token"},
+        follow_redirects=False,
+    )
+    replay = client.get(
+        "/v1/users/verify-email",
+        params={"token": session},
+        follow_redirects=False,
+    )
+    assert garbage.status_code in (302, 400, 401, 403, 404)
+    assert replay.status_code in (302, 400, 401, 403, 404)
+    assert users_store.get_user_by_email(email)["email_verified"] is False
+    loc = (garbage.headers.get("location") or "") + (replay.headers.get("location") or "")
+    if loc:
+        assert "success" not in loc.lower() or "invalid" in loc.lower()
 
 
 # ── input / spoofing ────────────────────────────────────────────────────────
