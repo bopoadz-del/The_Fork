@@ -508,6 +508,19 @@ def format_chunks_as_system_message(
                 "90 days), and do not answer from a permit tracker, "
                 "community schedule, or PSA recital instead.\n"
             )
+    # Live ~27d6940: user-supplied M#=Nd + common start is arithmetic.
+    # Access-date particulars must not veto the operands in the question.
+    if query:
+        try:
+            from app.core.hypothetical_milestone_arithmetic import (
+                instruction_for_query as _hypo_ms_instruction,
+            )
+            header += _hypo_ms_instruction(query)
+        except Exception:  # noqa: BLE001 — instruction must never break inject
+            _LOG.debug(
+                "hypothetical-milestone instruction skipped",
+                exc_info=True,
+            )
     # Owner ruling 2026-09-19: no party names leave this RAG. The block below
     # this one was built to do the opposite for the Engineer ("State ONLY that
     # firm's name"); it now runs only when the rule is switched off.

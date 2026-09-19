@@ -221,9 +221,18 @@ def test_status_connected_after_token(client):
     assert body["connected"] is True and body["email"] == "me@x.com"
 
 
-def test_disconnect_clears_token(client):
+def test_disconnect_clears_token(client, monkeypatch):
+    revoked = []
+
+    async def fake_revoke(token):
+        revoked.append(token)
+        return True
+
+    monkeypatch.setattr(drive_auth, "_revoke_request", fake_revoke)
     drive_auth.save_token("system", {"access_token": "AT", "expiry": time.time() + 9999})
-    assert client.post("/v1/drive/disconnect", headers=H).status_code == 200
+    body = client.post("/v1/drive/disconnect", headers=H).json()
+    assert body["was_connected"] is True and body["revoked"] is True
+    assert revoked == ["AT"]
     assert drive_auth.load_token("system") is None
 
 
