@@ -262,7 +262,41 @@ _MIX_TEXT_RE = re.compile(
     r"\b(mix\s+(?:design|proportion|ratio)|cement\s+parts|1\s*:\s*2\s*:\s*4)\b",
     re.IGNORECASE,
 )
+# Live Phase 2 leftover: "mobilization cost" / UK "mobilisation" / "site
+# mob" do not contain the full registry string "mobilization cost estimate",
+# so _blob_names_fw missed them and the LLM sometimes called the tool with
+# no num_personnel / duration_months → TypeError → no SAR number.
+_MOBILIZATION_TEXT_RE = re.compile(
+    r"\b(mobili[sz]ation\s+cost|site\s+mobili[sz]ation|"
+    r"mob(?:ilisation|ilization)?\s+cost|camp\s+mobili[sz]ation)\b",
+    re.IGNORECASE,
+)
+_MOB_PERSONNEL_RE = re.compile(
+    r"(\d[\d,]*)\s*(?:staff|personnel|people|workers|persons?|headcount|men)\b",
+    re.IGNORECASE,
+)
+_MOB_MONTHS_RE = re.compile(
+    r"(\d[\d,]*)\s*(?:months?|mos?\b)",
+    re.IGNORECASE,
+)
+# Documented GCC example (audit oracle) — used only when the ask names
+# mobilization but supplies no headcount / duration.
+_MOB_DEFAULT_PERSONNEL = 100
+_MOB_DEFAULT_MONTHS = 18
 _PRESENT = (None, "", 0, 0.0)
+
+# construction_calc presentation for the four live leftovers whose result
+# had a number but no unit the phone UI / stream could copy. F–W (#43–84)
+# only; A–F envelopes are untouched.
+_FW_PRESENTATION = {
+    "fineness_modulus": {"unit": "unitless", "value_keys": ("value",)},
+    "score_risk": {"unit": "unitless", "value_keys": ("score",)},
+    "slope_fos_simple": {"unit": "unitless", "value_keys": ("factor_of_safety",)},
+    "mobilization_cost_estimate": {
+        "unit": "SAR",
+        "value_keys": ("grand_total_sar", "value"),
+    },
+}
 
 
 def _fw_blob(calc: str | None, params: dict, text: str, original_name: str | None) -> str:
@@ -349,6 +383,84 @@ def _alias_consumption_params(out: dict) -> None:
         out.pop("waste_factor", None)
 
 
+def _looks_like_mobilization(_params: dict, blob: str) -> bool:
+    return bool(_MOBILIZATION_TEXT_RE.search(blob or ""))
+
+
+def _int_from_match(match: re.Match[str] | None) -> int | None:
+    if match is None:
+        return None
+    try:
+        return int(match.group(1).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _alias_mobilization_params(out: dict, blob: str = "") -> None:
+    """Fill headcount / duration so construction_calc always returns a SAR figure."""
+    search = " ".join(
+        str(x) for x in (
+            blob, out.get("text"), out.get("formula"), out.get("query"),
+        ) if x
+    )
+    if not _param_present(out, "num_personnel"):
+        parsed = _int_from_match(_MOB_PERSONNEL_RE.search(search))
+        out["num_personnel"] = parsed if parsed is not None else _MOB_DEFAULT_PERSONNEL
+    if not _param_present(out, "duration_months"):
+        parsed = _int_from_match(_MOB_MONTHS_RE.search(search))
+        out["duration_months"] = parsed if parsed is not None else _MOB_DEFAULT_MONTHS
+
+
+def _fw_presentation_note(unit: str, value: object, existing: object) -> str:
+    if isinstance(existing, list):
+        existing = " ".join(str(x) for x in existing)
+    note = str(existing or "").strip()
+    if value is None:
+        token = unit
+    elif isinstance(value, float) and value == int(value):
+        token = f"{int(value)} {unit}"
+    elif isinstance(value, float):
+        token = f"{value:g} {unit}"
+    else:
+        token = f"{value} {unit}"
+    if unit.lower() in note.lower() and (
+        value is None or str(value) in note.replace(",", "")
+    ):
+        return note
+    if note:
+        return f"{note} Result {token}."
+    return f"Result {token}."
+
+
+def shape_fw_calc_result(name: str, result: dict) -> dict:
+    """Stamp ``unit`` (and a copyable note) on the four live leftover results.
+
+    Fineness modulus / risk score / infinite-slope FoS are dimensionless —
+    the live probe needs the word ``unitless`` in the tool JSON. Mobilization
+    already has ``*_sar`` keys; the stream still needs a headline ``value``
+    + ``unit: SAR``.
+    """
+    spec = _FW_PRESENTATION.get(name)
+    if not spec or not isinstance(result, dict):
+        return result
+    if isinstance(result.get("error"), str):
+        return result
+    out = dict(result)
+    unit = spec["unit"]
+    value = None
+    for key in spec["value_keys"]:
+        if out.get(key) not in (None, ""):
+            value = out[key]
+            break
+    out.setdefault("unit", unit)
+    if value is not None:
+        out.setdefault("value", value)
+    out["note"] = _fw_presentation_note(
+        unit, value, out.get("note") or out.get("description"),
+    )
+    return out
+
+
 def resolve_fw_calc(
     calc: str | None,
     params: dict | None = None,
@@ -362,6 +474,8 @@ def resolve_fw_calc(
     - ``material_consumption`` asked, model (or E4 ``concrete`` pin) picked
       ``concrete_mix_proportions`` / ``concrete_volume``
     - text names an F–W registry function (snake or spaced)
+    - mobilization / mobilisation / site-mob language, including a no-figure
+      ask (fill documented 100 staff × 18 months so a SAR number always lands)
 
     True qty×rate and true 1:2:4 mix are left alone. A raft L×W×T volume
     ask stays on ``concrete_volume``.
@@ -391,7 +505,16 @@ def resolve_fw_calc(
             _alias_consumption_params(out)
             return "material_consumption", out
 
+    if _looks_like_mobilization(out, blob) and (
+        named in stealable or pinned == "mobilization_cost_estimate"
+        or named == "mobilization_cost_estimate"
+    ):
+        _alias_mobilization_params(out, blob)
+        return "mobilization_cost_estimate", out
+
     if named == "concrete_volume" and original in FW_ROUTE_NAMES:
+        if original == "mobilization_cost_estimate":
+            _alias_mobilization_params(out, blob)
         return original, out
 
     if pinned and named in stealable | {None}:
@@ -399,12 +522,20 @@ def resolve_fw_calc(
             _alias_resource_line_params(out)
         elif pinned == "material_consumption":
             _alias_consumption_params(out)
+        elif pinned == "mobilization_cost_estimate":
+            _alias_mobilization_params(out, blob)
         return pinned, out
 
     if pinned and named == "concrete_volume" and pinned != "unit_cost_total":
         if pinned == "material_consumption":
             _alias_consumption_params(out)
+        elif pinned == "mobilization_cost_estimate":
+            _alias_mobilization_params(out, blob)
         return pinned, out
+
+    if named == "mobilization_cost_estimate":
+        _alias_mobilization_params(out, blob)
+        return named, out
 
     return calc, out
 
