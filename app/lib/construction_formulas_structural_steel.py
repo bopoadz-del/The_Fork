@@ -91,6 +91,12 @@ def bolt_shear_capacity(
     cc = _norm_code(code)
     ab = float(bolt_area_mm2)
     n = int(n_shear_planes)
+    if ab <= 0:
+        return {"error": "bolt_area_mm2 must be > 0."}
+    if n <= 0:
+        return {"error": "n_shear_planes must be >= 1."}
+    if shear_strength_mpa <= 0:
+        return {"error": "shear_strength_mpa must be > 0."}
     if cc == _EC:
         cap_n = alpha_v * shear_strength_mpa * ab * n / 1.25
         std = "EN 1993-1-8 Table 3.4 (gM2=1.25)"

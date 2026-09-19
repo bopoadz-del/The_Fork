@@ -61,6 +61,10 @@ def calculate_interim_payment(
         dict with gross, retention, net payment, and breakdown.
     """
     gross = float(gross_valuation)
+    if gross < 0:
+        return {"error": "gross_valuation must be >= 0."}
+    if not (0.0 <= float(retention_percent) <= 100.0):
+        return {"error": "retention_percent must be between 0 and 100."}
     retention_rate = float(retention_percent) / 100.0
     retention_amount = gross * retention_rate
     net_payment = gross - retention_amount
