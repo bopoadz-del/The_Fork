@@ -981,6 +981,7 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # plus "documented waste factor" in ``text``) must apply the project's
     # 5% waste. Resolve before the name lookup so a missing calculation
     # still reaches concrete_volume when the ask carries the dims.
+    original_name = name
     try:
         from app.lib.construction_formulas_quantities import (
             resolve_concrete_volume_calc,
@@ -989,6 +990,19 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     except Exception:  # noqa: BLE001 — never break a non-concrete calc
         logger.warning(
             "swallowed %s in resolve_concrete_volume_calc() — continuing",
+            "Exception", exc_info=True,
+        )
+    # Phase 2 F–W (#43–84): remap resource_line / material_consumption
+    # mis-picks (and undo an E4 concrete_volume steal) after the volume
+    # pin so a "concrete" word in a consumption ask is not left on E4.
+    try:
+        from app.lib.construction_formulas_quantities import resolve_fw_calc
+        name, params = resolve_fw_calc(
+            name, params, original_name=original_name,
+        )
+    except Exception:  # noqa: BLE001 — never break a non-F–W calc
+        logger.warning(
+            "swallowed %s in resolve_fw_calc() — continuing",
             "Exception", exc_info=True,
         )
     fn = CALCULATORS.get(name)
