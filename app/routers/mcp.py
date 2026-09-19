@@ -13,7 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.dependencies import require_api_key, get_block_instance
-from app.core.privileges import raise_if_privileged_block
+from app.core.privileges import (
+    raise_if_inaccessible_document_ids,
+    raise_if_inaccessible_project_ids,
+    raise_if_privileged_block,
+)
 
 router = APIRouter()
 
@@ -102,9 +106,10 @@ if mcp_router_available():
         )
         return True
 
-    def _build_server(role: Optional[str] = None) -> "Server":
+    def _build_server(auth: Optional[dict] = None) -> "Server":
         from app.blocks import BLOCK_REGISTRY
 
+        role = (auth or {}).get("role")
         server = Server("cerebrum-blocks")
 
         @server.list_tools()
@@ -127,6 +132,8 @@ if mcp_router_available():
         @server.call_tool()
         async def _call_tool(name: str, arguments: dict):
             raise_if_privileged_block(name, role)
+            raise_if_inaccessible_project_ids(auth, arguments)
+            raise_if_inaccessible_document_ids(auth, arguments)
             if name not in BLOCK_REGISTRY:
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
             instance = get_block_instance(name)
@@ -142,7 +149,7 @@ if mcp_router_available():
     async def mcp_sse(request: Request,
                       auth: dict = Depends(require_api_key)):
         async with _sse.connect_sse(request.scope, request.receive, request._send) as streams:
-            server = _build_server(auth.get("role"))
+            server = _build_server(auth)
             await server.run(streams[0], streams[1], server.create_initialization_options())
 
 else:

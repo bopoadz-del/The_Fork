@@ -70,6 +70,13 @@ async def submit_routing_correction(
     a separate ``train_router`` call (nightly cron, or operator
     dashboard button) to consume the new rows.
     """
+    from app.core import projects as projects_store
+
+    pid = req.project_id
+    if pid and pid != "default":
+        if projects_store.get_project_accessible(pid, auth.get("user_id")) is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
     from app.blocks import BLOCK_REGISTRY
 
     cls = BLOCK_REGISTRY.get("learning_engine")
