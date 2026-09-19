@@ -1,9 +1,11 @@
 """Cross-user isolation: A must not reach B's data.
 
-Phase 1 of the accounts/isolation lane. Two plain users (A, B) and one
-admin. Each owns a project, a synthetic document, a conversation, a
+Agent E (Isolation), Phase 1. Two plain users (A, B) and one admin.
+Each owns a project, a synthetic document, a conversation, a
 memory fact, and a workflow. A hitting B's ids must get 403/404, B's
 objects stay put, and denial bodies must not carry B's canary text.
+Live fixtures, if a later pass seeds them, are ``FIXTURE-e-<date>-…``
+only — never ``FIXTURE-isolation-A`` or another agent's prefix.
 
 This file is the failing-test-first ledger for high-risk UNPROVEN
 id-bearing routes from docs/security/isolation_authz_gaps.md. A green
