@@ -259,3 +259,72 @@ async def test_named_calculator_route_actually_invokes_construction_calc(q):
         "PLATFORM PRE-DISPATCH: construction_calc" in str(m.get("content") or "")
         for m in msgs
     )
+
+
+# Exact live gate-tester strings (empty FIXTURE-a). Synthetic project_id.
+LIVE_REBAR_LAP = (
+    "What is the typical rebar lap length for 16mm bars in tension?"
+)
+LIVE_PE_CONVERT = "Convert 150 pe using pe_unit_convert"
+LIVE_FORMWORK_SLAB = "What is the formwork striking time for a slab?"
+LIVE_GATE = (LIVE_REBAR_LAP, LIVE_PE_CONVERT, LIVE_FORMWORK_SLAB)
+
+
+@pytest.mark.parametrize("q", LIVE_GATE)
+def test_live_gate_strings_are_named_calculator_not_below_routing_gate(q):
+    """Live #1 was reason=below_routing_gate; #3 was named_calculator."""
+    from app.agents.runtime import _message_is_formula_style_ask
+
+    assert _message_is_formula_style_ask(q), q
+    assert _message_wants_named_calculator(q), q
+    assert _forced_specific_tool(_tail(q), AVAILABLE) == "construction_calc", q
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("q", LIVE_GATE)
+async def test_live_empty_fixture_chat_calls_calc_without_mc_bleed(
+    q, tmp_path, monkeypatch,
+):
+    """Full chat path: LLM answers no-tool prose; predispatch must still
+    put construction_calc on the turn and must not emit the MC banner.
+    """
+    from app.agents.runtime import Agent, _MASTER_CORPUS_FALLBACK_NOTE
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ENV", "development")
+    monkeypatch.setattr(
+        "app.agents.runtime.project_is_rag_ready", lambda _pid: False,
+    )
+    _install_empty_fixture_with_master(monkeypatch)
+
+    async def _llm_no_tool(self, messages, api_key, project_id=None, **kwargs):
+        return {
+            "status": "success",
+            "choice": {
+                "message": {
+                    "content": (
+                        "This project has no documents of its own for this "
+                        "question — answering from the Master Corpus. "
+                        "Typical value from reference notes."
+                    ),
+                },
+            },
+            "raw": {},
+        }
+
+    monkeypatch.setattr(Agent, "_call_llm", _llm_no_tool)
+    agent = Agent(
+        name="project-assistant",
+        description="t",
+        system_prompt="t",
+        allowed_blocks=["construction"],
+    )
+    out = await agent.chat(q, api_key="cb_dev_key", project_id=FIXTURE_PID)
+    assert out["status"] == "success", out
+    names = [t.get("name") for t in (out.get("tool_calls") or [])]
+    assert "construction_calc" in names, names
+    answer = out.get("answer") or ""
+    assert _MASTER_CORPUS_FALLBACK_NOTE.strip() not in answer
+    sources = out.get("sources") or []
+    assert all(s.get("layer") != "master_corpus" for s in sources)
+    assert all(s.get("project_id") != MASTER_PID for s in sources)
