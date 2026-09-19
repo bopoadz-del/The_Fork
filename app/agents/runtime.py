@@ -442,21 +442,52 @@ _TOOL_FORMAT_RETRY_NUDGE = (
 #    the clause details."), which is the same dead end for the reader.
 # Both require a FIRST-PERSON promise. A bare leading verb ("Search results
 # show three specs...") is a real answer and must not match.
+# The work a promise can be a promise OF. One list, used by both shapes.
+#
+# It was two lists, written out separately in the two regexes below, and they
+# named only the verbs of SEARCHING. Then the platform taught the model to read
+# a truncated tool result window by window -- and the model began ending turns
+# on "Let me READ the final window...", a verb neither list had. Live on
+# 2d9d9c0, asked to "Draft a variation order under FIDIC clause", the turn ran
+# five iterations and ended, with no error, on:
+#
+#     "I now have the project's own change-management procedure and VSR form.
+#      Let me read the final window of the VSR form to complete the picture."
+#
+# The user asked for a document and was shown a status line. This is the third
+# time new vocabulary has walked a dangling promise past this detector (see
+# _strip_progress_narration for the second), and the first two were each fixed
+# by adding the one phrase that had just been seen. So this names the whole
+# family -- everything the agent can promise to go and do to a document --
+# rather than the one verb that happened to get caught tonight.
+_PROMISED_WORK = (
+    r"search|searching|look(?:ing)?\s+up|pull(?:ing)?|check(?:ing)?|"
+    r"run(?:ning)?|re-?run|fetch(?:ing)?|retriev(?:e|ing)|validat(?:e|ing)|"
+    r"read(?:ing)?|re-?read(?:ing)?|open(?:ing)?|review(?:ing)?|"
+    r"examin(?:e|ing)|scan(?:ning)?|load(?:ing)?|continu(?:e|ing)|"
+    r"go(?:ing)?\s+through|work(?:ing)?\s+through"
+)
+
+# "Let me know if you need anything else." is a courtesy, not a promise of
+# work. It was already reachable through "check" before "read" was added, and
+# widening the verb list widens that hole, so it is closed here.
+_FIRST_PERSON_INTENT = (
+    r"(?:let me(?!\s+know\b)|i'?ll\b|i\s+will\b|i'?m\b|i\s+am\b|i\s+need\s+to\b)"
+)
+
 _SEARCH_PREAMBLE_RE = re.compile(
     r"^\s*(?:okay[,.]?\s+|sure[,.]?\s+|thanks[,.]?\s+|right[,.]?\s+)?"
-    r"(?:let me\b|i'?ll\b|i\s+will\b|i'?m\b|i\s+am\b|i\s+need\s+to\b|"
+    r"(?:" + _FIRST_PERSON_INTENT + r"|"
     r"give me a moment|one moment|hold on)"
     r"[^.!?]{0,120}?"
-    r"\b(?:search|searching|look(?:ing)?\s+up|pull(?:ing)?|check(?:ing)?|"
-    r"run(?:ning)?|re-?run|fetch(?:ing)?|retriev(?:e|ing)|validat(?:e|ing))\b",
+    r"\b(?:" + _PROMISED_WORK + r")\b",
     re.IGNORECASE,
 )
 _SEARCH_PROMISE_TAIL_RE = re.compile(
     r"(?:^|[.!?]\s+)(?:[^.!?]{0,160}?)"
-    r"\b(?:i\s+am|i'?m|i\s+will|i'?ll|let me|i\s+need\s+to)\b"
+    r"\b" + _FIRST_PERSON_INTENT +
     r"[^.!?]{0,160}?"
-    r"\b(?:search|searching|run(?:ning)?|pull(?:ing)?|look(?:ing)?\s+up|"
-    r"fetch(?:ing)?|retriev(?:e|ing)|check(?:ing)?|validat(?:e|ing))\b"
+    r"\b(?:" + _PROMISED_WORK + r")\b"
     r"[^.!?]{0,160}[.!?]?\s*$",
     re.IGNORECASE,
 )
