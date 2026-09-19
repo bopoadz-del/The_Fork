@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from app.dependencies import require_api_key, get_block_instance
 from app.core.privileges import (
+    raise_if_inaccessible_document_ids,
     raise_if_inaccessible_project_ids,
     raise_if_privileged_block,
 )
@@ -132,6 +133,7 @@ if mcp_router_available():
         async def _call_tool(name: str, arguments: dict):
             raise_if_privileged_block(name, role)
             raise_if_inaccessible_project_ids(auth, arguments)
+            raise_if_inaccessible_document_ids(auth, arguments)
             if name not in BLOCK_REGISTRY:
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
             instance = get_block_instance(name)
