@@ -53,9 +53,28 @@ Everything else is **UNPROVEN** against that sweep. See `isolation_authz_gaps.md
 
 `POST /v1/execute` and `POST /execute` exist in `app/routers/execute.py`.
 Guard: `auth: dict = Depends(require_user)`.
-Additional: `raise_if_privileged_block` for `code`/`sandbox` (admin-only); orchestrator steps scanned.
-No project/document/conversation ownership. Body `input`/`params` are passed to `block.execute`.
-A plain user (JWT role=user) can invoke every non-privileged loaded block.
+Additional: `raise_if_privileged_block` for every name in `PRIVILEGED_BLOCKS`
+(`code`, `sandbox`, `mcp_consumer`, `local_drive`, `web`, `webhook`,
+`google_drive`, `onedrive`) — Agent F `b70763a` / `08055d1` on `60c8055`.
+A plain user gets **403** on those six-plus-two blocks. Orchestrator steps scanned.
+Nested `project_id` / `document_id` must be accessible (#623). Body
+`input`/`params` otherwise pass to `block.execute`.
+A plain user (JWT role=user) can still invoke every **non-privileged** loaded block.
+
+## Agent F privileged hats (from code, not a live probe)
+
+Reviewed against `60c8055`. Not a ready/secure claim. Live dual-account
+confirm waits for `build_sha >= 60c8055` (live was still `ec6d380` when
+this row was written).
+
+- `GET /v1/agents` omits `self-coding`, `external-mcp`, `document-ingestion` for a plain user.
+- `GET /v1/agents/{name}` and `POST /v1/agents/{name}/chat[/stream]` for those three names: **404**.
+- `POST /v1/chat/stream` with `"agent"` set to one of those three: SSE **error** event (`not available`), no `route`/`final` to that hat.
+- Both synthetic users in `tests/test_no_user_reaches_another_users_data.py` must see the same denials.
+
+A new block that starts a process or reaches the network fails CI unless
+it is in `PRIVILEGED_BLOCKS` or the reviewed allowlist in
+`tests/test_no_agent_hands_a_user_the_server.py`.
 
 ## Full matrix
 
@@ -100,8 +119,8 @@ A plain user (JWT role=user) can invoke every non-privileged loaded block.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `GET` | `/v1/agents/conversations/{conversation_id}/messages` | `require_user` | no | _enforce_conversation_access (ws-* → project accessible; else stored project_id) | — | OTHER_TENANCY | test_chat_open_access_gate. Non-ws missing row allowed (empty 200) after check returns. |
 | `GET` | `/v1/agents` | `require_user` | no | n/a (registry) | — | UNPROVEN |  |
-| `GET` | `/v1/agents/{name}` | `require_user` | no | n/a | — | UNPROVEN | Includes system_prompt |
-| `POST` | `/v1/agents/{name}/chat` | `require_user` | no | conversation_id: _enforce_conversation_access; project_id: get_project owner-only (NO include_admin_approved) except master_corpus alias | path_body_id | UNPROVEN | Stream sibling uses include_admin_approved. Body project_id vs conversation_id can diverge; conv check first. Owner-only project_id 404s shared-project users on this path. |
+| `GET` | `/v1/agents/{name}` | `require_user` | privileged hats 404 | n/a | — | OTHER_TENANCY | Includes system_prompt. `self-coding` / `external-mcp` / `document-ingestion` 404 for a plain user (Agent F). |
+| `POST` | `/v1/agents/{name}/chat` | `require_user` | privileged hats 404 | conversation_id: _enforce_conversation_access; project_id: get_project owner-only (NO include_admin_approved) except master_corpus alias | path_body_id | OTHER_TENANCY | Privileged names 404 for a plain user (Agent F). Stream sibling uses include_admin_approved. Body project_id vs conversation_id can diverge; conv check first. Owner-only project_id 404s shared-project users on this path. |
 | `POST` | `/v1/agents/{name}/chat/stream` | `require_user` | no | conversation_id: _enforce; project_id: get_project include_admin_approved except MC alias | path_body_id | OTHER_TENANCY | test_chat_open_access_gate. Body-only ids (no path id). |
 
 ### `auth.py` (8)
@@ -140,7 +159,7 @@ A plain user (JWT role=user) can invoke every non-privileged loaded block.
 | `POST` | `/chat` | `require_user` | no | project_id in body: drop if get_project_accessible fails (_with_project_memory/_with_doc_search) | — | OTHER_TENANCY | test_chat_project_memory_tenancy covers helper, not HTTP cross-user. No conversation_id on this model. |
 | `POST` | `/chat/stream` | `require_user` | no | NONE — request.project_id unused; no memory/doc inject | — | UNPROVEN | Streaming chat block; project_id accepted but ignored; no tenant leak path via this handler |
 | `POST` | `/v1/chat` | `require_user` | no | same as /chat | — | OTHER_TENANCY | Alias of /chat |
-| `POST` | `/v1/chat/stream` | `require_user` | no | conversation_id: _enforce_conversation_access; project_id: get_project_accessible drop | — | UNPROVEN | Main UI stream. Conversation check imported from agents. Body conversation_id vs project_id can disagree — conv check is authoritative for ws-* |
+| `POST` | `/v1/chat/stream` | `require_user` | privileged pin refused | conversation_id: _enforce_conversation_access; project_id: get_project_accessible drop | — | OTHER_TENANCY | Main UI stream. Pinning `self-coding` / `external-mcp` / `document-ingestion` emits an error event (Agent F). Conversation check imported from agents. Body conversation_id vs project_id can disagree — conv check is authoritative for ws-* |
 
 ### `chat_photos.py` (1)
 
@@ -197,8 +216,8 @@ A plain user (JWT role=user) can invoke every non-privileged loaded block.
 
 | Method | Path | Guard | Admin | Ownership | Flags | Matrix | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `POST` | `/execute` | `require_user` | privileged_blocks_only | none — body.input/params may carry project_id/document_id with no store check | id_no_owner | UNPROVEN | Any signed-in user; raise_if_privileged_block(code/sandbox); construction/rag/etc. run with caller-supplied ids |
-| `POST` | `/v1/execute` | `require_user` | privileged_blocks_only | none — delegates to /execute | id_no_owner | UNPROVEN | EXISTS. Guard=require_user (JWT or API key→system user). Not admin. Not require_api_key-only. Privileged blocks code/sandbox admin-only. |
+| `POST` | `/execute` | `require_user` | privileged_blocks_only | nested project_id/document_id: get_project_accessible / get_document grant (#623) | id_no_owner | OTHER_TENANCY | Plain user 403 on PRIVILEGED_BLOCKS (code/sandbox/mcp_consumer/local_drive/web/webhook/google_drive/onedrive). Nested ids 404 if inaccessible. |
+| `POST` | `/v1/execute` | `require_user` | privileged_blocks_only | same as /execute | id_no_owner | OTHER_TENANCY | Alias. Guard=require_user (JWT or API key→system user). Not require_api_key-only. |
 
 ### `exports.py` (10)
 
