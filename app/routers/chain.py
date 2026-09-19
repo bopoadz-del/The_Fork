@@ -5,7 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.blocks import BLOCK_REGISTRY
-from app.core.privileges import raise_if_privileged_block
+from app.core.privileges import (
+    raise_if_inaccessible_project_ids,
+    raise_if_privileged_block,
+)
 from app.dependencies import require_user
 from app.dependencies import block_instances, _create_block_instance
 
@@ -56,6 +59,12 @@ async def chain_execute(request: ChainRequest, auth: dict = Depends(require_user
 
     for step in request.steps:
         raise_if_privileged_block(step.block, auth.get("role"))
+    raise_if_inaccessible_project_ids(
+        auth,
+        request.initial_input,
+        *[step.params for step in request.steps],
+        *[step.input for step in request.steps],
+    )
 
     try:
         if "orchestrator" not in block_instances:
