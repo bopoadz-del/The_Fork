@@ -996,6 +996,35 @@ def _master_corpus_fallback_id() -> Optional[str]:
     return pid or None
 
 
+def _skip_master_fallback_for_formula_ask(
+    query: str, project_id: str, fb_id: Optional[str],
+) -> bool:
+    """True when a formula ask on a non-master project must not hit fallback.
+
+    Thin/empty fixtures were answering rebar-lap / unit-convert asks from
+    Master Corpus excerpts with zero construction_calc calls. Lookups still
+    fall back (STEP 0b). Operator-selected Master Corpus is unchanged.
+    """
+    pid = (project_id or "").strip()
+    if not pid or not query:
+        return False
+    if fb_id and pid == fb_id:
+        return False
+    try:
+        from app.core.projects import MASTER_CORPUS_PROJECT_ID
+        if pid == MASTER_CORPUS_PROJECT_ID:
+            return False
+    except Exception:  # noqa: BLE001 — alias table is optional
+        if pid == "master_corpus":
+            return False
+    try:
+        from app.agents.runtime import message_wants_formula_calculator
+        return bool(message_wants_formula_calculator(query))
+    except Exception:  # noqa: BLE001 — skip is best-effort
+        logger.debug("formula-ask fallback skip unavailable", exc_info=True)
+        return False
+
+
 def _project_has_any_chunks(store, project_id: str) -> bool:
     """True iff the project (or any configured GK project) has indexed chunks."""
     if store.count(project_id) > 0:
@@ -8237,6 +8266,7 @@ def retrieve_with_filter(
         and bool(fb_id)
         and fb_id != project_id
         and fb_id not in gk_ids
+        and not _skip_master_fallback_for_formula_ask(query, project_id, fb_id)
     )
     raw_fb: List[Chunk] = []
     if use_fallback:

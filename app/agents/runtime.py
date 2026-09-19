@@ -2322,6 +2322,7 @@ def _should_short_circuit_rag_miss(
     if user_message and (
         _asks_self_coding(user_message)
         or _looks_like_self_contained_calculation(user_message)
+        or _message_is_formula_style_ask(user_message)
         or _asks_for_export(user_message)
     ):
         return False
@@ -3542,6 +3543,10 @@ def _message_wants_named_calculator(text: str) -> bool:
         for p in phrases
     )
     if not wants:
+        # Registry / stem names (rebar lap, pe_unit_convert) are not in
+        # intent_map.yaml. Still a named calculator — stay on this agent.
+        wants = _message_is_formula_style_ask(raw)
+    if not wants:
         return False
     if _NAMED_CALC_ASK_RE.search(raw):
         return True
@@ -3734,6 +3739,12 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     # the rest by SHAPE: a question that supplies its own dimensions and asks
     # to compute is arithmetic, whatever the domain noun happens to be.
     if "construction_calc" in available and _looks_like_self_contained_calculation(text):
+        return "construction_calc"
+    # Named / stemmed formula asks (rebar lap, pe_unit_convert, …) are
+    # the same class: construction_calc must run. The dimension heuristic
+    # above never sees them, and Kimi/Groq cannot be tool_choice-forced,
+    # so this is the named lever. Does not pick which calculator.
+    if "construction_calc" in available and _message_is_formula_style_ask(text):
         return "construction_calc"
     return None
 
@@ -5463,6 +5474,12 @@ def _wants_user_supplied_arithmetic_directive(text: str) -> bool:
     is the same class: the operands are not supposed to be in the corpus.
     """
     if _looks_like_self_contained_calculation(text):
+        return True
+    # Named formula asks carry no L×W×D, so the dimension heuristic
+    # misses them. The strict lookup clamp then tells the model to
+    # answer ONLY from retrieved excerpts — on a thin fixture that is
+    # Master Corpus bleed, and the calculator is never called.
+    if _message_is_formula_style_ask(text):
         return True
     try:
         from app.core.hypothetical_milestone_arithmetic import (
@@ -12445,6 +12462,103 @@ def _routing_disabled() -> bool:
 def _asks_self_coding(text: str) -> bool:
     t = (text or "").lower()
     return any(p in t for p in _SELF_CODING_PHRASES)
+
+
+def _formula_ask_force_enabled() -> bool:
+    """Kill switch for named-formula routing / Master-Corpus skip.
+
+    ``FORCE_CALC_ON_FORMULA_ASK=0`` restores the pre-fix behaviour
+    (dimension heuristic + intent_map.yaml only). Default ON.
+    """
+    return (os.getenv("FORCE_CALC_ON_FORMULA_ASK", "1") or "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _message_names_unambiguous_calculator(text: str) -> bool:
+    """Registry name in underscore form, or a 3+ token spaced name.
+
+    ``pe_unit_convert`` is unambiguous. ``concrete volume`` is not —
+    it is also a BOQ lookup phrase. See test_self_contained_calculation_routing.
+    """
+    try:
+        from app.lib.construction_formulas import CALCULATORS
+    except Exception:  # noqa: BLE001
+        _LOG.debug("CALCULATORS import failed", exc_info=True)
+        return False
+    raw = text or ""
+    underscored = raw.lower().replace("-", "_")
+    spaced = raw.lower()
+    for name in CALCULATORS:
+        if len(name) < 6:
+            continue
+        if name.lower() in underscored:
+            return True
+        tokens = [t for t in name.split("_") if t]
+        if len(tokens) >= 3 and name.replace("_", " ") in spaced:
+            return True
+    return False
+
+
+def _message_matches_calculator_stem(text: str) -> bool:
+    """True when the message carries the first two tokens of a 3+ token name.
+
+    ``rebar lap`` matches ``rebar_lap_length``. Two-token registry names
+    (``concrete_volume``) are excluded — they collide with BOQ lookups.
+    """
+    try:
+        from app.lib.construction_formulas import CALCULATORS
+    except Exception:  # noqa: BLE001
+        _LOG.debug("CALCULATORS import failed", exc_info=True)
+        return False
+    spaced = (text or "").lower().replace("-", " ").replace("_", " ")
+    for name in CALCULATORS:
+        tokens = [t for t in name.lower().replace("-", "_").split("_") if t]
+        if len(tokens) < 3:
+            continue
+        stem = " ".join(tokens[:2])
+        if len(stem) < 8:
+            continue
+        if stem in spaced:
+            return True
+    return False
+
+
+def _message_is_formula_style_ask(text: str) -> bool:
+    """True when the turn is a formula / calculator ask, not a doc lookup.
+
+    Does not pick which calculator — Agent C owns mapping. This only
+    says the turn must go through construction_calc and must not fall
+    back to Master Corpus RAG on another project_id.
+    """
+    if not _formula_ask_force_enabled():
+        return False
+    raw = text or ""
+    if not raw.strip():
+        return False
+    try:
+        if message_is_contract_data_lookup(raw):
+            return False
+    except Exception:  # noqa: BLE001
+        _LOG.debug("contract-data lookup check skipped", exc_info=True)
+    if _looks_like_self_contained_calculation(raw):
+        return True
+    # Underscore form (pe_unit_convert) or a 3+ token spaced name.
+    # Two-token spaced names ("concrete volume") collide with BOQ lookups
+    # and must stay on RAG — `_message_names_registered_calculator` is
+    # too loose here.
+    if _message_names_unambiguous_calculator(raw):
+        return True
+    low = raw.lower()
+    for phrases, tool in _INTENT_TOOL_MAP:
+        if tool == "construction_calc" and any(p in low for p in phrases):
+            return True
+    return _message_matches_calculator_stem(raw)
+
+
+def message_wants_formula_calculator(text: str) -> bool:
+    """Public alias for retrieve / inject — skip Master Corpus fallback."""
+    return _message_is_formula_style_ask(text)
 
 
 def _message_names_registered_calculator(text: str) -> bool:
