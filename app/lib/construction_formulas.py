@@ -44,11 +44,17 @@ def dewatering_uplift_check(
     required_fos: float = 1.25,
 ) -> DewateringResult:
     """Check if dewatering can stop — FOS = counter-weight / uplift >= 1.25."""
+    if water_depth < 0:
+        raise ValueError("water_depth must be >= 0")
+    if raft_thickness < 0 or floor_count < 0 or floor_thickness < 0:
+        raise ValueError("raft_thickness, floor_count and floor_thickness must be >= 0")
+    if concrete_unit_weight <= 0 or water_unit_weight <= 0 or required_fos <= 0:
+        raise ValueError("unit weights and required_fos must be > 0")
     uplift = water_depth * water_unit_weight
     raft_weight = raft_thickness * concrete_unit_weight
     floor_weight = floor_count * floor_thickness * concrete_unit_weight
     counter_weight = raft_weight + floor_weight
-    fos = counter_weight / uplift if uplift > 0 else 0.0
+    fos = counter_weight / uplift if uplift > 0 else float("inf")
 
     notes = [
         f"Uplift = {water_depth} x {water_unit_weight} = {uplift:.3f} T/m2",
@@ -83,6 +89,10 @@ def diaphragm_wall_panel_volume(
     excavation_depth: float, panel_count: int = 1,
 ) -> Dict[str, float]:
     """Concrete volume for diaphragm wall panels with 10% tremie waste."""
+    if panel_length <= 0 or wall_thickness <= 0 or excavation_depth <= 0:
+        raise ValueError("panel_length, wall_thickness and excavation_depth must be > 0")
+    if panel_count <= 0:
+        raise ValueError("panel_count must be > 0")
     vol = panel_length * wall_thickness * excavation_depth
     total = vol * panel_count
     return {
@@ -100,6 +110,10 @@ def dewatering_well_point_spacing(
     well_point_diameter_m: float = 0.05,
 ) -> Dict[str, Any]:
     """Well point spacing by soil type. Multi-stage: 5m/stage, max 3 stages (15m)."""
+    if soil_permeability_m_s <= 0:
+        raise ValueError("soil_permeability_m_s must be > 0")
+    if required_drawdown_m < 0:
+        raise ValueError("required_drawdown_m must be >= 0")
     if soil_permeability_m_s > 1e-3:
         spacing_m, soil_type = 1.5, "coarse sand/gravel"
     elif soil_permeability_m_s > 1e-4:
@@ -159,10 +173,17 @@ def formwork_striking_time(
         notes.append(f"OK - {concrete_strength_7h} >= CIRIA min {ciria_surface_strength}")
     else:
         notes.append(f"NG - {concrete_strength_7h} < CIRIA min {ciria_surface_strength}")
-    based_on = "test_data" if concrete_strength_7h >= design_required_strength else "insufficient"
-    notes.append(f"Recommended: {proposed_hours}h after pour")
+    strength_ok = (
+        concrete_strength_7h >= ciria_surface_strength
+        and concrete_strength_7h >= design_required_strength
+    )
+    based_on = "test_data" if strength_ok else "insufficient"
+    recommended_hours = (
+        proposed_hours if strength_ok else max(proposed_hours, bs8110_minimum_hours)
+    )
+    notes.append(f"Recommended: {recommended_hours}h after pour")
     return FormworkStrikingResult(
-        recommended_hours=proposed_hours,
+        recommended_hours=recommended_hours,
         bs8110_minimum_hours=bs8110_minimum_hours,
         ciria_minimum_strength_n_mm2=ciria_surface_strength,
         design_required_strength_n_mm2=design_required_strength,
@@ -190,6 +211,17 @@ def concrete_mix_design_sg(
 ) -> Dict[str, float]:
     """Mix design by Specific Gravity (absolute volume method).
     W/(SGw) + C/(SGc) + F/(SGf) + Cr/(SGcr) = 1.0 m3."""
+    if w_c_ratio <= 0:
+        raise ValueError("w_c_ratio must be > 0")
+    if min(cement_sg, fine_agg_sg, coarse_agg_sg) <= 0:
+        raise ValueError("specific gravities must be > 0")
+    if fine_agg_ratio < 0 or coarse_agg_ratio < 0:
+        raise ValueError("aggregate ratios must be >= 0")
+    if float(dune_sand_pct) != 0.0:
+        raise ValueError(
+            "dune_sand_pct is not applied in the absolute-volume mix "
+            "(no dune-sand SG is defined). Omit it or pass 0."
+        )
     cement_tonnes = 1.0 / (w_c_ratio / 1.0 + 1.0 / cement_sg + fine_agg_ratio / fine_agg_sg + coarse_agg_ratio / coarse_agg_sg)
     cement_kg = round(cement_tonnes * 1000, 0)
     water_litres = round(cement_kg * w_c_ratio, 0)
@@ -224,6 +256,10 @@ def modulus_of_elasticity_concrete(fck_n_mm2: float) -> float:
 
 def beam_deflection_ss_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
     """Simply supported, UDL: delta = 5wL^4 / (384EI). Returns mm."""
+    if span_m < 0 or w_kn_m < 0:
+        raise ValueError("span_m and w_kn_m must be >= 0")
+    if ec_mpa <= 0 or i_mm4 <= 0:
+        raise ValueError("ec_mpa and i_mm4 must be > 0")
     w_n_mm = w_kn_m  # kN/m = N/mm
     l_mm = span_m * 1e3
     return round((5 * w_n_mm * l_mm**4) / (384 * ec_mpa * i_mm4), 2)
@@ -231,6 +267,10 @@ def beam_deflection_ss_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: f
 
 def beam_deflection_cantilever_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
     """Cantilever, UDL: delta = wL^4 / (8EI). Returns mm."""
+    if span_m < 0 or w_kn_m < 0:
+        raise ValueError("span_m and w_kn_m must be >= 0")
+    if ec_mpa <= 0 or i_mm4 <= 0:
+        raise ValueError("ec_mpa and i_mm4 must be > 0")
     w_n_mm = w_kn_m
     l_mm = span_m * 1e3
     return round((w_n_mm * l_mm**4) / (8 * ec_mpa * i_mm4), 2)
@@ -306,7 +346,8 @@ def post_tensioning_force(
     balanced = dead_load_kn_m2 * 0.75
     force_kn = balanced * span_m**2 / (8 * e) if e > 0 else 0
     area_mm2 = (force_kn * 1000) / tendon_stress_n_mm2
-    strand_area = math.pi * (tendon_diameter_mm / 2)**2
+    # 7-wire strand fill ≈ 0.78 (ASTM A416 / EN 10138: 12.7 mm → 98.7 mm²).
+    strand_area = 0.78 * math.pi * (tendon_diameter_mm / 2)**2
     strands = math.ceil(area_mm2 / strand_area) if strand_area > 0 else 0
     return {
         "tendon_force_kn": round(force_kn, 1),
@@ -324,6 +365,10 @@ def composite_column_design(
     use_i_beam: bool = True, i_beam_weight_t: float = 0.0,
 ) -> Dict[str, Any]:
     """Compare C60+I-Beam vs C80+rebar for composite columns."""
+    if column_diameter_mm <= 0:
+        raise ValueError("column_diameter_mm must be > 0")
+    if axial_load_kn < 0 or concrete_grade_n_mm2 <= 0:
+        raise ValueError("axial_load_kn must be >= 0 and concrete_grade_n_mm2 must be > 0")
     col_area = math.pi * (column_diameter_mm / 2)**2
     cap_a = col_area * concrete_grade_n_mm2 / 1000 * (1.10 if use_i_beam and i_beam_weight_t > 0 else 1.0)
     upgraded = min(concrete_grade_n_mm2 * 1.33, 80.0)
@@ -362,6 +407,8 @@ def foundation_bearing_pressure(
     foundation_depth_m: float = 0.0,
 ) -> Dict[str, float]:
     """q = P/A, FOS vs soil capacity."""
+    if foundation_width_m <= 0 or foundation_length_m <= 0:
+        return {"error": "foundation_width_m and foundation_length_m must be > 0"}
     area = foundation_width_m * foundation_length_m
     q = column_load_kn / area
     net_q = q - foundation_depth_m * 18
@@ -429,6 +476,12 @@ def crane_planning(
     Returns:
         Dict with crane count, monthly cost, and capacity analysis
     """
+    if total_lift_demand_tons < 0:
+        raise ValueError("total_lift_demand_tons must be >= 0")
+    if crane_capacity_tons <= 0 or cycle_time_minutes <= 0 or working_days <= 0:
+        raise ValueError("crane_capacity_tons, cycle_time_minutes and working_days must be > 0")
+    if hours_per_shift <= 0 or shifts_per_day <= 0:
+        raise ValueError("hours_per_shift and shifts_per_day must be > 0")
     lifts_per_hour = 60.0 / cycle_time_minutes
     effective_capacity_per_lift = crane_capacity_tons * (utilization_pct / 100.0)
     daily_lifts_per_crane = lifts_per_hour * hours_per_shift * shifts_per_day
@@ -493,6 +546,12 @@ def crane_cost_estimate(
     Returns:
         Dict with breakdown
     """
+    if num_cranes < 0 or duration_months < 0:
+        raise ValueError("num_cranes and duration_months must be >= 0")
+    if crane_capacity_tons <= 0:
+        raise ValueError("crane_capacity_tons must be > 0")
+    if remote_area_factor < 0:
+        raise ValueError("remote_area_factor must be >= 0")
     rate_table = {25: 8000, 30: 10000, 50: 18000, 100: 30000, 200: 70000, 300: 120000}
     closest = min(rate_table.keys(), key=lambda c: abs(c - crane_capacity_tons))
     dry_hire_monthly = rate_table.get(closest, 30000)
@@ -547,6 +606,8 @@ def cost_buildup_concrete(
     waste_pct: float = 0.03,
 ) -> Dict[str, float]:
     """Full concrete cost build-up (SAR/m3)."""
+    if quantity_m3 < 0:
+        raise ValueError("quantity_m3 must be >= 0")
     cement_cost = (cement_kg_m3 / 1000) * cement_price_sar_t
     aggregate_cost = (1839 / 1000) * aggregate_price_sar_t  # ~1839 kg/m3 combined
     water_cost = (160 / 1000) * water_price_sar_m3
@@ -575,6 +636,8 @@ def cost_buildup_rebar(
     markup_pct: float = 0.15,
 ) -> Dict[str, float]:
     """Rebar cost build-up (SAR/Tonne)."""
+    if quantity_kg <= 0:
+        raise ValueError("quantity_kg must be > 0")
     qty_t = quantity_kg / 1000
     material = qty_t * material_price_sar_t * (1 + waste_pct)
     labour = qty_t * labour_mhr_t * labour_rate_sar_hr
@@ -602,6 +665,10 @@ def cost_buildup_formwork(
     markup_pct: float = 0.15,
 ) -> Dict[str, float]:
     """Formwork cost build-up (SAR/m2)."""
+    if area_m2 < 0:
+        raise ValueError("area_m2 must be >= 0")
+    if crane_output_m2_hr <= 0:
+        raise ValueError("crane_output_m2_hr must be > 0")
     shuttering = shuttering_supply_sar_m2 / 6  # 6 uses
     scaffolding = scaffolding_sar_m2_day * cycle_days
     material = shuttering + scaffolding
@@ -676,8 +743,8 @@ def mobilization_cost_estimate(
     # IT costs
     it_costs = num_personnel * 85 * duration_months  # ~85 SAR/person/month
 
-    # Warehouse equipment (forklift, crane for laydown)
-    warehouse_equip = 35000 * remote_area_factor
+    # Warehouse equipment (forklift, crane for laydown). Factor applied once in fixed.
+    warehouse_equip = 35000
 
     recurring = total_monthly * duration_months
     fixed = (office_setup + camp_setup + demobilization + safety_setup +
@@ -693,11 +760,11 @@ def mobilization_cost_estimate(
         "note": NOTE_REMOTE_AREA,
         "breakdown": {
             "offices_sar": round(office_setup * remote_area_factor, 0),
-            "camp_sar": round((camp_setup + recurring) * remote_area_factor, 0),
+            "camp_sar": round((camp_setup + camp_per_person * num_personnel * duration_months) * remote_area_factor, 0),
             "transport_sar": round(transport_per_person * num_personnel * duration_months * remote_area_factor, 0),
             "safety_medical_sar": round((safety_setup + safety_medical_per_person * num_personnel * duration_months) * remote_area_factor, 0),
             "it_sar": round(it_costs * remote_area_factor, 0),
-            "warehouse_equipment_sar": round(warehouse_equip, 0),
+            "warehouse_equipment_sar": round(warehouse_equip * remote_area_factor, 0),
             "demobilization_sar": round(demobilization * remote_area_factor, 0),
         },
         "recurring_monthly_sar": round(total_monthly, 0),
@@ -760,6 +827,8 @@ def electrical_installation_sequence(
     floor_area_m2: float, num_floors: int = 1,
 ) -> Dict[str, Any]:
     """Electrical programme: 1st fix -> 2nd fix -> test -> commission -> handover."""
+    if floor_area_m2 <= 0 or num_floors <= 0:
+        raise ValueError("floor_area_m2 and num_floors must be > 0")
     total = floor_area_m2 * num_floors
     rates = {"1st_fix_conduit_boxes": 50, "2nd_fix_equipment_panels": 75,
              "cabling_testing": 100, "final_test_temp_power": 100,
@@ -802,6 +871,8 @@ def grout_pressure_calc(
     mixing_time_minutes: float = 2.0,
 ) -> Dict[str, float]:
     """Grouting for PT: 0.5 N/mm2 (5 kg/cm2 = 75 PSI). 35 N/mm2 @ 28d, >=20 @ 7d."""
+    if tendon_duct_diameter_mm <= 0:
+        return {"error": "tendon_duct_diameter_mm must be > 0"}
     area_mm2 = math.pi * (tendon_duct_diameter_mm / 2)**2
     return {
         "duct_area_mm2": round(area_mm2, 2),
@@ -820,14 +891,43 @@ def concrete_maturity_strength(
     time_intervals_hours: List[float],
     datum_temperature: float = -10.0,
     strength_28d_n_mm2: float = 40.0,
-) -> Dict[str, float]:
-    """Nurse-Saul maturity: MI = sum((T_avg - T0) x dt)."""
-    mi = sum(max(0, t - datum_temperature) * dt for t, dt in zip(temperature_history_c, time_intervals_hours))
-    avg_t = sum(t * dt for t, dt in zip(temperature_history_c, time_intervals_hours)) / sum(time_intervals_hours) if time_intervals_hours else 0
-    ratio = (1055 + (625 * avg_t)) / ((600 + 625) * avg_t) if avg_t > 0 else 0
-    ratio = min(ratio, 1.0)
+    reference_temperature_c: float = 20.0,
+    gain_a: float = 4.0,
+    gain_b: float = 0.85,
+) -> Dict[str, Any]:
+    """Nurse-Saul maturity + ACI 209 Type I moist strength gain.
+
+    MI = sum(max(0, T - T0) * dt)  (T0 = -10 °C by default).
+    Equivalent age te (hours) = MI / (Tref - T0); te_days = te / 24.
+    f(t)/f28 = te_days / (a + b*te_days)  with a=4, b=0.85 (ACI 209R).
+    """
+    if not temperature_history_c or not time_intervals_hours:
+        return {
+            "error": "temperature_history_c and time_intervals_hours are required and must be non-empty.",
+        }
+    if len(temperature_history_c) != len(time_intervals_hours):
+        return {
+            "error": "temperature_history_c and time_intervals_hours must have the same length.",
+        }
+    if any(float(dt) <= 0 for dt in time_intervals_hours):
+        return {"error": "time_intervals_hours must all be > 0."}
+    if strength_28d_n_mm2 <= 0:
+        return {"error": "strength_28d_n_mm2 must be > 0."}
+    te_denom = float(reference_temperature_c) - float(datum_temperature)
+    if te_denom <= 0:
+        return {"error": "reference_temperature_c must be greater than datum_temperature."}
+
+    mi = sum(
+        max(0.0, float(t) - float(datum_temperature)) * float(dt)
+        for t, dt in zip(temperature_history_c, time_intervals_hours)
+    )
+    te_days = (mi / te_denom) / 24.0
+    denom = gain_a + gain_b * te_days
+    ratio = (te_days / denom) if denom > 0 else 0.0
+    ratio = min(max(ratio, 0.0), 1.0)
     return {
         "maturity_index_c_hrs": round(mi, 0),
+        "equivalent_age_days": round(te_days, 3),
         "predicted_strength_n_mm2": round(strength_28d_n_mm2 * ratio, 1),
         "percent_of_28d": round(ratio * 100, 1),
     }
@@ -969,6 +1069,7 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # plus "documented waste factor" in ``text``) must apply the project's
     # 5% waste. Resolve before the name lookup so a missing calculation
     # still reaches concrete_volume when the ask carries the dims.
+    original_name = name
     try:
         from app.lib.construction_formulas_quantities import (
             resolve_concrete_volume_calc,
@@ -977,6 +1078,19 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     except Exception:  # noqa: BLE001 — never break a non-concrete calc
         logger.warning(
             "swallowed %s in resolve_concrete_volume_calc() — continuing",
+            "Exception", exc_info=True,
+        )
+    # Phase 2 F–W (#43–84): remap resource_line / material_consumption
+    # mis-picks (and undo an E4 concrete_volume steal) after the volume
+    # pin so a "concrete" word in a consumption ask is not left on E4.
+    try:
+        from app.lib.construction_formulas_quantities import resolve_fw_calc
+        name, params = resolve_fw_calc(
+            name, params, original_name=original_name,
+        )
+    except Exception:  # noqa: BLE001 — never break a non-F–W calc
+        logger.warning(
+            "swallowed %s in resolve_fw_calc() — continuing",
             "Exception", exc_info=True,
         )
     fn = CALCULATORS.get(name)

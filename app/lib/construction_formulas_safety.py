@@ -47,7 +47,13 @@ def fall_arrest_force(
     w_n = float(worker_mass_kg) * g
     H = float(free_fall_m)
     d = float(deceleration_distance_m)
-    f_n = w_n * (1.0 + H / d) if d > 0 else float("inf")
+    if worker_mass_kg <= 0:
+        return {"error": "worker_mass_kg must be > 0."}
+    if H < 0:
+        return {"error": "free_fall_m must be >= 0."}
+    if d <= 0:
+        return {"error": "deceleration_distance_m must be > 0."}
+    f_n = w_n * (1.0 + H / d)
     f_kn = f_n / 1000.0
     within = f_kn <= _OSHA_MAF_KN
     return {
@@ -69,8 +75,14 @@ def crane_lift_capacity(
     """Net crane capacity after rigging/block/jib deductions, and the lift
     utilisation. Net = chart - deductions; util = load/net; pass if <= max
     (typical lift-plan limit 85% of chart)."""
+    if float(chart_capacity_t) <= 0:
+        return {"error": "chart_capacity_t must be > 0."}
+    if float(deductions_t) < 0 or float(load_t) < 0:
+        return {"error": "deductions_t and load_t must be >= 0."}
     net = float(chart_capacity_t) - float(deductions_t)
-    util = (float(load_t) / net) if net > 0 else float("inf")
+    if net <= 0:
+        return {"error": "deductions_t must be less than chart_capacity_t (net capacity would be <= 0)."}
+    util = float(load_t) / net
     passed = util <= max_utilization
     return {
         "net_capacity_t": round(net, 2),

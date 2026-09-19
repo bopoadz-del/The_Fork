@@ -22,6 +22,38 @@ _FIG_PCT = r"([0-9]+(?:\.[0-9]+)?)\s*(?:%|percent)"
 _CCY = r"(?:sar|aed|usd|qar|omr|bhd|kwd|\$)"
 _MONEY_SUFFIX = {"m": 1e6, "mn": 1e6, "million": 1e6, "b": 1e9, "bn": 1e9, "billion": 1e9}
 
+# Live: "Draft a variation order" succeeded with VO-001 / Total: 0.0 and
+# the ask as the description. A draft-ask is not a variation.
+_DRAFT_VO_ASK_RE = re.compile(
+    r"(?:draft|issue|create|generate|write|prepare|make)\s+"
+    r"(?:a(?:n)?\s+)?(?:variation(?:\s+order)?|vo\b|change\s+order)",
+    re.I,
+)
+
+
+def _vo_scope_after_ask(text: str) -> str:
+    """Strip a draft-VO ask so leftover is actual works scope, if any."""
+    cleaned = _DRAFT_VO_ASK_RE.sub(" ", text or "")
+    cleaned = re.sub(
+        r"\b(please|fidic|clause|under|a|an|the|for)\b",
+        " ",
+        cleaned,
+        flags=re.I,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip(" .:-")
+
+
+def _variation_has_draft_facts(vo_data: Any, text: str) -> bool:
+    """True only when there is a works description and a positive cost."""
+    data = vo_data if isinstance(vo_data, dict) else {}
+    desc = str(data.get("description") or "").strip()
+    try:
+        cost = float(data.get("direct_cost") or 0)
+    except (TypeError, ValueError):
+        cost = 0.0
+    scope = _vo_scope_after_ask(" ".join(x for x in (desc, text) if x))
+    return bool(scope) and cost > 0
+
 
 def _follow_on_rfi_from_text(text: str) -> Optional[Dict[str, Any]]:
     """Draft one follow-on RFI from the operator ask (live M10)."""
@@ -243,6 +275,15 @@ class ConstructionBoqMixin:
         quantities = p.get("quantities", data.get("quantities", {}))
         location = p.get("location", "US National Average")
         project_type = p.get("project_type", "general_building")
+
+        if not quantities:
+            return {
+                "status": "error",
+                "action": "cost_estimate",
+                "error": (
+                    "No quantities supplied — provide quantities or a BOQ"
+                ),
+            }
 
         block = self._get_historical_benchmark_block()
         if block is None:
@@ -695,6 +736,18 @@ class ConstructionBoqMixin:
         critical = [i for i in procurement_items if i["priority"] == "critical"]
         total_cost = round(sum(i["total_cost"] for i in procurement_items), 2)
 
+        if not procurement_items:
+            return {
+                "status": "error",
+                "action": "procurement_list",
+                "error": (
+                    "No BOQ line items or discrete quantities supplied — "
+                    "cannot generate a procurement list"
+                ),
+                "total_items": 0,
+                "procurement_list": [],
+            }
+
         return {
             "status": "success",
             "action": "procurement_list",
@@ -829,6 +882,16 @@ class ConstructionBoqMixin:
                 data.get("message") or (input_data if isinstance(input_data, str) else "")
             )
 
+        if not quantities:
+            return {
+                "status": "error",
+                "action": "carbon_report",
+                "error": (
+                    "No material quantities supplied — provide quantities "
+                    "or a message that names quantities"
+                ),
+            }
+
         carbon_factors = {
             "concrete_m3": 250.0,
             "steel_kg": 2.3,
@@ -896,15 +959,16 @@ class ConstructionBoqMixin:
             if any(k in name.lower() for k in ["steel", "concrete", "pipe", "cable"]):
                 submittals.append(self._create_submittal_item(name + " — Test Certificate", "Inspection & Test Plan", contract_start))
 
-        # Standard submittals always required
-        for std in [
-            ("Method Statement — Excavation", "Method Statement"),
-            ("Method Statement — Concrete Pours", "Method Statement"),
-            ("QA/QC Plan", "Quality Document"),
-            ("Health & Safety Plan", "Safety Document"),
-            ("Material Storage Plan", "Logistics Document"),
-        ]:
-            submittals.append(self._create_submittal_item(std[0], std[1], contract_start))
+        if not submittals:
+            return {
+                "status": "error",
+                "action": "submittal_log",
+                "error": (
+                    "No specification sections or BOQ items supplied — "
+                    "cannot invent a submittal register"
+                ),
+                "submittal_register": [],
+            }
 
         return {
             "status": "success",
@@ -984,29 +1048,16 @@ class ConstructionBoqMixin:
                 "source": "auto",
             })
 
-        # Add standard project risks if register is thin
-        if len(risks) < 5:
-            standard_risks = [
-                ("Weather", "Adverse weather causing programme delays", 0.3, 0.5),
-                ("Labour", "Skilled trade shortage in local market", 0.4, 0.6),
-                ("Material", "Key material price escalation or supply disruption", 0.35, 0.65),
-                ("Design", "Late design information causing programme delay", 0.5, 0.7),
-                ("Regulatory", "Permit or authority approval delays", 0.3, 0.4),
-            ]
-            for cat, desc, prob, impact in standard_risks:
-                risks.append({
-                    "id": f"RISK-{len(risks)+1:03d}",
-                    "category": cat,
-                    "description": desc,
-                    "probability": prob,
-                    "impact": impact,
-                    "risk_score": round(prob * impact * 100, 1),
-                    "severity": "high" if prob * impact > 0.3 else "medium",
-                    "mitigation": "Monitor and review monthly",
-                    "owner": "Project Manager",
-                    "status": "Open",
-                    "source": "standard",
-                })
+        if not risks:
+            return {
+                "status": "error",
+                "action": "risk_register",
+                "error": (
+                    "No risks supplied — provide risks / auto_risks from a "
+                    "document. Catalogue risks are not invented."
+                ),
+                "risk_register": [],
+            }
 
         risks.sort(key=lambda x: x["risk_score"], reverse=True)
 
@@ -1084,9 +1135,12 @@ class ConstructionBoqMixin:
 
         if not rfis:
             return {
-                "status": "success",
+                "status": "error",
                 "action": "rfi_generator",
-                "message": "No issues found to generate RFIs from. Provide 'issues' list or chain from process_document.",
+                "error": (
+                    "No issues found to generate RFIs from. Provide an "
+                    "'issues' list or a question in the message."
+                ),
                 "rfis": [],
             }
 
@@ -1151,9 +1205,20 @@ class ConstructionBoqMixin:
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
     
-        co_type = p.get("change_type", data.get("change_type", "general"))
+        co_type = p.get("change_type", data.get("change_type"))
         direct_cost = p.get("direct_cost", data.get("direct_cost", 0))
-    
+        if not co_type and not direct_cost:
+            return {
+                "status": "error",
+                "action": "change_order_analysis",
+                "error": (
+                    "Provide change_type / description and/or direct_cost — "
+                    "cannot analyse a variation with no scope and no cost"
+                ),
+            }
+        if not co_type:
+            co_type = "general"
+
         analysis = self._analyze_change_type(co_type, params)
         cost_impact = self._calculate_co_cost_impact(direct_cost, analysis)
     
@@ -1353,7 +1418,17 @@ class ConstructionBoqMixin:
         cost_overrun_threshold = p.get("overrun_threshold", 0.10)
         target_reduction = p.get("target_reduction", 0.15)
         carbon_priority = p.get("carbon_priority", False)
-    
+
+        if not current_boq:
+            return {
+                "status": "error",
+                "action": "value_engineering_analysis",
+                "error": (
+                    "Provide a BOQ / priced items — cannot invent "
+                    "value-engineering alternatives"
+                ),
+            }
+
         alternatives = []
         for item in current_boq:
             item_alts = self._find_value_engineering_alternatives(item, carbon_priority)
@@ -1589,9 +1664,28 @@ class ConstructionBoqMixin:
         existing_vos = data.get("existing_vos") or p.get("existing_vos", [])
         contract_file = data.get("contract_file") or p.get("contract_file")
         contract_value = data.get("contract_value") or p.get("contract_value") or 0
+        ask_text = " ".join(
+            str(x)
+            for x in (
+                data.get("message"),
+                data.get("text"),
+                data.get("user_message"),
+                p.get("user_message"),
+                p.get("text"),
+            )
+            if x
+        )
 
-        if not vo_data:
+        if not vo_data and not ask_text:
             return {"status": "error", "error": "Provide vo_data with at least one variation"}
+        if not _variation_has_draft_facts(vo_data, ask_text):
+            return {
+                "status": "error",
+                "action": "variation_order_manager",
+                "error": (
+                    "Cannot draft a variation order with no scope and no cost"
+                ),
+            }
 
         vo_number = vo_data.get("vo_number", f"VO-{len(existing_vos)+1:03d}")
         vo_description = vo_data.get("description", "")
@@ -1634,11 +1728,24 @@ class ConstructionBoqMixin:
                 "justification": vo_data.get("delay_justification", "")
             },
             "contract_compliance": {
-                "variation_clause": contract_terms.get("clause_reference", "Clause XX"),
-                "entitlement_clear": contract_terms.get("clear_entitlement", True),
-                "pricing_methodology": contract_terms.get("pricing_method", "Dayworks/Rates"),
-                "notice_requirements_met": vo_data.get("notice_given", True),
-                "time_bar_risk": self._check_time_bar(existing_vos, vo_data)
+                "variation_clause": (
+                    contract_terms.get("clause_reference")
+                    or vo_data.get("clause_reference")
+                ),
+                "entitlement_clear": (
+                    contract_terms["clear_entitlement"]
+                    if "clear_entitlement" in contract_terms
+                    else vo_data.get("entitlement_clear")
+                ),
+                "pricing_methodology": (
+                    contract_terms.get("pricing_method")
+                    or vo_data.get("pricing_method")
+                ),
+                "notice_requirements_met": (
+                    vo_data["notice_given"] if "notice_given" in vo_data else None
+                ),
+                "time_bar_risk": self._check_time_bar(existing_vos, vo_data),
+                "note": contract_terms.get("note"),
             },
             "supporting_documents": self._list_vo_documents(vo_data),
             "document_content": vo_document,
