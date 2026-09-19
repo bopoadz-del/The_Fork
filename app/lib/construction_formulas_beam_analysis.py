@@ -17,6 +17,10 @@ def beam_moment_simple(udl_w_kn_m: float, span_m: float) -> dict:
     statics; the fixed-end variant is beam_moment_fixed_udl.)"""
     w = float(udl_w_kn_m)
     L = float(span_m)
+    if L <= 0:
+        return {"error": "span_m must be > 0."}
+    if w < 0:
+        return {"error": "udl_w_kn_m must be >= 0."}
     m = w * L * L / 8.0
     return {
         "max_moment_kn_m": round(m, 3),
@@ -35,12 +39,18 @@ def beam_moment_point_load(
     Off-centre at a from the left support: M = P*a*b/L (b = L-a), under the load."""
     P = float(point_load_kn)
     L = float(span_m)
+    if L <= 0:
+        return {"error": "span_m must be > 0."}
+    if P < 0:
+        return {"error": "point_load_kn must be >= 0."}
     if distance_from_left_m is None:
         m = P * L / 4.0
         expr = f"P*L/4 = {P}*{L}/4"
         loc = "midspan"
     else:
         a = float(distance_from_left_m)
+        if a < 0 or a > L:
+            return {"error": "distance_from_left_m must lie on the span [0, span_m]."}
         b = L - a
         m = P * a * b / L
         expr = f"P*a*b/L = {P}*{a}*{b}/{L}"
@@ -63,6 +73,8 @@ def beam_shear_simple(
     w = float(udl_w_kn_m)
     L = float(span_m)
     P = float(central_point_load_kn)
+    if L < 0 or w < 0 or P < 0:
+        return {"error": "span_m, udl_w_kn_m and central_point_load_kn must be >= 0."}
     v = w * L / 2.0 + P / 2.0
     return {
         "max_shear_kn": round(v, 3),
@@ -77,6 +89,10 @@ def beam_moment_fixed_udl(udl_w_kn_m: float, span_m: float) -> dict:
     supports (the max), sagging M = w*L^2/24 at midspan."""
     w = float(udl_w_kn_m)
     L = float(span_m)
+    if L <= 0:
+        return {"error": "span_m must be > 0."}
+    if w < 0:
+        return {"error": "udl_w_kn_m must be >= 0."}
     m_support = w * L * L / 12.0
     m_mid = w * L * L / 24.0
     return {

@@ -21,6 +21,8 @@ def carbon_footprint_concrete(
 ) -> dict:
     """Embodied CO2e of a concrete pour = volume * factor. Factor from a typical
     ICE/EPD table by grade, or pass ``embodied_kgco2e_m3`` from the supplier EPD."""
+    if float(volume_m3) < 0:
+        return {"error": "volume_m3 must be >= 0."}
     g = (grade or "c30").strip().lower()
     factor = float(embodied_kgco2e_m3) if embodied_kgco2e_m3 is not None \
         else _CONCRETE_ECO2_KGM3.get(g, 320.0)
@@ -65,6 +67,10 @@ _LOD_CLASH_MM = {100: None, 200: 50.0, 300: 25.0, 350: 12.0, 400: 6.0, 500: 3.0}
 def bim_clash_tolerance(lod: int = 350) -> dict:
     """Typical hard-clash tolerance for a BIM level of development. This is a
     BEP convention, NOT a standard constant — confirm in the project BEP."""
+    if int(lod) not in _LOD_CLASH_MM:
+        return {
+            "error": f"Unknown LOD {lod}. Known values: {sorted(_LOD_CLASH_MM)}.",
+        }
     tol = _LOD_CLASH_MM.get(int(lod))
     return {
         "kind": "reference_table",
