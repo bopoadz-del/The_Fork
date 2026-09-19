@@ -74,6 +74,11 @@ def test_outage_error_names_the_problem(client, dead_llm):
     # upstream of it ("no kimi_api_key configured." on keyless CI runners) —
     # both name the service as the problem.
     msg = (err.get("message") or "").lower()
+    # The plumbing itself (provider, HTTP status, upstream body) is no longer
+    # shown -- see tests/test_a_provider_outage_is_survivable.py -- so the
+    # message names the SERVICE in plain words.
     assert any(w in msg for w in (
         "outage", "llm", "500", "failed", "api_key", "configured", "provider",
+        "service is temporarily unavailable",
     )), msg
+    assert "your question" in msg or "outage" in msg or "configured" in msg, msg
