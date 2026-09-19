@@ -938,6 +938,8 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     for _d in attached_docs:
         if _d.get("id") and _d["id"] not in document_ids:
             document_ids.append(_d["id"])
+    from app.core.privileges import raise_if_inaccessible_document_ids
+    raise_if_inaccessible_document_ids(auth, {"document_ids": document_ids})
 
     async def event_stream():
         rid = get_request_id()
