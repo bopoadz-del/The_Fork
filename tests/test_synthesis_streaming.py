@@ -275,6 +275,72 @@ def test_streamed_xml_tool_leak_is_not_flushed(deepseek_streaming):
     assert events[-1]["type"] == "end"
 
 
+@pytest.mark.parametrize("prose_first", [False, True])
+def test_streamed_dsml_tool_leak_is_not_flushed(deepseek_streaming, prose_first):
+    """Live d8d9573: the guard above knew XML and raw JSON, not DeepSeek's
+    DSML, and ``<｜｜DSML｜｜ invoke name="construction_calc">`` reached the
+    browser. Both live orders: markup first, and markup after a line of
+    prose (which may legitimately have been shown already)."""
+    from tests.test_a_failed_tool_is_not_a_deliverable import LIVE_LEAK
+
+    text_in = ("The calculator returned a zeroed result.\n" if prose_first else "") + LIVE_LEAK
+    deltas = [text_in[i : i + 11] for i in range(0, len(text_in), 11)]
+    with patch.object(Agent, "_call_llm", _tool_then_final()), \
+         patch.object(Agent, "_run_tool_call", _tool_ok), \
+         patch.object(Agent, "_stream_synthesis", _mk_stream(deltas)):
+        events = _run_turn(_pa_agent())
+    shown = _tokens(events)
+    assert "DSML" not in shown
+    assert "invoke" not in shown
+    assert "contract_price" not in shown, "tool arguments leaked"
+    assert events[-1]["type"] == "end"
+    assert "DSML" not in (events[-1].get("content") or "")
+
+
+def test_a_tool_that_failed_is_offered_again_not_disarmed(deepseek_streaming):
+    """The cause behind the leak. Call 1 asks for a calculation that does not
+    exist; the tool says so. The next model call must still HAVE tools --
+    ``with_tools`` true -- so the model can use the list of valid names it was
+    just handed, rather than being forced to answer empty-handed."""
+    seen = []
+
+    async def fake_llm(_self, messages, api_key, **kwargs):
+        seen.append(kwargs.get("with_tools", True))
+        if len(seen) == 1:
+            return {"status": "success", "choice": {"message": {
+                "role": "assistant", "content": "",
+                "tool_calls": [{"id": "c1", "type": "function", "function": {
+                    "name": "construction_calc",
+                    "arguments": '{"calculation":"calculate_delay_damages"}'}}]}}}
+        return {"status": "success", "choice": {"message": {
+            "role": "assistant", "content": "Recovered: re-ran it as delay_damages_daily."}}}
+
+    async def tool_failed(self, tool_call, **kwargs):
+        return {"name": "construction_calc", "ok": True, "result": {
+            "status": "error", "error": "Unknown calculation 'calculate_delay_damages'.",
+            "available": ["delay_damages_daily"]}}
+
+    streamed = []
+
+    async def spy_stream(self, messages, api_key, **kwargs):
+        streamed.append(True)
+        yield "should never be reached"
+
+    with patch.object(Agent, "_call_llm", fake_llm), \
+         patch.object(Agent, "_run_tool_call", tool_failed), \
+         patch.object(Agent, "_stream_synthesis", spy_stream):
+        events = _drain(_pa_agent().chat_stream(
+            user_message="If Milestone 1 is 30 days late, what are the delay damages?",
+            history=[], project_id=None, conversation_id=None, user_id=None,
+        ))
+
+    assert not streamed, "a failed tool was treated as the deliverable"
+    assert len(seen) >= 2 and seen[1] is not False, (
+        f"tools were disarmed after a FAILED call: with_tools={seen}"
+    )
+    assert "re-ran it as delay_damages_daily" in _tokens(events)
+
+
 def test_streamed_json_tool_leak_is_not_flushed(deepseek_streaming):
     """UI-PHYS A5: SYNTHESIS_STREAMING must not flush raw tool-call JSON."""
     import json

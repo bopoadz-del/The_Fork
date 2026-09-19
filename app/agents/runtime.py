@@ -1901,6 +1901,28 @@ def _tool_process_payload(tool_result: Any) -> dict[str, Any]:
     return inner
 
 
+_FAILURE_STATUSES = frozenset({"error", "failed", "failure"})
+
+
+def _tool_payload_reports_failure(payload: Any, _depth: int = 0) -> bool:
+    """True when a tool's own reply says it failed, whatever the envelope says.
+
+    A reply fails when its ``status`` is an error status, or it carries a
+    non-empty ``error`` and no status claiming success. Blocks nest their
+    reply under ``result``, so that is followed — two levels, which is as
+    deep as any block goes. An empty ``error`` slot, an ``errors: []`` list
+    or the word inside a note is not a failure.
+    """
+    if not isinstance(payload, dict) or _depth > 2:
+        return False
+    status = str(payload.get("status") or "").strip().lower()
+    if status in _FAILURE_STATUSES:
+        return True
+    if payload.get("error") and status not in ("success", "ok"):
+        return True
+    return _tool_payload_reports_failure(payload.get("result"), _depth + 1)
+
+
 def _should_force_synthesis(tool_result: Any) -> bool:
     """True when this tool round produced the artifact the user asked for.
 
@@ -1913,6 +1935,13 @@ def _should_force_synthesis(tool_result: Any) -> bool:
     if not isinstance(tool_result, dict):
         return False
     if tool_result.get("ok") is False:
+        return False
+    # ``ok`` says the block RAN. Live d8d9573: construction_calc ran, replied
+    # "Unknown calculation 'calculate_delay_damages'" with the 84 valid names
+    # attached — and because the envelope was ok, the tools were disarmed and
+    # the model could not use the list it had just been given. It wrote the
+    # retry as DSML text instead, and that was shown to the user.
+    if _tool_payload_reports_failure(tool_result.get("result")):
         return False
     name = tool_result.get("name")
     if name in _NON_DELIVERABLE_TOOLS:
@@ -2772,6 +2801,22 @@ def _looks_like_xml_tool_leak(text: str) -> bool:
     if not text:
         return False
     return bool(_XML_TOOL_LEAK_RE.search(text))
+
+
+def _looks_like_tool_markup_leak(text: str) -> bool:
+    """True when ``text`` carries a tool call written out as markup.
+
+    Anthropic-style XML **or** DeepSeek's DSML. The streamed-synthesis guard
+    knew the first and not the second: live d8d9573 sent
+    ``<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="construction_calc">…`` to the
+    browser as the opening of an answer. ``_sanitize_final_text`` strips DSML,
+    but a streamed segment has left the building before that runs.
+    """
+    if not text:
+        return False
+    if _looks_like_xml_tool_leak(text):
+        return True
+    return "DSML" in text and bool(_DSML_MARKER_RE.search(text))
 
 
 def _recover_xml_tool_calls(text: str) -> list[dict]:
@@ -10082,7 +10127,7 @@ class Agent:
                         # flush XML tool markup or raw tool-call JSON to the client
                         # before sanitization (frontend keeps accumulated tokens).
                         if (
-                            _looks_like_xml_tool_leak(raw_so_far)
+                            _looks_like_tool_markup_leak(raw_so_far)
                             or _looks_like_internal_tool_json(raw_so_far)
                             or _looks_like_internal_context_leak(raw_so_far)
                         ):
@@ -10115,7 +10160,7 @@ class Agent:
                     # `final_text` goes through two lines down, is the
                     # backstop.
                     if (
-                        _looks_like_xml_tool_leak(raw)
+                        _looks_like_tool_markup_leak(raw)
                         or _looks_like_internal_tool_json(raw)
                     ):
                         tool_leak = True
