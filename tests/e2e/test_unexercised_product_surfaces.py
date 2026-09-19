@@ -34,12 +34,10 @@ _PREVIOUSLY_UNPINNED_HATS = (
     "heavy-reasoning",
     "smart-orchestrator",
 )
-# Privileged-block hats (mcp_consumer / local_drive) are admin-only after
-# b70763a. A registered user must not see them in the catalog.
-_PRIVILEGED_HATS = (
-    "external-mcp",
-    "document-ingestion",
-)
+# Hold an admin-only block (mcp_consumer; local_drive), so a plain user is
+# neither offered them nor able to name them -- see
+# tests/test_no_agent_hands_a_user_the_server.py.
+_ADMIN_ONLY_HATS = ("external-mcp", "document-ingestion")
 _API_KEY = {"Authorization": "Bearer cb_dev_key"}
 
 
@@ -552,14 +550,13 @@ def test_conversation_export_clear_history_and_sandbox_gate(client, session):
     names = {a["name"] for a in r.json()["agents"]}
     missing = [n for n in _PREVIOUSLY_UNPINNED_HATS if n not in names]
     assert not missing, f"hat catalog missing {missing}"
-    leaked = [n for n in _PRIVILEGED_HATS if n in names]
-    assert not leaked, f"hat catalog leaked privileged hats {leaked}"
     for name in _PREVIOUSLY_UNPINNED_HATS:
         r = client.get(f"/v1/agents/{name}", headers=h)
         assert r.status_code == 200, f"{name} -> {r.status_code}"
-    for name in _PRIVILEGED_HATS:
+    assert not names & set(_ADMIN_ONLY_HATS), names
+    for name in _ADMIN_ONLY_HATS:
         r = client.get(f"/v1/agents/{name}", headers=h)
-        assert r.status_code in (403, 404), f"{name} -> {r.status_code}"
+        assert r.status_code == 404, f"{name} -> {r.status_code}"
 
 
 @requires_construction_kit

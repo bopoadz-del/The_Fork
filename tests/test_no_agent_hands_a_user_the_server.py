@@ -142,6 +142,22 @@ def test_the_runtime_refuses_a_privileged_block_to_a_user(monkeypatch):
     assert ran, "an admin must still reach the block"
 
 
+def test_a_tool_the_caller_would_be_refused_is_not_offered():
+    """The auto-router still hands unmatched arithmetic to self-coding, for
+    anyone. A plain user's turn there must see formula_executor_v2 and not
+    `code`, or the model spends a round on a refusal."""
+    from app.agents import AGENT_REGISTRY
+
+    agent = AGENT_REGISTRY["self-coding"]
+    set_caller_role("user")
+    offered = {t["function"]["name"] for t in agent.tool_definitions()}
+    assert not offered & PRIVILEGED_BLOCKS, offered
+    assert "formula_executor_v2" in offered
+    set_caller_role("admin")
+    offered = {t["function"]["name"] for t in agent.tool_definitions()}
+    assert "code" in offered
+
+
 def test_a_user_cannot_delegate_to_a_privileged_agent(monkeypatch):
     from app.agents import AGENT_REGISTRY
 
@@ -164,8 +180,10 @@ def test_a_user_cannot_delegate_to_a_privileged_agent(monkeypatch):
 
 # ── the doors ───────────────────────────────────────────────────────────────
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def user_client():
+    # One user per test: the suite empties the database between tests, so a
+    # module-wide user is gone by the second one ("Token user no longer exists").
     from fastapi.testclient import TestClient
 
     from app.main import app
