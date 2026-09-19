@@ -1036,7 +1036,14 @@ class VectorStore:
                             self._rag_chunk_cls.chunk_index,
                         )
                     )
-                    rows = session.scalars(stmt).all()
+                    # A caller's ids come from a filename lookup; they are not
+                    # a licence to read a retired document (live d8d9573: the
+                    # superseded Contract Data came back as results #3-#5).
+                    hidden = self._hidden_doc_ids(session, project_id)
+                    rows = [
+                        r for r in session.scalars(stmt).all()
+                        if r.doc_id not in hidden
+                    ]
         except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
             logger.warning(
                 "chunks_for_docs failed for project=%s docs=%s: %s",
@@ -1145,18 +1152,26 @@ class VectorStore:
                     ph.append(f":{key}")
                     params[key] = did
                 extra_doc = f" AND doc_id IN ({', '.join(ph)}) "
-        sql = text(
-            "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
-            "knowledge_layer, authority "
-            f"FROM {self._table_name} "
-            "WHERE project_id = :project_id "
-            f"AND {' AND '.join(clauses)} "
-            f"{extra_doc}"
-            "LIMIT :k"
-        )
         try:
             with self._lock:
                 with self._session_factory()() as session:
+                    # Probe first: _hidden_doc_sql is inert until the store
+                    # knows the documents table can gate it. Same idiom as
+                    # identifier_search — which hid retired documents while
+                    # this method, feeding the same rescues, did not.
+                    vis = ""
+                    if self._docs_visibility_ready(session):
+                        vis = self._hidden_doc_sql(self._table_name)
+                    sql = text(
+                        "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
+                        "knowledge_layer, authority "
+                        f"FROM {self._table_name} "
+                        "WHERE project_id = :project_id "
+                        f"AND {' AND '.join(clauses)} "
+                        f"{extra_doc}"
+                        f"{vis} "
+                        "LIMIT :k"
+                    )
                     rows = session.execute(sql, params).all()
         except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
             logger.warning(
@@ -1234,7 +1249,11 @@ class VectorStore:
                             self._rag_chunk_cls.chunk_index,
                         )
                     )
-                    rows = session.scalars(stmt).all()
+                    hidden = self._hidden_doc_ids(session, project_id)
+                    rows = [
+                        r for r in session.scalars(stmt).all()
+                        if r.doc_id not in hidden
+                    ]
         except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
             logger.warning(
                 "chunks_following failed for project=%s anchors=%s: %s",
