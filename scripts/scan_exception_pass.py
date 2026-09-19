@@ -125,7 +125,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # chat.py (one line). Same handler — only the line number moved.
     "app/routers/chat.py:365": "baseline 2026-09-10",
     "app/routers/chat_watchdog.py:97": "baseline 2026-09-10",
-    "app/routers/mcp.py:61": "baseline 2026-09-10",
+    "app/routers/mcp.py:65": "baseline 2026-09-10",
     "app/worker/ingest_queue.py:33": "baseline 2026-09-10",
     "scripts/build_rate_card.py:79": "baseline 2026-09-10",
     "scripts/extract_alostool.py:113": "baseline 2026-09-10",

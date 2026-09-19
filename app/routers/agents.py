@@ -301,6 +301,8 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     # attacker cannot create/write a victim's private ws-{pid} conversation.
     if conversation_id is not None:
         _enforce_conversation_access(conversation_id, auth)
+    from app.core.privileges import raise_if_inaccessible_document_ids
+    raise_if_inaccessible_document_ids(auth, {"document_ids": body.get("document_ids") or []})
 
     # Defense in depth: if a project_id is provided, the caller must own it
     # OR it must be an admin-approved platform project visible to them (PR D).
