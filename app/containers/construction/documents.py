@@ -2417,6 +2417,15 @@ class ConstructionDocumentsMixin:
         inventing commercial terms that were not supplied.
         """
         text = self._joined_operator_text(input_data, params)
+        if not (text or "").strip():
+            return {
+                "status": "error",
+                "action": "job_requisition",
+                "error": (
+                    "Provide the works scope in the message — cannot draft "
+                    "a job requisition with no facts"
+                ),
+            }
         noc = ""
         noc_m = re.search(
             r"(AM Rev Design NOC[^.]{0,80}|NOC[^.]*?expir\w+\s+\d{1,2}\s+\w+\s+\d{4})",
