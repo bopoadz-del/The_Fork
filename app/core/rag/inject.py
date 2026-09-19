@@ -367,8 +367,10 @@ def format_chunks_as_system_message(
         extract_contract_doc_ids,
         part_summary_compose_enabled,
         priced_boq_compose_enabled,
+        query_applies_a_delay_duration,
         query_asks_delay_damages_daily_amount,
         query_asks_for_aca_including_vat,
+        query_asks_for_delay_damages_rate,
         query_asks_for_boq_item_amount,
         query_asks_for_contract_commencement_date,
         query_asks_for_parent_company_guarantee,
@@ -471,6 +473,30 @@ def format_chunks_as_system_message(
                 "unless the documents apply the rate to the including-VAT "
                 "amount. Do not answer with only the Accepted Contract Amount "
                 "including VAT.\n"
+            )
+    elif query and query_applies_a_delay_duration(query) and query_asks_for_delay_damages_rate(query):
+        # Live 4b3f4b9, Set 1 E2: both operands were in the excerpts and the
+        # model still stopped at "0.45% of the Contract Price ... confirm which
+        # base the contract intends before I extend it". The platform settles
+        # that for E1 (rate x Accepted Contract Amount, excluding VAT) and the
+        # same rule answers a delay of N days. Only when BOTH are in front of
+        # it: told to use a sum it cannot see, a model invents one.
+        _dd_texts = [c.text or "" for c in chunks]
+        if (
+            any(chunk_states_delay_damages_rate(t) for t in _dd_texts)
+            and any(chunk_states_accepted_contract_amount(t) for t in _dd_texts)
+        ):
+            header += (
+                "DELAY DAMAGES OVER A PERIOD — excerpts below state the "
+                "delay-damages rate per calendar day and the Accepted Contract "
+                "Amount. Finish the sum: rate × Accepted Contract Amount "
+                "(excluding VAT) × the number of days in the question, and "
+                "state the money figure with the arithmetic shown. Use the "
+                "rate for what the question names: a Milestone's rate for a "
+                "Milestone, the whole of the Works rate only for the whole of "
+                "the Works. Mention the Maximum Amount of Delay Damages if it "
+                "is stated. Do not stop at a percentage and do not ask which "
+                "base to use.\n"
             )
     if query and query_asks_for_time_for_completion(query):
         if any(chunk_states_time_for_completion(c.text or "") for c in chunks):
