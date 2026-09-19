@@ -12,6 +12,10 @@ import math
 def concrete_cylinders(failure_load_kn: float, cylinder_diameter_mm: float = 150.0) -> dict:
     """Compressive strength from a cylinder test: f = P / A, A = pi/4 * d^2.
     Standard cylinder is 150 mm dia x 300 mm."""
+    if float(cylinder_diameter_mm) <= 0:
+        return {"error": "cylinder_diameter_mm must be > 0."}
+    if float(failure_load_kn) < 0:
+        return {"error": "failure_load_kn must be >= 0."}
     P_n = float(failure_load_kn) * 1000.0
     area = math.pi / 4.0 * float(cylinder_diameter_mm) ** 2
     f = P_n / area
@@ -32,6 +36,10 @@ def concrete_shrinkage(
     """Drying shrinkage strain at time t (ACI 209): esh(t) = t/(f+t)*esh_ult,
     f=35 (moist-cured), esh_ult ~780 microstrain (adjust for RH/size)."""
     t = float(time_days)
+    if t < 0:
+        return {"error": "time_days must be >= 0."}
+    if float(time_constant_days) < 0:
+        return {"error": "time_constant_days must be >= 0."}
     f = float(time_constant_days)
     frac = t / (f + t)
     esh = frac * float(ultimate_shrinkage_microstrain)
@@ -54,8 +62,12 @@ def concrete_curing_time(
     f(t)/f28 = t/(a+b*t); Type I moist a=4, b=0.85). Inverse:
     t = a*frac/(1 - b*frac)."""
     frac = float(target_strength_fraction)
+    if frac <= 0:
+        return {"error": "target_strength_fraction must be > 0."}
     denom = 1.0 - gain_b * frac
-    days = gain_a * frac / denom if denom > 0 else float("inf")
+    if denom <= 0:
+        return {"error": "target_strength_fraction is unreachable for the given ACI 209 b coefficient."}
+    days = gain_a * frac / denom
     return {
         "days_to_target": round(days, 2),
         "target_fraction": frac,

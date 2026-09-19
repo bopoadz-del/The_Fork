@@ -200,6 +200,215 @@ def resolve_concrete_volume_calc(
     return "concrete_volume", out
 
 
+# Phase 2 F–W (#43–84) routing. Agent C owns this slice; do not remap A–F
+# names except to recover them from an E4 ``concrete_volume`` steal when
+# the ask is clearly an F–W calculator (resource line / material
+# consumption / an F–W registry name in the text).
+FW_ROUTE_NAMES = frozenset({
+    "fineness_modulus",
+    "formwork_striking_time",
+    "foundation_bearing_pressure",
+    "grout_pressure_calc",
+    "guardrail_top_rail_height",
+    "interior_finishes_takeoff",
+    "laser_scan_accuracy",
+    "leed_points_estimate",
+    "live_load_reduction",
+    "masonry_wall_capacity",
+    "material_consumption",
+    "mobilization_cost_estimate",
+    "modulus_of_elasticity_concrete",
+    "modulus_of_rupture",
+    "pe_unit_convert",
+    "plumbing_flow_programme",
+    "post_tensioning_force",
+    "precast_beam_erection_check",
+    "productivity_manpower_duration",
+    "productivity_rate",
+    "progress_quantity",
+    "rc_beam_moment_capacity",
+    "rc_beam_shear_capacity",
+    "rebar_by_area",
+    "rebar_lap_length",
+    "rebar_weight",
+    "resource_line_cost",
+    "roi_calculator",
+    "scaffold_load_capacity",
+    "score_risk",
+    "seismic_base_shear",
+    "shear_stress_check",
+    "slab_thickness_min",
+    "slope_fos_simple",
+    "steel_tension_capacity",
+    "supervision_ratio",
+    "thermal_shrinkage_equivalence",
+    "unit_cost_total",
+    "unit_weight_concrete",
+    "weld_capacity",
+    "wind_load_on_formwork",
+    "wind_pressure",
+})
+
+_RESOURCE_LINE_TEXT_RE = re.compile(
+    r"\b(resource\s+line|daily\s+output|day\s+rate|crew\s+days?)\b",
+    re.IGNORECASE,
+)
+_CONSUMPTION_TEXT_RE = re.compile(
+    r"\b(material\s+consumption|material\s+required|output\s+per\s+unit)\b",
+    re.IGNORECASE,
+)
+_MIX_RATIO_RE = re.compile(r"\b\d+\s*:\s*\d+\s*:\s*\d+\b")
+_MIX_TEXT_RE = re.compile(
+    r"\b(mix\s+(?:design|proportion|ratio)|cement\s+parts|1\s*:\s*2\s*:\s*4)\b",
+    re.IGNORECASE,
+)
+_PRESENT = (None, "", 0, 0.0)
+
+
+def _fw_blob(calc: str | None, params: dict, text: str, original_name: str | None) -> str:
+    return " ".join(
+        str(x) for x in (
+            text,
+            calc,
+            original_name,
+            params.get("text"),
+            params.get("formula"),
+            params.get("name"),
+            params.get("calculation"),
+        ) if x
+    )
+
+
+def _param_present(params: dict, key: str) -> bool:
+    return params.get(key) not in _PRESENT
+
+
+def _blob_names_fw(blob: str) -> str | None:
+    """Longest F–W registry name mentioned as snake, spaced, or 'of'-flexed."""
+    if not blob:
+        return None
+    low = blob.lower()
+    snake = re.sub(r"[\s\-]+", "_", low)
+    hit: str | None = None
+    for name in sorted(FW_ROUTE_NAMES, key=len, reverse=True):
+        spaced = name.replace("_", " ")
+        if name in snake or spaced in low:
+            hit = name
+            break
+        parts = name.split("_")
+        flex = r"\b" + r"\b(?:\s+of)?\s+".join(re.escape(p) for p in parts) + r"\b"
+        if re.search(flex, low):
+            hit = name
+            break
+    return hit
+
+
+def _looks_like_resource_line(params: dict, blob: str) -> bool:
+    if _param_present(params, "daily_output") or _param_present(params, "day_rate"):
+        return True
+    return bool(_RESOURCE_LINE_TEXT_RE.search(blob or ""))
+
+
+def _looks_like_mix(params: dict, blob: str) -> bool:
+    if _param_present(params, "cement_parts"):
+        return True
+    return bool(_MIX_RATIO_RE.search(blob or "") or _MIX_TEXT_RE.search(blob or ""))
+
+
+def _looks_like_consumption(params: dict, blob: str) -> bool:
+    if _param_present(params, "quantity_of_work") and _param_present(params, "output_per_unit"):
+        return True
+    if _param_present(params, "output_per_unit") and (
+        _param_present(params, "quantity") or _param_present(params, "quantity_of_work")
+    ):
+        return True
+    if _CONSUMPTION_TEXT_RE.search(blob or "") and not _looks_like_mix(params, blob):
+        return True
+    return False
+
+
+def _alias_resource_line_params(out: dict) -> None:
+    if "day_rate" not in out and out.get("unit_rate") not in (None, ""):
+        out["day_rate"] = out["unit_rate"]
+
+
+def _alias_consumption_params(out: dict) -> None:
+    if "quantity_of_work" not in out or out.get("quantity_of_work") in (None, ""):
+        if out.get("quantity") not in (None, ""):
+            out["quantity_of_work"] = out["quantity"]
+    # E4 injects waste_factor=0.05 (a fraction). material_consumption treats
+    # waste_factor as the full multiplier (1.05). Convert fractions.
+    factor = out.get("waste_factor")
+    try:
+        factor_f = float(factor) if factor not in (None, "") else None
+    except (TypeError, ValueError):
+        factor_f = None
+    if factor_f is not None and 0 < factor_f < 1:
+        if out.get("waste_percent") in (None, ""):
+            out["waste_percent"] = factor_f * 100.0
+        out.pop("waste_factor", None)
+
+
+def resolve_fw_calc(
+    calc: str | None,
+    params: dict | None = None,
+    text: str = "",
+    original_name: str | None = None,
+) -> tuple[str | None, dict]:
+    """Pin F–W calculators the LLM (or E4) mis-named.
+
+    Live Phase 2 modes this owns:
+    - ``resource_line_cost`` asked, model picked ``unit_cost_total``
+    - ``material_consumption`` asked, model (or E4 ``concrete`` pin) picked
+      ``concrete_mix_proportions`` / ``concrete_volume``
+    - text names an F–W registry function (snake or spaced)
+
+    True qty×rate and true 1:2:4 mix are left alone. A raft L×W×T volume
+    ask stays on ``concrete_volume``.
+    """
+    out = dict(params or {})
+    blob = _fw_blob(calc, out, text, original_name)
+    named = str(calc or "").strip() or None
+    original = str(original_name or "").strip() or None
+    pinned = _blob_names_fw(blob)
+
+    stealable = {
+        None, "", "unit_cost_total", "concrete_mix_proportions",
+        "concrete_volume", "excavation_volume",
+    }
+
+    if _looks_like_resource_line(out, blob) and not (
+        pinned == "unit_cost_total" and not (
+            _param_present(out, "daily_output") or _param_present(out, "day_rate")
+        )
+    ):
+        if named in stealable or pinned == "resource_line_cost":
+            _alias_resource_line_params(out)
+            return "resource_line_cost", out
+
+    if _looks_like_consumption(out, blob) and not _looks_like_mix(out, blob):
+        if named in stealable or pinned == "material_consumption":
+            _alias_consumption_params(out)
+            return "material_consumption", out
+
+    if named == "concrete_volume" and original in FW_ROUTE_NAMES:
+        return original, out
+
+    if pinned and named in stealable | {None}:
+        if pinned == "resource_line_cost":
+            _alias_resource_line_params(out)
+        elif pinned == "material_consumption":
+            _alias_consumption_params(out)
+        return pinned, out
+
+    if pinned and named == "concrete_volume" and pinned != "unit_cost_total":
+        if pinned == "material_consumption":
+            _alias_consumption_params(out)
+        return pinned, out
+
+    return calc, out
+
+
 def concrete_volume(
     length_m: float = 0.0,
     width_m: float = 0.0,
@@ -221,10 +430,16 @@ def concrete_volume(
     Headline ``volume_m3`` is the with-waste figure (E4 expects 945, not net
     900). ``APPLY_DOCUMENTED_WASTE=0`` zeros the factor and restores net.
     """
+    if min(float(length_m), float(width_m), float(thickness_m),
+           float(diameter_m), float(height_m), float(top_width_m),
+           float(bottom_width_m), float(depth_m)) < 0:
+        return {"error": "concrete_volume dimensions must be >= 0."}
     if not documented_waste_enabled():
         waste_factor = 0.0
     else:
         waste_factor = float(waste_factor)
+    if waste_factor < 0:
+        return {"error": "waste_factor must be >= 0."}
     s = (shape or "rectangular").strip().lower()
     if s == "cylinder":
         net = math.pi * (diameter_m / 2.0) ** 2 * height_m

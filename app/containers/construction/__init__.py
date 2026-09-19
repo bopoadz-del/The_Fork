@@ -1471,7 +1471,11 @@ class ConstructionContainer(
         if event_date and notice_date:
             days_elapsed = self._days_between(event_date, notice_date)
             return {"at_risk": days_elapsed > 14, "days_elapsed": days_elapsed, "mitigation": "Immediate notice recommended" if days_elapsed > 10 else None}
-        return {"at_risk": False, "days_elapsed": 0}
+        return {
+            "at_risk": None,
+            "days_elapsed": None,
+            "note": "event_date and notice_date required to assess time-bar risk",
+        }
     def _days_between(self, date1: str, date2: str) -> int:
         try:
             d1 = datetime.fromisoformat(date1.replace('Z', '+00:00'))
@@ -1482,12 +1486,17 @@ class ConstructionContainer(
     def _generate_vo_document(self, vo_number: str, description: str, pricing: Dict, vo_type: str) -> str:
         return f"Variation Order {vo_number}\nType: {vo_type}\nDescription: {description}\nTotal: {pricing['total']}"
     def _list_vo_documents(self, vo_data: Dict) -> List[str]:
-        return ["Notice of change", "Detailed breakdown", "Schedule impact"]
+        docs = vo_data.get("supporting_documents") or vo_data.get("attachments") or []
+        if isinstance(docs, list):
+            return [str(d) for d in docs if d]
+        if docs:
+            return [str(docs)]
+        return []
     def _identify_vo_risks(self, vo_data: Dict, cumulative: Dict) -> List[str]:
         risks = []
         if cumulative.get("approaching_cap"):
             risks.append("Approaching contract variation cap")
-        if not vo_data.get("notice_given", True):
+        if "notice_given" in vo_data and not vo_data.get("notice_given"):
             risks.append("Notice not given - time bar risk")
         return risks
     def _run_time_impact_analysis(self, baseline: Dict, updated: Dict, events: List[Dict]) -> Dict:
@@ -2199,6 +2208,7 @@ class ConstructionContainer(
         # pins concrete_volume and the documented 5% waste → 945 m3.
         from app.lib.construction_formulas_quantities import (
             resolve_concrete_volume_calc,
+            resolve_fw_calc,
         )
         text_blob = " ".join(
             str(x) for x in (
@@ -2207,8 +2217,12 @@ class ConstructionContainer(
                 calc,
             ) if x
         )
+        orig_calc = None if calc is None else str(calc)
         calc, calc_params = resolve_concrete_volume_calc(
-            None if calc is None else str(calc), calc_params, text_blob,
+            orig_calc, calc_params, text_blob,
+        )
+        calc, calc_params = resolve_fw_calc(
+            calc, calc_params, text_blob, original_name=orig_calc,
         )
 
         if not calc:
