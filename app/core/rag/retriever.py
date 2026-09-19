@@ -2068,6 +2068,60 @@ def _named_row_terms(query: str) -> frozenset:
     )
 
 
+# Words that join a question together and never sit in a label cell on
+# their own. Separate from _GK_STOPWORDS, which only knows words of four
+# letters and up.
+_LABEL_PHRASE_STOPWORDS = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "of", "to", "in",
+    "on", "at", "by", "as", "or", "and", "for", "it", "its", "do", "does",
+    "did", "who", "what", "which", "when", "where", "why", "how", "this",
+    "that", "these", "those", "under", "per", "any", "all", "there", "with",
+    "from", "has", "have", "will", "please", "tell", "me", "give",
+})
+# A label sits at the START of its row: after nothing but a clause number,
+# cell pipes and colons. ``0.1% of the Contract Price`` contains the phrase
+# "contract price" and is a value, not the label of a row called that.
+_LABEL_START_PREFIX = r"^[\s|:]*(?:\d+(?:\.\d+)*(?:\([a-z0-9]+\))*[\s|:]*)?"
+
+
+def _label_phrases(query: str) -> List[str]:
+    """Runs of two to four consecutive content words in the question.
+
+    Live unseen Set 3: "What is the Contract Date?" and "Who is the VT
+    Subcontractor?" missed the sheet. Counting content words cannot see
+    either label — "contract" is on every line and is not counted, "VT" is
+    two letters — but the PHRASES are exactly what the label cell prints.
+    """
+    words = re.findall(r"[A-Za-z][A-Za-z0-9&/-]*", query or "")
+    runs: List[List[str]] = [[]]
+    for w in words:
+        if w.lower() in _LABEL_PHRASE_STOPWORDS or w.lower() in _GK_STOPWORDS:
+            runs.append([])
+        else:
+            runs[-1].append(w.lower())
+    out: List[str] = []
+    for run in runs:
+        for n in (4, 3, 2):
+            for i in range(0, max(0, len(run) - n + 1)):
+                phrase = " ".join(run[i:i + n])
+                # "Contract Data" opens EVERY particulars chunk as its section
+                # heading; it names the sheet, not a row on it.
+                if _CD_HEADING_IN_CHUNK_RE.fullmatch(phrase):
+                    continue
+                out.append(phrase)
+    return out
+
+
+def _line_is_labelled(line: str, phrases: List[str]) -> Optional[int]:
+    """End offset of a label phrase that OPENS ``line``, else None."""
+    low = line.lower()
+    for phrase in phrases:
+        m = re.match(_LABEL_START_PREFIX + re.escape(phrase) + r"(?![a-z0-9])", low)
+        if m:
+            return m.end()
+    return None
+
+
 def named_particulars_row_match(query: str, text: str) -> int:
     """How strongly a particulars chunk states a row the question names.
 
@@ -2082,15 +2136,20 @@ def named_particulars_row_match(query: str, text: str) -> int:
     if not is_contract_data_particulars_row(text):
         return 0
     terms = _named_row_terms(query)
-    if len(terms) < _NAMED_ROW_MIN_LINE_TERMS:
+    phrases = _label_phrases(query)
+    if len(terms) < _NAMED_ROW_MIN_LINE_TERMS and not phrases:
         return 0
     body = _cd_chunk_body(text)
     names_a_row = False
+    by_label = False
     lines = body.splitlines()
     for i, line in enumerate(lines):
         low = line.lower()
         ends = [low.rfind(t) + len(t) for t in terms if t in low]
-        if len(ends) < _NAMED_ROW_MIN_LINE_TERMS:
+        label_end = _line_is_labelled(line, phrases)
+        if label_end is not None:
+            ends = [label_end]
+        elif len(ends) < _NAMED_ROW_MIN_LINE_TERMS:
             continue
         # The row has to SAY something, in a cell of its own. ``Value of
         # Performance Bond | |`` names the row and states nothing, and the
@@ -2107,9 +2166,14 @@ def named_particulars_row_match(query: str, text: str) -> int:
                 tail = f"{tail} {nxt.lower()}"
         if _NAMED_ROW_FILLED_CELL_RE.search(tail):
             names_a_row = True
+            by_label = label_end is not None
             break
     if not names_a_row:
         return 0
+    if by_label:
+        # The whole label was named; coverage of the rest of the question
+        # ("What is the ...?") says nothing more.
+        return max(_NAMED_ROW_MIN_LINE_TERMS, sum(1 for t in terms if t in body.lower()))
     body_low = body.lower()
     covered = sum(1 for t in terms if t in body_low)
     if covered / len(terms) < _NAMED_ROW_MIN_COVERAGE:
@@ -2129,7 +2193,10 @@ def _rescue_named_particulars_rows(
         return 0
     if _DEFINITION_QUESTION_RE.search(query or ""):
         return 0
-    if len(_named_row_terms(query)) < _NAMED_ROW_MIN_LINE_TERMS:
+    if (
+        len(_named_row_terms(query)) < _NAMED_ROW_MIN_LINE_TERMS
+        and not _label_phrases(query)
+    ):
         return 0
     try:
         from app.core.projects import documents_matching_title_phrase
@@ -6090,8 +6157,36 @@ def _normalize_boq_page_refs_in_text(text: str) -> str:
     return _BOQ_PAGE_REF_RE.sub(_repl, text or "")
 
 
+_PART_SUMMARY_NOT_A_LOOKUP_RE = re.compile(
+    r"(?i)\b(?:verify|check\s+(?:that|whether|if)|add\s+up|adds\s+up|sum\s+of|"
+    r"combined|altogether|in\s+total\s+across|compare[ds]?|larger|smaller|"
+    r"greater|less\s+than|more\s+than|difference|reconcile[ds]?)\b"
+)
+
+
+def query_names_part_summary_pages(query: str) -> bool:
+    """True when the ask involves the Part Summary total of named bill page(s).
+
+    The RETRIEVAL class: fetch and lift those pages' totals. Wider than
+    :func:`query_asks_for_part_summary_total`, which also decides whether one
+    printed figure can answer the whole question.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if not extract_asked_boq_page_refs(q):
+        return False
+    if _PART_SUMMARY_ASK_RE.search(q):
+        return True
+    return bool(
+        re.search(r"(?i)\btotal\b", q)
+        and re.search(r"(?i)\bpage\b", q)
+        and _PART_SUMMARY_BILL_RE.search(q)
+    )
+
+
 def query_asks_for_part_summary_total(query: str) -> bool:
-    """True for B3 (Part Summary / page total of a named bill page).
+    """True for B3 (Part Summary / page total of ONE named bill page).
 
     B4/B5 named-CESMM amounts stay on the priced-row path. A2 / E1
     monetary particulars are not this.
@@ -6107,26 +6202,46 @@ def query_asks_for_part_summary_total(query: str) -> bool:
         return False
     if query_asks_for_boq_item_amount(q):
         return False
-    refs = extract_asked_boq_page_refs(q)
-    if not refs:
+    if not query_names_part_summary_pages(q):
         return False
-    if _PART_SUMMARY_ASK_RE.search(q):
-        return True
-    return bool(
-        re.search(r"(?i)\btotal\b", q)
-        and re.search(r"(?i)\bpage\b", q)
-        and _PART_SUMMARY_BILL_RE.search(q)
-    )
+    refs = extract_asked_boq_page_refs(q)
+    # This class short-circuits the turn: it states ONE page's printed total
+    # and skips the model. Live d8d9573 (unseen Set 3) it answered "combined
+    # total of pages d/3/1, d/3/2 and d/3/3" and "do the three items on
+    # d/3/1 add up to its Part Summary?" with page d/3/1's total alone — a
+    # correct number, to a different question. Anything over several pages,
+    # or that asks for a check rather than a lookup, goes to the model.
+    return not (len(refs) > 1 or _PART_SUMMARY_NOT_A_LOOKUP_RE.search(q))
+
+
+# Live d8d9573, unseen Set 3: one page total came back as "SAR 34,645,529.00"
+# for one question and "INR 34,645,529.00" for another. The currency was the
+# FIRST currency-shaped token near the label, matched case-insensitively, so
+# a scrap of stamp OCR ("Inr", "Sr") ahead of the label beat the "SAR"
+# printed against the figure. Two rules now: the code BESIDE the amount wins;
+# failing that, only a properly upper-case code elsewhere counts, because
+# "SAR" in a column header is a currency and "sr" in OCR soup is not.
+_CURRENCY_BESIDE_AMOUNT_RE = re.compile(
+    rf"(?i)(?<![A-Za-z])({_BOQ_CURRENCY_ATOM})\s*$"
+)
+_UPPERCASE_CURRENCY_RE = re.compile(
+    r"(?<![A-Za-z])(SAR|SR|AED|USD|EUR|GBP|QAR|BHD|KWD|OMR|EGP|CNY|INR|JPY)(?![A-Za-z])"
+)
+
+
+def _normalise_currency_token(token: str) -> str:
+    if not token:
+        return ""
+    return "SAR" if token.lower().startswith("riyal") else token.upper()
 
 
 def _part_summary_currency(blob: str) -> str:
-    match = re.search(rf"(?i)\b({_BOQ_CURRENCY_ATOM})\b", blob or "")
-    if not match:
-        return ""
-    token = match.group(1)
-    if token.lower().startswith("riyal"):
-        return "SAR"
-    return token.upper() if token.upper() == token or len(token) <= 3 else token.upper()
+    """Fallback only: a genuine upper-case currency code somewhere in ``blob``."""
+    match = _UPPERCASE_CURRENCY_RE.search(blob or "")
+    if match:
+        return match.group(1)
+    word = re.search(r"(?i)\briyals?\b", blob or "")
+    return "SAR" if word else ""
 
 
 def _parse_part_summary_amount(raw: str) -> Optional[float]:
@@ -6176,10 +6291,17 @@ def _part_summary_totals(blob: str) -> List[Dict[str, Any]]:
         window = blob[start:after_limit]
         amount: Optional[float] = None
         raw = ""
-        for match in _PART_SUMMARY_MONEY_RE.finditer(blob[label.end():after_limit]):
+        beside = ""
+        after = blob[label.end():after_limit]
+        for match in _PART_SUMMARY_MONEY_RE.finditer(after):
             amount = _parse_part_summary_amount(match.group("amount"))
             if amount is not None:
                 raw = match.group("amount")
+                # The currency of a figure is the code printed AGAINST it.
+                lead = _CURRENCY_BESIDE_AMOUNT_RE.search(
+                    after[: match.start("amount")]
+                )
+                beside = lead.group(1) if lead else ""
                 break
         if amount is None:
             continue
@@ -6199,7 +6321,7 @@ def _part_summary_totals(blob: str) -> List[Dict[str, Any]]:
             "pages": pages,
             "amount": amount,
             "raw": raw,
-            "currency": _part_summary_currency(window),
+            "currency": _normalise_currency_token(beside),
         })
     return out
 
@@ -6291,7 +6413,7 @@ def _apply_part_summary_boost(
     """In-place: lift the asked Part Summary page total over line items."""
     if not part_summary_compose_enabled():
         return
-    if not query_asks_for_part_summary_total(query):
+    if not query_names_part_summary_pages(query):
         return
     refs = extract_asked_boq_page_refs(query)
     if not refs:
@@ -6320,7 +6442,7 @@ def _rescue_part_summary_chunks(
     """
     if not part_summary_compose_enabled():
         return 0
-    if not query_asks_for_part_summary_total(query):
+    if not query_names_part_summary_pages(query):
         return 0
     refs = extract_asked_boq_page_refs(query)
     if not refs:
@@ -6332,7 +6454,7 @@ def _rescue_part_summary_chunks(
 
     recovered = _rescue_chunks_matching(
         project_id, fused, store,
-        ("part summary", asked, "total this page"),
+        ("part summary", *refs, "total this page"),
         _keep, label="part-summary",
         bonus=_PART_SUMMARY_BONUS,
     )
@@ -6342,11 +6464,12 @@ def _rescue_part_summary_chunks(
     pids = [project_id] + [
         p for p in (extra_pids or []) if p and p != project_id
     ]
-    needle_sets = (
-        ["part summary", asked],
-        ["part summary"],
-        ["total this page", asked],
-        ["page total", asked],
+    # Every page the question names: "combined total of d/3/1, d/3/2 and
+    # d/3/3" needs three footers, and only the first used to be looked for.
+    needle_sets = tuple(
+        [["part summary"]]
+        + [[label, ref] for ref in refs
+           for label in ("part summary", "total this page", "page total")]
     )
     for pid in pids:
         for needles in needle_sets:

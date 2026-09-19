@@ -302,6 +302,73 @@ def test_a_plain_rate_question_in_the_same_crowd_reserves_nothing(
     assert not any("Accepted Contract Amount: SAR" in t for t in texts)
 
 
+# ── a phrase that IS a row's label names that row ─────────────────────────
+#
+# Unseen Set 3, live d8d9573. "What is the Contract Date?" and "Who is the VT
+# Subcontractor?" both missed the sheet: the first was answered from the
+# Conditions' definition ("means the date stated in the Contract Data"), the
+# second from ANOTHER contract's glossary. Counting content words cannot see
+# either label: "contract" is on every line so it is not counted, and "VT"
+# is two letters. But "Contract Date" and "VT Subcontractor", whole, are
+# exactly what is printed in the label cell.
+
+CD_DATES = LABEL + (
+    "1.1.10: | | Contract Date | [Insert date of Letter of Award or date of NOA] |\n"
+    "1.1.78: | VT Subcontractor | Not applicable | |\n"
+    "14.6.3: | | Minimum Amount of Interim Payment Certificate | Not applicable |\n"
+)
+
+
+@pytest.mark.parametrize(
+    "question, row",
+    [
+        ("What is the Contract Date?", "Contract Date | [Insert date"),
+        ("Who is the VT Subcontractor?", "VT Subcontractor | Not applicable"),
+    ],
+)
+def test_a_label_phrase_names_its_row(ret, monkeypatch, question, row):
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_for_docs",
+        lambda self, pid, doc_ids, k_per_doc=12, **_kw: [
+            _chunk("dates", CD_DOC, 0.0, CD_DATES, 2)],
+    )
+    assert ret.named_particulars_row_match(question, CD_DATES) > 0
+    assert row in "\n".join(_texts(ret, question))
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # The phrase is in the chunk, but as part of a VALUE, not a label.
+        "What is the Contract Price?",
+        # Stopword-led: "the engineer" is not a label phrase.
+        "Who is the Engineer under this contract?",
+        "What is the date of the site visit?",
+    ],
+)
+def test_a_phrase_that_is_not_a_label_names_nothing(ret, question):
+    text = LABEL + (
+        "8.8.1: | | Delay Damages: 0.1% of the Contract Price per calendar day |\n"
+        "3.1: | The Engineer's duties: as set out in the Conditions | |\n"
+        "1.1.10: | | Contract Date | [Insert date of Letter of Award] |\n"
+    )
+    assert ret.named_particulars_row_match(question, text) == 0, question
+
+
+def test_the_sheets_own_heading_is_not_a_row_label(ret):
+    """Found on the real index: "...listed in the Contract Data?" matched all
+    ten chunks, because every one opens with the CONTRACT DATA heading."""
+    assert "contract data" not in ret._label_phrases(
+        "What are the major items of Plant listed in the Contract Data?")
+    assert ret.named_particulars_row_match(
+        "What is stated in the Contract Data?", CD_INSURANCE) == 0
+
+
+def test_a_label_phrase_with_nothing_beside_it_is_still_not_an_answer(ret):
+    bare = LABEL + "1.1.10: | | Contract Date | |\n1.1.1: | | Accepted Contract Amount: SAR 5 |\n"
+    assert ret.named_particulars_row_match("What is the Contract Date?", bare) == 0
+
+
 def test_the_reservation_itself_takes_the_contract_sum_and_only_when_asked(ret):
     """The reservation on its own, with no fence in front of it to mask a
     mistake. Ranked: the rate, then an insurance row that is ALSO an amount of

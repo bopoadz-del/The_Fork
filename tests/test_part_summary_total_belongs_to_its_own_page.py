@@ -133,6 +133,113 @@ def test_an_unlabelled_total_does_not_borrow_the_next_totals_footer():
     assert compose_part_summary_total(ASK, excerpt)["amount"] == 1234567.0
 
 
+# ── the currency is the one printed beside the amount ─────────────────────
+#
+# Live d8d9573, unseen Set 3: the same page total came back as
+# "SAR 34,645,529.00" for one question and "INR 34,645,529.00" for another.
+# The currency was the FIRST currency-shaped token anywhere near the label,
+# matched case-insensitively -- so a scrap of stamp OCR ("Inr", "Sr", "Usd")
+# ahead of the label outranked the "SAR" printed against the figure.
+
+@pytest.mark.parametrize("noise", ["Inr", "sr", "Usd", "K'l.A inr J"])
+def test_stamp_noise_before_the_label_is_not_the_currency(noise):
+    page = (
+        f"D290.2 Nr 1,239 1,185.00 1,468,215.00 {noise} To Part Summary U,. "
+        "SAR 1,234,567.00 " + FOOTER + "Page d/3/1 124 of 675"
+    )
+    assert compose_part_summary_total(ASK, page)["currency"] == "SAR"
+
+
+def test_a_total_printed_without_a_currency_does_not_borrow_one_from_noise():
+    page = ("1,468,215.00 Inr stamp To Part Summary 1,234,567.00 "
+            + FOOTER + "Page d/3/1 124 of 675")
+    assert compose_part_summary_total(ASK, page)["currency"] == ""
+
+
+def test_a_real_currency_elsewhere_on_the_page_is_still_a_fallback():
+    """Genuine upper-case code in a column header, none beside the figure."""
+    page = ("Unit Rate SAR Amount SAR D290.2 Nr 1,239 To Part Summary "
+            "1,234,567.00 " + FOOTER + "Page d/3/1 124 of 675")
+    assert compose_part_summary_total(ASK, page)["currency"] == "SAR"
+
+
+# ── the one-page shortcut answers one-page questions only ─────────────────
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "What is the combined Part Summary total of pages d/3/1, d/3/2 and d/3/3?",
+        "Verify: do the three priced items on page d/3/1 add up to its Part Summary total?",
+        "What is the sum of the Part Summary totals for d/3/1 and d/3/2?",
+        "Is the Part Summary total for page d/3/1 larger than the one for d/3/3?",
+        # No "combined", no "sum": two pages is enough on its own.
+        "What are the Part Summary totals for pages d/3/1 and d/3/2?",
+    ],
+)
+def test_a_question_over_several_pages_or_a_check_is_not_the_shortcut(question):
+    """Both live questions were answered with page d/3/1's total alone --
+    a correct number, to a different question."""
+    from app.core.rag.retriever import query_asks_for_part_summary_total
+
+    assert not query_asks_for_part_summary_total(question), question
+
+
+def test_a_several_page_question_still_gets_every_named_pages_total(monkeypatch):
+    """Taking E6 off the shortcut must not take it off the RESCUE. It needs
+    three footers; cosine offers none of them, and only the first page used
+    to be looked for."""
+    from app.core.rag import retriever as ret
+
+    page_3 = PAGE_2.replace("d/3/2", "d/3/3").replace("7,654,321.00", "5,000,000.00") \
+                   .replace("d/3/3 125", "d/3/3 126").replace("PAGE Nr. d/3/3", "PAGE Nr. d/3/4")
+    footers = {"d/3/1": _chunk("p1", 0.0, PAGE_1, 3), "d/3/2": _chunk("p2", 0.0, PAGE_2, 5),
+               "d/3/3": _chunk("p3", 0.0, page_3, 7)}
+    noise = [_chunk(f"n{i}", 0.80 - i / 100, f"General specification clause {i} on demolition.", 300 + i)
+             for i in range(6)]
+
+    def containing_all(self, pid, needles, k=20, **_kw):
+        want = [n.lower() for n in needles]
+        if len(want) == 1:
+            # A bare "part summary" LIKE on a 675-page bill is cut at LIMIT 20
+            # long before it reaches these pages. Only a page-scoped needle
+            # finds them -- which is why every named page needs its own.
+            return []
+        return [c for c in footers.values()
+                if all(w in c.text.lower() for w in want)]
+
+    vs = "app.core.rag.vector_store.VectorStore."
+    monkeypatch.setattr(vs + "search", lambda self, pid, qvec, k, query_text=None: noise[:k])
+    monkeypatch.setattr(vs + "identifier_search", lambda self, pid, identifiers, k=20: [])
+    monkeypatch.setattr(vs + "chunks_for_docs", lambda self, pid, doc_ids, k_per_doc=12, **_kw: [])
+    monkeypatch.setattr(vs + "chunks_containing_all", containing_all)
+    monkeypatch.setattr(vs + "count", lambda self, pid=None: 11)
+    monkeypatch.setattr(vs + "_verify_embedding_identity", lambda self: None)
+    monkeypatch.setattr(ret, "_doc_name_for_id",
+                        lambda did: "Example - Demolition BOQ.pdf", raising=False)
+    monkeypatch.setattr("app.core.projects.documents_matching_title_phrase",
+                        lambda pid, phrase, limit=8: [])
+    monkeypatch.setattr("app.core.projects.documents_matching_filename_terms",
+                        lambda *a, **k: [])
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("COMPOSE_PART_SUMMARY", raising=False)
+    monkeypatch.delenv("RAG_LAYERED", raising=False)
+
+    ask = "What is the combined Part Summary total of pages d/3/1, d/3/2 and d/3/3?"
+    chunks, _ = ret.retrieve_with_filter(ask, "p_master", k=5)
+    got = {c.chunk_id for c in chunks}
+    assert {"p1", "p2", "p3"} <= got, got
+
+
+def test_the_plain_one_page_question_still_takes_the_shortcut():
+    from app.core.rag.retriever import query_asks_for_part_summary_total
+
+    assert query_asks_for_part_summary_total(ASK)
+    assert query_asks_for_part_summary_total(
+        "what does page d/3/1 of the demolition bill total?")
+
+
 def test_compose_follows_the_question_to_the_other_page():
     excerpt = "\n\n".join((PAGE_1, PAGE_2, PAGE_12_GLUED))
     assert compose_part_summary_total(ASK_NEXT_PAGE, excerpt)["amount"] == 7654321.0
