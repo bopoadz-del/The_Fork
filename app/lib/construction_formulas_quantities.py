@@ -221,10 +221,16 @@ def concrete_volume(
     Headline ``volume_m3`` is the with-waste figure (E4 expects 945, not net
     900). ``APPLY_DOCUMENTED_WASTE=0`` zeros the factor and restores net.
     """
+    if min(float(length_m), float(width_m), float(thickness_m),
+           float(diameter_m), float(height_m), float(top_width_m),
+           float(bottom_width_m), float(depth_m)) < 0:
+        return {"error": "concrete_volume dimensions must be >= 0."}
     if not documented_waste_enabled():
         waste_factor = 0.0
     else:
         waste_factor = float(waste_factor)
+    if waste_factor < 0:
+        return {"error": "waste_factor must be >= 0."}
     s = (shape or "rectangular").strip().lower()
     if s == "cylinder":
         net = math.pi * (diameter_m / 2.0) ** 2 * height_m
