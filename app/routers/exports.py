@@ -335,14 +335,19 @@ def _require_conversation_in_project(
     """
     del auth  # path grant is ``_check_owner``; kept so call sites stay stable
     aliases = _project_aliases(project_id)
-    if conversation_id.startswith("ws-"):
-        from app.routers.agents import _workspace_project_candidates
-
-        cands = set(_workspace_project_candidates(conversation_id))
-        if not cands.intersection(aliases):
-            raise HTTPException(404, "Conversation not found")
     conv = agent_memory.get_conversation(conversation_id)
     if conv is None:
+        # Ad-hoc / WBS-only. A ``ws-`` id must still name this project
+        # (``ws-{pid}`` or ``ws-{pid}-{suffix}``). Stored rows below
+        # bind on ``project_id`` so ``ws-master_corpus-export-test``
+        # (two suffix segments) still resolves via the alias set.
+        if conversation_id.startswith("ws-"):
+            from app.routers.agents import _workspace_project_candidates
+
+            if not set(_workspace_project_candidates(conversation_id)).intersection(
+                aliases
+            ):
+                raise HTTPException(404, "Conversation not found")
         return
     stored = conv.get("project_id")
     if stored is None or stored not in aliases:
