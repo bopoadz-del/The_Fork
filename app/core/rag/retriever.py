@@ -952,9 +952,12 @@ def retrieve(
     k: int = 5,
     *,
     intent: Optional[str] = None,
+    operator_text: Optional[str] = None,
 ) -> List[Chunk]:
     """Backwards-compatible: returns top-K AFTER the noise filter."""
-    chunks, _ = retrieve_with_filter(query, project_id, k=k, intent=intent)
+    chunks, _ = retrieve_with_filter(
+        query, project_id, k=k, intent=intent, operator_text=operator_text,
+    )
     return chunks
 
 
