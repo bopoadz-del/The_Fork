@@ -184,14 +184,59 @@ def test_a_question_over_several_pages_or_a_check_is_not_the_shortcut(question):
     assert not query_asks_for_part_summary_total(question), question
 
 
+# ── a label the chunker cut in half ───────────────────────────────────────
+#
+# Unseen Set 3 B3, page d/3/3, 0/3 on every build. On the live index one
+# chunk ENDS "...storm water culverts 1,370.00 To Par" and the next BEGINS
+# "t Summary ... SAR 17,496,857.00 ... Page d/3/3". Neither half says "Part
+# Summary", so the detector saw no total and the lookup (LIKE '%part
+# summary%') could not find the chunk at all.
+
+SPLIT_HEAD = ("G |Breakout and remove existing chain link fence D549.2 m 3,504 80.00 "
+              "280,320.00 H_ |storm water culverts D529.3 m 1,370.00 Rate Only To Par")
+SPLIT_TAIL = ("t Summary U,. stamp SAR 5,000,000.00 " + FOOTER + "Page d/3/3 126 of 675 "
+              + HEADER + "PAGE Nr. d/3/4 Item Description")
+OCR_NOISE_TAIL = ("r^. Summary 28/7/99 * SAR 5,000,000.00 " + FOOTER
+                  + "Page d/3/3 126 of 675")
+ASK_D33 = ASK.replace("d/3/1", "d/3/3")
+
+
+@pytest.mark.parametrize("tail", [SPLIT_TAIL, OCR_NOISE_TAIL])
+def test_the_second_half_of_a_split_label_is_still_the_pages_total(tail):
+    assert chunk_states_part_summary_total(tail, ["d/3/3"])
+    parsed = compose_part_summary_total(ASK_D33, tail)
+    assert parsed and parsed["amount"] == 5000000.0 and parsed["currency"] == "SAR"
+
+
+def test_the_first_half_states_no_total():
+    assert not chunk_states_part_summary_total(SPLIT_HEAD, ["d/3/3"])
+
+
+def test_a_split_label_is_only_a_label_at_the_very_start_of_a_chunk():
+    """"Summary" opening a CHUNK, before a money figure, under a bill page
+    footer. Not the word wherever it appears."""
+    prose = ("Executive overview of the demolition works. Summary of costs to date is "
+             "SAR 5,000,000.00 as reported. " + FOOTER + "Page d/3/3 126 of 675")
+    assert not chunk_states_part_summary_total(prose, ["d/3/3"])
+    assert compose_part_summary_total(ASK_D33, prose) is None
+
+
+def test_in_a_joined_excerpt_each_chunk_start_counts():
+    """The model's context is several chunks joined; the split tail is rarely
+    the first of them."""
+    excerpt = "\n\n".join((PAGE_1, "[source: PART NR. 3.pdf, chunk 12]\n" + SPLIT_TAIL))
+    assert compose_part_summary_total(ASK_D33, excerpt)["amount"] == 5000000.0
+
+
 def test_a_several_page_question_still_gets_every_named_pages_total(monkeypatch):
     """Taking E6 off the shortcut must not take it off the RESCUE. It needs
     three footers; cosine offers none of them, and only the first page used
     to be looked for."""
     from app.core.rag import retriever as ret
 
-    page_3 = PAGE_2.replace("d/3/2", "d/3/3").replace("7,654,321.00", "5,000,000.00") \
-                   .replace("d/3/3 125", "d/3/3 126").replace("PAGE Nr. d/3/3", "PAGE Nr. d/3/4")
+    # Page d/3/3 is the chunk whose label the chunker cut in half: it does
+    # not contain the words "part summary" at all.
+    page_3 = SPLIT_TAIL
     footers = {"d/3/1": _chunk("p1", 0.0, PAGE_1, 3), "d/3/2": _chunk("p2", 0.0, PAGE_2, 5),
                "d/3/3": _chunk("p3", 0.0, page_3, 7)}
     noise = [_chunk(f"n{i}", 0.80 - i / 100, f"General specification clause {i} on demolition.", 300 + i)
