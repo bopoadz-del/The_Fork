@@ -76,16 +76,16 @@ class TestExecuteEndpoint:
         assert "result" in data
     
     def test_execute_web_block(self):
-        """Test executing web block."""
+        """`web` fetches any URL from inside the network: admin-only. cb_dev_key
+        is deliberately NOT an admin (test_hardening), so it is refused. What
+        the block does is covered in tests/blocks/test_web.py."""
         response = client.post("/execute", json={
             "block": "web",
             "input": "<html><body>Test</body></html>",
             "params": {"operation": "html_parse"}
         })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["block"] == "web"
+
+        assert response.status_code == 403
     
     def test_execute_nonexistent_block(self):
         """Test executing non-existent block."""
@@ -164,16 +164,16 @@ class TestDriveEndpoints:
             pytest.skip("requires CEREBRUM_VIRGIN=false")
 
     def test_local_drive_list(self):
-        """Test local drive via execute endpoint."""
+        """`local_drive` reads and writes the data disk, which holds every
+        user's uploads: admin-only, so the non-admin cb_dev_key is refused.
+        What the block does is covered in tests/blocks/test_local_drive.py."""
         response = client.post("/execute", json={
             "block": "local_drive",
             "input": "/",
             "params": {"operation": "list"}
         })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["block"] == "local_drive"
+
+        assert response.status_code == 403
     
     def test_google_drive_mock(self):
         """Test Google Drive with mock."""

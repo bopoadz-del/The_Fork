@@ -11501,6 +11501,9 @@ class Agent:
                     },
                 }
             target = get_agent(agent_name)
+            from app.core.privileges import caller_may_use_agent
+            if target is not None and not caller_may_use_agent(target):
+                target = None
             if target is None:
                 return {
                     "name": name,
@@ -11508,7 +11511,7 @@ class Agent:
                     "result": {
                         "status": "error",
                         "error": f"Unknown agent: {agent_name}",
-                        "hint": f"Valid agents: {', '.join(sorted(AGENT_REGISTRY.keys())) or '(none)'}.",
+                        "hint": f"Valid agents: {', '.join(sorted(n for n, a in AGENT_REGISTRY.items() if caller_may_use_agent(a))) or '(none)'}.",
                     },
                 }
             if agent_name in _call_stack:
@@ -12101,6 +12104,17 @@ class Agent:
                     "status": "error",
                     "error": f"Block '{name}' not in agent's allowed_blocks.",
                     "hint": "This tool is not available to you; choose another.",
+                },
+            }
+        from app.core.privileges import caller_may_use_block, privileged_forbidden_detail
+        if not caller_may_use_block(name):
+            return {
+                "name": name,
+                "ok": False,
+                "result": {
+                    "status": "error",
+                    "error": privileged_forbidden_detail(name),
+                    "hint": "This tool is not available to this user; answer without it.",
                 },
             }
 

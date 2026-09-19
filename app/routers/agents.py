@@ -23,6 +23,7 @@ from app.agents import AGENT_REGISTRY, get_agent
 from app.agents.runtime import ROUTING_GENERALISTS, select_agent_for_message
 from app.core import agent_memory
 from app.core import projects as store
+from app.core.privileges import caller_may_use_agent
 from app.dependencies import require_user
 
 router = APIRouter()
@@ -146,8 +147,9 @@ async def get_conversation_messages(
 
 @router.get("/v1/agents")
 async def list_agents(auth: dict = Depends(require_user)):
+    visible = [a for a in AGENT_REGISTRY.values() if caller_may_use_agent(a, auth.get("role"))]
     return {
-        "count": len(AGENT_REGISTRY),
+        "count": len(visible),
         "agents": [
             {
                 "name": a.name,
@@ -161,7 +163,7 @@ async def list_agents(auth: dict = Depends(require_user)):
                 "available": a.unavailable_reason() is None,
                 "unavailable_reason": a.unavailable_reason(),
             }
-            for a in AGENT_REGISTRY.values()
+            for a in visible
         ],
     }
 
@@ -169,7 +171,7 @@ async def list_agents(auth: dict = Depends(require_user)):
 @router.get("/v1/agents/{name}")
 async def get_agent_info(name: str, auth: dict = Depends(require_user)):
     agent = get_agent(name)
-    if not agent:
+    if not agent or not caller_may_use_agent(agent, auth.get("role")):
         raise HTTPException(404, f"Agent '{name}' not found")
     return {
         "name": agent.name,
@@ -186,7 +188,7 @@ async def get_agent_info(name: str, auth: dict = Depends(require_user)):
 @router.post("/v1/agents/{name}/chat")
 async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(require_user)):
     agent = get_agent(name)
-    if not agent:
+    if not agent or not caller_may_use_agent(agent, auth.get("role")):
         raise HTTPException(404, f"Agent '{name}' not found")
     _reason = agent.unavailable_reason()
     if _reason:
@@ -275,7 +277,7 @@ def _bound_history(history: object) -> list:
 @router.post("/v1/agents/{name}/chat/stream")
 async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(require_user)):
     agent = get_agent(name)
-    if not agent:
+    if not agent or not caller_may_use_agent(agent, auth.get("role")):
         raise HTTPException(404, f"Agent '{name}' not found")
     _reason = agent.unavailable_reason()
     if _reason:
