@@ -304,11 +304,76 @@ def _check_owner(project_id: str, user_id: str) -> Dict[str, Any]:
     return proj
 
 
+def _project_aliases(project_id: str) -> set[str]:
+    """Path project id plus master-corpus / storage aliases it may be written under."""
+    aliases = {project_id}
+    src = projects_store._master_corpus_source(project_id)
+    if src:
+        aliases.add(src)
+    ui = projects_store.ui_project_id(project_id)
+    if ui:
+        aliases.add(ui)
+    aliases.add(projects_store.storage_project_id(project_id))
+    return aliases
+
+
+def _require_conversation_in_project(
+    project_id: str, conversation_id: str, auth: Dict[str, Any]
+) -> None:
+    """Caller must be able to read the conversation, and it must belong here.
+
+    Path project access alone is not enough: a caller who owns project A
+    must not export conversation/WBS rows bound to project B.
+
+    ``_check_owner`` already ran on the path project. Do not re-run
+    ``_enforce_conversation_access`` here: that helper looks the project
+    up again and 404s fixtures that mock ``_check_owner`` without a
+    stored projects row. Binding is the path aliases plus either the
+    ``ws-{{pid}}`` id or the stored conversation ``project_id``.
+    A missing conversation row is ad-hoc (xlsx fixtures, WBS staged
+    without a messages row) and is allowed after the path grant.
+    """
+    del auth  # path grant is ``_check_owner``; kept so call sites stay stable
+    aliases = _project_aliases(project_id)
+    conv = agent_memory.get_conversation(conversation_id)
+    if conv is None:
+        # Ad-hoc / WBS-only. A ``ws-`` id must still name this project
+        # (``ws-{pid}`` or ``ws-{pid}-{suffix}``). Stored rows below
+        # bind on ``project_id`` so ``ws-master_corpus-export-test``
+        # (two suffix segments) still resolves via the alias set.
+        if conversation_id.startswith("ws-"):
+            from app.routers.agents import _workspace_project_candidates
+
+            if not set(_workspace_project_candidates(conversation_id)).intersection(
+                aliases
+            ):
+                raise HTTPException(404, "Conversation not found")
+        return
+    stored = conv.get("project_id")
+    if stored is None or stored not in aliases:
+        raise HTTPException(404, "Conversation not found")
+
+
+def _require_document_in_project(project_id: str, document_id: str) -> Dict[str, Any]:
+    """Load a document only when it belongs to this project (or its storage alias)."""
+    doc = projects_store.get_document(document_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    stored = doc.get("project_id")
+    # Test fixtures (and a few in-memory mocks) omit project_id after
+    # ``_check_owner``. A bound row on another project is still 404.
+    if stored is None:
+        return doc
+    if stored not in _project_aliases(project_id):
+        raise HTTPException(404, "document not found")
+    return doc
+
+
 def _categories_from_document(project_id: str, document_id: str) -> List[Dict[str, Any]]:
     """Derive cost-BOQ categories from an uploaded priced BOQ via boq_processor
     (groups its line items by section). Raises 4xx if no priced items parse."""
-    doc = projects_store.get_document(document_id)
-    if not doc or not doc.get("file_path"):
+    doc = _require_document_in_project(project_id, document_id)
+    if not doc.get("file_path"):
         raise HTTPException(404, "document not found")
     from app.blocks.boq_processor import BOQProcessorBlock
     from app.core.doc_index import _run_sync
@@ -644,6 +709,11 @@ async def price_boq(
 
     proj = _check_owner(project_id, auth["user_id"])
     name = req.project_name or proj.get("name") or "Project"
+    # Ownership before asset-type validation so a foreign document_id
+    # cannot be distinguished from a missing one via a 400.
+    doc = _require_document_in_project(project_id, req.document_id)
+    if not doc.get("file_path"):
+        raise HTTPException(404, "document not found")
 
     # Validate asset_type / currency against the deployed rate-card.
     assets = boq_pricing.available_assets()
@@ -659,9 +729,6 @@ async def price_boq(
                  f"'{req.asset_type}'. Valid: {currencies}")
 
     # Extract UNPRICED line items from the document (rate is 0 -- expected).
-    doc = projects_store.get_document(req.document_id)
-    if not doc or not doc.get("file_path"):
-        raise HTTPException(404, "document not found")
     from app.blocks.boq_processor import BOQProcessorBlock
     res = await BOQProcessorBlock().process(
         {"file_path": doc["file_path"], "project_id": project_id})
@@ -801,6 +868,8 @@ async def export_schedule_from_brief(
     refused with 422.
     """
     proj = _check_owner(project_id, auth["user_id"])
+    if req.conversation_id:
+        _require_conversation_in_project(project_id, req.conversation_id, auth)
     name = req.project_name or proj.get("name") or "Project"
     from app.core.conversation_wbs import (
         load_conversation_wbs,
@@ -870,6 +939,8 @@ async def export_schedule_from_document(
     proj = _check_owner(project_id, auth["user_id"])
     if not req.document_ids:
         raise HTTPException(400, "document_ids is required and must be non-empty")
+    for document_id in req.document_ids:
+        _require_document_in_project(project_id, document_id)
     name = req.project_name or proj.get("name") or "Project"
     from app.lib.schedule_feed import extract_schedule_feed
     lead_times, target_milestones = await extract_schedule_feed(req.document_ids)
@@ -1170,6 +1241,7 @@ async def export_conversation_schedule(
     422 when a BOQ-scope WBS was requested and only a template remains.
     """
     proj = _check_owner(project_id, auth["user_id"])
+    _require_conversation_in_project(project_id, conversation_id, auth)
     from app.core.conversation_wbs import (
         load_conversation_wbs,
         refuse_scaffold_for_boq_wbs_ask,
@@ -1235,6 +1307,7 @@ async def export_conversation_message(
     ``pdf`` is 501 by decision (2026-07-24, operator).
     """
     proj = _check_owner(project_id, auth["user_id"])
+    _require_conversation_in_project(project_id, conversation_id, auth)
     project_name = proj.get("name") or "Project"
 
     msgs = agent_memory.get_messages(conversation_id, limit=200)
@@ -1367,8 +1440,8 @@ async def export_schedule_from_boq(
     workbook writer the template path uses.
     """
     proj = _check_owner(project_id, auth["user_id"])
-    doc = projects_store.get_document(req.document_id)
-    if not doc or not doc.get("file_path"):
+    doc = _require_document_in_project(project_id, req.document_id)
+    if not doc.get("file_path"):
         raise HTTPException(404, "document not found")
 
     from app.blocks.boq_processor import BOQProcessorBlock
