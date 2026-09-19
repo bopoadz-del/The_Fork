@@ -508,7 +508,20 @@ def format_chunks_as_system_message(
                 "90 days), and do not answer from a permit tracker, "
                 "community schedule, or PSA recital instead.\n"
             )
-    if query and query_asks_who_the_engineer_is(query):
+    # Owner ruling 2026-09-19: no party names leave this RAG. The block below
+    # this one was built to do the opposite for the Engineer ("State ONLY that
+    # firm's name"); it now runs only when the rule is switched off.
+    from app.core.party_names import (
+        WITHHELD_INSTRUCTION,
+        party_names_withheld,
+        query_asks_who_a_party_is,
+    )
+    _withhold = party_names_withheld()
+    if query and _withhold and (
+        query_asks_who_a_party_is(query) or query_asks_who_the_engineer_is(query)
+    ):
+        header += WITHHELD_INSTRUCTION
+    if query and not _withhold and query_asks_who_the_engineer_is(query):
         if any(chunk_states_engineer_identity(c.text or "") for c in chunks):
             header += (
                 # Deepseek-flash conflated identity with the appointment-timing
