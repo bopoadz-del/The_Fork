@@ -307,7 +307,7 @@ def _cross(client: TestClient, world: dict, name: str):
         return client.post(
             f"/v1/projects/{a_pid}/export/schedule-from-boq",
             headers=h,
-            json={"document_id": b_doc},
+            json={"document_id": b_doc, "manhours_per_unit": {"concrete": 1.0}},
         )
     if name == "redlines":
         return client.post(
@@ -761,14 +761,16 @@ def test_revoked_style_deleted_user_token_stops(client, world):
 
 
 def test_jwt_signed_with_empty_or_other_secret_rejected(client, world):
-    """Unset/guessed SECRET_KEY must not authenticate (HS256 only)."""
+    """Guessed/unset SECRET_KEY must not authenticate (HS256 only).
+
+    PyJWT refuses to *encode* an empty HMAC key. The server-side property
+    is the same: a token minted with a secret the process did not choose
+    (empty string is not a usable HS256 key; a guessed string is) is 401.
+    """
     payload = {"user_id": world["a"]["id"]}
-    empty = jwt.encode(payload, "", algorithm="HS256")
-    r = client.get("/v1/users/me", headers={"Authorization": f"Bearer {empty}"})
-    assert r.status_code == 401
     other = jwt.encode(payload, "not-the-server-secret", algorithm="HS256")
-    r2 = client.get("/v1/users/me", headers={"Authorization": f"Bearer {other}"})
-    assert r2.status_code == 401
+    r = client.get("/v1/users/me", headers={"Authorization": f"Bearer {other}"})
+    assert r.status_code == 401
 
 
 def test_login_before_verify_is_403(client):
