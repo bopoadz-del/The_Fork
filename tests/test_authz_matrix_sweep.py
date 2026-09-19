@@ -141,3 +141,76 @@ def test_admin_delete_is_soft_archive(client, world):
 def test_owner_delete_last(client, world):
     # Run owner deletes LAST so the matrix cases above see live projects.
     assert _surface(client, "delete", world["shared"], world["owner"]) == 200
+
+
+# Deliberate public surfaces. A NEW /v1 (or other data) route that is not
+# in this set and has no require_user / require_api_key dependency fails
+# this test — the next unguarded door cannot land silently.
+_PUBLIC_ROUTES = {
+    ("GET", "/"),
+    ("GET", "/api"),
+    ("GET", "/{full_path:path}"),
+    ("GET", "/livez"),
+    ("GET", "/health"),
+    ("GET", "/ready"),
+    ("GET", "/v1/health"),
+    ("GET", "/v1/upload-limits"),
+    ("GET", "/metrics"),
+    ("GET", "/v1/users/verify-email"),
+    ("POST", "/v1/users/register"),
+    ("POST", "/v1/users/login"),
+    ("POST", "/v1/users/resend-verification"),
+    ("GET", "/v1/drive/callback"),
+    # Catalog / liveness extras that currently have no Depends. Adding a
+    # guard later is fine; adding a *new* unlisted unguarded path is not.
+    ("GET", "/stats"),
+    ("GET", "/v1/system/health"),
+    ("GET", "/blocks"),
+    ("GET", "/blocks/{block_name}"),
+    ("GET", "/v1/blocks"),
+    ("GET", "/v1/blocks/{block_name}"),
+}
+
+
+def _route_has_auth_dependency(route) -> bool:
+    from app.dependencies import require_api_key, require_user
+
+    wanted = {require_user, require_api_key}
+
+    def walk(dep) -> bool:
+        call = getattr(dep, "call", None)
+        if call in wanted:
+            return True
+        for child in getattr(dep, "dependencies", []) or []:
+            if walk(child):
+                return True
+        return False
+
+    return walk(route.dependant)
+
+
+def test_new_unguarded_route_fails_ci():
+    """Inventory gate: every non-public HTTP route must carry an auth Depends.
+
+    Worth more than any single ownership fix — a route added without
+    require_user / require_api_key and without an explicit public listing
+    fails here instead of shipping as an open door.
+    """
+    from fastapi.routing import APIRoute
+
+    unguarded = []
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        methods = (route.methods or set()) - {"HEAD", "OPTIONS"}
+        for method in methods:
+            key = (method, route.path)
+            if key in _PUBLIC_ROUTES:
+                continue
+            if _route_has_auth_dependency(route):
+                continue
+            unguarded.append(key)
+    assert unguarded == [], (
+        "New unguarded route(s) — add require_user/require_api_key "
+        f"or list them in _PUBLIC_ROUTES if deliberate public: {unguarded}"
+    )
