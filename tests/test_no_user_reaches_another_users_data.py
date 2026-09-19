@@ -428,6 +428,78 @@ def _cross(client: TestClient, world: dict, name: str):
             headers=h,
             params={"q": CANARY_B[:20]},
         )
+    if name == "doc_preview_swap":
+        return client.get(
+            f"/v1/projects/{a_pid}/documents/{b_doc}/preview", headers=h
+        )
+    if name == "doc_delete_swap":
+        return client.delete(
+            f"/v1/projects/{a_pid}/documents/{b_doc}", headers=h
+        )
+    if name == "redline_swap":
+        return client.post(
+            f"/v1/projects/{a_pid}/documents/{b_doc}/redlines", headers=h
+        )
+    if name == "workflow_stamp":
+        return client.post(
+            "/v1/workflows",
+            headers=h,
+            json={
+                "name": "stamp B",
+                "steps": [{"block": "formula_executor", "params": {}}],
+                "project_id": b_pid,
+            },
+        )
+    if name == "execute_document":
+        return client.post(
+            "/v1/execute",
+            headers=h,
+            json={
+                "block": "chat",
+                "input": "what is the rate",
+                "params": {"document_id": b_doc, "use_rag": True},
+            },
+        )
+    if name == "chain_document":
+        return client.post(
+            "/v1/chain",
+            headers=h,
+            json={
+                "steps": [
+                    {
+                        "block": "chat",
+                        "params": {"document_ids": [b_doc], "use_rag": True},
+                    }
+                ],
+                "initial_input": "what is the rate",
+            },
+        )
+    if name == "chat_stream_b_cid":
+        return client.post(
+            "/v1/chat/stream",
+            headers=h,
+            json={"message": "quote the rate", "conversation_id": b_cid},
+        )
+    if name == "chat_stream_b_docs":
+        return client.post(
+            "/v1/chat/stream",
+            headers=h,
+            json={
+                "message": "extract schedule from the attached docs",
+                "project_id": a_pid,
+                "document_ids": [b_doc],
+            },
+        )
+    if name == "agent_stream_b_docs":
+        return client.post(
+            "/v1/agents/project-assistant/chat/stream",
+            headers=h,
+            json={
+                "message": "extract schedule from the attached docs",
+                "project_id": a_pid,
+                "document_ids": [b_doc],
+            },
+        )
     raise AssertionError(name)
 
 
@@ -478,6 +550,15 @@ CROSS_SURFACES = [
     "execute_alias",
     "chain_rag",
     "doc_search_b",
+    "doc_preview_swap",
+    "doc_delete_swap",
+    "redline_swap",
+    "workflow_stamp",
+    "execute_document",
+    "chain_document",
+    "chat_stream_b_cid",
+    "chat_stream_b_docs",
+    "agent_stream_b_docs",
 ]
 
 
@@ -557,6 +638,42 @@ def test_retrieval_canary_never_crosses(client, world):
         json={"message": "quote the rate", "conversation_id": b_cid},
     )
     _assert_denied(chat, label="chat on B conversation")
+
+    dropped = client.post(
+        "/v1/chat",
+        headers=h,
+        json={"message": "quote the rate", "project_id": b_pid},
+    )
+    # /chat drops an unowned project_id rather than 404; B's canary still
+    # must not appear (same fail-closed as project_ask).
+    assert dropped.status_code not in (500,)
+    assert CANARY_B not in dropped.text
+
+    ask = client.post(
+        "/v1/project/ask",
+        headers=h,
+        json={
+            "session_id": f"iso-ask-{_RUN}",
+            "request": "quote the documented rate",
+            "project_id": b_pid,
+        },
+    )
+    assert ask.status_code not in (500,)
+    assert CANARY_B not in ask.text
+
+    upload = client.post(
+        "/v1/upload",
+        headers=h,
+        data={"project_id": b_pid},
+        files={"file": ("x.txt", io.BytesIO(b"not-b"), "text/plain")},
+    )
+    assert upload.status_code in (200, 201) + DENY
+    if upload.status_code in (200, 201):
+        assert upload.json().get("document_id") in (None, "")
+        docs = client.get(
+            f"/v1/projects/{b_pid}/documents", headers=_h(world["b"])
+        ).json()["documents"]
+        assert all(d.get("original_name") != "x.txt" for d in docs)
 
 
 # ── role: plain user vs admin / debug / governance / keys / monitoring ──────
