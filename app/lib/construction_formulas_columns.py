@@ -47,6 +47,12 @@ def column_axial_capacity(
     """
     cc = _norm_code(code)
     Ag, Ast = float(gross_area_mm2), float(steel_area_mm2)
+    if Ag <= 0 or Ast < 0 or Ast >= Ag:
+        return {"error": "gross_area_mm2 must be > steel_area_mm2 >= 0."}
+    if fc_mpa <= 0 or fy_mpa <= 0:
+        return {"error": "fc_mpa and fy_mpa must be > 0."}
+    if unsupported_length_mm <= 0 or radius_gyration_mm <= 0:
+        return {"error": "unsupported_length_mm and radius_gyration_mm must be > 0."}
     Ac = Ag - Ast
     lu, r, k = float(unsupported_length_mm), float(radius_gyration_mm), float(k_factor)
     klu = k * lu
