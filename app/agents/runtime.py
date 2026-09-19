@@ -2298,6 +2298,12 @@ _MISSING_REFERENCE_ANSWER = (
 )
 
 
+_UNIT_RATE_TOKEN_RE = re.compile(
+    r"(?i)\d[\d,]*(?:\.\d+)?\s*/\s*(?:m[23]?|lm|sqm|cum|t|tonnes?|kg|nr|no|ea|each|"
+    r"items?|days?|hrs?|hours?|wks?|weeks?|months?|mo|l|ltrs?)"
+)
+
+
 def _should_short_circuit_rag_miss(
     audit_rec: dict[str, Any] | None,
     rag_sys_msg: dict[str, str] | None,
@@ -2330,7 +2336,13 @@ def _should_short_circuit_rag_miss(
         or _asks_for_export(user_message)
     ):
         return False
-    identifiers = audit_rec.get("extracted_identifiers") or []
+    # A unit RATE ("SAR 62/m2") is not a reference: it looks like page
+    # "d/3/3" to the extractor, and a variance question carrying all its own
+    # numbers was refused as a missing document in 4 s.
+    identifiers = [
+        i for i in (audit_rec.get("extracted_identifiers") or [])
+        if not _UNIT_RATE_TOKEN_RE.fullmatch(i.strip())
+    ]
     # Require a digit to avoid short-circuiting generic phrases like
     # "contract value" that happen to match a reference label.
     if not any(re.search(r"\d", ident) for ident in identifiers):

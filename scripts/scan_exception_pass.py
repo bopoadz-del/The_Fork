@@ -58,18 +58,17 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-19: formula-ask scope (empty-fixture non-RAG
-    # context + named-calculator force + Master Corpus skip) inserted
-    # lines above these pre-existing sites. Same handlers — only the
-    # line numbers moved. No new silent returns.
+    # Re-indexed 2026-09-19: formula-ask scope + unit-rate identifier
+    # filter (60c8055) + privilege gates. Same pre-existing handlers —
+    # only the line numbers moved. No new silent returns.
     "app/agents/runtime.py:1994": "baseline 2026-09-10",
     "app/agents/runtime.py:2000": "baseline 2026-09-10",
     "app/agents/runtime.py:2063": "baseline 2026-09-10",
     "app/agents/runtime.py:2069": "baseline 2026-09-10",
-    "app/agents/runtime.py:2725": "baseline 2026-09-10",
-    "app/agents/runtime.py:3720": "baseline 2026-09-10",
-    "app/agents/runtime.py:4841": "baseline 2026-09-10",
-    "app/agents/runtime.py:5222": "baseline 2026-09-10",
+    "app/agents/runtime.py:2737": "baseline 2026-09-10",
+    "app/agents/runtime.py:3732": "baseline 2026-09-10",
+    "app/agents/runtime.py:4853": "baseline 2026-09-10",
+    "app/agents/runtime.py:5234": "baseline 2026-09-10",
     "app/agents/runtime.py:643": "baseline 2026-09-10",
     "app/agents/runtime.py:874": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
