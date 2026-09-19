@@ -2199,6 +2199,7 @@ class ConstructionContainer(
         # pins concrete_volume and the documented 5% waste → 945 m3.
         from app.lib.construction_formulas_quantities import (
             resolve_concrete_volume_calc,
+            resolve_fw_calc,
         )
         text_blob = " ".join(
             str(x) for x in (
@@ -2207,8 +2208,12 @@ class ConstructionContainer(
                 calc,
             ) if x
         )
+        orig_calc = None if calc is None else str(calc)
         calc, calc_params = resolve_concrete_volume_calc(
-            None if calc is None else str(calc), calc_params, text_blob,
+            orig_calc, calc_params, text_blob,
+        )
+        calc, calc_params = resolve_fw_calc(
+            calc, calc_params, text_blob, original_name=orig_calc,
         )
 
         if not calc:

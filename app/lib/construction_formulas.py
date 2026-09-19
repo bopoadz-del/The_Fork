@@ -173,10 +173,17 @@ def formwork_striking_time(
         notes.append(f"OK - {concrete_strength_7h} >= CIRIA min {ciria_surface_strength}")
     else:
         notes.append(f"NG - {concrete_strength_7h} < CIRIA min {ciria_surface_strength}")
-    based_on = "test_data" if concrete_strength_7h >= design_required_strength else "insufficient"
-    notes.append(f"Recommended: {proposed_hours}h after pour")
+    strength_ok = (
+        concrete_strength_7h >= ciria_surface_strength
+        and concrete_strength_7h >= design_required_strength
+    )
+    based_on = "test_data" if strength_ok else "insufficient"
+    recommended_hours = (
+        proposed_hours if strength_ok else max(proposed_hours, bs8110_minimum_hours)
+    )
+    notes.append(f"Recommended: {recommended_hours}h after pour")
     return FormworkStrikingResult(
-        recommended_hours=proposed_hours,
+        recommended_hours=recommended_hours,
         bs8110_minimum_hours=bs8110_minimum_hours,
         ciria_minimum_strength_n_mm2=ciria_surface_strength,
         design_required_strength_n_mm2=design_required_strength,
@@ -339,7 +346,8 @@ def post_tensioning_force(
     balanced = dead_load_kn_m2 * 0.75
     force_kn = balanced * span_m**2 / (8 * e) if e > 0 else 0
     area_mm2 = (force_kn * 1000) / tendon_stress_n_mm2
-    strand_area = math.pi * (tendon_diameter_mm / 2)**2
+    # 7-wire strand fill ≈ 0.78 (ASTM A416 / EN 10138: 12.7 mm → 98.7 mm²).
+    strand_area = 0.78 * math.pi * (tendon_diameter_mm / 2)**2
     strands = math.ceil(area_mm2 / strand_area) if strand_area > 0 else 0
     return {
         "tendon_force_kn": round(force_kn, 1),
@@ -399,6 +407,8 @@ def foundation_bearing_pressure(
     foundation_depth_m: float = 0.0,
 ) -> Dict[str, float]:
     """q = P/A, FOS vs soil capacity."""
+    if foundation_width_m <= 0 or foundation_length_m <= 0:
+        return {"error": "foundation_width_m and foundation_length_m must be > 0"}
     area = foundation_width_m * foundation_length_m
     q = column_load_kn / area
     net_q = q - foundation_depth_m * 18
@@ -733,8 +743,8 @@ def mobilization_cost_estimate(
     # IT costs
     it_costs = num_personnel * 85 * duration_months  # ~85 SAR/person/month
 
-    # Warehouse equipment (forklift, crane for laydown)
-    warehouse_equip = 35000 * remote_area_factor
+    # Warehouse equipment (forklift, crane for laydown). Factor applied once in fixed.
+    warehouse_equip = 35000
 
     recurring = total_monthly * duration_months
     fixed = (office_setup + camp_setup + demobilization + safety_setup +
@@ -750,11 +760,11 @@ def mobilization_cost_estimate(
         "note": NOTE_REMOTE_AREA,
         "breakdown": {
             "offices_sar": round(office_setup * remote_area_factor, 0),
-            "camp_sar": round((camp_setup + recurring) * remote_area_factor, 0),
+            "camp_sar": round((camp_setup + camp_per_person * num_personnel * duration_months) * remote_area_factor, 0),
             "transport_sar": round(transport_per_person * num_personnel * duration_months * remote_area_factor, 0),
             "safety_medical_sar": round((safety_setup + safety_medical_per_person * num_personnel * duration_months) * remote_area_factor, 0),
             "it_sar": round(it_costs * remote_area_factor, 0),
-            "warehouse_equipment_sar": round(warehouse_equip, 0),
+            "warehouse_equipment_sar": round(warehouse_equip * remote_area_factor, 0),
             "demobilization_sar": round(demobilization * remote_area_factor, 0),
         },
         "recurring_monthly_sar": round(total_monthly, 0),
@@ -861,6 +871,8 @@ def grout_pressure_calc(
     mixing_time_minutes: float = 2.0,
 ) -> Dict[str, float]:
     """Grouting for PT: 0.5 N/mm2 (5 kg/cm2 = 75 PSI). 35 N/mm2 @ 28d, >=20 @ 7d."""
+    if tendon_duct_diameter_mm <= 0:
+        return {"error": "tendon_duct_diameter_mm must be > 0"}
     area_mm2 = math.pi * (tendon_duct_diameter_mm / 2)**2
     return {
         "duct_area_mm2": round(area_mm2, 2),
@@ -1057,6 +1069,7 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # plus "documented waste factor" in ``text``) must apply the project's
     # 5% waste. Resolve before the name lookup so a missing calculation
     # still reaches concrete_volume when the ask carries the dims.
+    original_name = name
     try:
         from app.lib.construction_formulas_quantities import (
             resolve_concrete_volume_calc,
@@ -1065,6 +1078,19 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     except Exception:  # noqa: BLE001 — never break a non-concrete calc
         logger.warning(
             "swallowed %s in resolve_concrete_volume_calc() — continuing",
+            "Exception", exc_info=True,
+        )
+    # Phase 2 F–W (#43–84): remap resource_line / material_consumption
+    # mis-picks (and undo an E4 concrete_volume steal) after the volume
+    # pin so a "concrete" word in a consumption ask is not left on E4.
+    try:
+        from app.lib.construction_formulas_quantities import resolve_fw_calc
+        name, params = resolve_fw_calc(
+            name, params, original_name=original_name,
+        )
+    except Exception:  # noqa: BLE001 — never break a non-F–W calc
+        logger.warning(
+            "swallowed %s in resolve_fw_calc() — continuing",
             "Exception", exc_info=True,
         )
     fn = CALCULATORS.get(name)
