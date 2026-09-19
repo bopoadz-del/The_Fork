@@ -37,6 +37,10 @@ async def save_workflow(
     for s in req.steps:
         if "block" not in s:
             raise HTTPException(400, "Every step needs a 'block'")
+    if req.project_id:
+        from app.core import projects as projects_store
+        if projects_store.get_project_accessible(req.project_id, auth["user_id"]) is None:
+            raise HTTPException(404, "Project not found")
     return store.save_workflow(
         req.name.strip(), req.steps, req.project_id, owner_id=auth["user_id"]
     )
