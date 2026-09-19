@@ -235,8 +235,7 @@ async def drive_status(auth: dict = Depends(require_user)):
 
 @router.post("/v1/drive/disconnect")
 async def drive_disconnect(auth: dict = Depends(require_user)):
-    cleared = drive_auth.clear_token(auth["user_id"])
-    return {"status": "ok", "was_connected": cleared}
+    return {"status": "ok", **await drive_auth.revoke_and_clear(auth["user_id"])}
 
 
 @router.get("/v1/drive/files")
