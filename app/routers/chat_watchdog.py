@@ -105,8 +105,8 @@ def event_type(raw: str) -> Optional[str]:
 
 #: What a user sees when a turn failed for a reason that is ours to know.
 PROVIDER_FAILURE_MESSAGE = (
-    "The assistant could not complete this answer just now. Please try again "
-    "in a minute."
+    "The assistant service is temporarily unavailable. This is a problem on our "
+    "side, not with your question. Please try again in a minute."
 )
 
 # An error text that names the plumbing: a provider, an HTTP status, an
