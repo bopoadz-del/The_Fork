@@ -66,9 +66,9 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # inserted 8 net lines above these four pre-existing sites. Same sites,
     # same handlers — only the line numbers moved. No new silent returns.
     "app/agents/runtime.py:2720": "baseline 2026-09-10",
-    "app/agents/runtime.py:3686": "baseline 2026-09-10",
-    "app/agents/runtime.py:4801": "baseline 2026-09-10",
-    "app/agents/runtime.py:5182": "baseline 2026-09-10",
+    "app/agents/runtime.py:3708": "baseline 2026-09-10",
+    "app/agents/runtime.py:4823": "baseline 2026-09-10",
+    "app/agents/runtime.py:5204": "baseline 2026-09-10",
     "app/agents/runtime.py:639": "baseline 2026-09-10",
     "app/agents/runtime.py:870": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",

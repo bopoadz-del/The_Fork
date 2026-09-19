@@ -30,6 +30,20 @@ from app.agents.runtime import (
 )
 from app.core.rag.vector_store import Chunk
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _party_names_may_be_stated(monkeypatch):
+    """This file pins the machinery that NAMES the Engineer (hint, extractor,
+    graft). Since the owner's ruling of 2026-09-19 -- "No names at all from
+    this RAG" -- that machinery runs only with RAG_WITHHOLD_PARTY_NAMES=0, the
+    setting for a private per-client corpus. It is kept, and kept tested, in
+    that mode. The default (names withheld) is pinned in
+    tests/test_no_party_names_leave_the_platform.py.
+    """
+    monkeypatch.setenv("RAG_WITHHOLD_PARTY_NAMES", "0")
+
 
 CATALOG = json.loads(
     (Path(__file__).parent / "fixtures" / "ui_phys" / "questions.json")

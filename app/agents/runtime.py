@@ -2804,6 +2804,28 @@ def _looks_like_xml_tool_leak(text: str) -> bool:
     return bool(_XML_TOOL_LEAK_RE.search(text))
 
 
+def _withhold_names_in_streamed_segment(
+    seg: str, rag_sys_msg: dict[str, Any] | None,
+) -> str:
+    """Names are removed from a streamed line BEFORE it leaves.
+
+    _postprocess_answer scrubs the finished answer, but a streamed segment has
+    reached the browser by then. Segments are whole lines, so a name does not
+    straddle two of them. Never raises into the stream.
+    """
+    try:
+        from app.core.identifier_scrub import scrub_identifiers
+        from app.core.party_names import withhold_party_names
+
+        return withhold_party_names(
+            scrub_identifiers(seg),
+            (rag_sys_msg or {}).get("content", "") if rag_sys_msg else "",
+        )
+    except Exception:  # noqa: BLE001 — a scrub failure must not break a turn
+        _LOG.warning("streamed name scrub failed; segment withheld", exc_info=True)
+        return ""
+
+
 def _looks_like_tool_markup_leak(text: str) -> bool:
     """True when ``text`` carries a tool call written out as markup.
 
@@ -5362,6 +5384,28 @@ def _graft_asked_contract_particular(
             if cleaned.startswith(line):
                 return cleaned
             return f"{line}\n\n{cleaned}"
+        # Owner ruling 2026-09-19: no party names leave this RAG. This graft
+        # used to write "The Engineer is <firm>." in front of the answer.
+        from app.core.party_names import (
+            party_names_withheld,
+            query_asks_who_a_party_is,
+            withheld_answer_line,
+        )
+        if party_names_withheld() and (
+            query_asks_who_a_party_is(user) or query_asks_who_the_engineer_is(user)
+        ):
+            line = withheld_answer_line(user)
+            body = (text or "").strip()
+            if "withheld" in body.lower():
+                return text
+            if (
+                not body
+                or _MISSING_PARTICULAR_RE.search(body)
+                or _GENERIC_ACK_RE.search(body)
+                or body == _CG_REFUSAL
+            ):
+                return line
+            return f"{line}\n\n{body}"
         if query_asks_who_the_engineer_is(user):
             name = extract_engineer_identity(rag)
             if not name:
@@ -6219,6 +6263,14 @@ def _postprocess_answer(
     # retrieval. Runs LAST so it catches names in any appended note too.
     from app.core.identifier_scrub import scrub_identifiers
     text = scrub_identifiers(text)
+    # ...and the PARTIES, which need no list: the excerpts this answer was
+    # written from say who the Employer, Engineer and Contractor are, so their
+    # names are read from there and replaced by the role. Owner ruling
+    # 2026-09-19: "No names at all from this RAG."
+    from app.core.party_names import withhold_party_names
+    text = withhold_party_names(
+        text, (rag_sys_msg or {}).get("content", "") if rag_sys_msg else "",
+    )
     # Disclosure banner goes on AFTER the scrub so it's never mangled, and only
     # when the banner isn't already present (idempotent across retries).
     if fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
@@ -10165,6 +10217,7 @@ class Agent:
                         if nl >= 0:
                             seg, pending = pending[: nl + 1], pending[nl + 1:]
                             seg = _sanitize_inline_paths(_sanitize_citation_labels(seg))
+                            seg = _withhold_names_in_streamed_segment(seg, _rag_sys_msg)
                             seg = _strip_answer_routing_preamble(seg)
                             if seg and not _looks_like_internal_tool_json(seg):
                                 yield {"type": "token", "content": seg}
@@ -10257,6 +10310,7 @@ class Agent:
                     # streaming used to emit tool JSON/XML here before sanitize.
                     if pending and not tool_leak and not promise_hold:
                         seg = _sanitize_inline_paths(_sanitize_citation_labels(pending))
+                        seg = _withhold_names_in_streamed_segment(seg, _rag_sys_msg)
                         seg = _strip_answer_routing_preamble(seg)
                         if seg and not _looks_like_internal_tool_json(seg):
                             yield {"type": "token", "content": seg}
