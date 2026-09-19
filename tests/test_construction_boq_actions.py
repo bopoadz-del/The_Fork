@@ -409,8 +409,8 @@ class TestRiskRegisterAutoPopulate:
         )
         assert result["status"] == "success"
         assert result["action"] == "risk_register"
-        assert result["total_risks"] >= 5  # 2 provided + standard risks
-        assert result["high_risks"] >= 1
+        assert result["total_risks"] == 2
+        assert result["high_risks"] == 1
         assert all(r["id"].startswith("RISK-") for r in result["risk_register"])
         assert result["risk_register"][0]["risk_score"] >= result["risk_register"][-1]["risk_score"]
 
@@ -464,8 +464,9 @@ class TestRFIGenerator:
     @pytest.mark.asyncio
     async def test_rfi_generator_no_issues(self, container):
         result = await container.rfi_generator({}, {})
-        assert result["status"] == "success"
+        assert result["status"] == "error"
         assert result["rfis"] == []
+        assert "issues" in result["error"].lower()
 
 
 class TestChangeOrderImpact:

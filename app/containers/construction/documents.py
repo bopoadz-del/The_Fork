@@ -2417,6 +2417,15 @@ class ConstructionDocumentsMixin:
         inventing commercial terms that were not supplied.
         """
         text = self._joined_operator_text(input_data, params)
+        if not (text or "").strip():
+            return {
+                "status": "error",
+                "action": "job_requisition",
+                "error": (
+                    "Provide the works scope in the message — cannot draft "
+                    "a job requisition with no facts"
+                ),
+            }
         noc = ""
         noc_m = re.search(
             r"(AM Rev Design NOC[^.]{0,80}|NOC[^.]*?expir\w+\s+\d{1,2}\s+\w+\s+\d{4})",
@@ -2464,7 +2473,11 @@ class ConstructionDocumentsMixin:
             "procedure_id": "PRC-601",
             "jr_number": "DRAFT-JR",
             "issued": False,
-            "title": "Job requisition — street-lighting installation",
+            "title": (
+                "Job requisition — street-lighting installation"
+                if re.search(r"street[-\s]?light", text, re.I)
+                else "Job requisition"
+            ),
             "scope": scope,
             "noc": noc,
             "noc_expiry": expiry,
@@ -2499,6 +2512,15 @@ class ConstructionDocumentsMixin:
         Live M14: the model called wir_form (refused) then Groq 413'd.
         """
         text = self._joined_operator_text(input_data, params)
+        if not (text or "").strip():
+            return {
+                "status": "error",
+                "action": "rfp_draft",
+                "error": (
+                    "Provide the works scope in the message — cannot draft "
+                    "an RFP with no facts"
+                ),
+            }
         refs = []
         for token in (
             "RFI002",

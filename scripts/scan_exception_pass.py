@@ -91,12 +91,15 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/blocks/voice.py:43": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:1383": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:145": "baseline 2026-09-10",
-    "app/containers/construction/__init__.py:1480": "baseline 2026-09-10",
-    "app/containers/construction/__init__.py:1613": "baseline 2026-09-10",
+    "app/containers/construction/__init__.py:1484": "baseline 2026-09-10",
+    "app/containers/construction/__init__.py:1622": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:407": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:414": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:555": "baseline 2026-09-10",
-    "app/containers/construction/boq.py:780": "baseline 2026-09-10",
+    # Re-indexed 2026-09-19: empty-quantities gate in generate_cost_estimate
+    # inserted 9 net lines above this pre-existing site. Same handler —
+    # only the line number moved. No new silent returns.
+    "app/containers/construction/boq.py:801": "baseline 2026-09-10",
     "app/containers/construction/helpers.py:69": "baseline 2026-09-10",
     "app/core/doc_index.py:1063": "baseline 2026-09-10",
     "app/core/doc_index.py:1106": "baseline 2026-09-10",

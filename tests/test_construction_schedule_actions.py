@@ -266,11 +266,8 @@ async def test_warranty_maintenance_schedule_custom_systems(container):
 @pytest.mark.asyncio
 async def test_warranty_maintenance_schedule_defaults_when_empty(container):
     result = await container.warranty_maintenance_schedule(input_data={}, params={})
-    assert result["status"] == "success"
-    assert result["total_systems"] == 7  # default system list
-    assert result["project"] == "Project"
-    assert result["defects_liability_period_months"] == 12
-    assert len(result["maintenance_schedule"]) > 0
+    assert result["status"] == "error"
+    assert "systems" in result["error"].lower() or "equipment" in result["error"].lower()
 
 
 @requires_construction_kit
