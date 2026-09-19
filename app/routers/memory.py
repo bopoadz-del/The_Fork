@@ -47,4 +47,9 @@ async def memory_operation(
 
     block = get_memory_block()
     payload = {"action": action, **request.model_dump(exclude_none=True)}
+    # Namespace get/set/delete/exists so two JWT users cannot share a key.
+    # flush/keys stay unprefixed (admin-only, whole cache).
+    if action in {"get", "set", "delete", "exists"} and payload.get("key"):
+        uid = auth.get("user_id") or "anon"
+        payload["key"] = f"{uid}:{payload['key']}"
     return await block.execute(payload)

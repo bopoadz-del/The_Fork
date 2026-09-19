@@ -65,10 +65,10 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # Re-indexed 2026-09-14: the ENGINEER IDENTITY leak-guard regex (#599)
     # inserted 8 net lines above these four pre-existing sites. Same sites,
     # same handlers — only the line numbers moved. No new silent returns.
-    "app/agents/runtime.py:2720": "baseline 2026-09-10",
-    "app/agents/runtime.py:3708": "baseline 2026-09-10",
-    "app/agents/runtime.py:4823": "baseline 2026-09-10",
-    "app/agents/runtime.py:5204": "baseline 2026-09-10",
+    "app/agents/runtime.py:2732": "baseline 2026-09-10",
+    "app/agents/runtime.py:3720": "baseline 2026-09-10",
+    "app/agents/runtime.py:4835": "baseline 2026-09-10",
+    "app/agents/runtime.py:5216": "baseline 2026-09-10",
     "app/agents/runtime.py:639": "baseline 2026-09-10",
     "app/agents/runtime.py:870": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
@@ -124,7 +124,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # chat.py (one line). Same handler — only the line number moved.
     "app/routers/chat.py:365": "baseline 2026-09-10",
     "app/routers/chat_watchdog.py:97": "baseline 2026-09-10",
-    "app/routers/mcp.py:61": "baseline 2026-09-10",
+    "app/routers/mcp.py:65": "baseline 2026-09-10",
     "app/worker/ingest_queue.py:33": "baseline 2026-09-10",
     "scripts/build_rate_card.py:79": "baseline 2026-09-10",
     "scripts/extract_alostool.py:113": "baseline 2026-09-10",
