@@ -396,6 +396,7 @@ async def _stream_from_pinned_agent(
     history: List[Any],
     conversation_id: Optional[str],
     attached_documents: Optional[List[Dict[str, Any]]] = None,
+    role: Optional[str] = None,
 ):
     """Run a user-PINNED agent (the / picker) directly. Bypasses the predefined
     shortcut and the smart-orchestrator auto-override — the user's explicit
@@ -405,7 +406,11 @@ async def _stream_from_pinned_agent(
     from app.agents import get_agent
     from app.core import projects as projects_store
 
+    from app.core.privileges import agent_forbidden_detail, caller_may_use_agent
     agent = get_agent(agent_name)
+    if agent is not None and not caller_may_use_agent(agent, role):
+        yield f"data: {json.dumps({'type': 'error', 'message': agent_forbidden_detail(agent_name), 'request_id': rid})}\n\n"
+        return
     if agent is None:
         yield f"data: {json.dumps({'type': 'error', 'message': f'Unknown agent: {agent_name}', 'request_id': rid})}\n\n"
         return
@@ -945,7 +950,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
             async for evt in _stream_from_pinned_agent(
                 agent_name=pinned_agent_name, prompt=prompt, project_id=project_id,
                 user_id=user_id, history=history, conversation_id=conversation_id,
-                attached_documents=attached_docs,
+                attached_documents=attached_docs, role=auth.get("role"),
             ):
                 yield evt
             return
