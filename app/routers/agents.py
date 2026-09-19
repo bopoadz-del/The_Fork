@@ -24,6 +24,7 @@ from app.agents.runtime import ROUTING_GENERALISTS, select_agent_for_message
 from app.core import agent_memory
 from app.core import projects as store
 from app.core.privileges import caller_may_use_agent
+from app.routers.chat_watchdog import sanitize_error_frame
 from app.dependencies import require_user
 
 router = APIRouter()
@@ -406,7 +407,9 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
                 user_id=auth["user_id"],
                 rag_debug=rag_debug,
             ):
-                yield f"data: {json.dumps(evt, default=str)}\n\n"
+                # Same net as /v1/chat/stream: an error naming the plumbing
+                # (provider, HTTP status, upstream body) is replaced for the user.
+                yield sanitize_error_frame(f"data: {json.dumps(evt, default=str)}\n\n")
                 await asyncio.sleep(0)  # yield to the event loop
         except Exception as e:
             # Log the real error server-side; stream only a generic message so
