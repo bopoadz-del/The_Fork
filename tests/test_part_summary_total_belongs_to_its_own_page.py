@@ -337,3 +337,59 @@ def test_retrieval_returns_the_asked_page_and_not_the_other_footers(monkeypatch)
     chunks, _ = ret.retrieve_with_filter(ASK, "p_master", k=5)
 
     assert [c.chunk_id for c in chunks] == ["p1"]
+
+
+# ── the collection page: every page's total, as a list ────────────────────
+#
+# Unseen Set 3 B3 (page d/3/3), 0/3 on every build. The bill ends each Part
+# with a collection page, and on the live index it reads:
+#
+#   PART SUMMARY From Page Nr. d/3/1 34,645,529.00 From Page Nr. d/3/2
+#   1,852,848.00 From Page Nr. d/3/3 17,496,857.00 From Page Nr. d/3/4 ...
+#
+# The page reference comes BEFORE its amount, in a list -- the opposite of a
+# page footer, which is all the ownership logic understood. And the old
+# label-window rule read that list as one total belonging to every page
+# reference within 80 characters: 34,645,529.00 "for" d/3/1 AND d/3/2.
+
+COLLECTION = (
+    "BILL OF QUANTITIES DEMOLITION AND SITE CLEARANCE Description Qty PART SUMMARY "
+    "From Page Nr. d/3/1 1,234,567.00 From Page Nr. d/3/2 7,654,321.00 "
+    "From Page Nr. d/3/3 5,000,000.00 From Page Nr. d/3/4 8,240,875.00) "
+    "From Page Nr. d/3/12 9,999,999.00 Carried to Grand Summary 99,000,000.00"
+)
+
+
+@pytest.mark.parametrize(
+    "page, amount",
+    [("d/3/1", 1234567.0), ("d/3/2", 7654321.0), ("d/3/3", 5000000.0),
+     ("d/3/4", 8240875.0), ("d/3/12", 9999999.0)],
+)
+def test_each_page_gets_its_own_row_of_the_collection(page, amount):
+    ask = ASK.replace("d/3/1", page)
+    assert chunk_states_part_summary_total(COLLECTION, [page])
+    assert compose_part_summary_total(ask, COLLECTION)["amount"] == amount
+
+
+def test_a_page_the_collection_does_not_list_gets_nothing():
+    assert not chunk_states_part_summary_total(COLLECTION, ["d/3/9"])
+    assert compose_part_summary_total(ASK.replace("d/3/1", "d/3/9"), COLLECTION) is None
+
+
+def test_page_1_is_not_page_12_in_a_list_either():
+    assert compose_part_summary_total(ASK, COLLECTION)["amount"] == 1234567.0
+
+
+def test_the_collection_and_the_pages_own_footer_agree_and_either_answers():
+    excerpt = COLLECTION + "\n\n[doc_id=x chunk=3 score=1.000] " + PAGE_1
+    assert compose_part_summary_total(ASK, excerpt)["amount"] == 1234567.0
+
+
+def test_no_total_ever_belongs_to_two_pages():
+    """Structural, so it does not depend on which candidate is listed first:
+    the label that HEADS a collection list must not claim the list."""
+    from app.core.rag.retriever import _part_summary_totals
+
+    totals = _part_summary_totals(COLLECTION)
+    assert totals and all(len(t["pages"]) == 1 for t in totals), totals
+    assert sorted(t["pages"][0] for t in totals) == ["d/3/1", "d/3/12", "d/3/2", "d/3/3", "d/3/4"]
