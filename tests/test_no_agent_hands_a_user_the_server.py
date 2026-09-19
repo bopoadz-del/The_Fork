@@ -64,7 +64,8 @@ def test_a_privileged_block_is_refused_to_everyone_but_an_admin(block):
     assert not caller_may_use_block(block)
 
 
-@pytest.mark.parametrize("block", ["mcp_consumer", "local_drive", "web", "webhook"])
+@pytest.mark.parametrize("block", ["mcp_consumer", "local_drive", "web", "webhook",
+                                   "google_drive", "onedrive"])
 def test_the_blocks_that_reach_past_the_app_are_privileged(block):
     assert block in PRIVILEGED_BLOCKS
 
@@ -197,7 +198,8 @@ def user_client():
         yield c, {"Authorization": f"Bearer {token}"}
 
 
-@pytest.mark.parametrize("block", ["mcp_consumer", "local_drive", "web", "webhook"])
+@pytest.mark.parametrize("block", ["mcp_consumer", "local_drive", "web", "webhook",
+                                   "google_drive", "onedrive"])
 def test_execute_refuses_the_newly_privileged_blocks(user_client, block):
     from app.blocks import BLOCK_REGISTRY
 
