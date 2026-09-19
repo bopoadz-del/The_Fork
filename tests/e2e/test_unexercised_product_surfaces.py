@@ -30,12 +30,14 @@ _FIXTURE_IFC = Path(__file__).resolve().parents[1] / "fixtures" / "sample_office
 _PREVIOUSLY_UNPINNED_HATS = (
     "learning",
     "supervision-proposal",
-    "external-mcp",
     "contracts-manager",
-    "document-ingestion",
     "heavy-reasoning",
     "smart-orchestrator",
 )
+# Hold an admin-only block (mcp_consumer; local_drive), so a plain user is
+# neither offered them nor able to name them -- see
+# tests/test_no_agent_hands_a_user_the_server.py.
+_ADMIN_ONLY_HATS = ("external-mcp", "document-ingestion")
 _API_KEY = {"Authorization": "Bearer cb_dev_key"}
 
 
@@ -551,6 +553,10 @@ def test_conversation_export_clear_history_and_sandbox_gate(client, session):
     for name in _PREVIOUSLY_UNPINNED_HATS:
         r = client.get(f"/v1/agents/{name}", headers=h)
         assert r.status_code == 200, f"{name} -> {r.status_code}"
+    assert not names & set(_ADMIN_ONLY_HATS), names
+    for name in _ADMIN_ONLY_HATS:
+        r = client.get(f"/v1/agents/{name}", headers=h)
+        assert r.status_code == 404, f"{name} -> {r.status_code}"
 
 
 @requires_construction_kit
