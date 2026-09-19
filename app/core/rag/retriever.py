@@ -467,7 +467,7 @@ def elect_answer_bearing_contract(
         (query_asks_for_boq_item_amount,
          lambda _name, text: (
              chunk_states_priced_item(
-                 text, extract_asked_cesmm_codes(query),
+                 text, extract_asked_cesmm_codes(query), query=query,
              )
              or chunk_states_rate_only_item(
                  text, extract_asked_cesmm_codes(query),
@@ -701,7 +701,7 @@ class _ContractScope:
                     if priced_boq_compose_enabled():
                         self._priced_item_in_pool = any(
                             chunk_states_priced_item(
-                                text, self._rate_only_codes,
+                                text, self._rate_only_codes, query=self.query,
                             )
                             for _n, text in scoped
                         )
@@ -741,7 +741,7 @@ class _ContractScope:
             # E1 keeps Contract Data rate + ACA even when a priced
             # CESMM row shares the unnamed pool.
             if not chunk_states_priced_item(
-                chunk_text, self._rate_only_codes,
+                chunk_text, self._rate_only_codes, query=self.query,
             ):
                 return False
         elif self._rate_only_in_pool and not e1_daily:
@@ -5832,14 +5832,118 @@ def chunk_states_rate_only_item(text: str, codes: List[str]) -> bool:
     return False
 
 
-def chunk_states_priced_item(text: str, codes: List[str]) -> bool:
-    """True when the asked CESMM row already prints qty × rate = amount."""
+# Words every BOQ question uses; they describe the ASK, not the item.
+_BOQ_ASK_GENERIC_TERMS = frozenset({
+    "amount", "total", "quantity", "rate", "unit", "item", "items", "price",
+    "priced", "cost", "value", "many", "much", "removal", "remove", "removed",
+    "removing", "existing", "breakout", "breaking", "break", "bill", "demolition",
+    "stated", "including", "allowed", "page", "cesmm", "work", "works",
+    "equal", "equals", "verify", "check", "according", "under", "against",
+})
+_CESMM_ROW_LEAD_CHARS = 170
+
+
+def _same_word(a: str, b: str) -> bool:
+    """"culverts"/"culvert", "fencing"/"fence": same word, different ending.
+
+    A shared prefix of all but the last letter of the shorter word, at least
+    four letters, and lengths within three. "wall"/"walkway" differ.
+    """
+    a, b = a.lower(), b.lower()
+    short = min(len(a), len(b))
+    if short < 4 or abs(len(a) - len(b)) > 3:
+        return False
+    k = max(4, short - 1)
+    return a[:k] == b[:k]
+
+
+_CODE_IN_QUESTION_RE = re.compile(
+    r"(?i)\(?\s*(?:item\s+)?[A-Z]\s?\d{2,4}(?:\.\d+)?\s*\)?"
+)
+
+
+def asked_item_description_terms(query: str) -> frozenset:
+    """The words of the question that describe the ITEM it asks about.
+
+    By POSITION: a BOQ question puts the description right before the code —
+    "removal of *storm water culverts* (D529.3)". Words after it ("...D549.2
+    *according to the tender bill*") or in another clause ("Verify: ...") are
+    about the ask, not the item; treating them as a description would reject
+    the right row for a question that simply gave none.
+    """
+    q = query or ""
+    m = _CODE_IN_QUESTION_RE.search(q)
+    if not m:
+        return frozenset()
+    before = re.split(r"[:;?.!]", q[: m.start()])[-1]
+    query = before
+    codes = {c.replace(".", "") for c in extract_asked_cesmm_codes(query or "")}
+    return frozenset(
+        t for t in _significant_terms(query)
+        if t not in _BOQ_ASK_GENERIC_TERMS and t.replace(".", "") not in codes
+        and not t[0].isdigit()
+    )
+
+
+def _cesmm_row_contexts(text: str, code: str) -> List[Tuple[str, str]]:
+    """``(description_before_the_code, row_window)`` for each occurrence.
+
+    A bill prints the description BEFORE its code, so the window that starts
+    at the code does not contain it. The lead is cut at the previous item so
+    a neighbour's description is not borrowed.
+    """
+    compact = normalize_cesmm_item_codes(code or "")
+    if not compact:
+        return []
+    letter, rest = compact[0], compact[1:]
+    item_re = re.compile(
+        rf"(?i)(?<![A-Za-z0-9]){re.escape(letter)}\s*{re.escape(rest)}"
+        r"(?![A-Za-z0-9])",
+    )
+    blob = text or ""
+    out: List[Tuple[str, str]] = []
+    windows = _cesmm_row_windows(text, code)
+    for match, window in zip(item_re.finditer(blob), windows):
+        lead = blob[max(0, match.start() - _CESMM_ROW_LEAD_CHARS): match.start()]
+        prev = list(_NEXT_CESMM_ROW_RE.finditer(lead))
+        if prev:
+            lead = lead[prev[-1].end():]
+        out.append((_normalize_retrieval_ws(lead), window))
+    return out
+
+
+def row_is_the_asked_item(query: str, lead: str, window: str) -> bool:
+    """False when the row's description shares nothing with the question's.
+
+    Live 5312551: one code, two bills, two items. The priced BOQ prints
+    ``...existing concrete wall/barrier D 529.3 m 26,997 500 13,498,500.00``;
+    the demolition bill prints ``...storm water culverts D529.3 m 1,370.00
+    Rate Only``. Asked for the culverts' total, the platform stated the
+    wall's. The code does not identify the item; the description does. A
+    question that gives only the code has nothing to check and passes.
+    """
+    wanted = asked_item_description_terms(query)
+    if not wanted:
+        return True
+    have = re.findall(r"[A-Za-z]{4,}", f"{lead} {window}")
+    return any(_same_word(w, h) for w in wanted for h in have)
+
+
+def chunk_states_priced_item(text: str, codes: List[str], query: str = "") -> bool:
+    """True when the asked CESMM row already prints qty × rate = amount.
+
+    With ``query``, the row must also BE the asked item
+    (:func:`row_is_the_asked_item`).
+    """
     if not codes or not text:
         return False
     for code in codes:
-        for window in _cesmm_row_windows(text, code):
-            if _parse_priced_cesmm_window(window, code):
-                return True
+        for lead, window in _cesmm_row_contexts(text, code):
+            if not _parse_priced_cesmm_window(window, code):
+                continue
+            if query and not row_is_the_asked_item(query, lead, window):
+                continue
+            return True
     return False
 
 
@@ -6045,9 +6149,9 @@ def compose_priced_boq_row(query: str, excerpt: str) -> Optional[Dict[str, Any]]
     qlow = (query or "").lower()
     candidates: List[Dict[str, Any]] = []
     for code in codes:
-        for window in _cesmm_row_windows(excerpt, code):
+        for lead, window in _cesmm_row_contexts(excerpt, code):
             parsed = _parse_priced_cesmm_window(window, code)
-            if parsed:
+            if parsed and row_is_the_asked_item(query, lead, window):
                 candidates.append(parsed)
     if not candidates:
         return None
@@ -6158,10 +6262,21 @@ def _normalize_boq_page_refs_in_text(text: str) -> str:
 
 
 _PART_SUMMARY_NOT_A_LOOKUP_RE = re.compile(
-    r"(?i)\b(?:verify|check\s+(?:that|whether|if)|add\s+up|adds\s+up|sum\s+of|"
+    r"(?i)\b(?:verify|check\s+(?:that|whether|if)|consistent|add\s+up|adds\s+up|sum\s+of|"
     r"combined|altogether|in\s+total\s+across|compare[ds]?|larger|smaller|"
     r"greater|less\s+than|more\s+than|difference|reconcile[ds]?)\b"
 )
+
+
+def query_is_a_check_not_a_lookup(query: str) -> bool:
+    """True for "verify / does it add up / which is larger" — not "what is".
+
+    The deterministic composers state one printed figure and skip the model.
+    That answers a lookup. It does not answer a check: live 5312551,
+    "Verify: does 158 ha at SAR 186,328/ha equal the stated D110 amount?" got
+    the row back and no verdict.
+    """
+    return bool(_PART_SUMMARY_NOT_A_LOOKUP_RE.search(query or ""))
 
 
 def query_names_part_summary_pages(query: str) -> bool:
@@ -6512,7 +6627,10 @@ def _apply_rate_only_boost(
     codes = extract_asked_cesmm_codes(query)
     if not codes:
         return
-    if any(chunk_states_priced_item(chunk.text or "", codes) for _s, chunk in scored):
+    if any(
+        chunk_states_priced_item(chunk.text or "", codes, query=query)
+        for _s, chunk in scored
+    ):
         return
     for i, (score, chunk) in enumerate(scored):
         if not chunk_states_rate_only_item(chunk.text or "", codes):
@@ -6535,7 +6653,7 @@ def _apply_priced_boq_boost(
     if not codes:
         return
     for i, (score, chunk) in enumerate(scored):
-        if not chunk_states_priced_item(chunk.text or "", codes):
+        if not chunk_states_priced_item(chunk.text or "", codes, query=query):
             continue
         boosted = score + _PRICED_BOQ_BONUS
         chunk.score = round(boosted, 6)

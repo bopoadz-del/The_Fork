@@ -122,3 +122,149 @@ def test_every_column_order_and_ocr_variant_parses(row):
 def test_a_row_that_is_not_priced_is_never_made_priced(row):
     assert not chunk_states_priced_item("Breakout fence " + row, CODES), row
     assert compose_priced_boq_row(ASK, "Breakout fence " + row) is None
+
+
+# ── one item code, two bills, two different items ─────────────────────────
+#
+# Live 5312551, and caused by the fix above. Until the parser could read
+# unit-first rows it could not read THIS row either, which hid the flaw:
+#
+#   priced BOQ:      ...existing concrete wall/barrier  D 529.3  m  26,997  500  13,498,500.00
+#   demolition bill: ...existing storm water culverts   D529.3   m  1,370.00  Rate Only
+#
+# Asked "What is the total amount for removal of storm water culverts
+# (D529.3)?", the platform answered "D529.3: quantity 26,997 m @ 500.00 =
+# 13,498,500" -- the other bill's wall, stated as the culverts' total. The
+# correct answer is that the item is Rate Only and has no amount.
+#
+# The code alone does not identify the item. The question's own description
+# does, and a priced row whose description shares nothing with it is a
+# different item that happens to carry the same number.
+
+G4 = "What is the total amount for removal of storm water culverts (D529.3)?"
+OTHER_BILLS_WALL = (
+    "and concrete structures D529.2 | sum 1 Excluded D_ {Breakout and remove "
+    "existing concrete wall/barrier D 529.3 m 26,997 500 13,498,500.00 E "
+    "|Breakout and remove existing walkway D 599.1 sum 1"
+)
+THE_CULVERTS = (
+    "G |Breakout and remove existing chain link fence D549.2 m 3,504 80.00 "
+    "280,320.00 H_ |Breakout and remove existing storm water culverts D529.3 m "
+    "1,370.00 Rate Only} stamp"
+)
+
+
+def test_a_priced_row_for_a_different_item_is_not_the_answer():
+    assert compose_priced_boq_row(G4, OTHER_BILLS_WALL) is None
+
+
+def test_with_both_bills_in_the_excerpt_the_culverts_stay_rate_only():
+    both = OTHER_BILLS_WALL + "\n\n" + THE_CULVERTS
+    assert compose_priced_boq_row(G4, both) is None
+    assert chunk_states_rate_only_item(both, ["d529.3"])
+    assert not chunk_states_priced_item(both, ["d529.3"], query=G4)
+
+
+def test_the_same_row_answers_the_question_that_describes_it():
+    ask = "What is the amount for breaking out the existing concrete wall/barrier (D529.3)?"
+    row = compose_priced_boq_row(ask, OTHER_BILLS_WALL + "\n\n" + THE_CULVERTS)
+    assert row and row["amount"] == 13498500.0
+
+
+def test_a_question_that_gives_only_the_code_still_gets_the_priced_row():
+    """No description to check against: the code is all there is."""
+    row = compose_priced_boq_row("What is the amount for D529.3?", OTHER_BILLS_WALL)
+    assert row and row["amount"] == 13498500.0
+
+
+def test_plural_and_wording_differences_do_not_break_the_match():
+    """The bill says "culverts", "fence"; people say "culvert", "fencing"."""
+    ask = "What is the amount for the chain-link fencing removal (D549.2)?"
+    assert compose_priced_boq_row(ask, UNIT_FIRST)["amount"] == 280320.0
+
+
+# ── a check is not a lookup ───────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Verify: does 158 ha at SAR 186,328/ha equal the stated D110 amount?",
+        "Verify: does 34,844 m at SAR 142.00/m equal the stated D529.2 amount?",
+        "Check whether the D549.2 amount is consistent with its rate and quantity.",
+        "Is the D549.2 amount larger than the D599.6 amount?",
+    ],
+)
+def test_a_verify_question_is_not_answered_by_restating_the_row(question):
+    """Live 5312551: both "Verify:" questions got the bare row back -- the
+    figures, and no verdict. The expected answer says yes or no."""
+    from app.core.rag.retriever import query_is_a_check_not_a_lookup
+
+    assert query_is_a_check_not_a_lookup(question), question
+
+
+def test_a_plain_amount_question_is_a_lookup():
+    from app.core.rag.retriever import query_is_a_check_not_a_lookup
+
+    assert not query_is_a_check_not_a_lookup(ASK)
+    assert not query_is_a_check_not_a_lookup(G4)
+
+
+def test_the_runtime_shortcut_steps_aside_for_a_check_and_not_for_a_lookup():
+    from app.agents.runtime import _should_short_circuit_priced_boq
+
+    rag = {"role": "system", "content": "Project excerpts:\n" + UNIT_FIRST}
+    lookup = [{"role": "user", "content": ASK}]
+    check = [{"role": "user", "content":
+              "Verify: does 3,504 m at SAR 80.00/m equal the stated D549.2 amount?"}]
+
+    assert "280,320" in _should_short_circuit_priced_boq(rag, lookup, has_predispatch=False)
+    assert _should_short_circuit_priced_boq(rag, check, has_predispatch=False) == ""
+
+
+# ── the description is the words right before the code ────────────────────
+
+def test_words_that_are_in_no_row_are_not_a_description_of_another_item():
+    """"according to the bill" matches nothing. That is no description, not a
+    description of something else -- the code is all there is to go on."""
+    ask = "What is the amount of D549.2 according to the tender bill?"
+    assert compose_priced_boq_row(ask, UNIT_FIRST)["amount"] == 280320.0
+
+
+def test_a_verify_question_still_composes_so_the_guard_above_is_what_stops_it():
+    """"verify", "equal" are in no row either; the composer must not refuse
+    by accident, or the explicit check/lookup guard is never exercised."""
+    ask = "Verify: does 3,504 m at SAR 80.00/m equal the stated D549.2 amount?"
+    assert compose_priced_boq_row(ask, UNIT_FIRST)["amount"] == 280320.0
+
+
+def test_fence_and_fencing_are_the_same_word():
+    from app.core.rag.retriever import _same_word
+
+    assert _same_word("fencing", "fence") and _same_word("culvert", "culverts")
+    assert not _same_word("wall", "walkway") and not _same_word("rail", "railing's")
+    # ...and it matters: "fencing" is the ONLY describing word here, and the
+    # excerpt also holds another item under the same code.
+    other = "Supply of welded mesh panels D549.2 m 900 10.00 9,000.00"
+    ask = "What is the amount for fencing (D549.2)?"
+    assert compose_priced_boq_row(ask, other + "\n\n" + UNIT_FIRST)["amount"] == 280320.0
+
+
+def test_a_code_is_not_paired_with_its_neighbours_description():
+    """The row ABOVE D549.2 is the guard rail. Its words must not be borrowed:
+    asked for a guard rail under D549.2 while a real guard-rail row sits
+    elsewhere under that code, the fence row is not the answer."""
+    elsewhere = "Supply metal beam guard rail D549.2 m 10 5.00 50.00"
+    ask = "What is the amount for the metal beam guard rail (D549.2)?"
+    row = compose_priced_boq_row(ask, UNIT_FIRST + "\n\n" + elsewhere)
+    assert row and row["amount"] == 50.0
+
+
+def test_one_chunk_is_enough_to_tell_it_is_the_wrong_item():
+    """No pool needed: the wall row, alone, is still not the culverts."""
+    assert not chunk_states_priced_item(OTHER_BILLS_WALL, ["d529.3"], query=G4)
+    assert chunk_states_priced_item(OTHER_BILLS_WALL, ["d529.3"])  # no question, no check
+
+
+def test_an_earlier_clause_sets_the_scene_it_does_not_describe_the_item():
+    ask = "For the boundary wall package handover: what is the amount for D549.2?"
+    assert compose_priced_boq_row(ask, UNIT_FIRST)["amount"] == 280320.0
