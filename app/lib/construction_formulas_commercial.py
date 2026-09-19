@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 def roi_calculator(gain: float, cost: float) -> dict:
     """Return on investment: ROI% = (gain - cost) / cost * 100."""
     g, c = float(gain), float(cost)
+    if c == 0:
+        return {"error": "cost must be non-zero to compute ROI"}
     net = g - c
-    roi = (net / c * 100.0) if c else 0.0
+    roi = net / c * 100.0
     return {
         "net_profit": round(net, 2),
         "roi_percent": round(roi, 2),
@@ -52,7 +54,9 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
     """Output per labour-hour and per worker-hour. rate = output/hours;
     per-worker = rate/crew_size."""
     o, h = float(output_quantity), float(labor_hours)
-    rate = (o / h) if h else 0.0
+    if h == 0:
+        return {"error": "labor_hours must be > 0"}
+    rate = o / h
     per_worker = (rate / crew_size) if crew_size else rate
     return {
         "rate_per_hour": round(rate, 3),
