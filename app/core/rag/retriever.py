@@ -760,7 +760,16 @@ class _ContractScope:
         if not self.named:
             if self._delay_rate_in_pool:
                 if not chunk_states_delay_damages_rate(chunk_text):
-                    return False
+                    # "If Milestone 1 is 30 days late, what are the damages?"
+                    # applies a duration to the rate and wants money: the sum
+                    # the rate is a percentage OF has to survive this fence.
+                    # Not reclassified as E1 — that composer multiplies the
+                    # whole-of-Works rate and would misstate a milestone.
+                    if not (
+                        query_applies_a_delay_duration(self.query)
+                        and chunk_states_accepted_contract_amount(chunk_text)
+                    ):
+                        return False
             if self._engineer_identity_in_pool:
                 if not chunk_states_engineer_identity(chunk_text):
                     return False
@@ -1378,6 +1387,127 @@ def _rescue_filename_matched_docs(
     return names
 
 
+# ── document-identity rescue (live B6) ─────────────────────────────────────
+#
+# Live 24d1c0c, 0/3: "What is the document number and revision of the priced
+# Bill of Quantities, and who prepared it?" The cover is indexed, in a file
+# NAMED ``…Bill of Quantities (Priced).pdf``; searched by its document number
+# it ranks first. Asked plainly, the top five were contract templates that
+# describe how a bill should be identified. A control block is labels and
+# codes — nothing in the question resembles it — and "document number",
+# "revision", "prepared" are in every template in the corpus.
+#
+# The filename rescue above keeps the five most "distinctive" words,
+# capitalised first; "priced", the one word that tells this bill from the
+# unpriced one, came sixth. Here the words that ASK (number, revision,
+# prepared) are separated from the words that NAME, every naming word is
+# mandatory, and only the named document's control block is fetched.
+# Kill-switch: RAG_DOCUMENT_IDENTITY_RESCUE=0.
+_DOC_IDENTITY_ASK_RE = re.compile(
+    r"(?i)\b(?:document|doc\.?|drawing|reference)\s+(?:number|no\b\.?|ref\b)|"
+    r"\brevision\b|\bprepared\s+by\b|"
+    r"\bwho\s+(?:prepared|authored|wrote|issued|checked|reviewed|approved)\b"
+)
+_DOC_IDENTITY_ASK_WORDS = frozenset({
+    "document", "number", "revision", "prepared", "authored", "wrote",
+    "issued", "checked", "reviewed", "approved", "reference", "drawing",
+    "date", "dated", "title", "author",
+})
+_DOC_CONTROL_BLOCK_LABEL_RES = tuple(
+    re.compile(p, re.IGNORECASE) for p in (
+        r"\bdocument\s+no\b", r"\brevision\s+no\b", r"\bprepared\s+by\b",
+        r"\bdoc\s+status\b", r"\bproject\s+no\b", r"\bfile\s+name\b",
+        r"\bchecked\b", r"\breviewed\b", r"\bapproved\b", r"\bauthor\b",
+        r"\bclient\s+reference\b",
+    )
+)
+_DOC_IDENTITY_BONUS = 2.0
+_DOC_IDENTITY_COVER_CHUNKS = 8
+_DOC_IDENTITY_MAX_CHUNKS = 2
+
+
+def document_identity_rescue_enabled() -> bool:
+    """ON by default — live B6 recall defect."""
+    return _env_flag_on("RAG_DOCUMENT_IDENTITY_RESCUE")
+
+
+def query_asks_for_document_identity(query: str) -> bool:
+    """True for "what number / revision is X, who prepared it"."""
+    return bool(_DOC_IDENTITY_ASK_RE.search(query or ""))
+
+
+def document_identity_title_terms(query: str) -> List[str]:
+    """The words of the ask that NAME the document, not the ones that ask."""
+    return sorted(
+        t for t in _significant_terms(query)
+        if t not in _DOC_IDENTITY_ASK_WORDS
+    )
+
+
+def chunk_states_document_control_block(text: str) -> bool:
+    """True for a cover / revision-history block: two or more control labels."""
+    t = text or ""
+    return sum(1 for rx in _DOC_CONTROL_BLOCK_LABEL_RES if rx.search(t)) >= 2
+
+
+def _rescue_document_identity_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> int:
+    """Pull the named document's control block into ``fused``."""
+    if not document_identity_rescue_enabled():
+        return 0
+    if not query_asks_for_document_identity(query):
+        return 0
+    terms = document_identity_title_terms(query)
+    if len(terms) < 2:
+        return 0  # no document is named; identity vocabulary alone is not one
+    try:
+        from app.core.projects import documents_matching_filename_terms
+    except Exception:  # noqa: BLE001
+        logger.warning("document-identity rescue: projects import failed", exc_info=True)
+        return 0
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return 0
+    recovered = 0
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    for pid in pids:
+        try:
+            docs = documents_matching_filename_terms(
+                pid, terms, require_all=True, limit=3,
+            )
+            hits = (
+                fetch(pid, [d["id"] for d in docs],
+                      k_per_doc=_DOC_IDENTITY_COVER_CHUNKS)
+                if docs else []
+            )
+        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+            logger.warning("document-identity rescue for %s failed: %s", pid, exc)
+            continue
+        blocks = sorted(
+            (c for c in hits if chunk_states_document_control_block(c.text or "")),
+            key=lambda c: c.chunk_index,
+        )
+        for chunk in blocks[:_DOC_IDENTITY_MAX_CHUNKS]:
+            prev = fused.get(chunk.chunk_id)
+            if prev is not None:
+                fused[chunk.chunk_id] = (
+                    prev[0], prev[1], max(prev[2], _DOC_IDENTITY_BONUS),
+                )
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, _DOC_IDENTITY_BONUS)
+            recovered += 1
+        if recovered:
+            break
+    if recovered:
+        logger.info("document-identity rescue recovered %d chunk(s)", recovered)
+    return recovered
+
+
 # ── specification-title filename rescue (live C2) ──────────────────────────
 #
 # Live Master Corpus C2 (SHA 567147a): "Which specification document covers
@@ -1899,6 +2029,19 @@ _NAMED_ROW_UBIQUITOUS_TERMS = frozenset({
 _NAMED_ROW_SEPARATOR_RE = re.compile(r"[:|]")
 _NAMED_ROW_FILLED_CELL_RE = re.compile(r"[:|][^A-Za-z0-9]*[A-Za-z0-9]")
 _NAMED_ROW_NEW_CLAUSE_RE = re.compile(r"^[\s|]*\d+(?:\.\d+)+")
+_NAMED_ROW_SHARE_OF_SUM_RE = re.compile(
+    r"(?i)\d\s*%\s*of\s+the\s+(?:contract\s+price|accepted\s+contract\s+amount)"
+)
+_NAMED_ROW_BASE_AMOUNT_BONUS = 1.5
+_DELAY_DURATION_ASK_RE = re.compile(
+    r"(?i)\b\d+\s*(?:calendar\s+|working\s+)?(?:days?|weeks?|months?)\s+"
+    r"(?:late|of\s+delay|delay(?:ed)?|behind|overdue|over(?:run)?)\b"
+)
+
+
+def query_applies_a_delay_duration(query: str) -> bool:
+    """True for "... is 30 days late ..." — a rate alone cannot answer it."""
+    return bool(_DELAY_DURATION_ASK_RE.search(query or ""))
 
 
 def named_particulars_row_rescue_enabled() -> bool:
@@ -1907,6 +2050,9 @@ def named_particulars_row_rescue_enabled() -> bool:
 
 
 def _named_row_terms(query: str) -> frozenset:
+    # "6 weeks behind" is an operand applied to the row, not part of its
+    # label; left in, it dilutes coverage and the row stops matching.
+    query = _DELAY_DURATION_ASK_RE.sub(" ", query or "")
     return frozenset(
         t for t in _significant_terms(query)
         if t not in _NAMED_ROW_UBIQUITOUS_TERMS
@@ -1985,6 +2131,7 @@ def _rescue_named_particulars_rows(
     if not callable(fetch):
         return 0
     matched: List[Tuple[int, Chunk]] = []
+    sheet: List[Chunk] = []
     pids = [project_id] + [p for p in extra_pids if p and p != project_id]
     for pid in pids:
         try:
@@ -1993,13 +2140,33 @@ def _rescue_named_particulars_rows(
         except Exception as exc:  # noqa: BLE001 — extras must not break the turn
             logger.warning("named-row rescue for %s failed: %s", pid, exc)
             continue
+        sheet.extend(hits)
         for chunk in hits:
             strength = named_particulars_row_match(query, chunk.text or "")
             if strength:
                 matched.append((strength, chunk))
     matched.sort(key=lambda m: (-m[0], m[1].chunk_index))
+    chosen = [chunk for _strength, chunk in matched[:_NAMED_ROW_MAX_CHUNKS]]
     recovered = 0
-    for _strength, chunk in matched[:_NAMED_ROW_MAX_CHUNKS]:
+    # Live 24d1c0c E2, 0/3: the 0.015%-per-day row ranked first and the answer
+    # stopped, correctly, at "0.45% of the Contract Price — which is not in
+    # the retrieved context". A share of the contract sum is half an answer;
+    # the sum is one row up the same sheet. Below the asked row's bonus, so
+    # the base can accompany the row and never outrank it.
+    if any(_NAMED_ROW_SHARE_OF_SUM_RE.search(c.text or "") for c in chosen):
+        docs = {c.doc_id for c in chosen}
+        base = next(
+            (
+                c for c in sheet
+                if c.doc_id in docs
+                and chunk_states_accepted_contract_amount(c.text or "")
+            ),
+            None,
+        )
+        if base is not None and base.chunk_id not in fused:
+            fused[base.chunk_id] = (base, 0.0, _NAMED_ROW_BASE_AMOUNT_BONUS)
+            recovered += 1
+    for chunk in chosen:
         prev = fused.get(chunk.chunk_id)
         if prev is not None:
             # Already pooled on cosine alone: it still has to beat the
@@ -7293,6 +7460,10 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
+    _rescue_document_identity_chunks(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
     _rescue_e1_real_aca_from_pool_docs(
         query, project_id, fused_lex, store,
     )
@@ -7857,6 +8028,11 @@ def retrieve_with_filter(
     # A4/A7/A8: the rest of the Contract Data sheet — any filled row the
     # question names, not only the seven with a rescue of their own.
     _rescue_named_particulars_rows(
+        query, project_id, fused, store,
+        extra_pids=extra_rescue_pids,
+    )
+    # B6: number / revision / author of a document the question names.
+    _rescue_document_identity_chunks(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
     )
