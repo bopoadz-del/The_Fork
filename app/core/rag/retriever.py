@@ -760,7 +760,16 @@ class _ContractScope:
         if not self.named:
             if self._delay_rate_in_pool:
                 if not chunk_states_delay_damages_rate(chunk_text):
-                    return False
+                    # "If Milestone 1 is 30 days late, what are the damages?"
+                    # applies a duration to the rate and wants money: the sum
+                    # the rate is a percentage OF has to survive this fence.
+                    # Not reclassified as E1 — that composer multiplies the
+                    # whole-of-Works rate and would misstate a milestone.
+                    if not (
+                        query_applies_a_delay_duration(self.query)
+                        and chunk_states_accepted_contract_amount(chunk_text)
+                    ):
+                        return False
             if self._engineer_identity_in_pool:
                 if not chunk_states_engineer_identity(chunk_text):
                     return False
@@ -1899,6 +1908,19 @@ _NAMED_ROW_UBIQUITOUS_TERMS = frozenset({
 _NAMED_ROW_SEPARATOR_RE = re.compile(r"[:|]")
 _NAMED_ROW_FILLED_CELL_RE = re.compile(r"[:|][^A-Za-z0-9]*[A-Za-z0-9]")
 _NAMED_ROW_NEW_CLAUSE_RE = re.compile(r"^[\s|]*\d+(?:\.\d+)+")
+_NAMED_ROW_SHARE_OF_SUM_RE = re.compile(
+    r"(?i)\d\s*%\s*of\s+the\s+(?:contract\s+price|accepted\s+contract\s+amount)"
+)
+_NAMED_ROW_BASE_AMOUNT_BONUS = 1.5
+_DELAY_DURATION_ASK_RE = re.compile(
+    r"(?i)\b\d+\s*(?:calendar\s+|working\s+)?(?:days?|weeks?|months?)\s+"
+    r"(?:late|of\s+delay|delay(?:ed)?|behind|overdue|over(?:run)?)\b"
+)
+
+
+def query_applies_a_delay_duration(query: str) -> bool:
+    """True for "... is 30 days late ..." — a rate alone cannot answer it."""
+    return bool(_DELAY_DURATION_ASK_RE.search(query or ""))
 
 
 def named_particulars_row_rescue_enabled() -> bool:
@@ -1907,6 +1929,9 @@ def named_particulars_row_rescue_enabled() -> bool:
 
 
 def _named_row_terms(query: str) -> frozenset:
+    # "6 weeks behind" is an operand applied to the row, not part of its
+    # label; left in, it dilutes coverage and the row stops matching.
+    query = _DELAY_DURATION_ASK_RE.sub(" ", query or "")
     return frozenset(
         t for t in _significant_terms(query)
         if t not in _NAMED_ROW_UBIQUITOUS_TERMS
@@ -1985,6 +2010,7 @@ def _rescue_named_particulars_rows(
     if not callable(fetch):
         return 0
     matched: List[Tuple[int, Chunk]] = []
+    sheet: List[Chunk] = []
     pids = [project_id] + [p for p in extra_pids if p and p != project_id]
     for pid in pids:
         try:
@@ -1993,13 +2019,33 @@ def _rescue_named_particulars_rows(
         except Exception as exc:  # noqa: BLE001 — extras must not break the turn
             logger.warning("named-row rescue for %s failed: %s", pid, exc)
             continue
+        sheet.extend(hits)
         for chunk in hits:
             strength = named_particulars_row_match(query, chunk.text or "")
             if strength:
                 matched.append((strength, chunk))
     matched.sort(key=lambda m: (-m[0], m[1].chunk_index))
+    chosen = [chunk for _strength, chunk in matched[:_NAMED_ROW_MAX_CHUNKS]]
     recovered = 0
-    for _strength, chunk in matched[:_NAMED_ROW_MAX_CHUNKS]:
+    # Live 24d1c0c E2, 0/3: the 0.015%-per-day row ranked first and the answer
+    # stopped, correctly, at "0.45% of the Contract Price — which is not in
+    # the retrieved context". A share of the contract sum is half an answer;
+    # the sum is one row up the same sheet. Below the asked row's bonus, so
+    # the base can accompany the row and never outrank it.
+    if any(_NAMED_ROW_SHARE_OF_SUM_RE.search(c.text or "") for c in chosen):
+        docs = {c.doc_id for c in chosen}
+        base = next(
+            (
+                c for c in sheet
+                if c.doc_id in docs
+                and chunk_states_accepted_contract_amount(c.text or "")
+            ),
+            None,
+        )
+        if base is not None and base.chunk_id not in fused:
+            fused[base.chunk_id] = (base, 0.0, _NAMED_ROW_BASE_AMOUNT_BONUS)
+            recovered += 1
+    for chunk in chosen:
         prev = fused.get(chunk.chunk_id)
         if prev is not None:
             # Already pooled on cosine alone: it still has to beat the
