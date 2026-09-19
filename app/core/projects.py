@@ -1738,6 +1738,10 @@ def documents_matching_title_phrase(
         select(Document.id, Document.original_name, Document.file_path)
         .where(Document.project_id == source_id)
         .where(or_(name_l.like(needle), path_l.like(needle)))
+        # Its sibling documents_matching_filename_terms has always skipped
+        # retired files. This one did not, and at limit=8 a retired copy can
+        # also crowd the live file out of the list.
+        .where(Document.retrieval_visible.is_(True))
         .limit(max(1, int(limit or 8)))
     )
     try:

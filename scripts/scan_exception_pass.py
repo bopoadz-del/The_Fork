@@ -113,7 +113,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/core/doc_index.py:952": "baseline 2026-09-10",
     "app/core/doc_index.py:974": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:333": "baseline 2026-09-10",
-    "app/core/rag/vector_store.py:1755": "baseline 2026-09-10",
+    "app/core/rag/vector_store.py:1774": "baseline 2026-09-10",
     "app/infra/monitoring.py:320": "baseline 2026-09-10",
     "app/lib/boq_excel.py:188": "baseline 2026-09-10",
     "app/lib/boq_pricing.py:128": "baseline 2026-09-10",
