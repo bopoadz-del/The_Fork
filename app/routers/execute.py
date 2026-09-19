@@ -8,6 +8,7 @@ from app.dependencies import require_user
 from app.dependencies import block_instances, _create_block_instance
 from app.core.input_adapter import adapt_input
 from app.core.privileges import (
+    raise_if_inaccessible_document_ids,
     raise_if_inaccessible_project_ids,
     raise_if_privileged_block,
     raise_if_privileged_steps,
@@ -42,6 +43,7 @@ async def execute(request: ExecuteRequest, auth: dict = Depends(require_user)):
     if block_name == "orchestrator":
         raise_if_privileged_steps((request.params or {}).get("steps"), auth.get("role"))
     raise_if_inaccessible_project_ids(auth, request.params, request.input)
+    raise_if_inaccessible_document_ids(auth, request.params, request.input)
 
     try:
         if block_name not in block_instances:

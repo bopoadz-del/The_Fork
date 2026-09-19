@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.blocks import BLOCK_REGISTRY
 from app.core.privileges import (
+    raise_if_inaccessible_document_ids,
     raise_if_inaccessible_project_ids,
     raise_if_privileged_block,
 )
@@ -60,6 +61,12 @@ async def chain_execute(request: ChainRequest, auth: dict = Depends(require_user
     for step in request.steps:
         raise_if_privileged_block(step.block, auth.get("role"))
     raise_if_inaccessible_project_ids(
+        auth,
+        request.initial_input,
+        *[step.params for step in request.steps],
+        *[step.input for step in request.steps],
+    )
+    raise_if_inaccessible_document_ids(
         auth,
         request.initial_input,
         *[step.params for step in request.steps],
