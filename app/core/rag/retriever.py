@@ -1873,6 +1873,148 @@ def _rescue_contract_data_docs(
     return names
 
 
+# ── Named-row rescue: ANY filled Contract Data row the question names ─────
+#
+# Live b64bbd2, 0/3 each: "What is the value of the Performance Bond?",
+# "...Time for Completion for Milestone 5?", "What is the approved method of
+# electronic communication under the contract?". All three rows are in the
+# index, correctly prefixed, and score 5.0 when the question happens to say
+# "Contract Data". Asked plainly they are absent: a scanned table embeds
+# badly, cosine never pools it, and every bonus below only re-scores the pool.
+#
+# The out-of-pool fetch above is gated by ``query_wants_contract_data_file``
+# — seven rows, each added after it failed live. This is the same fetch for
+# the rest of the sheet: the discriminator is the row itself. A filled row
+# line that carries two or more of the question's own content words is a row
+# the question named; one shared word is a coincidence.
+# Kill-switch: RAG_NAMED_PARTICULARS_ROW_RESCUE=0.
+_NAMED_ROW_MIN_LINE_TERMS = 2
+_NAMED_ROW_MIN_COVERAGE = 0.5
+_NAMED_ROW_MAX_CHUNKS = 2
+# On nearly every Contract Data line, so they name no row in particular.
+_NAMED_ROW_UBIQUITOUS_TERMS = frozenset({
+    "contract", "contracts", "works", "applicable", "clause", "data",
+    "under", "many", "much", "stated", "state", "states", "according",
+})
+_NAMED_ROW_SEPARATOR_RE = re.compile(r"[:|]")
+_NAMED_ROW_FILLED_CELL_RE = re.compile(r"[:|][^A-Za-z0-9]*[A-Za-z0-9]")
+_NAMED_ROW_NEW_CLAUSE_RE = re.compile(r"^[\s|]*\d+(?:\.\d+)+")
+
+
+def named_particulars_row_rescue_enabled() -> bool:
+    """ON by default — live A4/A7/A8 recall defect."""
+    return _env_flag_on("RAG_NAMED_PARTICULARS_ROW_RESCUE")
+
+
+def _named_row_terms(query: str) -> frozenset:
+    return frozenset(
+        t for t in _significant_terms(query)
+        if t not in _NAMED_ROW_UBIQUITOUS_TERMS
+    )
+
+
+def named_particulars_row_match(query: str, text: str) -> int:
+    """How strongly a particulars chunk states a row the question names.
+
+    0 when it does not. Otherwise the number of distinct question terms in
+    the chunk body, so callers can prefer the better-matching window.
+
+    Judged per LINE because that is what a row is in the rendered chunk, and
+    on the whole line rather than the parsed key: a scanned table often puts
+    the clause number in the key position and the label in the value
+    (``4.3.3(a): | Value of Performance Bond: 10 %``).
+    """
+    if not is_contract_data_particulars_row(text):
+        return 0
+    terms = _named_row_terms(query)
+    if len(terms) < _NAMED_ROW_MIN_LINE_TERMS:
+        return 0
+    body = _cd_chunk_body(text)
+    names_a_row = False
+    lines = body.splitlines()
+    for i, line in enumerate(lines):
+        low = line.lower()
+        ends = [low.rfind(t) + len(t) for t in terms if t in low]
+        if len(ends) < _NAMED_ROW_MIN_LINE_TERMS:
+            continue
+        # The row has to SAY something, in a cell of its own. ``Value of
+        # Performance Bond | |`` names the row and states nothing, and the
+        # rest of a bare label (``...for the whole of the Works``) is not a
+        # value either — so content only counts after a cell separator.
+        tail = low[max(ends):]
+        if not _NAMED_ROW_SEPARATOR_RE.search(tail) and i + 1 < len(lines):
+            # A scanned key wraps: ``Time for Completion (by`` /
+            # ``Milestone, if applicable): Milestone 1 | 397 days``. A next
+            # line that opens with a clause number is the next ROW, not the
+            # rest of this one.
+            nxt = lines[i + 1]
+            if not _NAMED_ROW_NEW_CLAUSE_RE.match(nxt):
+                tail = f"{tail} {nxt.lower()}"
+        if _NAMED_ROW_FILLED_CELL_RE.search(tail):
+            names_a_row = True
+            break
+    if not names_a_row:
+        return 0
+    body_low = body.lower()
+    covered = sum(1 for t in terms if t in body_low)
+    if covered / len(terms) < _NAMED_ROW_MIN_COVERAGE:
+        return 0
+    return covered
+
+
+def _rescue_named_particulars_rows(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> int:
+    """Pull the filled Contract Data row(s) the question names into ``fused``."""
+    if not named_particulars_row_rescue_enabled():
+        return 0
+    if _DEFINITION_QUESTION_RE.search(query or ""):
+        return 0
+    if len(_named_row_terms(query)) < _NAMED_ROW_MIN_LINE_TERMS:
+        return 0
+    try:
+        from app.core.projects import documents_matching_title_phrase
+    except Exception:  # noqa: BLE001
+        logger.warning("named-row rescue: projects import failed", exc_info=True)
+        return 0
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return 0
+    matched: List[Tuple[int, Chunk]] = []
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    for pid in pids:
+        try:
+            docs = documents_matching_title_phrase(pid, "contract data")
+            hits = fetch(pid, [d["id"] for d in docs], k_per_doc=40) if docs else []
+        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+            logger.warning("named-row rescue for %s failed: %s", pid, exc)
+            continue
+        for chunk in hits:
+            strength = named_particulars_row_match(query, chunk.text or "")
+            if strength:
+                matched.append((strength, chunk))
+    matched.sort(key=lambda m: (-m[0], m[1].chunk_index))
+    recovered = 0
+    for _strength, chunk in matched[:_NAMED_ROW_MAX_CHUNKS]:
+        prev = fused.get(chunk.chunk_id)
+        if prev is not None:
+            # Already pooled on cosine alone: it still has to beat the
+            # table-of-contents page that repeats the label.
+            fused[chunk.chunk_id] = (
+                prev[0], prev[1], max(prev[2], _ASKED_PARTICULAR_VALUE_BONUS),
+            )
+            continue
+        fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
+        recovered += 1
+    if recovered:
+        logger.info("named-row rescue recovered %d Contract Data chunk(s)", recovered)
+    return recovered
+
+
 # ── Schedule-register / Not Used rescue (live OLD-pack G1) ─────────────────
 #
 # Live Master Corpus G1 (tip a65cebb5): "Answer only from the client project
@@ -3169,9 +3311,18 @@ def chunk_answers_asked_particular(query: str, text: str) -> bool:
     if dnp_rescue_enabled() and query_asks_for_defects_notification_period(query):
         if chunk_states_defects_notification_period(text):
             return True
-    return (
+    if (
         is_contract_data_particulars_row(text)
         and particulars_row_answers_asked_label(query, text)
+    ):
+        return True
+    # The key-position test above cannot see a scanned row whose label sits in
+    # the value cell (``4.3.3(a): | Value of Performance Bond: 10 %``), nor a
+    # label no regex lists. The row the named-row rescue fetched must survive
+    # the election it was fetched for.
+    return (
+        named_particulars_row_rescue_enabled()
+        and named_particulars_row_match(query, text) > 0
     )
 
 
@@ -7138,6 +7289,10 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _rescue_asked_particular_value_chunks(
         query, project_id, fused_lex, store,
     )
+    _rescue_named_particulars_rows(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
     _rescue_e1_real_aca_from_pool_docs(
         query, project_id, fused_lex, store,
     )
@@ -7699,6 +7854,12 @@ def retrieve_with_filter(
     # unprefixed chunk cosine never fetched. Rescue is project-only so
     # the FIDIC note's illustrative 0.05% cannot impersonate the rate.
     _rescue_asked_particular_value_chunks(query, project_id, fused, store)
+    # A4/A7/A8: the rest of the Contract Data sheet — any filled row the
+    # question names, not only the seven with a rescue of their own.
+    _rescue_named_particulars_rows(
+        query, project_id, fused, store,
+        extra_pids=extra_rescue_pids,
+    )
     _rescue_e1_real_aca_from_pool_docs(query, project_id, fused, store)
     _rescue_a2_including_vat_from_pool_docs(query, project_id, fused, store)
     _rescue_schedule_register_chunks(
