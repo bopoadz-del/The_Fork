@@ -139,13 +139,88 @@ def _dense_particulars_span(text: str) -> tuple[int, int] | None:
     return best
 
 
+# A value that actually STATES a particular: money, a percentage, or a number
+# of days. Deliberately narrower than _CD_FILLED_VALUE_RE, which also accepts
+# "not applicable" / "n/a" -- fine for judging one row of a table already known
+# to be Contract Data, useless for deciding whether a section IS one. Meeting
+# minutes are full of "NA".
+_CD_SUBSTANTIVE_VALUE_RE = re.compile(
+    r"(?i)(?:\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b\s*\d|"
+    r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|"
+    r"\d+(?:\.\d+)?\s*%|"
+    r"\d+\s+(?:calendar\s+|working\s+)?days?\b)"
+)
+
+# How far past a key its value may sit. Table extraction routinely puts a key
+# and its value on different lines -- one word per line for some PDFs -- so
+# this is measured on whitespace-collapsed text, not per line.
+_CD_KEY_TO_VALUE_WINDOW = 160
+
+# Distinct high-signal particulars a section must STATE before it may carry
+# the Contract Data label. One is not enough: "Retention: 10%" turns up in a
+# progress report. Two different ones, each with a real value, is a table.
+_CD_MIN_STATED_PARTICULARS = 2
+
+
+def section_states_contract_particulars(section: str) -> bool:
+    """True when a section actually states contract particulars.
+
+    A heading that SAYS "Contract Data" is not evidence of a Contract Data
+    table. Live on 2d9d9c0 the label -- and the retrieval bonus that rides on
+    it -- sat on three documents, none of them the contract:
+
+      * ``CPM 16-01-2024.pdf`` and ``CPM 22-01-2024.pdf``: progress-meeting
+        minutes whose agenda item "Contract Data" lists document transmittals
+        ("15: Performance Bond form | Issued via Aconex on 9/1/24").
+      * ``Long Form PSA ... Rev 5.docx``: a DIFFERENT contract, a consultancy
+        agreement whose Part A is headed "Contract Particulars".
+
+    They outranked the real Contract Data PDF on every contract question. With
+    five chunks returned, the clause never arrived, and the assistant answered
+    "not in the retrieved excerpts" to the value of the Performance Bond, the
+    number of Milestones, the approved method of electronic communication and
+    whether Sections apply -- all four of which are stated in that PDF. The
+    PSA is the dangerous one: it could answer a question about this contract
+    with another contract's terms.
+
+    So the section has to earn the label: at least two DISTINCT high-signal
+    keys (Accepted Contract Amount, Time for Completion, Delay Damages, Defects
+    Notification, Performance Bond, Retention), each followed closely by a
+    substantive value. A transmittal line names "Performance Bond" and then
+    says "Issued via Aconex" -- a key with no particular behind it.
+    """
+    flat = re.sub(r"\s+", " ", section or "")
+    if not flat:
+        return False
+    stated: set[str] = set()
+    for match in _CD_HIGH_SIGNAL_KEY_RE.finditer(flat):
+        window = flat[match.end(): match.end() + _CD_KEY_TO_VALUE_WINDOW]
+        if _CD_SUBSTANTIVE_VALUE_RE.search(window):
+            # Collapse spelling variants so "Performance Bond" and
+            # "Performance Security" count once, not twice.
+            stated.add(re.sub(r"\W+", " ", match.group(0).lower()).split()[0])
+            if len(stated) >= _CD_MIN_STATED_PARTICULARS:
+                return True
+    return False
+
+
 def contract_data_spans(text: str, filename: str = "") -> list[tuple[int, int]]:
-    spans = contract_data_heading_spans(text)
+    """Spans that are Contract Data -- by content, not merely by heading.
+
+    Every candidate, from a heading or from the filename fallback, must pass
+    :func:`section_states_contract_particulars`. This is the single chokepoint
+    for both the chunker and the indexer, so a document that fails here gets
+    neither the label nor the retrieval bonus that depends on it.
+    """
+    spans = [
+        span for span in contract_data_heading_spans(text)
+        if section_states_contract_particulars(text[span[0]:span[1]])
+    ]
     if spans:
         return spans
     if filename and _CONTRACT_DATA_FILENAME_RE.search(filename):
         dense = _dense_particulars_span(text)
-        if dense:
+        if dense and section_states_contract_particulars(text[dense[0]:dense[1]]):
             return [dense]
     return []
 
