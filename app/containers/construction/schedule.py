@@ -399,11 +399,22 @@ class ConstructionScheduleMixin:
         planned_pct = float(p.get("planned_percent") or data.get("planned_percent", 0))
         actual_pct = float(p.get("actual_percent") or data.get("actual_percent", 0))
         contract_value = float(p.get("contract_value") or data.get("contract_value", 0))
+        activities = p.get("activities") or data.get("activities", [])
+        has_planned = "planned_percent" in p or "planned_percent" in data
+        has_actual = "actual_percent" in p or "actual_percent" in data
+        if not has_planned and not has_actual and not activities:
+            return {
+                "status": "error",
+                "action": "progress_tracker",
+                "error": (
+                    "Provide planned_percent and actual_percent, or an "
+                    "activities list — cannot track progress with no figures"
+                ),
+            }
         actual_cost = p.get("actual_cost")
         if actual_cost is None:
             actual_cost = data.get("actual_cost")
         reporting_period = p.get("reporting_period", datetime.now(timezone.utc).strftime("%B %Y"))
-        activities = p.get("activities") or data.get("activities", [])
         photos = p.get("photos") or data.get("photos", [])
 
         variance = round(actual_pct - planned_pct, 2)

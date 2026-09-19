@@ -695,6 +695,18 @@ class ConstructionBoqMixin:
         critical = [i for i in procurement_items if i["priority"] == "critical"]
         total_cost = round(sum(i["total_cost"] for i in procurement_items), 2)
 
+        if not procurement_items:
+            return {
+                "status": "error",
+                "action": "procurement_list",
+                "error": (
+                    "No BOQ line items or discrete quantities supplied — "
+                    "cannot generate a procurement list"
+                ),
+                "total_items": 0,
+                "procurement_list": [],
+            }
+
         return {
             "status": "success",
             "action": "procurement_list",
@@ -1084,9 +1096,12 @@ class ConstructionBoqMixin:
 
         if not rfis:
             return {
-                "status": "success",
+                "status": "error",
                 "action": "rfi_generator",
-                "message": "No issues found to generate RFIs from. Provide 'issues' list or chain from process_document.",
+                "error": (
+                    "No issues found to generate RFIs from. Provide an "
+                    "'issues' list or a question in the message."
+                ),
                 "rfis": [],
             }
 
@@ -1151,9 +1166,20 @@ class ConstructionBoqMixin:
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
     
-        co_type = p.get("change_type", data.get("change_type", "general"))
+        co_type = p.get("change_type", data.get("change_type"))
         direct_cost = p.get("direct_cost", data.get("direct_cost", 0))
-    
+        if not co_type and not direct_cost:
+            return {
+                "status": "error",
+                "action": "change_order_analysis",
+                "error": (
+                    "Provide change_type / description and/or direct_cost — "
+                    "cannot analyse a variation with no scope and no cost"
+                ),
+            }
+        if not co_type:
+            co_type = "general"
+
         analysis = self._analyze_change_type(co_type, params)
         cost_impact = self._calculate_co_cost_impact(direct_cost, analysis)
     
@@ -1634,11 +1660,24 @@ class ConstructionBoqMixin:
                 "justification": vo_data.get("delay_justification", "")
             },
             "contract_compliance": {
-                "variation_clause": contract_terms.get("clause_reference", "Clause XX"),
-                "entitlement_clear": contract_terms.get("clear_entitlement", True),
-                "pricing_methodology": contract_terms.get("pricing_method", "Dayworks/Rates"),
-                "notice_requirements_met": vo_data.get("notice_given", True),
-                "time_bar_risk": self._check_time_bar(existing_vos, vo_data)
+                "variation_clause": (
+                    contract_terms.get("clause_reference")
+                    or vo_data.get("clause_reference")
+                ),
+                "entitlement_clear": (
+                    contract_terms["clear_entitlement"]
+                    if "clear_entitlement" in contract_terms
+                    else vo_data.get("entitlement_clear")
+                ),
+                "pricing_methodology": (
+                    contract_terms.get("pricing_method")
+                    or vo_data.get("pricing_method")
+                ),
+                "notice_requirements_met": (
+                    vo_data["notice_given"] if "notice_given" in vo_data else None
+                ),
+                "time_bar_risk": self._check_time_bar(existing_vos, vo_data),
+                "note": contract_terms.get("note"),
             },
             "supporting_documents": self._list_vo_documents(vo_data),
             "document_content": vo_document,

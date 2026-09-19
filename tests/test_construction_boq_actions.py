@@ -464,8 +464,9 @@ class TestRFIGenerator:
     @pytest.mark.asyncio
     async def test_rfi_generator_no_issues(self, container):
         result = await container.rfi_generator({}, {})
-        assert result["status"] == "success"
+        assert result["status"] == "error"
         assert result["rfis"] == []
+        assert "issues" in result["error"].lower()
 
 
 class TestChangeOrderImpact:
