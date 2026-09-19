@@ -6238,6 +6238,29 @@ _PART_SUMMARY_LABEL_RE = re.compile(
     r"(?i)\b(?:part\s+summary|total\s+this\s+page|page\s+total|"
     r"carried\s+to\s+collection)\b"
 )
+# The chunker cuts on length, not on meaning. Live (unseen Set 3 B3, page
+# d/3/3): one chunk ENDS "...culverts 1,370.00 To Par" and the next BEGINS
+# "t Summary ... SAR 17,496,857.00 ... Page d/3/3". Neither half says "Part
+# Summary". The second half is still that page's total, and it is
+# recognisable: "Summary", within a few characters of the START of a chunk
+# (start of text, or right after an excerpt marker's closing bracket). The
+# word anywhere else in running prose is not a label.
+_PART_SUMMARY_SPLIT_LABEL_RE = re.compile(
+    r"(?i)(?:\A|\]\s*)\W{0,4}(?:[a-z]{1,4}\W{1,3})?summary\b"
+)
+
+
+def _part_summary_labels(blob: str) -> List["re.Match"]:
+    """Every Part Summary label in ``blob``, whole or cut by the chunker."""
+    found = list(_PART_SUMMARY_LABEL_RE.finditer(blob or ""))
+    whole = [(m.start(), m.end()) for m in found]
+    for m in _PART_SUMMARY_SPLIT_LABEL_RE.finditer(blob or ""):
+        # "...] To Part Summary" is a whole label, already counted.
+        if not any(a <= m.end() <= b for a, b in whole):
+            found.append(m)
+    return sorted(found, key=lambda m: m.start())
+
+
 _PART_SUMMARY_ASK_RE = re.compile(
     r"(?i)\bpart\s+summary\b|\btotal\s+this\s+page\b|\bpage\s+total\b"
 )
@@ -6419,7 +6442,7 @@ def _part_summary_totals(blob: str) -> List[Dict[str, Any]]:
     total is evidence for no page in particular: it must never be elected as
     the page a question names.
     """
-    labels = list(_PART_SUMMARY_LABEL_RE.finditer(blob))
+    labels = _part_summary_labels(blob)
     out: List[Dict[str, Any]] = []
     for i, label in enumerate(labels):
         # Amount sits on the summary row (after the label). Looking
@@ -6486,7 +6509,7 @@ def compose_part_summary_total(
     blob = _normalize_boq_page_refs_in_text(
         _normalize_retrieval_ws((excerpt or "").replace("|", " "))
     )
-    if not _PART_SUMMARY_LABEL_RE.search(blob):
+    if not _part_summary_labels(blob):
         return None
     # Only a total printed for the ASKED page. A lone total whose page number
     # did not survive the scan used to be returned as the asked page's.
@@ -6531,7 +6554,7 @@ def chunk_states_part_summary_total(
     (header + footer split by the 500-char BOQ chunker).
     """
     blob = text or ""
-    if not _PART_SUMMARY_LABEL_RE.search(blob):
+    if not _part_summary_labels(blob):
         return False
     if not _PART_SUMMARY_MONEY_RE.search(
         _normalize_retrieval_ws(blob.replace("|", " "))
@@ -6612,7 +6635,7 @@ def _rescue_part_summary_chunks(
     needle_sets = tuple(
         [["part summary"]]
         + [[label, ref] for ref in refs
-           for label in ("part summary", "total this page", "page total")]
+           for label in ("part summary", "total this page", "page total", "summary")]
     )
     for pid in pids:
         for needles in needle_sets:
