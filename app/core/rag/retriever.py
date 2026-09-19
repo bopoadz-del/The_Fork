@@ -1387,6 +1387,127 @@ def _rescue_filename_matched_docs(
     return names
 
 
+# ── document-identity rescue (live B6) ─────────────────────────────────────
+#
+# Live 24d1c0c, 0/3: "What is the document number and revision of the priced
+# Bill of Quantities, and who prepared it?" The cover is indexed, in a file
+# NAMED ``…Bill of Quantities (Priced).pdf``; searched by its document number
+# it ranks first. Asked plainly, the top five were contract templates that
+# describe how a bill should be identified. A control block is labels and
+# codes — nothing in the question resembles it — and "document number",
+# "revision", "prepared" are in every template in the corpus.
+#
+# The filename rescue above keeps the five most "distinctive" words,
+# capitalised first; "priced", the one word that tells this bill from the
+# unpriced one, came sixth. Here the words that ASK (number, revision,
+# prepared) are separated from the words that NAME, every naming word is
+# mandatory, and only the named document's control block is fetched.
+# Kill-switch: RAG_DOCUMENT_IDENTITY_RESCUE=0.
+_DOC_IDENTITY_ASK_RE = re.compile(
+    r"(?i)\b(?:document|doc\.?|drawing|reference)\s+(?:number|no\b\.?|ref\b)|"
+    r"\brevision\b|\bprepared\s+by\b|"
+    r"\bwho\s+(?:prepared|authored|wrote|issued|checked|reviewed|approved)\b"
+)
+_DOC_IDENTITY_ASK_WORDS = frozenset({
+    "document", "number", "revision", "prepared", "authored", "wrote",
+    "issued", "checked", "reviewed", "approved", "reference", "drawing",
+    "date", "dated", "title", "author",
+})
+_DOC_CONTROL_BLOCK_LABEL_RES = tuple(
+    re.compile(p, re.IGNORECASE) for p in (
+        r"\bdocument\s+no\b", r"\brevision\s+no\b", r"\bprepared\s+by\b",
+        r"\bdoc\s+status\b", r"\bproject\s+no\b", r"\bfile\s+name\b",
+        r"\bchecked\b", r"\breviewed\b", r"\bapproved\b", r"\bauthor\b",
+        r"\bclient\s+reference\b",
+    )
+)
+_DOC_IDENTITY_BONUS = 2.0
+_DOC_IDENTITY_COVER_CHUNKS = 8
+_DOC_IDENTITY_MAX_CHUNKS = 2
+
+
+def document_identity_rescue_enabled() -> bool:
+    """ON by default — live B6 recall defect."""
+    return _env_flag_on("RAG_DOCUMENT_IDENTITY_RESCUE")
+
+
+def query_asks_for_document_identity(query: str) -> bool:
+    """True for "what number / revision is X, who prepared it"."""
+    return bool(_DOC_IDENTITY_ASK_RE.search(query or ""))
+
+
+def document_identity_title_terms(query: str) -> List[str]:
+    """The words of the ask that NAME the document, not the ones that ask."""
+    return sorted(
+        t for t in _significant_terms(query)
+        if t not in _DOC_IDENTITY_ASK_WORDS
+    )
+
+
+def chunk_states_document_control_block(text: str) -> bool:
+    """True for a cover / revision-history block: two or more control labels."""
+    t = text or ""
+    return sum(1 for rx in _DOC_CONTROL_BLOCK_LABEL_RES if rx.search(t)) >= 2
+
+
+def _rescue_document_identity_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> int:
+    """Pull the named document's control block into ``fused``."""
+    if not document_identity_rescue_enabled():
+        return 0
+    if not query_asks_for_document_identity(query):
+        return 0
+    terms = document_identity_title_terms(query)
+    if len(terms) < 2:
+        return 0  # no document is named; identity vocabulary alone is not one
+    try:
+        from app.core.projects import documents_matching_filename_terms
+    except Exception:  # noqa: BLE001
+        logger.warning("document-identity rescue: projects import failed", exc_info=True)
+        return 0
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return 0
+    recovered = 0
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    for pid in pids:
+        try:
+            docs = documents_matching_filename_terms(
+                pid, terms, require_all=True, limit=3,
+            )
+            hits = (
+                fetch(pid, [d["id"] for d in docs],
+                      k_per_doc=_DOC_IDENTITY_COVER_CHUNKS)
+                if docs else []
+            )
+        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+            logger.warning("document-identity rescue for %s failed: %s", pid, exc)
+            continue
+        blocks = sorted(
+            (c for c in hits if chunk_states_document_control_block(c.text or "")),
+            key=lambda c: c.chunk_index,
+        )
+        for chunk in blocks[:_DOC_IDENTITY_MAX_CHUNKS]:
+            prev = fused.get(chunk.chunk_id)
+            if prev is not None:
+                fused[chunk.chunk_id] = (
+                    prev[0], prev[1], max(prev[2], _DOC_IDENTITY_BONUS),
+                )
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, _DOC_IDENTITY_BONUS)
+            recovered += 1
+        if recovered:
+            break
+    if recovered:
+        logger.info("document-identity rescue recovered %d chunk(s)", recovered)
+    return recovered
+
+
 # ── specification-title filename rescue (live C2) ──────────────────────────
 #
 # Live Master Corpus C2 (SHA 567147a): "Which specification document covers
@@ -7339,6 +7460,10 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
+    _rescue_document_identity_chunks(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
     _rescue_e1_real_aca_from_pool_docs(
         query, project_id, fused_lex, store,
     )
@@ -7903,6 +8028,11 @@ def retrieve_with_filter(
     # A4/A7/A8: the rest of the Contract Data sheet — any filled row the
     # question names, not only the seven with a rescue of their own.
     _rescue_named_particulars_rows(
+        query, project_id, fused, store,
+        extra_pids=extra_rescue_pids,
+    )
+    # B6: number / revision / author of a document the question names.
+    _rescue_document_identity_chunks(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
     )
