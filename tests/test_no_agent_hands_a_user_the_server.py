@@ -42,6 +42,29 @@ _STARTS_A_PROCESS_RE = re.compile(
     r"subprocess\.(?:run|Popen|call|check_output|check_call)|os\.system\(|"
     r"os\.popen\(|StdioServerParameters\(|create_subprocess_(?:exec|shell)\("
 )
+# A new block that opens the network must be admin-only, or listed here
+# with why the destination is not a caller-chosen host (same shape as
+# _REVIEWED_PROCESS_BLOCKS). Caller-URL downloaders are listed as a known
+# gap — they are not privileged yet; a *new* file with httpx/requests
+# still fails CI until someone puts it in PRIVILEGED_BLOCKS or here.
+_REVIEWED_NETWORK_BLOCKS = {
+    "chat": "LLM provider URL from env/config, not a caller-chosen host",
+    "project_reasoner": "same LLM hop as chat",
+    "formula_executor_v2": "same LLM hop as chat",
+    "translate": "fixed Google translate endpoint; query is text, not a URL",
+    "search": "fixed Serper/DDGS endpoints; query is text, not a URL",
+    "ocr": "downloads a caller http(s) URL then local Tesseract — SSRF-class, not privileged yet",
+    "ocr_v2": "same caller-URL download as ocr",
+    "pdf": "same caller-URL download as ocr",
+    "pdf_v2": "same caller-URL download as ocr",
+    "image": "same caller-URL download as ocr",
+}
+_REACHES_THE_NETWORK_RE = re.compile(
+    r"\b(?:httpx|requests|aiohttp|urllib3)\.|"
+    r"urllib\.request|"
+    r"AsyncOpenAI|OpenAI\(|"
+    r"\bwebsockets\.|\bftplib\.|\bsmtplib\."
+)
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +110,22 @@ def test_every_block_that_starts_a_process_is_privileged_or_reviewed():
             offenders.append(f"{path.name} ({name})")
     assert not offenders, (
         "these blocks start a process but are not admin-only: " + ", ".join(offenders)
+    )
+
+
+def test_every_block_that_reaches_the_network_is_privileged_or_reviewed():
+    offenders = []
+    for path in sorted(BLOCKS_DIR.glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        m = re.search(r'^\s+name\s*=\s*"([^"]+)"', src, re.M)
+        if not m or not _REACHES_THE_NETWORK_RE.search(src):
+            continue
+        name = m.group(1)
+        if name not in PRIVILEGED_BLOCKS and name not in _REVIEWED_NETWORK_BLOCKS:
+            offenders.append(f"{path.name} ({name})")
+    assert not offenders, (
+        "these blocks reach the network but are not admin-only: "
+        + ", ".join(offenders)
     )
 
 
