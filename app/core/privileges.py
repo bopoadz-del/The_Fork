@@ -21,6 +21,13 @@ PRIVILEGED_BLOCKS = frozenset({
     "local_drive",   # reads, lists and WRITES the data disk -- every user's uploads
     "web",           # fetches any URL from inside the network
     "webhook",       # sends a request to any URL from inside the network
+    # Both fall back to a SERVER-WIDE token (GOOGLE_ACCESS_TOKEN /
+    # ONEDRIVE_ACCESS_TOKEN) when the caller passes none, so a direct call
+    # would browse whoever's drive that is. Users reach their OWN drive
+    # through /v1/drive/*, which passes the per-user token and never goes
+    # through this gate.
+    "google_drive",
+    "onedrive",
 })
 
 _caller_role: ContextVar[Optional[str]] = ContextVar("caller_role", default=None)

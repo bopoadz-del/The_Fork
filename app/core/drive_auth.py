@@ -84,6 +84,34 @@ def clear_token(user_id: str) -> bool:
     return False
 
 
+_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+
+
+async def _revoke_request(token: str) -> bool:
+    """POST the token to Google's revoke endpoint. Overridable seam for tests."""
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.post(_REVOKE_URL, data={"token": token})
+    return resp.status_code == 200
+
+
+async def revoke_and_clear(user_id: str) -> Dict[str, bool]:
+    """Disconnect for real: revoke the grant at Google, then drop the file.
+
+    Deleting only our copy left the grant live at Google -- the app still
+    showed as connected in the user's Google account, and the refresh token
+    kept working for anyone holding a copy. Revoking the refresh token ends
+    the whole grant. A failed revoke still removes our copy, and says so."""
+    token = load_token(user_id)
+    revoked = False
+    secret = (token or {}).get("refresh_token") or (token or {}).get("access_token")
+    if secret:
+        try:
+            revoked = await _revoke_request(secret)
+        except httpx.HTTPError:
+            logger.warning("Drive revoke failed for %s", _safe_user(user_id), exc_info=True)
+    return {"was_connected": clear_token(user_id), "revoked": revoked}
+
+
 async def _refresh_request(refresh_token: str) -> Dict[str, Any]:
     """POST the refresh grant to Google. Overridable seam for tests."""
     async with httpx.AsyncClient(timeout=20) as client:
