@@ -578,19 +578,52 @@ class TestResourceHistogramDeliver:
         result = await container.resource_histogram({}, {})
         assert result["status"] == "error"
 
+    @pytest.mark.asyncio
+    async def test_taskrsrc_700h_hand_derived(self, container):
+        """A1010 LAB 200 + A1020 LAB 400 + A1030 CARP 100 = 700 man-hours."""
+        path = Path("tests/fixtures/resource_loaded.xer")
+        if not path.is_file():
+            pytest.fail(f"resource-loaded fixture missing: {path}")
+        result = await container.resource_histogram({}, {"schedule_file": str(path)})
+        assert result["status"] == "success", result
+        assert result["total_manhours"] == 700.0
+        assert result["by_trade_totals"] == {"LAB": 600.0, "CARP": 100.0}
+        assert result["source"] == "primavera_taskrsrc"
+
 
 class TestClaimsBuilderDeliver:
     @pytest.mark.asyncio
     async def test_empty_does_not_invent_events(self, container):
         result = await container.claims_builder({}, {})
-        if result.get("status") == "success":
-            events = result.get("delay_events") or result.get("events") or []
-            assert events == [] or result.get("claim") or result.get("notice")
-            invented = str(result).lower()
-            assert "sample" not in invented
-            assert "todo" not in invented
-        else:
-            assert result["status"] == "error"
+        assert result["status"] == "error"
+        assert "delay_events" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_quantum_from_event_costs_hand_derived(self, container):
+        """Two events: 10 d / 25_000 + 5 d / 10_000 → delay 15 d, claim 35_000.
+        Breakdown: staff 30% = 10_500, accommodation 20% = 7_000,
+        plant 25% = 8_750, insurances 10% = 3_500, OH 15% = 5_250.
+        """
+        result = await container.claims_builder(
+            {
+                "delay_events": [
+                    {"event_id": "DE-01", "description": "access withheld", "delay_days": 10, "cost_impact": 25_000},
+                    {"event_id": "DE-02", "description": "late IFC", "delay_days": 5, "cost_impact": 10_000},
+                ]
+            },
+            {},
+        )
+        assert result["status"] == "success"
+        assert result["delay_summary"]["total_delay_days"] == 15
+        q = result["quantum_calculation"]
+        assert q["calculation_mode"] == "event_sum"
+        assert q["prolongation_period_days"] == 15
+        assert q["total_claim"] == 35_000.0
+        assert q["breakdown"]["site_staff"] == 10_500.0
+        assert q["breakdown"]["site_accommodation"] == 7_000.0
+        assert q["breakdown"]["plant_standing"] == 8_750.0
+        assert q["breakdown"]["insurances_bonds"] == 3_500.0
+        assert q["breakdown"]["overheads_profit"] == 5_250.0
 
 
 class TestChangeOrderImpactDeliver:
@@ -672,7 +705,12 @@ class TestWarrantyDeliver:
         row = result["warranty_register"][0]
         assert row["system"] == "AHU-1"
         assert row["warranty_months"] == 24
-        assert row["warranty_expiry"] == "2027-12-22" or row["warranty_expiry"] == "2027-12-24"
+        assert row["warranty_expiry"] == "2027-12-22"
+
+    @pytest.mark.asyncio
+    async def test_empty_systems_is_error(self, container):
+        result = await container.warranty_maintenance_schedule({}, {})
+        assert result["status"] == "error"
 
 
 class TestSubmittalLogDeliver:
@@ -686,28 +724,39 @@ class TestSubmittalLogDeliver:
         assert result["total_submittals"] >= 1
         descs = [s["description"] for s in result["submittal_register"]]
         assert any("Structural steel" in d for d in descs)
+        assert not any("QA/QC Plan" in d for d in descs)
+
+    @pytest.mark.asyncio
+    async def test_empty_is_error(self, container):
+        result = await container.submittal_log_generator({}, {})
+        assert result["status"] == "error"
 
 
 class TestRiskRegisterDeliver:
     @pytest.mark.asyncio
     async def test_from_supplied_risks(self, container):
+        """severity high → p=0.7 i=0.8 score=56.0; medium → 0.4×0.5×100=20.0.
+        Sorted descending. No catalogue padding.
+        """
         result = await container.risk_register_auto_populate(
             {
                 "risks": [
-                    {
-                        "description": "Late steel delivery",
-                        "category": "procurement",
-                        "probability": "medium",
-                        "impact": "high",
-                    }
+                    {"description": "Fall hazard", "category": "Safety", "severity": "high"},
+                    {"description": "Material delay", "category": "Schedule", "severity": "medium"},
                 ]
             },
             {},
         )
-        assert result["status"] in {"success", "error"}
-        if result["status"] == "success":
-            rows = result.get("risks") or result.get("risk_register") or result.get("register") or []
-            assert rows
+        assert result["status"] == "success"
+        assert result["total_risks"] == 2
+        assert result["risk_register"][0]["risk_score"] == 56.0
+        assert result["risk_register"][1]["risk_score"] == 20.0
+        assert all(r["source"] == "auto" for r in result["risk_register"])
+
+    @pytest.mark.asyncio
+    async def test_empty_is_error(self, container):
+        result = await container.risk_register_auto_populate({}, {})
+        assert result["status"] == "error"
 
 
 class TestProcurementOptimizerDeliver:
@@ -739,11 +788,18 @@ class TestCarbonFootprintDeliver:
     @pytest.mark.asyncio
     async def test_empty_refuses_or_names_gap(self, container):
         result = await container.carbon_footprint_calculator({}, {})
-        if result.get("status") == "success":
-            assert result.get("total_kgco2e") not in (0, 0.0) or result.get("items") or result.get("error")
-            assert "todo" not in str(result).lower()
-        else:
-            assert result["status"] == "error"
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_factors_hand_derived(self, container):
+        """12 m³ × 250 + 2_000 kg × 2.3 = 3_000 + 4_600 = 7_600 kg = 7.6 t."""
+        result = await container.carbon_footprint_calculator(
+            {"quantities": {"concrete_m3": {"quantity": 12}, "steel_kg": {"quantity": 2_000}}},
+            {},
+        )
+        assert result["status"] == "success"
+        assert result["total_embodied_carbon_kg"] == 7_600.0
+        assert result["total_tonnes_co2"] == 7.6
 
 
 class TestBimExtractDeliver:
@@ -816,7 +872,21 @@ class TestWirAndDraftsDeliver:
     @pytest.mark.asyncio
     async def test_safety_briefing_empty_errors_or_asks(self, container):
         result = await container.safety_briefing({}, {})
-        assert result["status"] in {"error", "success"}
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_rfp_empty_is_error(self, container):
+        result = await container.rfp_draft({}, {})
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_job_requisition_title_not_invented_lighting(self, container):
+        result = await container.job_requisition(
+            {"text": "Job requisition for traffic signage and road markings only."},
+            {},
+        )
+        assert result["status"] == "success"
+        assert "street-lighting" not in result["title"].lower()
 
 
 class TestAutoPipelineAndOrchestrate:
@@ -839,11 +909,28 @@ class TestValueEngineeringDeliver:
     @pytest.mark.asyncio
     async def test_empty_refuses_or_does_not_invent_savings(self, container):
         result = await container.value_engineering({}, {})
-        if result.get("status") == "success":
-            savings = result.get("savings") or result.get("total_saving") or 0
-            assert savings in (0, 0.0, None) or result.get("options")
-        else:
-            assert result["status"] == "error"
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_ggbs_saving_hand_derived(self, container):
+        """concrete 100_000: GGBS −5% = −5_000, fly ash −8% = −8_000;
+        steel 50_000 × 0 = 0. Sum of negative deltas = −13_000.
+        Conservative scenario savings = abs(sum)×0.5 = 6_500.
+        """
+        result = await container.value_engineering(
+            {
+                "boq": [
+                    {"id": "C-01", "material_type": "concrete_c30", "quantity": 400, "total_cost": 100_000, "carbon_impact": 10_000},
+                    {"id": "S-01", "material_type": "structural_steel", "quantity": 20, "total_cost": 50_000, "carbon_impact": 8_000},
+                ]
+            },
+            {},
+        )
+        assert result["status"] == "success"
+        assert result["current_project_cost"] == 150_000
+        assert result["alternatives_identified"] >= 3
+        cons = result["scenarios"]["conservative"]
+        assert cons["cost_savings"] == 6_500.0
 
 
 class TestDailySiteReportDeliver:
@@ -858,12 +945,35 @@ class TestDailySiteReportDeliver:
 
 class TestOmManualDeliver:
     @pytest.mark.asyncio
-    async def test_named_system_outline(self, container):
+    async def test_empty_is_error(self, container):
+        result = await container.om_manual_generator({}, {})
+        assert result["status"] == "error"
+        assert "equipment" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_named_system_without_equipment_is_error(self, container):
+        """systems=['hvac'] is not an equipment_list — do not invent tags."""
         result = await container.om_manual_generator({"systems": ["hvac"]}, {})
-        if result.get("status") == "success":
-            assert result.get("manual") or result.get("sections") or result.get("outline")
-        else:
-            assert result["status"] == "error"
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_equipment_list_delivers_tag(self, container):
+        result = await container.om_manual_generator(
+            {
+                "equipment_list": [
+                    {
+                        "tag": "AHU-1",
+                        "description": "Air handling unit",
+                        "system_type": "mechanical",
+                    }
+                ]
+            },
+            {},
+        )
+        assert result["status"] == "success"
+        blob = str(result)
+        assert "AHU-1" in blob
+        assert result.get("sections") or result.get("manual")
 
 
 class TestEsgDeliver:
@@ -930,9 +1040,23 @@ class TestQaQcAndAsBuilt:
     @pytest.mark.asyncio
     async def test_as_built_without_files_errors(self, container):
         result = await container.as_built_deviation_report({}, {})
-        assert result["status"] in {"error", "success"}
-        if result["status"] == "success":
-            assert result.get("deviations") is not None or result.get("note")
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_as_built_10_vs_10_05_is_major(self, container):
+        """design 10.0 vs as-built 10.05; default tolerance 10 mm = 0.01.
+        |10.05−10.0| = 0.05 > 0.01 → deviation.
+        0.05 > 10/500 = 0.02 → major → CONDITIONAL.
+        """
+        result = await container.as_built_deviation_report(
+            {"measurements": [{"type": "length", "value": 10.05, "unit": "m"}]},
+            {"design_measurements": [{"type": "length", "value": 10.0, "unit": "m"}]},
+        )
+        assert result["status"] == "success"
+        assert result["deviation_summary"]["total_deviations"] == 1
+        assert result["deviation_summary"]["major"] == 1
+        assert result["sign_off_status"] == "CONDITIONAL"
+        assert result["deviations"][0]["deviation"] == pytest.approx(0.05)
 
 
 class TestBimAnalysisAndClash:
@@ -980,3 +1104,46 @@ class TestRouteUnknownAndAliases:
     async def test_health_check_is_metadata_not_deliverable(self, container):
         result = await container.route("health_check", {}, {})
         assert result.get("status") in {"success", "ok", "healthy"} or "health" in str(result).lower()
+
+
+class TestProcurementAnalysisDeliver:
+    @pytest.mark.asyncio
+    async def test_empty_is_error(self, container):
+        result = await container.procurement_analysis({}, {})
+        assert result["status"] == "error"
+        assert result.get("stage") == "list_generation"
+
+
+class TestRouteOnlyDeliver:
+    @pytest.mark.asyncio
+    async def test_extract_measurements_empty_is_error(self, container):
+        result = await container.route("extract_measurements", {}, {})
+        assert result["status"] == "error"
+        assert "extract" in result["error"].lower() or "drawing" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_generate_construction_report_empty_is_error(self, container):
+        result = await container.route("generate_construction_report", {}, {})
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_track_progress_empty_is_error(self, container):
+        result = await container.route("track_progress", {}, {})
+        assert result["status"] == "error"
+        assert "photo" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_cost_estimate_empty_is_error(self, container):
+        result = await container.route("cost_estimate", {}, {})
+        assert result["status"] == "error"
+        assert "quantit" in result["error"].lower() or "boq" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_analyze_spec_empty_is_error(self, container):
+        result = await container.route("analyze_spec", {}, {})
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_schedule_risk_empty_is_error(self, container):
+        result = await container.route("schedule_risk", {}, {})
+        assert result["status"] == "error"

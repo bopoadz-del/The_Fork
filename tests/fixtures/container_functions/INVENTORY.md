@@ -131,6 +131,64 @@ Columns: chat reach / agents / det vs LLM / needs uploaded file.
 
 construction-capable = the 11 agents listed above.
 
+## Phase 1 verdicts (ConstructionContainer direct)
+
+Central fail = `status=success` without a deliverable, or silent invention.
+`construction_calc` / `formula_execute` / `sympy_reason` are not owned here.
+
+| Action | Verdict | Note |
+|---|---|---|
+| look_ahead | WORKS | inclusive 21-day window; missing/.xer/0 days error |
+| procurement_list_generator | WORKS | empty error; 140_000 / 16-week steel |
+| drawing_qto | WORKS | missing/wrong-type error; 10×5 DXF = 50 m² |
+| variation_order_manager | WORKS | no invented Clause XX |
+| payment_certificate | WORKS | IPC arithmetic |
+| generate_wbs | WORKS | building brief delivers tree; empty brief left as existing contract |
+| cash_flow_forecast | WORKS | S-curve month 1 |
+| rfi_generator | WORKS | empty error |
+| evm_calculate | WORKS | SPI/CPI hand-derived |
+| boq_process | WORKS | CSV line total |
+| parse_primavera_schedule / primavera_parse | WORKS | 3-activity XER / missing file |
+| extract_quantities | WORKS | empty error |
+| estimate_costs / cost_estimate | WORKS | empty error |
+| progress_tracker | WORKS | empty error; proxy SPI |
+| commissioning_checklist | WORKS | named system; default pack left as existing contract |
+| resource_histogram | WORKS | 200+400+100 = 700 h TASKRSRC |
+| claims_builder | WORKS | empty error; 35_000 event_sum |
+| change_order_impact | WORKS | 50_000 → 67_500 |
+| tender_bid_analysis | WORKS | lowest 950_000 |
+| forensic_delay_analysis | WORKS | missing schedules error |
+| warranty_maintenance_schedule | WORKS | empty error; 24×30 days expiry |
+| submittal_log_generator | WORKS | empty error; no invented QA/QC Plan |
+| risk_register_auto_populate | WORKS | empty error; scores 56.0 / 20.0 |
+| procurement_optimizer | WORKS | empty does not rank ghosts |
+| procurement_analysis | WORKS | empty errors at list_generation |
+| wir_form / inspection_request | WORKS | alias reaches wir |
+| job_requisition | WORKS | empty error; lighting title only if text matches |
+| safety_briefing | WORKS | empty error |
+| rfp_draft | WORKS | empty error |
+| qa_qc_inspection | WORKS | empty errors or asks |
+| process_document / process_contract / process_specification_full | WORKS | missing input error |
+| spec_analyze / analyze_spec | WORKS | missing input error |
+| bim_analysis / bim_extract / bim_clash_detection | WORKS | missing IFC error |
+| as_built_deviation_report | WORKS | empty error; 10.05 vs 10.0 major |
+| carbon_footprint_calculator | WORKS | empty error; 12×250 + 2000×2.3 = 7600 |
+| safety_compliance_audit | WORKS | empty does not invent findings |
+| esg_sustainability_report | WORKS | BOQ rows score |
+| om_manual_generator | WORKS | empty / systems-only error; equipment_list delivers tag |
+| digital_twin_sync | NEEDS-EXTERNAL | prepared_not_pushed (existing honesty) |
+| cde_post_rfi / cde_poll_events | NEEDS-EXTERNAL | no config → error |
+| jetson_dispatch | NEEDS-EXTERNAL | pending_hardware |
+| auto_pipeline | WORKS | missing file error |
+| intelligent_workflow | — | not yet a deliverable case |
+| daily_site_report | WORKS | date-only does not invent weather/headcount |
+| value_engineering | WORKS | empty error; conservative 6_500 |
+| track_progress | WORKS | empty error (route-only) |
+| extract_measurements | WORKS | empty error (route-only) |
+| generate_construction_report | WORKS | empty error (route-only) |
+| schedule_risk | WORKS | empty file error (alias → parse) |
+| chat / orchestrate / learn / recommend / benchmark_lookup | WORKS | empty is error or empty-honest |
+
 ## Phase 2
 
 Live chat probes need `FORK_TOKEN`. If unset, Phase 2 is blocked.
