@@ -779,11 +779,62 @@ def test_plain_user_cannot_read_foreign_memory_cache_key(client, world):
 # ── /v1/execute plain-user capability ───────────────────────────────────────
 
 def test_execute_plain_user_privileged_blocks_blocked(client, world):
-    h = _h(world["a"])
-    for path in ("/v1/execute", "/execute"):
-        for block in ("code", "sandbox"):
-            r = client.post(path, headers=h, json={"block": block, "input": "x"})
-            assert r.status_code == 403, (path, block, r.status_code, r.text[:200])
+    from app.blocks import BLOCK_REGISTRY
+    from app.core.privileges import PRIVILEGED_BLOCKS
+
+    for actor in ("a", "b"):
+        h = _h(world[actor])
+        for path in ("/v1/execute", "/execute"):
+            for block in sorted(PRIVILEGED_BLOCKS):
+                if block not in BLOCK_REGISTRY:
+                    assert block in PRIVILEGED_BLOCKS
+                    continue
+                r = client.post(
+                    path, headers=h, json={"block": block, "input": "x"}
+                )
+                assert r.status_code == 403, (
+                    actor, path, block, r.status_code, r.text[:200]
+                )
+
+
+def test_both_users_refused_privileged_agent_doors(client, world):
+    """Agent F: both synthetic accounts see the same 404 / SSE error."""
+    hats = ("self-coding", "external-mcp", "document-ingestion")
+    for actor in ("a", "b"):
+        h = _h(world[actor])
+        names = {
+            a["name"]
+            for a in client.get("/v1/agents", headers=h).json()["agents"]
+        }
+        assert not names & set(hats), (actor, names)
+        for hat in hats:
+            r = client.get(f"/v1/agents/{hat}", headers=h)
+            assert r.status_code == 404, (actor, hat, r.status_code, r.text[:200])
+            chat = client.post(
+                f"/v1/agents/{hat}/chat",
+                headers=h,
+                json={"message": "hi"},
+            )
+            assert chat.status_code == 404, (
+                actor, hat, chat.status_code, chat.text[:200]
+            )
+            stream = client.post(
+                "/v1/chat/stream",
+                headers=h,
+                json={"message": "list the files", "agent": hat},
+            )
+            events = [
+                json.loads(line[5:])
+                for line in stream.text.splitlines()
+                if line.startswith("data:") and line[5:].strip().startswith("{")
+            ]
+            assert not any(
+                e.get("type") == "route" and e.get("final") == hat for e in events
+            ), (actor, hat, events)
+            errors = [e for e in events if e.get("type") == "error"]
+            assert errors and "not available" in errors[0]["message"], (
+                actor, hat, events
+            )
 
 
 def test_execute_plain_user_nonprivileged_without_foreign_id_is_not_403(client, world):
