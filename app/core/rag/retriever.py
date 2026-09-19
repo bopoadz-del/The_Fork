@@ -1444,10 +1444,15 @@ def document_identity_title_terms(query: str) -> List[str]:
     )
 
 
+def document_control_label_count(text: str) -> int:
+    """How many distinct document-control labels the chunk carries."""
+    t = text or ""
+    return sum(1 for rx in _DOC_CONTROL_BLOCK_LABEL_RES if rx.search(t))
+
+
 def chunk_states_document_control_block(text: str) -> bool:
     """True for a cover / revision-history block: two or more control labels."""
-    t = text or ""
-    return sum(1 for rx in _DOC_CONTROL_BLOCK_LABEL_RES if rx.search(t)) >= 2
+    return document_control_label_count(text) >= 2
 
 
 def _rescue_document_identity_chunks(
@@ -1488,9 +1493,13 @@ def _rescue_document_identity_chunks(
         except Exception as exc:  # noqa: BLE001 — extras must not break the turn
             logger.warning("document-identity rescue for %s failed: %s", pid, exc)
             continue
+        # Richest block first. A cover prints a thin title block (number,
+        # revision) BEFORE the full control block (…, prepared by, status);
+        # page order lifted the thin one and the answer reported that the
+        # excerpt "does not name the party that prepared it" (live 39d6b8d).
         blocks = sorted(
             (c for c in hits if chunk_states_document_control_block(c.text or "")),
-            key=lambda c: c.chunk_index,
+            key=lambda c: (-document_control_label_count(c.text or ""), c.chunk_index),
         )
         for chunk in blocks[:_DOC_IDENTITY_MAX_CHUNKS]:
             prev = fused.get(chunk.chunk_id)
@@ -6806,7 +6815,16 @@ def reserve_monetary_base_row(
     ``allow`` is the caller's contract-scope test, so a reserved row cannot
     re-enter a contract the fence already excluded.
     """
-    if not kept or not query_needs_a_monetary_base(query):
+    # Live 39d6b8d E2: "If Milestone 1 is 30 days late, what are the milestone
+    # delay damages?" names no currency and says no "calculate", so it was
+    # never a monetary-base ask — yet 30 days × 0.015% of the Contract Price
+    # is money. The sum was fetched and lifted, and still came sixth of five
+    # behind copies of the rate row from every copy of the contract.
+    delay_scenario = bool(
+        query_applies_a_delay_duration(query)
+        and query_asks_for_delay_damages_rate(query)
+    )
+    if not kept or not (query_needs_a_monetary_base(query) or delay_scenario):
         return False
     e1 = (
         delay_damages_daily_rescue_enabled()
@@ -6814,6 +6832,10 @@ def reserve_monetary_base_row(
     )
 
     def _is_money_base(text: str) -> bool:
+        if delay_scenario and not e1:
+            # The sum the rate is a percentage OF — not any row with money in
+            # it (an insurance deductible is an amount too).
+            return chunk_states_accepted_contract_amount(text)
         if e1:
             try:
                 from app.lib.construction_formulas_commercial import (
