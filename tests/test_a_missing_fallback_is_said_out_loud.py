@@ -47,24 +47,43 @@ def test_a_missing_primary_key_is_reported(monkeypatch):
     assert probe_llm()["primary_ready"] is False
 
 
-def test_boot_warns_when_there_is_no_usable_fallback(monkeypatch, caplog):
+class _Capture(logging.Handler):
+    """Attached straight to the logger: the app's logging setup may stop
+    propagation to the root, which is where caplog listens."""
+
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(record.getMessage())
+
+
+@pytest.fixture
+def boot_log():
+    handler, logger = _Capture(), logging.getLogger("app.main")
+    logger.addHandler(handler)
+    yield handler
+    logger.removeHandler(handler)
+
+
+def test_boot_warns_when_there_is_no_usable_fallback(monkeypatch, boot_log):
     from app.main import _warn_when_the_llm_has_no_fallback
 
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "kimi")
-    with caplog.at_level(logging.WARNING, logger="app.main"):
-        _warn_when_the_llm_has_no_fallback()
-    assert "NO USABLE FALLBACK" in caplog.text
-    assert "ds-test" not in caplog.text
+    _warn_when_the_llm_has_no_fallback()
+    text = " ".join(boot_log.lines)
+    assert "NO USABLE FALLBACK" in text
+    assert "ds-test" not in text
 
 
-def test_boot_is_quiet_when_the_fallback_works(monkeypatch, caplog):
+def test_boot_is_quiet_when_the_fallback_works(monkeypatch, boot_log):
     from app.main import _warn_when_the_llm_has_no_fallback
 
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
-    with caplog.at_level(logging.WARNING, logger="app.main"):
-        _warn_when_the_llm_has_no_fallback()
-    assert "FALLBACK" not in caplog.text
+    _warn_when_the_llm_has_no_fallback()
+    assert "FALLBACK" not in " ".join(boot_log.lines)
 
 
 def test_health_shows_it_and_names_nothing(monkeypatch):
