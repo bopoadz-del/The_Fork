@@ -1,0 +1,34 @@
+"""Routing: does the question reach something that can answer it?
+
+Live, 2026-09-20: "Our BOQ has 1,250 m2 of blockwork at SAR 62/m2 but site
+measured 1,318 m2. What is the cost variance ...?" was answered in 4 s with
+"I could not confirm this reference in the indexed project sources" -- three
+asks out of three, pinned to quantity-surveyor too. The identifier extractor
+read the unit RATE "62/m2" as a reference code (it looks like page "d/3/3"),
+retrieval found no document called 62/m2, and the missing-reference shortcut
+answered before anything could calculate. Every number the question needs is
+in the question.
+"""
+import pytest
+
+from app.agents.runtime import _should_short_circuit_rag_miss
+
+_MISS = {"identifier_miss": True, "threshold_fired": True}
+
+
+@pytest.mark.parametrize("rate", ["62/m2", "410/m3", "1,900/day", "95/m", "3.5/t", "12.50/hr"])
+def test_a_unit_rate_is_not_a_document_reference(rate):
+    q = f"Site measured 1,318 m2 against the BOQ at SAR {rate}. What is the variance?"
+    assert not _should_short_circuit_rag_miss({**_MISS, "extracted_identifiers": [rate]}, None, q)
+
+
+@pytest.mark.parametrize("ref", ["d/3/3", "LTR-MN-000372", "D529.2", "clause 13.5"])
+def test_a_real_reference_that_retrieval_missed_still_short_circuits(ref):
+    q = f"What does {ref} say?"
+    assert _should_short_circuit_rag_miss({**_MISS, "extracted_identifiers": [ref]}, None, q)
+
+
+def test_the_live_question_is_not_short_circuited():
+    q = ("Our BOQ has 1,250 m2 of blockwork at SAR 62/m2 but site measured "
+         "1,318 m2. What is the cost variance and is it within a 5% tolerance?")
+    assert not _should_short_circuit_rag_miss({**_MISS, "extracted_identifiers": ["62/m2"]}, None, q)
