@@ -3489,7 +3489,7 @@ _PARTY_FIRM_RE = re.compile(
     r"(?i)\b(?:limited|ltd\.?|llc|llp|gmbh|plc|inc\.?)\b",
 )
 _SCANNED_ENGINEER_LINE_RE = re.compile(
-    # Table rows open with cell pipes: ``|: | Engineer JACOBS(CH2M ...) |``.
+    # Table rows open with cell pipes: ``|: | Engineer EXAMPLECO(EX2M ...) |``.
     r"(?im)^[ \t|:]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?[ \t|:]*)?"
     r"(?:(?:the|name\s+of\s+the)\s+)?"
     r"engineer\b(?!\s*'?s\s+representative)[ \t]*[:|–-]?\s*(.*)$",

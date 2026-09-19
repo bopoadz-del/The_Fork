@@ -5792,6 +5792,21 @@ def _graft_priced_boq_item(
         if answer_states_priced_boq(raw, parsed):
             return text
         body = raw.strip()
+        # A check ("Verify: does 34,844 m at SAR 142.00/m equal the stated
+        # amount?") is answered by a VERDICT, and a verdict is short. The
+        # rules below replace any answer under 500 characters that does not
+        # restate the row, which threw the verdict away and left the bare row
+        # (unseen Set 3 E4, with the shortcut guard already live). For a
+        # check the row is evidence: put it in front, never in place.
+        from app.core.rag.retriever import query_is_a_check_not_a_lookup
+        if (
+            query_is_a_check_not_a_lookup(user)
+            and body
+            and body not in (_CG_REFUSAL, _EMPTY_RESPONSE_FALLBACK)
+            and not _GENERIC_ACK_RE.search(body)
+            and not _looks_like_search_preamble(body)
+        ):
+            return f"{line}\n\n{body}"
         storm_misroute = bool(
             re.search(r"(?i)storm\s+water", body)
             and not re.search(r"(?i)storm\s+water", parsed.get("description") or "")

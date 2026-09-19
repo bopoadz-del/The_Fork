@@ -10,10 +10,10 @@ The Contract Data PDF draws its bold cells by over-printing, and the text
 layer comes out as
 
     PPaarrttyy aanndd EEnnggiinneeeerr ddeettaaiillss
-    EEnnggiinneeeerr JJAACCOOBBSS((CCHH22MM SSaauuddii LLiimmiitteedd))
+    EEnnggiinneeeerr EEXXAAMMPPLLEECCOO((EEXX22MM SSaauuddii LLiimmiitteedd))
 
 Every rule downstream then reads junk. The row parser produced
-key="CCOOBBSS((CC: HH22MM SSaauuddii ..." value="Clause (as", the Engineer
+key="PPLLEECCOO((EE: XX22MM SSaauuddii ..." value="Clause (as", the Engineer
 extractor returned **"Clause (as"** as the appointed firm, those chunks were
 judged to "state the Engineer", and the fence that keeps only such chunks
 threw away the one clean copy of the row. The model, told to "state ONLY that
@@ -33,13 +33,13 @@ from app.core.rag.text_repair import repair_fake_bold
 def test_the_live_lines_read_as_text():
     assert repair_fake_bold("PPaarrttyy aanndd EEnnggiinneeeerr ddeettaaiillss") == (
         "Party and Engineer details")
-    assert repair_fake_bold("EEnnggiinneeeerr JJAACCOOBBSS ((CCHH22MM SSaauuddii LLiimmiitteedd))") == (
-        "Engineer JACOBS (CH2M Saudi Limited)")
+    assert repair_fake_bold("EEnnggiinneeeerr EEXXAAMMPPLLEECCOO ((EEXX22MM SSaauuddii LLiimmiitteedd))") == (
+        "Engineer EXAMPLECO (EX2M Saudi Limited)")
 
 
 def test_doubled_punctuation_and_digits_inside_a_doubled_run_are_repaired():
-    line = "NN aawwaarr HHaaddddaadd ((nnhhaaddddaadd@@ddiirriiyyaahh..ssaa)) 88550000 RRiiyyaaddhh"
-    assert repair_fake_bold(line) == "N awar Haddad (nhaddad@diriyah.sa) 8500 Riyadh"
+    line = "NN aammee SSuurrnnaammee ((ppeerrssoonn@@eexxaammppllee..ssaa)) 88550000 EExxaammpplleevviillllee"
+    assert repair_fake_bold(line) == "N ame Surname (person@example.sa) 8500 Exampleville"
 
 
 def test_a_tripled_run_is_repaired_too():
@@ -71,8 +71,8 @@ def test_a_lone_doubled_looking_token_in_clean_text_is_left_alone():
 
 
 def test_a_clean_word_inside_a_doubled_line_keeps_its_own_double_letters():
-    line = "CCoommppaannyy address LLiimmiitteedd committee RRiiyyaaddhh"
-    assert repair_fake_bold(line) == "Company address Limited committee Riyadh"
+    line = "CCoommppaannyy address LLiimmiitteedd committee EExxaammpplleevviillllee"
+    assert repair_fake_bold(line) == "Company address Limited committee Exampleville"
 
 
 def test_two_doubled_looking_tokens_are_still_not_enough_evidence():
@@ -88,9 +88,9 @@ def test_a_doubled_cell_holding_a_single_word_is_repaired():
     The evidence is the chunk's; the repair is the line's."""
     text = ("PPaarrttyy aanndd ddeettaaiillss\n"
             "|: | EEnnggiinneeeerr\n"
-            "JACOBS(CH2M Saudi Limited): | |\n")
+            "EXAMPLECO(EX2M Saudi Limited): | |\n")
     assert repair_fake_bold(text) == (
-        "Party and details\n|: | Engineer\nJACOBS(CH2M Saudi Limited): | |\n")
+        "Party and details\n|: | Engineer\nEXAMPLECO(EX2M Saudi Limited): | |\n")
 
 
 def test_only_the_affected_lines_change():
@@ -100,7 +100,7 @@ def test_only_the_affected_lines_change():
 
 
 def test_it_is_idempotent():
-    once = repair_fake_bold("EEnnggiinneeeerr JJAACCOOBBSS ((CCHH22MM))")
+    once = repair_fake_bold("EEnnggiinneeeerr EEXXAAMMPPLLEECCOO ((EEXX22MM))")
     assert repair_fake_bold(once) == once
 
 
@@ -206,8 +206,8 @@ DOUBLED_HEAD = "PPaarrttyy aanndd EEnnggiinneeeerr ddeettaaiillss\n"
 def test_a_clean_number_beside_clean_words_survives_in_a_doubled_line():
     """1100 is pair-shaped. On a doubled line it is collapsed only when BOTH
     neighbours were doubled; here its neighbours are ordinary words."""
-    line = "CCoommppaannyy LLiimmiitteedd RRiiyyaaddhh quantity 1100 metres"
-    assert repair_fake_bold(line) == "Company Limited Riyadh quantity 1100 metres"
+    line = "CCoommppaannyy LLiimmiitteedd EExxaammpplleevviillllee quantity 1100 metres"
+    assert repair_fake_bold(line) == "Company Limited Exampleville quantity 1100 metres"
 
 
 def test_a_clean_line_in_a_doubled_chunk_is_left_exactly_as_it_was():
