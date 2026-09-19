@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import delete, func, or_, select, text as sqla_text
+from sqlalchemy import and_, delete, func, or_, select, text as sqla_text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.db import SessionLocal, engine, get_database_url
@@ -1619,8 +1619,14 @@ def documents_matching_filename_terms(
     min_terms: int = 2,
     require_letter: bool = False,
     limit: int = 8,
+    require_all: bool = False,
 ) -> List[Dict[str, str]]:
     """Documents whose ``original_name`` or ``file_path`` overlap ``terms``.
+
+    ``require_all`` makes every term mandatory IN THE QUERY. The default
+    OR-match is cut to 80 rows before it is ranked, and on a corpus where
+    hundreds of names contain "bill" that cut can drop the one file that
+    contains all of "bill", "quantities" and "priced".
 
     Used by letter/signatory retrieval so a named-site letter (the UBCC /
     Wadi Safar completion letter lives in ``Misc/`` with the site and
@@ -1657,9 +1663,11 @@ def documents_matching_filename_terms(
     stmt = (
         select(Document.id, Document.original_name, Document.file_path)
         .where(Document.project_id == source_id)
-        .where(or_(*term_clauses))
+        .where(and_(*term_clauses) if require_all else or_(*term_clauses))
         .where(Document.retrieval_visible.is_(True))
     )
+    if require_all:
+        min_terms = len(cleaned)
     if require_letter:
         stmt = stmt.where(or_(name_l.like("%letter%"), path_l.like("%letter%")))
     stmt = stmt.limit(80)

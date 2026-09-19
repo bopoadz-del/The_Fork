@@ -85,7 +85,19 @@ CD_INSURANCE = LABEL + (
     "18.2: | Deductible per occurrence: SAR 250,000 | |\n"
     "18.3: | Minimum third party insurance: SAR 20,000,000 | |\n"
 )
-CD_CHUNKS = (CD_BOND, CD_MILESTONE_LIST, CD_MILESTONE_TIMES, CD_COMMS, CD_INSURANCE)
+CD_ACA = LABEL + (
+    "| Clause (as: | Description | Data |\n"
+    "1.1.1: | | Accepted Contract Amount: SAR 1,000,000,000.00 excluding VAT |\n"
+    "1.1.27: | | Defects Notification Period: 365 days |\n"
+)
+CD_MILESTONE_DAMAGES = LABEL + (
+    "8.8.1: | | Delay Damages (if\n"
+    "applicable per Milestone): Milestone | Delay Damages\n"
+    "|: | | Milestone 1 | 0.015% of the Contract Price per calendar day\n"
+    "|: | | Milestone 2 | 0.015% of the Contract Price per calendar day\n"
+)
+CD_CHUNKS = (CD_BOND, CD_MILESTONE_LIST, CD_MILESTONE_TIMES, CD_COMMS,
+             CD_INSURANCE, CD_ACA, CD_MILESTONE_DAMAGES)
 
 # What actually won the live top-5.
 TOC_PAGE = (
@@ -125,6 +137,7 @@ A7 = "What is the value of the Performance Bond?"
 A4 = ("How many Milestones are there and what is the Time for Completion for "
       "Milestone 5?")
 A8 = "What is the approved method of electronic communication under the contract?"
+E2 = "If Milestone 1 is 30 days late, what are the milestone delay damages?"
 
 
 def _chunk(cid, doc_id, score, text, index=0):
@@ -227,6 +240,53 @@ def test_a_row_nobody_has_asked_about_yet_is_rescued(ret, question, expected):
     """Shape-invariance: rows that have never failed live, so no special case
     exists for them and none should be needed."""
     assert expected in "\n".join(_texts(ret, question))
+
+
+def test_e2_a_percentage_of_the_contract_price_brings_the_price_with_it(ret):
+    """Live 24d1c0c, 0/3. The rate row was retrieved at rank 1 and the answer
+    stopped, correctly, at "0.45% of the Contract Price -- and the Contract
+    Price is not in the retrieved context". A rate is half an answer to a
+    question about money; the other half is one row up the same sheet."""
+    blob = "\n".join(_texts(ret, E2))
+    assert "Milestone 1 | 0.015% of the Contract Price" in blob
+    assert "Accepted Contract Amount: SAR 1,000,000,000.00" in blob
+
+
+def test_a7_a_percentage_of_the_aca_brings_the_aca_too(ret):
+    """Not only delay damages: any row valued as a share of the contract sum."""
+    blob = "\n".join(_texts(ret, A7))
+    assert "Value of Performance Bond: 10 %" in blob
+    assert "Accepted Contract Amount: SAR 1,000,000,000.00" in blob
+
+
+def test_the_base_amount_never_outranks_the_row_that_was_asked_for(ret):
+    assert "Value of Performance Bond" in _texts(ret, A7)[0]
+    assert "0.015% of the Contract Price" in _texts(ret, E2)[0]
+
+
+def test_a_plain_rate_question_still_gets_the_rate_and_nothing_else(ret):
+    """The control for the E2 exception. "What ARE the delay damages" is
+    answered by the rate; only a question that applies a duration to it
+    ("30 days late") needs the sum as well."""
+    texts = _texts(ret, "What are the milestone Delay Damages for Milestone 1?")
+    assert texts and "0.015% of the Contract Price" in texts[0]
+    assert not any("Accepted Contract Amount: SAR" in t for t in texts)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "If Milestone 1 is 30 days late, what are the milestone delay damages?",
+        "Milestone 2 finishes 6 weeks behind; what delay damages apply?",
+        "What are the delay damages for 14 calendar days of delay to Milestone 1?",
+    ],
+)
+def test_any_phrasing_of_a_delay_duration_keeps_the_sum(ret, question):
+    assert any("Accepted Contract Amount: SAR" in t for t in _texts(ret, question))
+
+
+def test_a_row_that_is_not_a_share_of_anything_brings_nothing_extra(ret):
+    assert not any("Accepted Contract Amount: SAR" in t for t in _texts(ret, A8))
 
 
 def test_the_rescue_does_not_flood_the_top_k(ret):
