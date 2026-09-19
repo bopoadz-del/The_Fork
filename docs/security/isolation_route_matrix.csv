@@ -13,14 +13,14 @@ GET,/blocks,blocks.py,none,no,n/a,unguarded_non_public,UNPROVEN,Full block catal
 GET,/blocks/{block_name},blocks.py,none,no,n/a,unguarded_non_public,UNPROVEN,Block config + instance.get_stats(); no auth
 GET,/v1/blocks,blocks.py,none,no,n/a,unguarded_non_public,UNPROVEN,Alias of GET /blocks
 GET,/v1/blocks/{block_name},blocks.py,none,no,n/a,unguarded_non_public,UNPROVEN,Alias of GET /blocks/{name}
-POST,/execute,execute.py,require_user,privileged_blocks_only,none — body.input/params may carry project_id/document_id with no store check,id_no_owner,UNPROVEN,Any signed-in user; raise_if_privileged_block(code/sandbox); construction/rag/etc. run with caller-supplied ids
-POST,/v1/execute,execute.py,require_user,privileged_blocks_only,none — delegates to /execute,id_no_owner,UNPROVEN,EXISTS. Guard=require_user (JWT or API key→system user). Not admin. Not require_api_key-only. Privileged blocks code/sandbox admin-only.
+POST,/execute,execute.py,require_user,privileged_blocks_only,nested project_id/document_id grant (#623),id_no_owner,OTHER_TENANCY,Plain user 403 on PRIVILEGED_BLOCKS (code/sandbox/mcp_consumer/local_drive/web/webhook/google_drive/onedrive)
+POST,/v1/execute,execute.py,require_user,privileged_blocks_only,same as /execute,id_no_owner,OTHER_TENANCY,Alias of /execute. JWT or API key→system user. Privileged blocks 403 to a plain user (Agent F).
 POST,/chain,chain.py,require_user,privileged_blocks_only,none — step inputs may name any project/file,id_no_owner,UNPROVEN,Orchestrator chain; same privilege gate as execute
 POST,/v1/chain,chain.py,require_user,privileged_blocks_only,none,id_no_owner,UNPROVEN,Alias of /chain
 POST,/chat,chat.py,require_user,no,project_id in body: drop if get_project_accessible fails (_with_project_memory/_with_doc_search),—,OTHER_TENANCY,"test_chat_project_memory_tenancy covers helper, not HTTP cross-user. No conversation_id on this model."
 POST,/chat/stream,chat.py,require_user,no,NONE — request.project_id unused; no memory/doc inject,—,UNPROVEN,Streaming chat block; project_id accepted but ignored; no tenant leak path via this handler
 POST,/v1/chat,chat.py,require_user,no,same as /chat,—,OTHER_TENANCY,Alias of /chat
-POST,/v1/chat/stream,chat.py,require_user,no,conversation_id: _enforce_conversation_access; project_id: get_project_accessible drop,—,UNPROVEN,Main UI stream. Conversation check imported from agents. Body conversation_id vs project_id can disagree — conv check is authoritative for ws-*
+POST,/v1/chat/stream,chat.py,require_user,privileged pin refused,conversation_id: _enforce_conversation_access; project_id: get_project_accessible drop,—,OTHER_TENANCY,Pinning self-coding/external-mcp/document-ingestion emits an error event (Agent F). Conv check authoritative for ws-*
 POST,/v1/chat/analyze-photo,chat_photos.py,require_user,no,none (ephemeral temp file; no project),—,UNPROVEN,Any signed-in user; no tenant id
 POST,/upload,upload.py,require_api_key,no,optional Form project_id: get_project(user_id) or skip index; file stored regardless,id_no_owner,UNPROVEN,File lands in DATA_DIR even when project_id missing/unowned. API key→SYSTEM_USER_ID. No child-id.
 POST,/v1/upload,upload.py,require_api_key,no,same as /upload,id_no_owner,UNPROVEN,Alias
@@ -114,8 +114,8 @@ GET,/mcp/info,mcp.py,require_api_key,no,n/a (tool catalog),—,UNPROVEN,
 GET,/mcp/sse,mcp.py,require_api_key,privileged_blocks_only,none — MCP call_tool executes blocks with caller arguments,id_no_owner,UNPROVEN,Same execute surface as /v1/execute via tools. /mcp/messages Mount in main.py uses validate_key only (not JWT-normalized).
 GET,/v1/agents/conversations/{conversation_id}/messages,agents.py,require_user,no,_enforce_conversation_access (ws-* → project accessible; else stored project_id),—,OTHER_TENANCY,test_chat_open_access_gate. Non-ws missing row allowed (empty 200) after check returns.
 GET,/v1/agents,agents.py,require_user,no,n/a (registry),—,UNPROVEN,
-GET,/v1/agents/{name},agents.py,require_user,no,n/a,—,UNPROVEN,Includes system_prompt
-POST,/v1/agents/{name}/chat,agents.py,require_user,no,conversation_id: _enforce_conversation_access; project_id: get_project owner-only (NO include_admin_approved) except master_corpus alias,path_body_id,UNPROVEN,Stream sibling uses include_admin_approved. Body project_id vs conversation_id can diverge; conv check first. Owner-only project_id 404s shared-project users on this path.
+GET,/v1/agents/{name},agents.py,require_user,privileged hats 404,n/a,—,OTHER_TENANCY,Includes system_prompt. self-coding/external-mcp/document-ingestion 404 for a plain user (Agent F)
+POST,/v1/agents/{name}/chat,agents.py,require_user,privileged hats 404,conversation_id: _enforce_conversation_access; project_id: get_project owner-only (NO include_admin_approved) except master_corpus alias,path_body_id,OTHER_TENANCY,Privileged names 404 for a plain user (Agent F). Stream sibling uses include_admin_approved.
 POST,/v1/agents/{name}/chat/stream,agents.py,require_user,no,conversation_id: _enforce; project_id: get_project include_admin_approved except MC alias,path_body_id,OTHER_TENANCY,test_chat_open_access_gate. Body-only ids (no path id).
 GET,/v1/hydration/latest,hydration.py,require_api_key,no,query project_id with NO ownership check,id_no_owner,UNPROVEN,Any authenticated principal can read any project's latest hydration row
 GET,/v1/hydration/history,hydration.py,require_api_key,no,query project_id unscoped,id_no_owner,UNPROVEN,Same
