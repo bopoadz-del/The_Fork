@@ -176,28 +176,28 @@ class TestDriveEndpoints:
         assert response.status_code == 403
     
     def test_google_drive_mock(self):
-        """Test Google Drive with mock."""
+        """`google_drive` falls back to a server-wide token when none is passed:
+        admin-only, so the non-admin cb_dev_key is refused. Users reach their
+        own drive through /v1/drive/*."""
         response = client.post("/execute", json={
             "block": "google_drive",
             "input": {},
             "params": {"operation": "list"}
         })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["block"] == "google_drive"
+
+        assert response.status_code == 403
     
     def test_onedrive_mock(self):
-        """Test OneDrive with mock."""
+        """`onedrive` falls back to a server-wide token when none is passed:
+        admin-only, so the non-admin cb_dev_key is refused. Users reach their
+        own drive through /v1/drive/*."""
         response = client.post("/execute", json={
             "block": "onedrive",
             "input": {},
             "params": {"operation": "list"}
         })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["block"] == "onedrive"
+
+        assert response.status_code == 403
     
     def test_android_drive_paths(self):
         """Test Android Drive get_paths."""
