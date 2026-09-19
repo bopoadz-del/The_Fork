@@ -77,4 +77,6 @@ jobs:
           path: |
             test-results/
             playwright-report/
+            /tmp/ui_phys_uvicorn.log
+            /tmp/ui_phys_stub_miss.log
           if-no-files-found: ignore
