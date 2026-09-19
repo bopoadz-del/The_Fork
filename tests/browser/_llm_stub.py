@@ -84,6 +84,21 @@ def _answer_from_messages(messages: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def stub_provider_env() -> dict[str, str]:
+    """Provider env that gets a turn past chat_stream's API-key gate.
+
+    Lives here, not in conftest.py, so regular CI can import it without
+    Playwright and check it against the runtime. It used to name Groq; when
+    Groq was removed the gate started answering "No DEEPSEEK_API_KEY
+    configured." before the stub ran, and the nightly was red for days with
+    nothing in the PR suite to say why.
+    """
+    return {
+        "LLM_PROVIDER": "deepseek",
+        "DEEPSEEK_API_KEY": "ui-phys-stub-not-a-real-key",
+    }
+
+
 def install_stub() -> None:
     if os.getenv("CEREBRUM_UI_PHYS_STUB", "").strip() not in {"1", "true", "yes"}:
         return
@@ -91,7 +106,7 @@ def install_stub() -> None:
     from app.agents import runtime
 
     async def _stub(self, messages, api_key, project_id=None, with_tools=True,
-                    user_id=None, exclude_tools=None):
+                    user_id=None, exclude_tools=None, deadline=None):
         canned = _answer_from_messages(messages)
         if canned:
             # chat_stream reads resp["choice"]["message"] — a bare
@@ -109,8 +124,9 @@ def install_stub() -> None:
                 "raw": {"model": "ui-phys-stub"},
             }
         # Unknown prompt: do not invent. A missing-key error is honest.
-        # The nightly sets a dummy GROQ_API_KEY to pass the env-key gate;
-        # still refuse unknown asks so we never dial a real provider.
+        # The nightly sets a dummy provider key (see ``stub_provider_env``)
+        # to pass the env-key gate; still refuse unknown asks so we never
+        # dial a real provider.
         users = [
             _message_text(m)[:240]
             for m in (messages or [])
