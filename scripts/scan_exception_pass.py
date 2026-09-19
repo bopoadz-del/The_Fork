@@ -58,19 +58,19 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    "app/agents/runtime.py:1990": "baseline 2026-09-10",
-    "app/agents/runtime.py:1996": "baseline 2026-09-10",
-    "app/agents/runtime.py:2059": "baseline 2026-09-10",
-    "app/agents/runtime.py:2065": "baseline 2026-09-10",
-    # Re-indexed 2026-09-14: the ENGINEER IDENTITY leak-guard regex (#599)
-    # inserted 8 net lines above these four pre-existing sites. Same sites,
-    # same handlers — only the line numbers moved. No new silent returns.
-    "app/agents/runtime.py:2732": "baseline 2026-09-10",
-    "app/agents/runtime.py:3720": "baseline 2026-09-10",
-    "app/agents/runtime.py:4835": "baseline 2026-09-10",
-    "app/agents/runtime.py:5216": "baseline 2026-09-10",
-    "app/agents/runtime.py:639": "baseline 2026-09-10",
-    "app/agents/runtime.py:870": "baseline 2026-09-10",
+    # Re-indexed 2026-09-19: formula-ask scope + unit-rate identifier
+    # filter (60c8055) + privilege gates. Same pre-existing handlers —
+    # only the line numbers moved. No new silent returns.
+    "app/agents/runtime.py:1994": "baseline 2026-09-10",
+    "app/agents/runtime.py:2000": "baseline 2026-09-10",
+    "app/agents/runtime.py:2063": "baseline 2026-09-10",
+    "app/agents/runtime.py:2069": "baseline 2026-09-10",
+    "app/agents/runtime.py:2737": "baseline 2026-09-10",
+    "app/agents/runtime.py:3736": "baseline 2026-09-10",
+    "app/agents/runtime.py:4862": "baseline 2026-09-10",
+    "app/agents/runtime.py:5243": "baseline 2026-09-10",
+    "app/agents/runtime.py:643": "baseline 2026-09-10",
+    "app/agents/runtime.py:874": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",

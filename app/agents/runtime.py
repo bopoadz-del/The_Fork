@@ -631,6 +631,10 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
     outside the RAG corpus.  Allows project-fact Q&A to keep working even
     when the project has no indexed chunks yet.
     """
+    # Formula asks do not need a corpus — construction_calc is the path.
+    # Empty FIXTURE projects must not early-return the unindexed refusal.
+    if _message_is_formula_style_ask(user_message):
+        return True
     try:
         from app.core.project_memory import build_project_context
 
@@ -2328,6 +2332,7 @@ def _should_short_circuit_rag_miss(
     if user_message and (
         _asks_self_coding(user_message)
         or _looks_like_self_contained_calculation(user_message)
+        or _message_is_formula_style_ask(user_message)
         or _asks_for_export(user_message)
     ):
         return False
@@ -3544,6 +3549,10 @@ def _message_wants_named_calculator(text: str) -> bool:
     with no figures is a predefined IPC deliverable — do not steal it.
     """
     raw = text or ""
+    # "Build a plumbing flow programme" is a schedule deliverable.
+    # intent_map "plumbing flow" must not steal it onto named_calculator.
+    if _message_is_schedule_or_programme_deliverable(raw):
+        return False
     if _looks_like_self_contained_calculation(raw):
         return True
     low = raw.lower()
@@ -3553,6 +3562,10 @@ def _message_wants_named_calculator(text: str) -> bool:
         if tool == "construction_calc"
         for p in phrases
     )
+    if not wants:
+        # Registry / stem names (rebar lap, pe_unit_convert) are not in
+        # intent_map.yaml. Still a named calculator — stay on this agent.
+        wants = _message_is_formula_style_ask(raw)
     if not wants:
         return False
     if _NAMED_CALC_ASK_RE.search(raw):
@@ -3702,10 +3715,13 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     ``_user_intent_requires_tool``."""
     if not messages:
         return None
-    tail = messages[-1]
-    if tail.get("role") != "user":
+    if messages[-1].get("role") != "user":
         return None
-    text = _unwrap_rag_folded_operator_text(tail.get("content") or "")
+    # Predispatch / RAG fold can sit on messages[-1]. Recover the operator
+    # ask so named_calculator still forces construction_calc.
+    text = _latest_operator_ask(messages)
+    if not text:
+        return None
     low = text.lower()
     # Contract Data TfC / milestone Q&A must not force primavera_parser or
     # generate_wbs — those questions belong to RAG.
@@ -3741,11 +3757,22 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
         return "look_ahead"
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
+            if (
+                tool == "construction_calc"
+                and _message_is_schedule_or_programme_deliverable(text)
+            ):
+                continue
             return tool
     # Keyword phrases reach ~a dozen of the 76 registered calculators. Catch
     # the rest by SHAPE: a question that supplies its own dimensions and asks
     # to compute is arithmetic, whatever the domain noun happens to be.
     if "construction_calc" in available and _looks_like_self_contained_calculation(text):
+        return "construction_calc"
+    # Named / stemmed formula asks (rebar lap, pe_unit_convert, …) are
+    # the same class: construction_calc must run. The dimension heuristic
+    # above never sees them, and Kimi/Groq cannot be tool_choice-forced,
+    # so this is the named lever. Does not pick which calculator.
+    if "construction_calc" in available and _message_is_formula_style_ask(text):
         return "construction_calc"
     return None
 
@@ -5476,6 +5503,12 @@ def _wants_user_supplied_arithmetic_directive(text: str) -> bool:
     """
     if _looks_like_self_contained_calculation(text):
         return True
+    # Named formula asks carry no L×W×D, so the dimension heuristic
+    # misses them. The strict lookup clamp then tells the model to
+    # answer ONLY from retrieved excerpts — on a thin fixture that is
+    # Master Corpus bleed, and the calculator is never called.
+    if _message_is_formula_style_ask(text):
+        return True
     try:
         from app.core.hypothetical_milestone_arithmetic import (
             query_is_hypothetical_milestone_arithmetic,
@@ -6333,7 +6366,19 @@ def _postprocess_answer(
     )
     # Disclosure banner goes on AFTER the scrub so it's never mangled, and only
     # when the banner isn't already present (idempotent across retries).
-    if fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
+    ask = _latest_operator_ask(messages) or ""
+    if not ask:
+        ask = str((audit_rec or {}).get("user_message_preview") or "")
+    pid = project_id or (audit_rec or {}).get("project_id")
+    calc_ran = _turn_already_ran_construction_calc(messages)
+    if should_suppress_master_corpus_fallback(pid, ask) or (
+        calc_ran and not project_is_master_corpus(pid)
+    ):
+        text = _strip_master_corpus_preamble(text)
+    elif fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
+        # Formula / user-FIXTURE calculator asks must not wear the
+        # Master Corpus banner even if retrieve leaked a fallback chunk.
+        # Live: pe_unit_convert ran and the answer still opened with it.
         text = _MASTER_CORPUS_FALLBACK_NOTE + text
     from app.core.rag.coverage_honesty import apply_coverage_honesty
     text = apply_coverage_honesty(
@@ -6502,6 +6547,13 @@ def _build_sources_from_audit(
     Empty list when ``audit_rec`` has no chunks (fallback turn).
     """
     chunks = (audit_rec or {}).get("chunks") or []
+    ask = str((audit_rec or {}).get("user_message_preview") or "")
+    pid = (audit_rec or {}).get("project_id")
+    if chunks and should_suppress_master_corpus_fallback(pid, ask):
+        chunks = [
+            c for c in chunks
+            if (c.get("layer") or "own") != "master_corpus"
+        ]
     if not chunks:
         return []
 
@@ -8928,10 +8980,17 @@ class Agent:
             )
         if _more_pre:
             tool_calls_made.append(_more_pre)
+        _calc_pre = None
+        if not _locked:
+            _calc_pre = await _predispatch_formula_calc(
+                self, messages, project_id, operator_text=user_message,
+            )
+        if _calc_pre:
+            tool_calls_made.append(_calc_pre)
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and not _calc_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -8948,7 +9007,7 @@ class Agent:
                 "sources": [],
             }
         _has_pre = bool(
-            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
+            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre or _calc_pre
         )
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
         # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
@@ -10021,9 +10080,33 @@ class Agent:
                    "result": _more_summary,
                    "predispatched": True}
 
+        _calc_pre = None
+        if not _locked:
+            _calc_pre = await _predispatch_formula_calc(
+                self, messages, project_id, operator_text=user_message,
+            )
+        if _calc_pre:
+            _note_tool(_calc_pre["name"])
+            stream_tool_results.append(_calc_pre)
+            _calc_summary = _summarize_result(_calc_pre.get("result"))
+            yield {"type": "tool_call",
+                   "tool": _calc_pre["name"],
+                   "name": _calc_pre["name"],
+                   "args_preview": json.dumps({
+                       "action": "construction_calc",
+                   }, default=str)[:200],
+                   "predispatched": True}
+            yield {"type": "tool_result",
+                   "tool": _calc_pre["name"],
+                   "name": _calc_pre["name"],
+                   "ok": bool(_calc_pre.get("ok")),
+                   "summary": _calc_summary[:400],
+                   "result": _calc_summary,
+                   "predispatched": True}
+
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and not _calc_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -10036,7 +10119,7 @@ class Agent:
                    "tools": list(tools_invoked)}
             return
         _has_pre = bool(
-            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre
+            _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre or _calc_pre
         )
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
         # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
@@ -12457,6 +12540,328 @@ def _routing_disabled() -> bool:
 def _asks_self_coding(text: str) -> bool:
     t = (text or "").lower()
     return any(p in t for p in _SELF_CODING_PHRASES)
+
+
+def _formula_ask_force_enabled() -> bool:
+    """Kill switch for named-formula routing / Master-Corpus skip.
+
+    ``FORCE_CALC_ON_FORMULA_ASK=0`` restores the pre-fix behaviour
+    (dimension heuristic + intent_map.yaml only). Default ON.
+    """
+    return (os.getenv("FORCE_CALC_ON_FORMULA_ASK", "1") or "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _message_names_unambiguous_calculator(text: str) -> bool:
+    """Registry name in underscore form, or a 3+ token spaced name.
+
+    ``pe_unit_convert`` is unambiguous. ``concrete volume`` is not —
+    it is also a BOQ lookup phrase. See test_self_contained_calculation_routing.
+    """
+    try:
+        from app.lib.construction_formulas import CALCULATORS
+    except Exception:  # noqa: BLE001
+        _LOG.debug("CALCULATORS import failed", exc_info=True)
+        return False
+    raw = text or ""
+    underscored = raw.lower().replace("-", "_")
+    spaced = raw.lower()
+    for name in CALCULATORS:
+        if len(name) < 6:
+            continue
+        if name.lower() in underscored:
+            return True
+        tokens = [t for t in name.split("_") if t]
+        if len(tokens) >= 3 and name.replace("_", " ") in spaced:
+            return True
+    return False
+
+
+def _message_matches_calculator_stem(text: str) -> bool:
+    """True when the message carries the first two tokens of a 3+ token name.
+
+    ``rebar lap`` matches ``rebar_lap_length``. Two-token registry names
+    (``concrete_volume``) are excluded — they collide with BOQ lookups.
+    """
+    try:
+        from app.lib.construction_formulas import CALCULATORS
+    except Exception:  # noqa: BLE001
+        _LOG.debug("CALCULATORS import failed", exc_info=True)
+        return False
+    spaced = (text or "").lower().replace("-", " ").replace("_", " ")
+    for name in CALCULATORS:
+        tokens = [t for t in name.lower().replace("-", "_").split("_") if t]
+        if len(tokens) < 3:
+            continue
+        stem = " ".join(tokens[:2])
+        if len(stem) < 8:
+            continue
+        # ``critical_path_float`` stems to "critical path", which is a
+        # schedule lookup ("What is the critical path of this schedule?")
+        # not a construction_calc ask. Keep rebar lap / formwork striking.
+        if stem in _FORMULA_STEM_LOOKUP_COLLISIONS:
+            continue
+        if stem in spaced:
+            return True
+    return False
+
+
+_FORMULA_STEM_LOOKUP_COLLISIONS = frozenset({
+    "critical path",
+})
+
+
+def _message_is_schedule_or_programme_deliverable(text: str) -> bool:
+    """True for a generate/build programme or schedule ask, not a formula.
+
+    Live FIXTURE-c: "Build a plumbing flow programme for a 20-storey tower"
+    is a schedule-builder path. intent_map.yaml maps "plumbing flow" to
+    construction_calc; that must not steal the deliverable.
+    """
+    raw = text or ""
+    if not _is_generative_request(raw):
+        return False
+    low = raw.lower()
+    return any(
+        p in low
+        for p in (
+            "programme", "program", "schedule", "wbs", "gantt",
+            "critical path",
+        )
+    )
+
+
+def _turn_already_ran_construction_calc(messages: list | None) -> bool:
+    """True when this turn already invoked construction_calc (predispatch)."""
+    for m in messages or []:
+        content = str((m or {}).get("content") or "")
+        if content.lstrip().startswith("PLATFORM PRE-DISPATCH: construction_calc"):
+            return True
+        if (m or {}).get("name") == "construction_calc":
+            return True
+    return False
+
+
+def _message_is_formula_style_ask(text: str) -> bool:
+    """True when the turn is a formula / calculator ask, not a doc lookup.
+
+    Does not pick which calculator — Agent C owns mapping. This only
+    says the turn must go through construction_calc and must not fall
+    back to Master Corpus RAG on another project_id.
+    """
+    if not _formula_ask_force_enabled():
+        return False
+    raw = text or ""
+    if not raw.strip():
+        return False
+    if _message_is_schedule_or_programme_deliverable(raw):
+        return False
+    try:
+        if message_is_contract_data_lookup(raw):
+            return False
+    except Exception:  # noqa: BLE001
+        _LOG.debug("contract-data lookup check skipped", exc_info=True)
+    if _looks_like_self_contained_calculation(raw):
+        return True
+    # Underscore form (pe_unit_convert) or a 3+ token spaced name.
+    # Two-token spaced names ("concrete volume") collide with BOQ lookups
+    # and must stay on RAG — `_message_names_registered_calculator` is
+    # too loose here.
+    if _message_names_unambiguous_calculator(raw):
+        return True
+    low = raw.lower()
+    for phrases, tool in _INTENT_TOOL_MAP:
+        if tool == "construction_calc" and any(p in low for p in phrases):
+            return True
+    return _message_matches_calculator_stem(raw)
+
+
+def message_wants_formula_calculator(text: str) -> bool:
+    """Public alias for retrieve / inject — skip Master Corpus fallback."""
+    return _message_is_formula_style_ask(text)
+
+
+def project_is_master_corpus(project_id: str | None) -> bool:
+    """True when ``project_id`` is the Master Corpus alias or its source."""
+    pid = (project_id or "").strip()
+    if not pid:
+        return False
+    if pid == "master_corpus":
+        return True
+    try:
+        from app.core.projects import (
+            MASTER_CORPUS_PROJECT_ID,
+            MASTER_CORPUS_SOURCE_PROJECT_ID,
+        )
+        if pid in (MASTER_CORPUS_PROJECT_ID, MASTER_CORPUS_SOURCE_PROJECT_ID):
+            return True
+    except Exception:  # noqa: BLE001
+        _LOG.debug("master-corpus id table unavailable", exc_info=True)
+    src = (os.getenv("MASTER_CORPUS_SOURCE_PROJECT_ID") or "").strip()
+    return bool(src) and pid == src
+
+
+def project_is_user_fixture(project_id: str | None) -> bool:
+    """True when the active project is a user FIXTURE (not Master Corpus).
+
+    Live UI ids are hex slugs (``b860981f``); the FIXTURE- prefix lives
+    on the project name. Synthetic test pids embed ``fixture`` too.
+    """
+    pid = (project_id or "").strip()
+    if not pid or project_is_master_corpus(pid):
+        return False
+    low = pid.lower()
+    if low.startswith("fixture") or "fixture" in low:
+        return True
+    try:
+        from app.core.projects import get_project
+        rec = get_project(pid, user_id=None, include_admin_approved=True)
+        name = str((rec or {}).get("name") or "").strip().lower()
+        return name.startswith("fixture")
+    except Exception:  # noqa: BLE001
+        _LOG.debug("user-fixture name lookup skipped", exc_info=True)
+        return False
+
+
+def should_suppress_master_corpus_fallback(
+    project_id: str | None, text: str | None,
+) -> bool:
+    """True when a calculator-shaped ask must not use Master Corpus RAG.
+
+    Any non-master project (including a user FIXTURE whose id is a hex
+    slug) skips fallback / banner / MC sources for formula-style and
+    named_calculator asks. Operator-selected Master Corpus is unchanged.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if project_is_master_corpus(project_id):
+        return False
+    if _message_is_formula_style_ask(raw):
+        return True
+    if _message_wants_named_calculator(raw):
+        return True
+    return False
+
+
+_MC_BLEED_PREAMBLE_RE = re.compile(
+    r"^\s*_?This project has no documents of its own for this question\s+"
+    r"[—–-]\s+answering from the Master Corpus\.?_?\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_master_corpus_preamble(text: str) -> str:
+    """Drop the official banner and the model's copy of the same line."""
+    raw = text or ""
+    if _MASTER_CORPUS_FALLBACK_NOTE.strip() in raw:
+        raw = raw.replace(_MASTER_CORPUS_FALLBACK_NOTE, "")
+        raw = raw.replace(_MASTER_CORPUS_FALLBACK_NOTE.strip(), "")
+    cleaned = _MC_BLEED_PREAMBLE_RE.sub("", raw, count=1)
+    return cleaned.lstrip()
+
+
+def _formula_calculator_name_from_message(text: str) -> str | None:
+    """Unique registry name implied by the message, or None.
+
+    Used only to invoke construction_calc. Does not invent a mapping
+    among audit #43–84 — if two names match, we pass no name and the
+    tool returns an honest unknown-calculation envelope.
+    """
+    try:
+        from app.lib.construction_formulas import CALCULATORS
+    except Exception:  # noqa: BLE001
+        _LOG.debug("CALCULATORS import failed", exc_info=True)
+        return None
+    raw = text or ""
+    underscored = raw.lower().replace("-", "_")
+    spaced = raw.lower().replace("-", " ").replace("_", " ")
+    hits: list[str] = []
+    for name in CALCULATORS:
+        if len(name) < 6:
+            continue
+        tokens = [t for t in name.lower().split("_") if t]
+        if name.lower() in underscored:
+            hits.append(name)
+            continue
+        if len(tokens) >= 3 and name.replace("_", " ") in spaced:
+            hits.append(name)
+            continue
+        if len(tokens) >= 3:
+            stem = " ".join(tokens[:2])
+            if (
+                len(stem) >= 8
+                and stem in spaced
+                and stem not in _FORMULA_STEM_LOOKUP_COLLISIONS
+            ):
+                hits.append(name)
+    uniq = list(dict.fromkeys(hits))
+    return uniq[0] if len(uniq) == 1 else None
+
+
+async def _predispatch_formula_calc(
+    agent: "Agent",
+    messages: list,
+    project_id: str | None,
+    operator_text: str | None = None,
+) -> dict[str, Any] | None:
+    """Run construction_calc before the model can answer from Master Corpus.
+
+    Kimi/Groq reject named tool_choice, so `_forced_specific_tool` alone
+    left named_calculator turns with zero tool calls. Predispatch is the
+    provider-independent lever. Kill-switch: AGENT_FORMULA_PREDISPATCH=0.
+    """
+    if os.getenv("AGENT_FORMULA_PREDISPATCH", "1") == "0":
+        return None
+    if "construction" not in getattr(agent, "allowed_blocks", ()):
+        return None
+    try:
+        user_msg, _history = _messages_user_and_history(messages)
+        detect = (operator_text or user_msg or "").strip()
+        if not detect:
+            return None
+        if _message_is_schedule_or_programme_deliverable(detect):
+            return None
+        if not (
+            _message_is_formula_style_ask(detect)
+            or _message_wants_named_calculator(detect)
+        ):
+            return None
+        calc_name = _formula_calculator_name_from_message(detect)
+        tc = {
+            "id": "predispatch-construction_calc",
+            "function": {
+                "name": "construction_calc",
+                "arguments": json.dumps({
+                    "calculation": calc_name,
+                    "params": {"text": detect},
+                    "text": detect,
+                }),
+            },
+        }
+        result = await agent._run_tool_call(tc)
+        inner = result.get("result") if isinstance(result, dict) else result
+        rendered = json.dumps(inner, default=str)[:4000]
+        _inject_predispatch(
+            messages,
+            "construction_calc",
+            rendered,
+            "construction_calc has already been run. Answer from that "
+            "result. Do not answer from Master Corpus excerpts.",
+        )
+        return {
+            "name": "construction_calc",
+            "ok": bool(isinstance(result, dict) and result.get("ok")),
+            "predispatched": True,
+            "result": inner,
+        }
+    except Exception:  # noqa: BLE001
+        _LOG.warning(
+            "construction_calc pre-dispatch failed; continuing normally",
+            exc_info=True,
+        )
+        return None
 
 
 def _message_names_registered_calculator(text: str) -> bool:

@@ -661,6 +661,35 @@ from app.core.rag.retriever import (
     identifier_present_in_text,
     retrieve_with_filter,
 )
+
+
+def _drop_master_corpus_for_formula_fixture(
+    chunks: List[Any],
+    user_message: str,
+    project_id: Optional[str],
+) -> List[Any]:
+    """Drop tagged Master Corpus rows for a user-FIXTURE calculator ask.
+
+    Retrieve skip uses ``retrieval_query`` (may be follow-up-expanded).
+    The original composer string is the authority — live short asks
+    (``rebar lap``, ``pe_unit_convert``, ``slab formwork striking``)
+    must not keep a leaked ``layer=master_corpus`` chunk.
+    """
+    if not chunks:
+        return chunks
+    try:
+        from app.agents.runtime import should_suppress_master_corpus_fallback
+        if not should_suppress_master_corpus_fallback(project_id, user_message):
+            return chunks
+        return [
+            c for c in chunks
+            if getattr(c, "layer", "own") != "master_corpus"
+        ]
+    except Exception:  # noqa: BLE001 — strip is best-effort
+        _LOG.debug("formula-fixture MC strip skipped", exc_info=True)
+        return chunks
+
+
 from app.core.rag import audit as _audit
 from app.core.rag import budget as _budget
 
@@ -860,6 +889,10 @@ def rag_inject(
 
     chunks, noise_filtered = retrieve_with_filter(
         retrieval_query, project_id, k=effective_k,
+        operator_text=user_message,
+    )
+    chunks = _drop_master_corpus_for_formula_fixture(
+        chunks, user_message, project_id,
     )
     top_score = (max(c.score or 0 for c in chunks) if chunks else 0.0)
 

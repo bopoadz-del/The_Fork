@@ -196,7 +196,7 @@ def test_rag_inject_drops_wrong_year_and_fails_closed(monkeypatch, tmp_path):
     )
     wrong.source_name = DD22_NAME
 
-    def only_wrong(query, project_id, k=5, intent=None):
+    def only_wrong(query, project_id, k=5, intent=None, **kwargs):
         return [wrong], 0
 
     monkeypatch.setattr("app.core.rag.inject.retrieve_with_filter", only_wrong)
@@ -231,7 +231,7 @@ def test_rag_inject_keeps_named_year_and_names_it(monkeypatch, tmp_path):
     )
     wrong.source_name = DD22_NAME
 
-    def mixed(query, project_id, k=5, intent=None):
+    def mixed(query, project_id, k=5, intent=None, **kwargs):
         return [wrong, right], 0
 
     monkeypatch.setattr("app.core.rag.inject.retrieve_with_filter", mixed)

@@ -35,7 +35,7 @@ def test_rag_inject_declines_when_identifier_missing(isolated_data_dir, monkeypa
 
     # Fake retriever returns a semantically-similar chunk that does NOT
     # contain the requested identifier.
-    def fake_retrieve(query, project_id, k=5):
+    def fake_retrieve(query, project_id, k=5, **kwargs):
         return [
             Chunk(
                 chunk_id="c1",
@@ -69,7 +69,7 @@ def test_rag_inject_includes_context_when_identifier_present(isolated_data_dir, 
     from app.core.rag.inject import rag_inject
     from app.core.rag.vector_store import Chunk
 
-    def fake_retrieve(query, project_id, k=5):
+    def fake_retrieve(query, project_id, k=5, **kwargs):
         return [
             Chunk(
                 chunk_id="c1",

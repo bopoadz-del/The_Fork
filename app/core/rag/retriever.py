@@ -952,9 +952,12 @@ def retrieve(
     k: int = 5,
     *,
     intent: Optional[str] = None,
+    operator_text: Optional[str] = None,
 ) -> List[Chunk]:
     """Backwards-compatible: returns top-K AFTER the noise filter."""
-    chunks, _ = retrieve_with_filter(query, project_id, k=k, intent=intent)
+    chunks, _ = retrieve_with_filter(
+        query, project_id, k=k, intent=intent, operator_text=operator_text,
+    )
     return chunks
 
 
@@ -994,6 +997,35 @@ def _master_corpus_fallback_id() -> Optional[str]:
     """
     pid = (os.getenv("MASTER_CORPUS_SOURCE_PROJECT_ID") or "").strip()
     return pid or None
+
+
+def _skip_master_fallback_for_formula_ask(
+    query: str, project_id: str, fb_id: Optional[str],
+    operator_text: Optional[str] = None,
+) -> bool:
+    """True when a formula ask on a non-master project must not hit fallback.
+
+    Thin/empty fixtures were answering rebar-lap / unit-convert asks from
+    Master Corpus excerpts with zero construction_calc calls. Lookups still
+    fall back (STEP 0b). Operator-selected Master Corpus is unchanged.
+
+    ``operator_text`` is the original composer string when retrieve was
+    called with a follow-up-expanded ``query``.
+    """
+    pid = (project_id or "").strip()
+    if not pid:
+        return False
+    if fb_id and pid == fb_id:
+        return False
+    try:
+        from app.agents.runtime import should_suppress_master_corpus_fallback
+        for text in (operator_text, query):
+            if text and should_suppress_master_corpus_fallback(pid, text):
+                return True
+        return False
+    except Exception:  # noqa: BLE001 — skip is best-effort
+        logger.debug("formula-ask fallback skip unavailable", exc_info=True)
+        return False
 
 
 def _project_has_any_chunks(store, project_id: str) -> bool:
@@ -8039,6 +8071,7 @@ def retrieve_with_filter(
     k: int = 5,
     *,
     intent: Optional[str] = None,
+    operator_text: Optional[str] = None,
 ) -> tuple:
     """Returns ``(chunks, noise_filtered_count)``.
 
@@ -8237,6 +8270,9 @@ def retrieve_with_filter(
         and bool(fb_id)
         and fb_id != project_id
         and fb_id not in gk_ids
+        and not _skip_master_fallback_for_formula_ask(
+            query, project_id, fb_id, operator_text=operator_text,
+        )
     )
     raw_fb: List[Chunk] = []
     if use_fallback:
