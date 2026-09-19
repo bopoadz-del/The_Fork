@@ -324,7 +324,7 @@ def test_rag_inject_returns_none_when_below_threshold(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
 
-    def fake_retrieve(query, project_id, k):
+    def fake_retrieve(query, project_id, k, **kwargs):
         from app.core.rag.vector_store import Chunk
         return ([
             Chunk(chunk_id="c1", project_id=project_id, doc_id="d1",
@@ -352,7 +352,7 @@ def test_rag_inject_returns_system_message_when_confident(monkeypatch, tmp_path)
     monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
     monkeypatch.setenv("MAX_RAG_TOKENS", "1500")
 
-    def fake_retrieve(query, project_id, k):
+    def fake_retrieve(query, project_id, k, **kwargs):
         from app.core.rag.vector_store import Chunk
         return ([
             Chunk(chunk_id="c1", project_id=project_id, doc_id="d1",
@@ -394,7 +394,7 @@ def test_rag_inject_degrades_to_k2_when_budget_exhausted(monkeypatch, tmp_path):
     budget.consume(day=today, tokens=100)  # consumed == 100 == budget
 
     seen_k = {"value": None}
-    def fake_retrieve(query, project_id, k):
+    def fake_retrieve(query, project_id, k, **kwargs):
         seen_k["value"] = k
         from app.core.rag.vector_store import Chunk
         return ([
@@ -424,7 +424,7 @@ def test_rag_inject_runs_for_any_agent_when_project_id_present(monkeypatch, tmp_
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
 
-    def fake_retrieve(query, project_id, k):
+    def fake_retrieve(query, project_id, k, **kwargs):
         from app.core.rag.vector_store import Chunk
         return ([
             Chunk(chunk_id="c1", project_id=project_id, doc_id="d1",

@@ -325,6 +325,12 @@ def calculate_payment(
     """
     Calculate net payment due per PRC-605.
     """
+    if claimed_amount < 0 or certified_amount < 0:
+        return {"error": "claimed_amount and certified_amount must be >= 0."}
+    if not (0.0 <= retention_rate <= 1.0):
+        return {"error": "retention_rate must be between 0 and 1 (fraction, not percent)."}
+    if cumulative_previous_certified < 0 or contract_value < 0:
+        return {"error": "cumulative_previous_certified and contract_value must be >= 0."}
     retention_held = certified_amount * retention_rate
     net_due = certified_amount - retention_held
     cumulative_now = cumulative_previous_certified + certified_amount
@@ -393,6 +399,8 @@ def calculate_evm(
     earned_f = float(earned)
     actual_f = float(actual)
     bac_f = float(bac) if bac is not None else None
+    if planned_f < 0 or earned_f < 0 or actual_f < 0 or (bac_f is not None and bac_f < 0):
+        return {"error": "EVM values (PV, EV, AC, BAC) must be >= 0."}
 
     # Derived figures come from the UNROUNDED CPI: EAC from the 3dp display
     # value drifted 82 per 211k on the phase-3 hand-check battery (200000/0.947
@@ -473,6 +481,8 @@ def evaluate_tender(
     weights: optional dict overriding defaults:
         {"technical": 0.45, "commercial": 0.45, "hse": 0.07, "local_content": 0.03}
     """
+    if not tenderers:
+        return {"error": "evaluate_tender requires at least one tenderer."}
     if weights is None:
         weights = {"technical": 0.45, "commercial": 0.45, "hse": 0.07, "local_content": 0.03}
 

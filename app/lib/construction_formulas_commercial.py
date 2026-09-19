@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 def roi_calculator(gain: float, cost: float) -> dict:
     """Return on investment: ROI% = (gain - cost) / cost * 100."""
     g, c = float(gain), float(cost)
+    if c == 0:
+        return {"error": "cost must be non-zero to compute ROI"}
     net = g - c
-    roi = (net / c * 100.0) if c else 0.0
+    roi = net / c * 100.0
     return {
         "net_profit": round(net, 2),
         "roi_percent": round(roi, 2),
@@ -39,7 +41,9 @@ def unit_cost_total(quantity: float, unit_rate: float) -> dict:
 def cost_per_area(total_cost: float, area: float, area_unit: str = "m2") -> dict:
     """Unit area cost = total_cost / area (per m2 or per sf, caller's unit)."""
     t, a = float(total_cost), float(area)
-    rate = (t / a) if a else 0.0
+    if a <= 0:
+        return {"error": "area must be > 0 — cannot compute a unit cost from a zero or negative area."}
+    rate = t / a
     return {
         "cost_per_area": round(rate, 2),
         "area_unit": area_unit,
@@ -52,7 +56,9 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
     """Output per labour-hour and per worker-hour. rate = output/hours;
     per-worker = rate/crew_size."""
     o, h = float(output_quantity), float(labor_hours)
-    rate = (o / h) if h else 0.0
+    if h == 0:
+        return {"error": "labor_hours must be > 0"}
+    rate = o / h
     per_worker = (rate / crew_size) if crew_size else rate
     return {
         "rate_per_hour": round(rate, 3),
@@ -432,6 +438,8 @@ def delay_damages_daily(
     """
     pct = float(rate_percent)
     base = float(contract_amount)
+    if pct < 0 or base < 0:
+        return {"error": "rate_percent and contract_amount must be >= 0."}
     daily = round(base * (pct / 100.0), 2)
     cur = (currency or "SAR").strip().upper() or "SAR"
     return {
