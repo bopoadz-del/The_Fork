@@ -366,6 +366,73 @@ def admin_approve_project(project_id: str, auth: dict = Depends(require_api_key)
     return {"status": "approved", "project_id": project_id}
 
 
+@router.post("/v1/admin/documents/{old_id}/supersede")
+def admin_supersede_document(
+    old_id: str,
+    new_id: str = Query(..., description="The document that replaces old_id"),
+    auth: dict = Depends(require_api_key),
+):
+    """Retire a document in favour of a corrected copy. Never deletes.
+
+    ``projects.supersede_document`` has existed for a while -- it hides the old
+    row from retrieval (``retrieval_visible=false``) and points it at its
+    replacement (``superseded_by``) -- but it was only reachable from inside
+    ``add_document(reingest_of=...)``, which no route exposes. So the one
+    safe, reversible way to replace a badly-indexed document could not be
+    used from outside the process, and the alternatives were a hand-written
+    UPDATE against production or a delete.
+
+    Why it was needed: three documents carried a false ``CONTRACT DATA
+    particulars`` label and outranked the real Contract Data on every contract
+    question. They could not be re-indexed in place -- the server does not
+    retain the source bytes of archive-ingested documents, so doc-reindex
+    returns ZERO_CHUNK -- which left "upload a corrected copy, then retire the
+    old row" as the only non-destructive fix.
+
+    Guard rails: both documents must exist and must belong to the SAME
+    project, so a document can never be retired in favour of one from another
+    project. Reversible by setting ``retrieval_visible=true`` and clearing
+    ``superseded_by``; the old row and its chunks are untouched.
+    """
+    _require_admin(auth)
+    from app.core import audit
+    from app.core import projects as _projects
+
+    if old_id == new_id:
+        raise HTTPException(400, "a document cannot supersede itself")
+    old = _projects.get_document(old_id)
+    new = _projects.get_document(new_id)
+    if old is None:
+        raise HTTPException(404, f"document '{old_id}' not found")
+    if new is None:
+        raise HTTPException(404, f"replacement document '{new_id}' not found")
+    if old.get("project_id") != new.get("project_id"):
+        raise HTTPException(
+            400,
+            "old and new documents belong to different projects; a document "
+            "may only be superseded by one in the same project",
+        )
+
+    updated = _projects.supersede_document(old_id, new_id)
+    if updated is None:
+        raise HTTPException(500, "supersede failed")
+    audit.record(
+        "document.superseded",
+        project_id=old.get("project_id"),
+        user_id=auth.get("user_id"),
+        old_document_id=old_id,
+        new_document_id=new_id,
+    )
+    return {
+        "status": "superseded",
+        "old_document_id": old_id,
+        "new_document_id": new_id,
+        "project_id": old.get("project_id"),
+        "retrieval_visible": updated.get("retrieval_visible"),
+        "superseded_by": updated.get("superseded_by"),
+    }
+
+
 @router.get("/v1/admin/projects/archived")
 def admin_list_archived_projects(auth: dict = Depends(require_api_key)):
     """List soft-archived (hidden) projects — so an admin can see what junk is
