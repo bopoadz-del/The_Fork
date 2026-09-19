@@ -180,8 +180,10 @@ def test_a_user_cannot_delegate_to_a_privileged_agent(monkeypatch):
 
 # ── the doors ───────────────────────────────────────────────────────────────
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def user_client():
+    # One user per test: the suite empties the database between tests, so a
+    # module-wide user is gone by the second one ("Token user no longer exists").
     from fastapi.testclient import TestClient
 
     from app.main import app
