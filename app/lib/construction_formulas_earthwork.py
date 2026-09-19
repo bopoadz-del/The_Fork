@@ -17,6 +17,10 @@ def excavation_volume(
 ) -> dict:
     """Bank (in-situ) excavation volume L*W*D, and the loose (bulked) volume for
     haulage = bank*(1+bulking)."""
+    if min(float(length_m), float(width_m), float(depth_m)) < 0:
+        return {"error": "excavation length_m, width_m and depth_m must be >= 0."}
+    if float(bulking_factor) < 0:
+        return {"error": "bulking_factor must be >= 0."}
     bank = float(length_m) * float(width_m) * float(depth_m)
     loose = bank * (1.0 + bulking_factor)
     return {
@@ -36,6 +40,10 @@ def backfill_volume(
 ) -> dict:
     """Backfill needed to fill the void around a structure. Void (compacted) =
     excavation - structure; loose material to import = void*(1+swell)."""
+    if float(excavation_bank_m3) < 0 or float(structure_volume_m3) < 0:
+        return {"error": "excavation_bank_m3 and structure_volume_m3 must be >= 0."}
+    if float(swell_factor) < 0:
+        return {"error": "swell_factor must be >= 0."}
     void = float(excavation_bank_m3) - float(structure_volume_m3)
     void = max(void, 0.0)
     loose_needed = void * (1.0 + swell_factor)
@@ -57,6 +65,10 @@ def cut_fill_balance(
 ) -> dict:
     """Site earthwork balance in bank m3. balance = cut - fill; positive = surplus
     to export, negative = deficit to import. Loose export/import shown for haulage."""
+    if float(cut_volume_m3) < 0 or float(fill_volume_m3) < 0:
+        return {"error": "cut_volume_m3 and fill_volume_m3 must be >= 0."}
+    if float(bulking_factor) < 0:
+        return {"error": "bulking_factor must be >= 0."}
     cut = float(cut_volume_m3)
     fill = float(fill_volume_m3)
     balance = cut - fill
@@ -79,6 +91,10 @@ def compaction_control(
 ) -> dict:
     """Field compaction = field MDD / lab MDD * 100. Pass if >= required (default
     95% Standard/Modified Proctor)."""
+    if float(max_dry_density) <= 0:
+        return {"error": "max_dry_density must be > 0."}
+    if float(field_dry_density) < 0:
+        return {"error": "field_dry_density must be >= 0."}
     pct = float(field_dry_density) / float(max_dry_density) * 100.0
     passed = pct >= float(required_compaction_percent)
     return {
