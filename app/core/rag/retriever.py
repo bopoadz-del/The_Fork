@@ -6263,6 +6263,18 @@ _PART_SUMMARY_SPLIT_LABEL_RE = re.compile(
 )
 
 
+_PART_SUMMARY_COLLECTION_ROW_RE = re.compile(
+    r"(?i)from\s+page\s+(?:nr|no)?\.?\s*([a-z])\s*[/\-]\s*(\d{1,3})\s*[/\-]\s*(\d{1,3})"
+    r"\s+(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?)"
+)
+
+
+def _skip_ws(text: str, pos: int) -> int:
+    while pos < len(text) and text[pos].isspace():
+        pos += 1
+    return pos
+
+
 def _part_summary_labels(blob: str) -> List["re.Match"]:
     """Every Part Summary label in ``blob``, whole or cut by the chunker."""
     found = list(_PART_SUMMARY_LABEL_RE.finditer(blob or ""))
@@ -6457,7 +6469,26 @@ def _part_summary_totals(blob: str) -> List[Dict[str, Any]]:
     """
     labels = _part_summary_labels(blob)
     out: List[Dict[str, Any]] = []
+    # The collection page that closes each Part lists every page's total with
+    # the reference BEFORE the amount: "From Page Nr. d/3/3 17,496,857.00".
+    # Each row owns exactly its own page. (Unseen Set 3 B3: this page was the
+    # only place d/3/3's total could be read, and nothing understood it.)
+    for row in _PART_SUMMARY_COLLECTION_ROW_RE.finditer(blob):
+        amount = _parse_part_summary_amount(row.group("amount"))
+        if amount is None:
+            continue
+        out.append({
+            "pages": [f"{row.group(1).lower()}/{int(row.group(2))}/{int(row.group(3))}"],
+            "amount": amount,
+            "raw": row.group("amount"),
+            "currency": "",
+        })
     for i, label in enumerate(labels):
+        # A label that HEADS a collection list owns none of it: the old window
+        # rule read "PART SUMMARY From Page Nr. d/3/1 <amt> From Page Nr.
+        # d/3/2 ..." as one total belonging to every reference in 80 chars.
+        if _PART_SUMMARY_COLLECTION_ROW_RE.match(blob, _skip_ws(blob, label.end())):
+            continue
         # Amount sits on the summary row (after the label). Looking
         # behind the label elects a neighbor line-item rate (220.00).
         # A wide window used to reach the next page's 1,370.00 Rate
