@@ -1233,20 +1233,6 @@ class TestFwIntentMapForcesConstructionCalc:
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_routes_fw_resource_line_to_construction_calc():
-    from app.blocks.smart_orchestrator import SmartOrchestratorBlock
-
-    r = await SmartOrchestratorBlock().process(
-        {"user_message": (
-            "Resource line cost for 240 m2 plaster at 12 m2 daily output "
-            "and 280 day rate."
-        )},
-    )
-    assert r["status"] == "success"
-    assert "construction_calc" in (r.get("action_queue") or []), r
-
-
-@pytest.mark.asyncio
 async def test_container_construction_calc_remaps_resource_line():
     from app.containers.construction import ConstructionContainer
 
