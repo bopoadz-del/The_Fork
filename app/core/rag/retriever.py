@@ -1406,7 +1406,10 @@ def _rescue_filename_matched_docs(
 _DOC_IDENTITY_ASK_RE = re.compile(
     r"(?i)\b(?:document|doc\.?|drawing|reference)\s+(?:number|no\b\.?|ref\b)|"
     r"\brevision\b|\bprepared\s+by\b|"
-    r"\bwho\s+(?:prepared|authored|wrote|issued|checked|reviewed|approved)\b"
+    r"\bwho\s+(?:prepared|authored|wrote|issued|checked|reviewed|approved)\b|"
+    # "What is the date of the priced BOQ", "when was the ... issued".
+    r"\bdate\s+of\s+(?:the\s+)?(?!commencement|completion|award|access|taking)|"
+    r"\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b"
 )
 _DOC_IDENTITY_ASK_WORDS = frozenset({
     "document", "number", "revision", "prepared", "authored", "wrote",
@@ -1436,10 +1439,24 @@ def query_asks_for_document_identity(query: str) -> bool:
     return bool(_DOC_IDENTITY_ASK_RE.search(query or ""))
 
 
+# "...number and revision OF THE priced Bill of Quantities, and who prepared
+# it" / "the date OF THE priced Bill of Quantities and the Employer's ...".
+# The title is the noun phrase an identity word points at, cut at the next
+# clause. Taking every non-ask word instead adds "employer" and "contract"
+# to the title, and a filename has to contain every title word.
+_DOC_IDENTITY_TITLE_RE = re.compile(
+    r"(?i)\b(?:number|no\.?|revision|date|reference|ref|status|title|author)\s+"
+    r"of\s+(?:the\s+)?(?P<title>.+?)(?=\s+and\s+(?:the|who|what|its|when)\b|[,;?]|$)"
+)
+
+
 def document_identity_title_terms(query: str) -> List[str]:
     """The words of the ask that NAME the document, not the ones that ask."""
+    q = query or ""
+    pointed = _DOC_IDENTITY_TITLE_RE.search(q)
+    scope = pointed.group("title") if pointed else q
     return sorted(
-        t for t in _significant_terms(query)
+        t for t in _significant_terms(scope)
         if t not in _DOC_IDENTITY_ASK_WORDS
     )
 
@@ -6154,6 +6171,17 @@ def compose_priced_boq_row(query: str, excerpt: str) -> Optional[Dict[str, Any]]
             if parsed and row_is_the_asked_item(query, lead, window):
                 candidates.append(parsed)
     if not candidates:
+        return None
+    # Unseen Set 3, live 5312551: two bills priced the SAME item differently
+    # (915 Nr @ 3,800 in one, 897 Nr @ 1,275.00 in the other) and the first
+    # was stated flatly. One line is only honest when there is one answer;
+    # when the sources disagree the model gets the turn, with both excerpts.
+    # Copies of one bill (signed, unsigned, an OCR of it) agree and collapse.
+    if len({(c["qty"], c["rate"], c["amount"]) for c in candidates}) > 1:
+        logger.info(
+            "priced-BOQ compose declined: %d excerpts disagree on %s",
+            len(candidates), ", ".join(codes),
+        )
         return None
 
     def _score(parsed: Dict[str, Any]) -> int:

@@ -227,6 +227,41 @@ def test_the_richest_control_block_wins_not_the_first_one(ret, monkeypatch):
     assert any("Prepared by: EXAMPLEQS" in c.text for c in lifted)
 
 
+# ── the title is the phrase after "of the", not every other word ──────────
+#
+# Unseen Set 3, live: "What is the date of the priced Bill of Quantities and
+# the Employer's contract reference on it?" Two misses. "date of" was not an
+# identity ask at all. And the title was taken as every word that is not an
+# ask-word -- here that adds "employer" and "contract", every one of which the
+# filename then has to contain, and it contains neither.
+
+C1 = ("What is the date of the priced Bill of Quantities and the Employer's "
+      "contract reference on it?")
+
+
+def test_a_date_question_is_an_identity_question(ret):
+    assert ret.query_asks_for_document_identity(C1)
+    assert ret.query_asks_for_document_identity("When was the priced Bill of Quantities issued?")
+
+
+def test_the_title_is_the_phrase_the_question_points_at(ret):
+    assert ret.document_identity_title_terms(C1) == ["bill", "priced", "quantities"]
+    # The Set 1 wording still yields the same title.
+    assert ret.document_identity_title_terms(B6) == ["bill", "priced", "quantities"]
+
+
+def test_c1_reaches_the_cover(ret):
+    texts = _texts(ret, C1)
+    assert texts and "Date: June 2, 2099" in texts[0]
+    assert "Client reference: XX-2099-001" in texts[0]
+
+
+def test_a_question_with_no_of_the_phrase_falls_back_to_the_old_rule(ret):
+    """"Who prepared the priced Bill of Quantities?" has no "of the"."""
+    assert ret.document_identity_title_terms(
+        "Who prepared the priced Bill of Quantities?") == ["bill", "priced", "quantities"]
+
+
 def test_one_leftover_word_does_not_name_a_document(ret):
     """"Who prepared the quantities?" leaves one word. Every bill in the
     corpus has it in its name; that is a topic, not a title."""

@@ -268,3 +268,43 @@ def test_one_chunk_is_enough_to_tell_it_is_the_wrong_item():
 def test_an_earlier_clause_sets_the_scene_it_does_not_describe_the_item():
     ask = "For the boundary wall package handover: what is the amount for D549.2?"
     assert compose_priced_boq_row(ask, UNIT_FIRST)["amount"] == 280320.0
+
+
+# ── two bills that disagree about the SAME item ───────────────────────────
+#
+# Unseen Set 3, live 5312551: "How many street lighting poles are to be
+# removed and what is the amount (D999.1)?" The top two excerpts were
+#
+#   priced BOQ:       ...street lighting poles...  D 999.1  Nr  915  3,800     3,477,000.00
+#   demolition bill:  ...street lighting poles...  D999.1   Nr  897  1,275.00  1,143,675.00
+#
+# Same item, same code, two documents, two answers -- and the platform stated
+# the first one flatly. A deterministic one-line answer is only honest when
+# there is one answer. When the sources disagree the turn goes to the model,
+# with both excerpts in front of it.
+
+POLES_PRICED_BOQ = (
+    "C_ |Breakout and remove existing street lighting poles and luminaires "
+    "including feeder pillars D 999.1 Nr 915 3,800 3,477,000.00 D_ {Breakout"
+)
+POLES_DEMOLITION = (
+    "C Breakout and remove existing street lighting poles and luminaires "
+    "including feeder pillars D999.1 Nr 897 1,275.00 1,143,675.00 D Breakout"
+)
+POLES_ASK = "How many street lighting poles are to be removed and what is the amount (D999.1)?"
+
+
+def test_two_sources_that_disagree_are_not_settled_by_picking_the_first():
+    both = POLES_PRICED_BOQ + "\n\n" + POLES_DEMOLITION
+    assert compose_priced_boq_row(POLES_ASK, both) is None
+    assert compose_priced_boq_row(POLES_ASK, POLES_DEMOLITION + "\n\n" + POLES_PRICED_BOQ) is None
+
+
+def test_the_same_row_quoted_twice_is_not_a_disagreement():
+    """Two copies of one bill (signed and unsigned, or an OCR of it) agree."""
+    twice = POLES_DEMOLITION + "\n\n" + POLES_DEMOLITION.replace("C Breakout", "C |Breakout")
+    assert compose_priced_boq_row(POLES_ASK, twice)["amount"] == 1143675.0
+
+
+def test_one_source_is_still_answered_directly():
+    assert compose_priced_boq_row(POLES_ASK, POLES_DEMOLITION)["amount"] == 1143675.0
