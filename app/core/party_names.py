@@ -114,12 +114,39 @@ def _trim(candidate: str) -> str:
     return re.sub(r"\s+", " ", name).strip(" \t.,:;|-–*_")
 
 
+# A contract is full of role-led TERMS — Employer Requirements, Contractor
+# Documents, Engineer Instructions, Contractor Personnel. The word after the
+# role is what tells a term from a party, and these are never a party's name.
+# Live 562ee32: "Employer Requirements XYZC General Specification" was read as
+# role + name, and "Requirements" was then removed from every answer.
+_CONTRACT_TERM_WORDS = frozenset("""
+requirements requirement representative representatives personnel equipment
+documents document proposal proposals instructions instruction risks risk
+claims claim default entitlement entitlements obligations obligation tender
+approval approvals consent notice notices design drawings drawing programme
+program team staff shall may must will is are was has have to and or the a an
+details detail address data name names duties duty liability liabilities
+authority rights right property goods materials plant works work site
+""".split())
+
+
 def _is_a_name(name: str) -> bool:
+    """A party's name STARTS like one. An ALL-CAPS token somewhere in a run of
+    words is not enough — that was the whole test, and it let contract terms
+    through."""
     if len(name) < 4 or name.lower() in _GENERIC_WORDS:
         return False
-    if _FIRM_SUFFIX_RE.search(name):
-        return True
-    return bool(re.search(r"\b[A-Z][A-Z0-9&]{2,}\b", name))  # an acronym-style firm
+    if re.search(r"[.!?]\s", name):
+        return False  # runs across a sentence: prose, not a name
+    first = re.sub(r"[^A-Za-z0-9&'-]", " ", name).split()
+    if not first or first[0].lower() in _CONTRACT_TERM_WORDS:
+        return False
+    # A legal-entity word, always. "All capitals" alone is not evidence: bills
+    # say "as directed by the Engineer D110 ..." and a replay of this scrub
+    # over the real answers turned item code D110 into "the Engineer". A firm
+    # written in capitals still qualifies through its bracketed registered
+    # name -- EXAMPLECO(EX2M Arabia Limited).
+    return bool(_FIRM_SUFFIX_RE.search(name)) and first[0][:1].isupper()
 
 
 def extract_party_names(excerpts: str) -> List[Tuple[str, str]]:
@@ -151,13 +178,24 @@ def _variants(name: str) -> List[str]:
             words = part.split()
             while words and words[-1].lower().strip(".,") in _GENERIC_WORDS:
                 words.pop()
-            if words:
+            if len(words) >= 2:
                 out.add(" ".join(words))
-            for w in words:
+            # A single word identifies a party only when it could be nothing
+            # else: all capitals (EXAMPLECO, EX2M), a hyphenated proper name
+            # (Al-Sample), or the opening word of the name. Never an ordinary
+            # word from the middle of it ("Gate", "Investment").
+            for i, w in enumerate(words):
                 bare = w.strip(".,()&")
-                if len(bare) >= 4 and bare.lower() not in _GENERIC_WORDS and (
-                    bare.isupper() or not bare.islower()
-                ) and re.search(r"[A-Za-z]", bare):
+                if len(bare) < 4 or bare.lower() in _GENERIC_WORDS:
+                    continue
+                if bare.lower() in _CONTRACT_TERM_WORDS:
+                    continue
+                distinctive = (
+                    re.fullmatch(r"[A-Z][A-Z0-9&]{2,}", bare)
+                    or re.fullmatch(r"[A-Z][a-z]*-[A-Z][A-Za-z]+", bare)
+                    or (i == 0 and len(bare) >= 6 and bare[:1].isupper())
+                )
+                if distinctive:
                     out.add(bare)
     # Longest first, so "Exampleton Gate Company Limited" goes before
     # "Exampleton Gate" and leaves no orphaned "Company Limited" behind.

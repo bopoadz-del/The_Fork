@@ -214,3 +214,90 @@ def test_a_partys_initials_are_a_name_too():
 def test_initials_never_touch_an_ordinary_word_or_a_lower_case_match():
     text = "The bthc register and the word Both are untouched; so is BTHCX-001."
     assert withhold_party_names(text, ACRONYM_EXCERPT) == text
+
+
+# ── a contract TERM is not a party ────────────────────────────────────────
+#
+# Live 562ee32 -- a regression this file's first version shipped, caught by
+# re-running Set 1 the moment it deployed. C1 (order of precedence) came back
+# as "3. Schedule of Project the Employer ... the Employer Environment the
+# Employer for Contract". The extractor had read "Employer Requirements XYZC
+# General Specification" as role + name (there was an ALL-CAPS token in it,
+# and that was the whole test), and then offered every word of that "name",
+# "Requirements" included, as something to remove.
+#
+# A contract is full of role-led TERMS: Employer Requirements, Contractor
+# Documents, Engineer Instructions, Employer's Representative. None is a party.
+
+TERMS_EXCERPT = (
+    "[doc_id=s chunk=1 score=1.000] 1.5.1(d) the Specification: Post Tender "
+    "Clarifications; Tender Addenda; Schedule of Project Requirements; Particular "
+    "Specification; XYZC Environment Requirements for Contract & XYZC Sustainability "
+    "Requirements; XYZC HSE Specification; Employer Requirements XYZC General "
+    "Specification. The Employer's Representative shall attend. Contractor Documents "
+    "XYZC shall be submitted. Engineer Instructions ABCD shall be in writing. "
+    "Contractor Personnel and Contractor Equipment remain on Site."
+)
+PRECEDENCE_ANSWER = (
+    "1. Post Tender Clarifications 2. Tender Addenda 3. Schedule of Project "
+    "Requirements, followed by the Particular Specification, the Environment "
+    "Requirements for Contract, the HSE Specification and the General Specification. "
+    "Engineer Instructions must be in writing; Contractor Documents are submitted."
+)
+
+
+def test_role_led_contract_terms_are_not_read_as_parties():
+    assert extract_party_names(TERMS_EXCERPT) == []
+
+
+def test_the_live_precedence_answer_comes_back_untouched():
+    assert withhold_party_names(PRECEDENCE_ANSWER, TERMS_EXCERPT) == PRECEDENCE_ANSWER
+
+
+def test_a_real_party_beside_those_terms_is_still_found_and_nothing_else_is():
+    both = TERMS_EXCERPT + "\n\n" + EXCERPT
+    names = dict(extract_party_names(both))
+    assert set(names.values()) == {"the Employer", "the Engineer", "the Contractor"}
+    out = withhold_party_names(PRECEDENCE_ANSWER + " Signed by EXAMPLECO.", both)
+    assert "EXAMPLECO" not in out
+    assert "Schedule of Project Requirements" in out
+    assert "Environment Requirements for Contract" in out
+
+
+@pytest.mark.parametrize(
+    "word", ["Requirements", "Specification", "Company", "Limited", "Investment",
+             "Contracting", "Gate", "Arabia", "Instructions", "General"],
+)
+def test_an_ordinary_word_of_a_name_is_never_removed_on_its_own(word):
+    """Only what IDENTIFIES: the whole name, its distinctive opening word, an
+    all-capitals short form, a bracketed alias, the initials."""
+    sentence = f"The {word} clause applies to every {word.lower()} in the schedule."
+    assert withhold_party_names(sentence, EXCERPT + "\n\n" + FLAT_EXCERPT) == sentence
+
+
+# ── an item code is not a firm ────────────────────────────────────────────
+#
+# Found by REPLAYING the scrub over all 77 real answers with their real
+# excerpts, before shipping the fix above -- the check that should have been
+# run before the first version. Bills say "as directed by the Engineer D110
+# General site clearance ...". "All capitals" was accepted as a firm's name,
+# so item codes D110 and D599.9 came back as "the Engineer" in BOQ answers.
+
+BOQ_EXCERPT = (
+    "[doc_id=b chunk=3 score=4.000] complete as directed by the Engineer D110 "
+    "General site clearance ha 158 186,328.00 29,439,824.00 Removal of Asbestos "
+    "including handling, complete as directed by the Engineer D599.9 m 262.00 Rate "
+    "Only as instructed by the Engineer CESMM4 Class D applies. Employer BOQ Rev B."
+)
+BOQ_ANSWER = ("D110: quantity 158 ha @ 186,328.00 = 29,439,824. Item D599.9 is Rate "
+              "Only under CESMM4 Class D (BOQ Rev B).")
+
+
+def test_item_codes_and_standards_are_not_read_as_the_engineer():
+    assert extract_party_names(BOQ_EXCERPT) == []
+    assert withhold_party_names(BOQ_ANSWER, BOQ_EXCERPT) == BOQ_ANSWER
+
+
+def test_a_firm_written_in_capitals_is_still_found_through_its_registered_name():
+    names = dict(extract_party_names(EXCERPT))
+    assert any(n.startswith("EXAMPLECO") for n in names)
