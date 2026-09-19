@@ -409,8 +409,8 @@ class TestRiskRegisterAutoPopulate:
         )
         assert result["status"] == "success"
         assert result["action"] == "risk_register"
-        assert result["total_risks"] >= 5  # 2 provided + standard risks
-        assert result["high_risks"] >= 1
+        assert result["total_risks"] == 2
+        assert result["high_risks"] == 1
         assert all(r["id"].startswith("RISK-") for r in result["risk_register"])
         assert result["risk_register"][0]["risk_score"] >= result["risk_register"][-1]["risk_score"]
 

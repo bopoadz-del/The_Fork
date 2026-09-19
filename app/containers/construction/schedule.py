@@ -554,17 +554,15 @@ class ConstructionScheduleMixin:
         handover_date = p.get("handover_date") or data.get("handover_date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         defects_liability_months = int(p.get("defects_liability_months", data.get("defects_liability_months", 12)))
 
-        # Standard system warranties if none provided
         if not systems:
-            systems = [
-                {"name": "HVAC System", "type": "mechanical", "supplier": "TBD"},
-                {"name": "Electrical Distribution", "type": "electrical", "supplier": "TBD"},
-                {"name": "Plumbing & Drainage", "type": "plumbing", "supplier": "TBD"},
-                {"name": "Lifts / Elevators", "type": "vertical_transport", "supplier": "TBD"},
-                {"name": "Fire Suppression", "type": "fire_protection", "supplier": "TBD"},
-                {"name": "Building Facade", "type": "architectural", "supplier": "TBD"},
-                {"name": "Roof Waterproofing", "type": "waterproofing", "supplier": "TBD"},
-            ]
+            return {
+                "status": "error",
+                "action": "warranty_maintenance_schedule",
+                "error": (
+                    "Provide systems / equipment — cannot invent a warranty "
+                    "register"
+                ),
+            }
 
         warranty_register = []
         maintenance_tasks = []

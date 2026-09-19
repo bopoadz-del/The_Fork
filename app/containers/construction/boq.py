@@ -244,6 +244,15 @@ class ConstructionBoqMixin:
         location = p.get("location", "US National Average")
         project_type = p.get("project_type", "general_building")
 
+        if not quantities:
+            return {
+                "status": "error",
+                "action": "cost_estimate",
+                "error": (
+                    "No quantities supplied — provide quantities or a BOQ"
+                ),
+            }
+
         block = self._get_historical_benchmark_block()
         if block is None:
             return {
@@ -841,6 +850,16 @@ class ConstructionBoqMixin:
                 data.get("message") or (input_data if isinstance(input_data, str) else "")
             )
 
+        if not quantities:
+            return {
+                "status": "error",
+                "action": "carbon_report",
+                "error": (
+                    "No material quantities supplied — provide quantities "
+                    "or a message that names quantities"
+                ),
+            }
+
         carbon_factors = {
             "concrete_m3": 250.0,
             "steel_kg": 2.3,
@@ -908,15 +927,16 @@ class ConstructionBoqMixin:
             if any(k in name.lower() for k in ["steel", "concrete", "pipe", "cable"]):
                 submittals.append(self._create_submittal_item(name + " — Test Certificate", "Inspection & Test Plan", contract_start))
 
-        # Standard submittals always required
-        for std in [
-            ("Method Statement — Excavation", "Method Statement"),
-            ("Method Statement — Concrete Pours", "Method Statement"),
-            ("QA/QC Plan", "Quality Document"),
-            ("Health & Safety Plan", "Safety Document"),
-            ("Material Storage Plan", "Logistics Document"),
-        ]:
-            submittals.append(self._create_submittal_item(std[0], std[1], contract_start))
+        if not submittals:
+            return {
+                "status": "error",
+                "action": "submittal_log",
+                "error": (
+                    "No specification sections or BOQ items supplied — "
+                    "cannot invent a submittal register"
+                ),
+                "submittal_register": [],
+            }
 
         return {
             "status": "success",
@@ -996,29 +1016,16 @@ class ConstructionBoqMixin:
                 "source": "auto",
             })
 
-        # Add standard project risks if register is thin
-        if len(risks) < 5:
-            standard_risks = [
-                ("Weather", "Adverse weather causing programme delays", 0.3, 0.5),
-                ("Labour", "Skilled trade shortage in local market", 0.4, 0.6),
-                ("Material", "Key material price escalation or supply disruption", 0.35, 0.65),
-                ("Design", "Late design information causing programme delay", 0.5, 0.7),
-                ("Regulatory", "Permit or authority approval delays", 0.3, 0.4),
-            ]
-            for cat, desc, prob, impact in standard_risks:
-                risks.append({
-                    "id": f"RISK-{len(risks)+1:03d}",
-                    "category": cat,
-                    "description": desc,
-                    "probability": prob,
-                    "impact": impact,
-                    "risk_score": round(prob * impact * 100, 1),
-                    "severity": "high" if prob * impact > 0.3 else "medium",
-                    "mitigation": "Monitor and review monthly",
-                    "owner": "Project Manager",
-                    "status": "Open",
-                    "source": "standard",
-                })
+        if not risks:
+            return {
+                "status": "error",
+                "action": "risk_register",
+                "error": (
+                    "No risks supplied — provide risks / auto_risks from a "
+                    "document. Catalogue risks are not invented."
+                ),
+                "risk_register": [],
+            }
 
         risks.sort(key=lambda x: x["risk_score"], reverse=True)
 
@@ -1379,7 +1386,17 @@ class ConstructionBoqMixin:
         cost_overrun_threshold = p.get("overrun_threshold", 0.10)
         target_reduction = p.get("target_reduction", 0.15)
         carbon_priority = p.get("carbon_priority", False)
-    
+
+        if not current_boq:
+            return {
+                "status": "error",
+                "action": "value_engineering_analysis",
+                "error": (
+                    "Provide a BOQ / priced items — cannot invent "
+                    "value-engineering alternatives"
+                ),
+            }
+
         alternatives = []
         for item in current_boq:
             item_alts = self._find_value_engineering_alternatives(item, carbon_priority)
