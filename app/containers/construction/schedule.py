@@ -399,11 +399,22 @@ class ConstructionScheduleMixin:
         planned_pct = float(p.get("planned_percent") or data.get("planned_percent", 0))
         actual_pct = float(p.get("actual_percent") or data.get("actual_percent", 0))
         contract_value = float(p.get("contract_value") or data.get("contract_value", 0))
+        activities = p.get("activities") or data.get("activities", [])
+        has_planned = "planned_percent" in p or "planned_percent" in data
+        has_actual = "actual_percent" in p or "actual_percent" in data
+        if not has_planned and not has_actual and not activities:
+            return {
+                "status": "error",
+                "action": "progress_tracker",
+                "error": (
+                    "Provide planned_percent and actual_percent, or an "
+                    "activities list — cannot track progress with no figures"
+                ),
+            }
         actual_cost = p.get("actual_cost")
         if actual_cost is None:
             actual_cost = data.get("actual_cost")
         reporting_period = p.get("reporting_period", datetime.now(timezone.utc).strftime("%B %Y"))
-        activities = p.get("activities") or data.get("activities", [])
         photos = p.get("photos") or data.get("photos", [])
 
         variance = round(actual_pct - planned_pct, 2)
@@ -543,17 +554,15 @@ class ConstructionScheduleMixin:
         handover_date = p.get("handover_date") or data.get("handover_date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         defects_liability_months = int(p.get("defects_liability_months", data.get("defects_liability_months", 12)))
 
-        # Standard system warranties if none provided
         if not systems:
-            systems = [
-                {"name": "HVAC System", "type": "mechanical", "supplier": "TBD"},
-                {"name": "Electrical Distribution", "type": "electrical", "supplier": "TBD"},
-                {"name": "Plumbing & Drainage", "type": "plumbing", "supplier": "TBD"},
-                {"name": "Lifts / Elevators", "type": "vertical_transport", "supplier": "TBD"},
-                {"name": "Fire Suppression", "type": "fire_protection", "supplier": "TBD"},
-                {"name": "Building Facade", "type": "architectural", "supplier": "TBD"},
-                {"name": "Roof Waterproofing", "type": "waterproofing", "supplier": "TBD"},
-            ]
+            return {
+                "status": "error",
+                "action": "warranty_maintenance_schedule",
+                "error": (
+                    "Provide systems / equipment — cannot invent a warranty "
+                    "register"
+                ),
+            }
 
         warranty_register = []
         maintenance_tasks = []
