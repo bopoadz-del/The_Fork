@@ -61,16 +61,19 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # Re-indexed 2026-09-20: SYNC2 empty-turn / user-rate closure inserts.
     # Same pre-existing handlers — only the line numbers moved. No new
     # silent returns.
-    "app/agents/runtime.py:1994": "baseline 2026-09-10",
-    "app/agents/runtime.py:2000": "baseline 2026-09-10",
-    "app/agents/runtime.py:2063": "baseline 2026-09-10",
-    "app/agents/runtime.py:2069": "baseline 2026-09-10",
-    "app/agents/runtime.py:2737": "baseline 2026-09-10",
-    "app/agents/runtime.py:3742": "baseline 2026-09-10",
-    "app/agents/runtime.py:4881": "baseline 2026-09-10",
-    "app/agents/runtime.py:5286": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20: rfi_generator toolkit exposure inserted
+    # above these pre-existing handlers. Same sites — only the line
+    # numbers moved. No new silent returns.
+    "app/agents/runtime.py:2028": "baseline 2026-09-10",
+    "app/agents/runtime.py:2034": "baseline 2026-09-10",
+    "app/agents/runtime.py:2097": "baseline 2026-09-10",
+    "app/agents/runtime.py:2103": "baseline 2026-09-10",
+    "app/agents/runtime.py:2771": "baseline 2026-09-10",
+    "app/agents/runtime.py:3777": "baseline 2026-09-10",
+    "app/agents/runtime.py:4926": "baseline 2026-09-10",
+    "app/agents/runtime.py:5331": "baseline 2026-09-10",
     "app/agents/runtime.py:643": "baseline 2026-09-10",
-    "app/agents/runtime.py:874": "baseline 2026-09-10",
+    "app/agents/runtime.py:908": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
