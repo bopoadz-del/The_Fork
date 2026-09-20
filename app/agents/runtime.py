@@ -12194,8 +12194,24 @@ class Agent:
             # Container construction_calc already flattens; the tool path
             # must too or PMI names (bcws/bcwp/acwp) never reach the fn.
             # Also covers E4 ``text`` / ``formula`` beside ``params``.
+            # Unwrap ``input`` the same way as ``params`` — never copy the
+            # envelope key itself as a calculator kwarg.
+            _envelope = {
+                "calculation", "name", "calculator", "params", "input",
+                "project_id", "conversation_id", "user_id",
+            }
+            nested_input = args.get("input")
+            if isinstance(nested_input, dict):
+                for ik, iv in nested_input.items():
+                    if ik in _envelope:
+                        continue
+                    if ik in calc_params and calc_params[ik] not in (None, ""):
+                        continue
+                    if iv is None or iv == "":
+                        continue
+                    calc_params[ik] = iv
             for key, val in (args or {}).items():
-                if key in ("calculation", "name", "calculator", "params"):
+                if key in _envelope:
                     continue
                 if key in calc_params and calc_params[key] not in (None, ""):
                     continue
