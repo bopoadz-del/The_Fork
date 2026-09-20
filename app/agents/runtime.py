@@ -4827,6 +4827,7 @@ def _graft_composed_concrete_volume(
         if (
             not raw.strip()
             or raw.strip() == _CG_REFUSAL
+            or raw.strip() == _EMPTY_RESPONSE_FALLBACK
             or _looks_like_search_preamble(raw)
             or _GENERIC_ACK_RE.search(raw)
             or _MISSING_PARTICULAR_RE.search(raw)
@@ -4836,6 +4837,84 @@ def _graft_composed_concrete_volume(
     except Exception:  # noqa: BLE001 — compose must never break a turn
         _LOG.exception("concrete-volume compose failed; passing answer through")
         return text
+
+
+def _graft_composed_user_priced_takeoff(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Cost-gate A3-1: volume × user rate after 0-token force_synthesis.
+
+    Live FAIL: construction_calc succeeded, synthesis emitted nothing, and
+    volume-only recover (one footing, or 14× without the rate) shipped a
+    silent / incomplete bubble. Numbers are in the question; do not invent
+    a rate. Kill-switch ``COMPOSE_USER_PRICED_TAKEOFF=0`` restores the FAIL.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            answer_states_money_amount,
+            compose_user_priced_takeoff_from_ask,
+            format_user_priced_takeoff_line,
+            query_asks_user_priced_takeoff,
+        )
+        user = _latest_operator_ask(messages)
+        if not query_asks_user_priced_takeoff(user):
+            return text
+        composed = compose_user_priced_takeoff_from_ask(user)
+        if not composed:
+            return text
+        line = format_user_priced_takeoff_line(composed)
+        if not line:
+            return text
+        payload = json.dumps({
+            "calculation": "user_priced_takeoff",
+            "net_volume_m3": composed["net_volume_m3"],
+            "volume_with_waste_m3": composed["volume_with_waste_m3"],
+            "unit_rate": composed["unit_rate"],
+            "currency": composed["currency"],
+            "waste_percent": composed.get("waste_percent"),
+            "contingency_percent": composed.get("contingency_percent"),
+            "base_cost": composed["base_cost"],
+            "total_cost": composed["total_cost"],
+            "note": line,
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "user_priced_takeoff" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        raw = text or ""
+        if answer_states_money_amount(raw, float(composed["total_cost"])):
+            return text
+        return line
+    except Exception:  # noqa: BLE001 — compose must never break a turn
+        _LOG.exception("user-priced takeoff compose failed; passing answer through")
+        return text
+
+
+def _nonblank_after_empty_synthesis(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Never ship a blank bubble after a successful deliverable calc.
+
+    Prefer a priced take-off compose. If that is off / inapplicable and
+    ``construction_calc`` already ran, emit the cut-off sentence rather
+    than an empty end event.
+    """
+    raw = (text or "").strip()
+    if raw and raw != _EMPTY_RESPONSE_FALLBACK:
+        return text
+    priced = _graft_composed_user_priced_takeoff(raw, messages)
+    if priced.strip() and priced.strip() != _EMPTY_RESPONSE_FALLBACK:
+        return priced
+    if _turn_already_ran_construction_calc(messages) or _construction_calc_from_messages(
+        messages,
+    ):
+        return _SYNTH_CUTOFF_NOTICE
+    return text or _EMPTY_RESPONSE_FALLBACK
 
 
 def _construction_calc_tool_schema() -> dict[str, Any]:
@@ -6498,7 +6577,21 @@ def _compose_excerpt_boq_instead_of_retry(
     return (
         _compose_priced_boq_instead_of_retry(text, rag_sys_msg, messages)
         or _compose_part_summary_instead_of_retry(text, rag_sys_msg, messages)
+        or _compose_user_priced_takeoff_instead_of_retry(text, messages)
     )
+
+
+def _compose_user_priced_takeoff_instead_of_retry(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """A3-1: compose volume × user rate instead of a second empty LLM hop."""
+    grafted = _graft_composed_user_priced_takeoff(text, messages)
+    if not grafted.strip() or grafted.strip() == _EMPTY_RESPONSE_FALLBACK:
+        return ""
+    if grafted.strip() == (text or "").strip():
+        return ""
+    return grafted
 
 
 def _postprocess_answer(
@@ -6527,6 +6620,9 @@ def _postprocess_answer(
     # Leftover E4: compose raft volume + documented waste when the model
     # hung on "Let me validate…" and never wrote 945 m³.
     text = _graft_composed_concrete_volume(text, messages)
+    # Cost-gate A3-1: calc succeeded, force_synthesis emitted 0 tokens.
+    # Volume-only recover is not a priced take-off — compose from the ask.
+    text = _graft_composed_user_priced_takeoff(text, messages)
     # Live ~27d6940: user-supplied M#=Nd + common start is arithmetic.
     text = _graft_hypothetical_milestone_arithmetic(text, messages)
     # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
@@ -6614,7 +6710,9 @@ def _postprocess_answer(
     # After graft: #587's INTERNAL GUIDANCE did not stop extract from
     # electing the ENGINEER APPOINTMENT heading. Strip leftover steering
     # so JACOBS (or any other particular) is what the user sees.
-    return _strip_answer_routing_preamble(text)
+    text = _strip_answer_routing_preamble(text)
+    # 0-token force_synthesis must never persist an empty bubble.
+    return _nonblank_after_empty_synthesis(text, messages)
 
 
 _INGEST_NEXT_RE = re.compile(r"(?im)^Next:\s*\S+")

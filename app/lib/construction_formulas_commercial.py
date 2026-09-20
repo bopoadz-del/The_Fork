@@ -892,6 +892,159 @@ def answer_is_unbound_delay_damages(text: str) -> bool:
     return bool(_UNBOUND_DD_NOTE_RE.search(text or ""))
 
 
+# ── User-priced concrete take-off (Cost-gate A3-1) ─────────────────────────
+# Live SO probe: construction_calc succeeded, force_synthesis emitted 0
+# tokens, and the bubble stayed blank. Volume-only recover also fails
+# the gate because the operator asked for SAR 410 + waste + contingency.
+# Kill-switch: COMPOSE_USER_PRICED_TAKEOFF=0. Never invent a rate.
+
+_PRICED_TAKEOFF_MATERIAL_RE = re.compile(
+    r"(?i)\b(concrete|footing|pad\s+footing|raft|slab)\b",
+)
+_PRICED_TAKEOFF_VERB_RE = re.compile(
+    r"(?i)\b(take\s*off|volume|price|priced|cost)\b",
+)
+_USER_UNIT_RATE_RE = re.compile(
+    r"(?i)\b(SAR|USD|AED|QAR|EUR|GBP)\s*([\d,]+(?:\.\d+)?)\s*"
+    r"(?:per|/)\s*m(?:³|3)\b",
+)
+_FOOTING_COUNT_RE = re.compile(
+    r"(?i)(\d+)\s+(?:pad\s+)?footings?\b",
+)
+_LWT_CHAIN_RE = re.compile(
+    r"(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
+    r"(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
+    r"(\d[\d,]*(?:\.\d+)?)"
+    r"(?:\s*(?:mm|cm|m)\b)?",
+    re.IGNORECASE,
+)
+_WASTE_PCT_RE = re.compile(r"(?i)(\d+(?:\.\d+)?)\s*%\s*waste")
+_CONTINGENCY_PCT_RE = re.compile(r"(?i)(\d+(?:\.\d+)?)\s*%\s*contingenc")
+
+
+def compose_user_priced_takeoff_enabled() -> bool:
+    raw = (os.getenv("COMPOSE_USER_PRICED_TAKEOFF", "1") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def query_asks_user_priced_takeoff(query: str) -> bool:
+    """True for concrete take-off + an operator-instructed unit rate."""
+    q = query or ""
+    if not q:
+        return False
+    if not _PRICED_TAKEOFF_MATERIAL_RE.search(q):
+        return False
+    if not _PRICED_TAKEOFF_VERB_RE.search(q):
+        return False
+    return bool(_USER_UNIT_RATE_RE.search(q))
+
+
+def _parse_lwt_metres(text: str) -> tuple[float, float, float] | None:
+    match = _LWT_CHAIN_RE.search(text or "")
+    if not match:
+        return None
+    return tuple(float(g.replace(",", "")) for g in match.groups())  # type: ignore[return-value]
+
+
+def _parse_footing_count(text: str) -> int:
+    match = _FOOTING_COUNT_RE.search(text or "")
+    if not match:
+        return 1
+    n = int(match.group(1))
+    return n if n > 0 else 1
+
+
+def _parse_user_unit_rate(text: str) -> tuple[float, str] | None:
+    match = _USER_UNIT_RATE_RE.search(text or "")
+    if not match:
+        return None
+    return float(match.group(2).replace(",", "")), match.group(1).upper()
+
+
+def _format_qty(value: float) -> str:
+    number = float(value)
+    if abs(number - round(number)) < 1e-9:
+        return str(int(round(number)))
+    return f"{number:.4f}".rstrip("0").rstrip(".")
+
+
+def compose_user_priced_takeoff_from_ask(text: str) -> dict | None:
+    """Volume × user rate × stated waste/contingency, or None.
+
+    Operands come from the question only. A missing unit rate is not
+    filled in. Kill-switch ``COMPOSE_USER_PRICED_TAKEOFF=0`` returns None.
+    """
+    if not compose_user_priced_takeoff_enabled():
+        return None
+    if not query_asks_user_priced_takeoff(text):
+        return None
+    dims = _parse_lwt_metres(text)
+    rate = _parse_user_unit_rate(text)
+    if dims is None or rate is None:
+        return None
+    length, width, depth = dims
+    unit_rate, currency = rate
+    if unit_rate <= 0 or min(length, width, depth) <= 0:
+        return None
+    count = _parse_footing_count(text)
+    net = count * length * width * depth
+    waste_m = _WASTE_PCT_RE.search(text or "")
+    contingency_m = _CONTINGENCY_PCT_RE.search(text or "")
+    waste_pct = float(waste_m.group(1)) if waste_m else 0.0
+    contingency_pct = float(contingency_m.group(1)) if contingency_m else 0.0
+    if waste_pct < 0 or waste_pct > 100 or contingency_pct < 0 or contingency_pct > 100:
+        return None
+    with_waste = net * (1.0 + waste_pct / 100.0)
+    base_cost = round(with_waste * unit_rate, 2)
+    total_cost = round(base_cost * (1.0 + contingency_pct / 100.0), 2)
+    return {
+        "count": count,
+        "length": length,
+        "width": width,
+        "depth": depth,
+        "net_volume_m3": net,
+        "volume_with_waste_m3": with_waste,
+        "waste_percent": waste_pct,
+        "contingency_percent": contingency_pct,
+        "unit_rate": unit_rate,
+        "currency": currency,
+        "base_cost": base_cost,
+        "total_cost": total_cost,
+    }
+
+
+def format_user_priced_takeoff_line(composed: dict) -> str:
+    """User-facing A3-1 line from ``compose_user_priced_takeoff_from_ask``."""
+    cur = composed.get("currency") or "SAR"
+    count = int(composed["count"])
+    length = float(composed["length"])
+    width = float(composed["width"])
+    depth = float(composed["depth"])
+    net = float(composed["net_volume_m3"])
+    with_waste = float(composed["volume_with_waste_m3"])
+    waste_pct = float(composed.get("waste_percent") or 0.0)
+    contingency_pct = float(composed.get("contingency_percent") or 0.0)
+    rate = float(composed["unit_rate"])
+    base = float(composed["base_cost"])
+    total = float(composed["total_cost"])
+    parts = [
+        f"Net volume {count} × {_format_qty(length)} × {_format_qty(width)} "
+        f"× {_format_qty(depth)} = {_format_qty(net)} m3.",
+    ]
+    if waste_pct:
+        parts.append(
+            f"With {waste_pct:g}% waste: {_format_qty(with_waste)} m3."
+        )
+    parts.append(
+        f"At the instructed {cur} {_format_qty(rate)}/m3 = {cur} {base:,.2f}."
+    )
+    if contingency_pct:
+        parts.append(
+            f"Plus {contingency_pct:g}% contingency: {cur} {total:,.2f}."
+        )
+    return " ".join(parts)
+
+
 ADDITIONAL_CALCULATORS = {
     "roi_calculator": roi_calculator,
     "unit_cost_total": unit_cost_total,
