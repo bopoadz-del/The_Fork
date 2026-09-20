@@ -6724,12 +6724,15 @@ def _graft_named_community_tfc_span(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
+    project_id: str | None = None,
+    extra_project_ids: list[str] | None = None,
 ) -> str:
     """Set3 F1: longest/shortest Time for Completion in a named community.
 
     Live 4ab5561 answered Milestones 1–5 only and said none were
     Northern Community. The continuation table states 547 / 397
-    (delta 150). Compose from excerpts; do not invent days.
+    (delta 150). Compose from excerpts; last-chance scan the loaded
+    CD volume when top-k stopped at Milestone 5. Do not invent days.
     """
     try:
         from app.core.rag.retriever import (
@@ -6742,6 +6745,24 @@ def _graft_named_community_tfc_span(
             return text
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         composed = compose_named_community_tfc_span(user, rag)
+        if not composed:
+            try:
+                from app.core.rag.retriever import (
+                    community_tfc_span_excerpts_from_loaded_cd_volume,
+                )
+                extra = community_tfc_span_excerpts_from_loaded_cd_volume(
+                    user, project_id or "", rag_context=rag,
+                    extra_pids=extra_project_ids,
+                )
+                if extra:
+                    composed = compose_named_community_tfc_span(user, extra)
+            except Exception:  # noqa: BLE001 — volume scan must never break
+                _LOG.debug(
+                    "f1 loaded-volume TFC span compose failed; "
+                    "keeping excerpt compose",
+                    exc_info=True,
+                )
+                composed = None
         if not composed:
             return text
         line = format_named_community_tfc_span_line(composed)
@@ -6999,7 +7020,10 @@ def _postprocess_answer(
     text = _graft_combined_part_summary_total(text, rag_sys_msg, messages)
     # Set3 F1: longest/shortest Time for Completion among a named
     # community's milestones (Northern Community 547 / 150).
-    text = _graft_named_community_tfc_span(text, rag_sys_msg, messages)
+    text = _graft_named_community_tfc_span(
+        text, rag_sys_msg, messages, project_id=pid,
+        extra_project_ids=extra_pids,
+    )
     # OLD-pack G4: state Rate Only when the retrieved BOQ row already
     # says so and no priced triple exists. The live FAIL greeted
     # ("I'm ready to help…") and never named D529.3 / Rate Only.

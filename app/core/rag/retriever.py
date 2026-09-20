@@ -2580,7 +2580,8 @@ def _rescue_named_particulars_rows(
     for pid in pids:
         try:
             docs = documents_matching_title_phrase(pid, "contract data")
-            hits = fetch(pid, [d["id"] for d in docs], k_per_doc=40) if docs else []
+            k_per = 80 if query_asks_named_community_tfc_span(query) else 40
+            hits = fetch(pid, [d["id"] for d in docs], k_per_doc=k_per) if docs else []
         except Exception as exc:  # noqa: BLE001 — extras must not break the turn
             logger.warning("named-row rescue for %s failed: %s", pid, exc)
             continue
@@ -2590,7 +2591,12 @@ def _rescue_named_particulars_rows(
             if strength:
                 matched.append((strength, chunk))
     matched.sort(key=lambda m: (-m[0], m[1].chunk_index))
-    chosen = [chunk for _strength, chunk in matched[:_NAMED_ROW_MAX_CHUNKS]]
+    row_cap = _NAMED_ROW_MAX_CHUNKS
+    if query_asks_named_community_tfc_span(query):
+        # Live F1: list + M1–5 times filled both slots and the
+        # continuation (547 / Northern) never entered chosen.
+        row_cap = max(row_cap, 4)
+    chosen = [chunk for _strength, chunk in matched[:row_cap]]
     # A row that runs on into the next chunk is still one row. The second
     # half carries no label, so it is found from the first half, not by name.
     for parent in list(chosen):
@@ -5576,7 +5582,7 @@ def _loaded_cd_chunk_texts(
             continue
         try:
             docs = documents_matching_title_phrase(pid, "contract data") or []
-            hits = fetch(pid, [d["id"] for d in docs], k_per_doc=40) if docs else []
+            hits = fetch(pid, [d["id"] for d in docs], k_per_doc=80) if docs else []
         except Exception as exc:  # noqa: BLE001 — extras must not break
             logger.warning("loaded-CD volume scan for %s failed: %s", pid, exc)
             continue
@@ -5681,6 +5687,45 @@ def milestone_period_excerpts_from_loaded_cd_volume(
     if not rate_parts or not aca_parts:
         return ""
     return "\n\n".join(rate_parts[:3] + aca_parts[:3])
+
+
+def community_tfc_span_excerpts_from_loaded_cd_volume(
+    query: str,
+    project_id: str,
+    store=None,
+    *,
+    rag_context: str = "",
+    extra_pids: Optional[Iterable[str]] = None,
+) -> str:
+    """Join named-community Time-for-Completion rows from the loaded volume.
+
+    Live Set3 F1: top-k stopped at Milestone 5 (Southern / Boulevard).
+    Northern Community 547 / 397 sit on the continuation page. Return
+    those rows so compose can state 547 and 150 — do not invent days.
+    """
+    if not query_asks_named_community_tfc_span(query):
+        return ""
+    community = extract_asked_community_name(query)
+    needle = (community or "").lower()
+    if not needle:
+        return ""
+    parts: List[str] = []
+    texts = list(_loaded_cd_chunk_texts(project_id, extra_pids, store))
+    if rag_context:
+        texts.append(rag_context)
+    for text in texts:
+        if needle not in (text or "").lower():
+            continue
+        if not re.search(r"(?i)\d+\s*days", text):
+            continue
+        if text not in parts:
+            parts.append(text)
+    if not parts:
+        return ""
+    composed = compose_named_community_tfc_span(query, "\n\n".join(parts))
+    if not composed:
+        return ""
+    return "\n\n".join(parts[:6])
 
 
 def _a2_fused_chunk(entry) -> Optional[Chunk]:
