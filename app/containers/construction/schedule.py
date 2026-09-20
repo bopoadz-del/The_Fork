@@ -2328,6 +2328,8 @@ class ConstructionScheduleMixin:
                                 "duration_days": zoned_dur,
                                 "predecessors": list(zone_tails[z]),
                                 "resources": list(res),
+                                "wbs": sub_code,
+                                "wbs_code": sub_code,
                                 "wbs_phase": phase_key,
                             })
                             new_zone_tails.append([aid])
@@ -2346,6 +2348,8 @@ class ConstructionScheduleMixin:
                             "duration_days": int(dur),
                             "predecessors": list(serial_tail),
                             "resources": list(res),
+                            "wbs": sub_code,
+                            "wbs_code": sub_code,
                             "wbs_phase": phase_key,
                         })
                         serial_tail = [aid]
@@ -2496,6 +2500,8 @@ class ConstructionScheduleMixin:
                 "duration_days": days,
                 "predecessors": [],
                 "resources": ["procurement"],
+                "wbs": pid,
+                "wbs_code": pid,
                 "wbs_phase": "Procurement / Long-Lead",
                 "long_lead": True,
                 "linked_to_install": matched,
@@ -2649,6 +2655,8 @@ class ConstructionScheduleMixin:
         enriched, summary, cpm_error = self._attach_cpm_to_activities(
             activities, start_date
         )
+        from app.core.conversation_wbs import stamp_hierarchical_wbs_codes
+        enriched = stamp_hierarchical_wbs_codes(enriched, wbs_tree)
 
         operator_ms = _operator_milestones_from_text(brief)
         if boq_derived:
