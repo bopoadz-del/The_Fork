@@ -238,8 +238,13 @@ def concrete_mix_design_sg(
     }
 
 
-def concrete_mix_slip_form() -> Dict[str, Any]:
-    """Slip-forming mix: 1:2:2.6, W/C=0.42, slump=150 +/- 30 mm."""
+def concrete_mix_slip_form(**_kwargs: Any) -> Dict[str, Any]:
+    """Slip-forming mix: 1:2:2.6, W/C=0.42, slump=150 +/- 30 mm.
+
+    Extra kwargs are ignored. Documented constants stay locked — live
+    probes send slump/w_c next to the name; forwarding them would
+    TypeError a zero-arg signature (tool_error / cause).
+    """
     mix = concrete_mix_design_sg(w_c_ratio=0.42, fine_agg_ratio=2.0, coarse_agg_ratio=2.6)
     mix["slump_mm"] = "150 +/- 30"
     mix["retarder_20c_lit_m3"] = 3.8
@@ -644,11 +649,13 @@ def cost_buildup_rebar(
     equipment = qty_t * crane_hr_t * crane_rate_sar_hr
     direct = material + labour + equipment
     with_markup = direct * (1 + indirect_pct) / (1 - markup_pct)
+    sell_t = round(with_markup / qty_t, 0) if qty_t > 0 else 0
     return {
         "material_sar_t": round(material / qty_t, 0) if qty_t > 0 else 0,
         "labour_sar_t": round(labour / qty_t, 0) if qty_t > 0 else 0,
         "equipment_sar_t": round(equipment / qty_t, 0) if qty_t > 0 else 0,
-        "selling_price_sar_t": round(with_markup / qty_t, 0) if qty_t > 0 else 0,
+        "selling_price_sar_t": sell_t,
+        "total_project_value_sar": round(sell_t * qty_t, 0) if qty_t > 0 else 0,
     }
 
 
@@ -1228,6 +1235,25 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "vol": ("volume_m3", "quantity_m3"),
     "qty": ("quantity_m3", "quantity_kg", "quantity", "volume_m3"),
     "quantity": ("quantity_m3", "quantity_kg", "quantity"),
+    "quantity_t": ("quantity_kg",),
+    "qty_t": ("quantity_kg",),
+    "tonnes": ("quantity_kg",),
+    "tons": ("quantity_kg",),
+    "tonne": ("quantity_kg",),
+    "ton": ("quantity_kg",),
+    "mass": ("quantity_kg", "total_mass_kg"),
+    "rebar_kg": ("quantity_kg",),
+    "material_price": ("material_price_sar_t",),
+    "steel_price": ("material_price_sar_t",),
+    "rebar_price": ("material_price_sar_t",),
+    "unit_rate": ("material_price_sar_t",),
+    "waste": ("waste_pct",),
+    "waste_percent": ("waste_pct",),
+    "bidders": ("tenderers",),
+    "bids": ("tenderers",),
+    "suppliers": ("tenderers",),
+    "submissions": ("tenderers",),
+    "tenderer": ("tenderers",),
     "diameter": ("column_diameter_mm", "diameter_mm", "bolt_diameter_mm", "diameter_m"),
     "dia": ("column_diameter_mm", "diameter_mm", "bolt_diameter_mm", "diameter_m"),
     "excavation": ("excavation_bank_m3",),
@@ -1250,7 +1276,7 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "ipc": ("gross_valuation",),
     "amount": ("gross_valuation", "total_cost", "claimed_amount"),
     "cost": ("total_cost",),
-    "price": ("total_cost",),
+    "price": ("material_price_sar_t", "total_cost"),
     "total": ("total_cost",),
     "area_m2": ("area", "floor_area_m2", "area_m2"),
     "gfa": ("floor_area_m2",),
@@ -1309,7 +1335,7 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "width": ("width_mm", "formwork_width_m", "width_m"),
     "v": ("wind_velocity_m_s", "wind_speed_m_s"),
     "p": ("central_point_load_kn", "axial_load_kn", "point_load_kn"),
-    "rate": ("rate_percent",),
+    "rate": ("rate_percent", "material_price_sar_t"),
     "delay_rate": ("rate_percent",),
     "aca": ("contract_amount",),
     "accepted_contract_amount": ("contract_amount",),
@@ -1468,15 +1494,33 @@ def _is_junk_key(key: Any) -> bool:
     return _snake_key(key) in {_snake_key(j) for j in _BIND_JUNK_KEYS}
 
 
+_POSITIONAL_KEY = "_positional"
 _KV_ASSIGN_RE = re.compile(
     r"([A-Za-z_][\w]*)\s*[:=]\s*"
     r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|"
     r"\"[^\"]*\"|'[^']*')",
 )
+_KV_JSON_START_RE = re.compile(r"([A-Za-z_][\w]*)\s*[:=]\s*([\[{])")
+_TONNE_INCOMING = frozenset({
+    "quantity_t", "qty_t", "tonnes", "tons", "tonne", "ton",
+})
+_FRACTION_PCT_KEYS = frozenset({
+    "waste_pct", "indirect_pct", "markup_pct",
+})
+
+
+def _value_has_number(val: Any) -> bool:
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return True
+    if isinstance(val, (list, tuple)):
+        return any(_value_has_number(item) for item in val)
+    if isinstance(val, dict):
+        return any(_value_has_number(item) for item in val.values())
+    return False
 
 
 def _parse_kv_assignments(text: str) -> Dict[str, Any]:
-    """Parse ``udl_w_kn_m=20, span_m=6`` / ``length=10,width=5,thickness=0.3``.
+    """Parse ``udl_w_kn_m=20, span_m=6`` / ``temps=[20, 22, 25]``.
 
     Live standing-exit probe prints and often *sends* params as assignment
     strings, not JSON objects. Only keep a parse that yielded a number so
@@ -1485,7 +1529,25 @@ def _parse_kv_assignments(text: str) -> Dict[str, Any]:
     if not text or ("=" not in text and ":" not in text):
         return {}
     out: Dict[str, Any] = {}
+    consumed: List[Tuple[int, int]] = []
+
+    def _overlaps(span: Tuple[int, int]) -> bool:
+        return any(span[0] < c[1] and c[0] < span[1] for c in consumed)
+
+    decoder = json.JSONDecoder()
+    for match in _KV_JSON_START_RE.finditer(text):
+        if _overlaps(match.span()):
+            continue
+        try:
+            obj, end = decoder.raw_decode(text, match.end() - 1)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        out[match.group(1)] = obj
+        consumed.append((match.start(), end))
+
     for match in _KV_ASSIGN_RE.finditer(text):
+        if _overlaps(match.span()):
+            continue
         raw = match.group(2).strip().strip("\"'")
         number = raw.replace(",", "").strip()
         unit = re.match(r"^([+-]?\d+(?:\.\d+)?)(?:\s*[A-Za-zµμ/%²³³°]+)?$", number)
@@ -1494,20 +1556,25 @@ def _parse_kv_assignments(text: str) -> Dict[str, Any]:
             out[match.group(1)] = float(token) if "." in token else int(token)
         else:
             out[match.group(1)] = raw
-    if not any(isinstance(val, (int, float)) for val in out.values()):
+        consumed.append(match.span())
+    if not any(_value_has_number(val) for val in out.values()):
         return {}
     return out
 
 
 def coerce_calc_params(raw: Any) -> Dict[str, Any]:
-    """Accept a dict, JSON-object string, or ``k=v, k=v`` assignment string.
+    """Accept a dict, JSON object/array, or ``k=v, k=v`` assignment string.
 
-    Never invent keys. A non-object / empty / undecodable value is ``{}``.
+    A JSON array becomes ``{_positional: [...]}`` so run_calculation can
+    zip it onto the signature (beam_shear [20, 6], tenderer list, maturity
+    pair-of-lists). Never invent keys. Empty / undecodable is ``{}``.
     """
     if raw is None or raw == "":
         return {}
     if isinstance(raw, dict):
         return dict(raw)
+    if isinstance(raw, (list, tuple)):
+        return {_POSITIONAL_KEY: list(raw)}
     if isinstance(raw, str):
         text = raw.strip()
         if not text:
@@ -1520,11 +1587,82 @@ def coerce_calc_params(raw: Any) -> Dict[str, Any]:
                 obj = None
             if isinstance(obj, dict):
                 return dict(obj)
+            if isinstance(obj, list):
+                return {_POSITIONAL_KEY: obj}
         parsed = _parse_kv_assignments(text)
         if parsed:
             return parsed
         return {}
     return {}
+
+
+def _scale_bound_value(incoming: str, dest: str, val: Any) -> Any:
+    """quantity_t / tonnes → quantity_kg. Never invents a mass that was absent."""
+    inc = _snake_key(incoming)
+    if dest == "quantity_kg" and (
+        inc in _TONNE_INCOMING or inc.endswith("_t")
+    ):
+        try:
+            return float(val) * 1000.0
+        except (TypeError, ValueError):
+            logger.debug("quantity_t token %r is not numeric", val)
+            return val
+    return val
+
+
+def _bind_sequence_params(
+    fn: Any, values: List[Any], name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Zip a JSON/Python array onto this calculator's signature.
+
+    List-of-dicts → unique list param (evaluate_tender tenderers).
+    List-of-lists → list-typed params in signature order (maturity).
+    Scalars → required-then-optional positional names (beam_shear [20, 6]).
+    """
+    seq = list(values or [])
+    if not seq or fn is None:
+        return {}
+    try:
+        sig = _inspect.signature(fn)
+    except (TypeError, ValueError):
+        return {}
+    dests = [
+        key for key, param in sig.parameters.items()
+        if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+        and not key.startswith("_")
+    ]
+    list_dests = [
+        key for key in dests
+        if _annotation_wants_list(sig.parameters[key].annotation)
+    ]
+    if dests and all(isinstance(item, dict) for item in seq):
+        calc = str(name or "").strip().lower()
+        if calc == "evaluate_tender" or "tenderers" in list_dests:
+            return {"tenderers": seq}
+        if len(list_dests) == 1:
+            return {list_dests[0]: seq}
+        return {}
+    if (
+        list_dests
+        and len(seq) == len(list_dests)
+        and all(isinstance(item, (list, tuple)) for item in seq)
+    ):
+        return {key: list(item) for key, item in zip(list_dests, seq)}
+    required = [
+        key for key in dests
+        if sig.parameters[key].default is sig.parameters[key].empty
+    ]
+    order = required + [key for key in dests if key not in required]
+    return {key: val for key, val in zip(order, seq)}
+
+
+def _pop_positional(params: Dict[str, Any]) -> Optional[List[Any]]:
+    if not isinstance(params, dict):
+        return None
+    raw = params.pop(_POSITIONAL_KEY, None)
+    if isinstance(raw, (list, tuple)):
+        return list(raw)
+    return None
 
 
 def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1654,8 +1792,11 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
         if dest is None:
             leftovers[key] = val
             continue
+        if isinstance(val, (list, tuple)) and len(val) == 1:
+            val = val[0]
+        scaled = _scale_bound_value(str(key), dest, val)
         if dest not in bound or bound[dest] in (None, ""):
-            bound[dest] = val
+            bound[dest] = scaled
 
     if has_var_kw:
         for key, val in leftovers.items():
@@ -1805,6 +1946,92 @@ def _extract_mix_from_ask(text: str, out: Dict[str, Any]) -> None:
         out["w_c_ratio"] = _ask_float(match.group(1))
 
 
+def _csv_floats(raw: str) -> List[float]:
+    return [_ask_float(tok) for tok in re.findall(_ASK_NUM, raw or "")]
+
+
+def _extract_maturity_from_ask(text: str, out: Dict[str, Any]) -> None:
+    """CSV temps / hours from the ask. Does not invent a missing series."""
+    if not _ask_present(out, "temperature_history_c"):
+        match = re.search(
+            rf"((?:{_ASK_NUM}\s*,\s*){{1,}}{_ASK_NUM})\s*"
+            rf"(?:°\s*C|deg(?:rees)?(?:\s*C)?|\bC\b)",
+            text, re.IGNORECASE,
+        )
+        if match is None:
+            match = re.search(
+                rf"(?:temps?|temperatures?|temperature_history(?:_c)?)\s*[:=]?\s*"
+                rf"((?:{_ASK_NUM}\s*,\s*){{1,}}{_ASK_NUM})",
+                text, re.IGNORECASE,
+            )
+        if match:
+            nums = _csv_floats(match.group(1))
+            if nums:
+                out["temperature_history_c"] = nums
+    if not _ask_present(out, "time_intervals_hours"):
+        match = re.search(
+            rf"((?:{_ASK_NUM}\s*,\s*){{1,}}{_ASK_NUM})\s*"
+            rf"(?:hours?|hrs?|h)\b",
+            text, re.IGNORECASE,
+        )
+        if match is None:
+            match = re.search(
+                rf"(?:hours?|intervals?|time_intervals(?:_hours)?|dt)\s*[:=]?\s*"
+                rf"((?:{_ASK_NUM}\s*,\s*){{1,}}{_ASK_NUM})",
+                text, re.IGNORECASE,
+            )
+        if match:
+            nums = _csv_floats(match.group(1))
+            if nums:
+                out["time_intervals_hours"] = nums
+
+
+def _extract_rebar_cost_from_ask(text: str, out: Dict[str, Any]) -> None:
+    if not _ask_present(out, "quantity_kg"):
+        match = re.search(rf"{_ASK_NUM}\s*kg\b", text, re.IGNORECASE)
+        if match:
+            out["quantity_kg"] = _ask_float(match.group(1))
+        else:
+            match = re.search(
+                rf"{_ASK_NUM}\s*(?:tonnes?|tons?|t)\b",
+                text, re.IGNORECASE,
+            )
+            if match:
+                out["quantity_kg"] = _ask_float(match.group(1)) * 1000.0
+    if not _ask_present(out, "material_price_sar_t"):
+        match = re.search(
+            rf"{_ASK_NUM}\s*(?:SAR|USD|AED)?\s*/\s*t(?:onne)?s?\b",
+            text, re.IGNORECASE,
+        )
+        if match:
+            out["material_price_sar_t"] = _ask_float(match.group(1))
+
+
+_TENDER_ROW_RE = re.compile(
+    r"(Bidder\s+[A-Za-z0-9]+|[A-Za-z][\w.\-]{1,30})\s*[—\-:]\s*"
+    r"technical\s+(\d+(?:\.\d+)?)\s*,\s*commercial\s+(\d+(?:\.\d+)?)\s*,\s*"
+    r"HSE\s+(\d+(?:\.\d+)?)(?:\s*,\s*local(?:\s+content)?\s+(\d+(?:\.\d+)?))?",
+    re.IGNORECASE,
+)
+
+
+def _extract_tender_from_ask(text: str, out: Dict[str, Any]) -> None:
+    if _ask_present(out, "tenderers", "bidders", "bids"):
+        return
+    rows: List[Dict[str, Any]] = []
+    for match in _TENDER_ROW_RE.finditer(text or ""):
+        local = match.group(5)
+        rows.append({
+            "name": match.group(1).strip(),
+            "technical_score": _ask_float(match.group(2)),
+            "commercial_score": _ask_float(match.group(3)),
+            "hse_score": _ask_float(match.group(4)),
+            "local_content_score": _ask_float(local) if local is not None else 0,
+        })
+    if rows:
+        out["tenderers"] = rows
+
+
 def _extract_calc_kwargs_from_ask(
     name: str, params: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -1826,6 +2053,12 @@ def _extract_calc_kwargs_from_ask(
         _extract_carbon_from_ask(blob, out)
     elif calc == "concrete_mix_design_sg":
         _extract_mix_from_ask(blob, out)
+    elif calc == "concrete_maturity_strength":
+        _extract_maturity_from_ask(blob, out)
+    elif calc == "cost_buildup_rebar":
+        _extract_rebar_cost_from_ask(blob, out)
+    elif calc == "evaluate_tender":
+        _extract_tender_from_ask(blob, out)
     elif calc == "diaphragm_wall_panel_volume":
         _fill_lwd_from_text(blob, out, "excavation_depth")
         if _ask_present(out, "length_m") and not _ask_present(out, "panel_length"):
@@ -1905,6 +2138,9 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
         if _annotation_wants_list(param.annotation):
             out[key] = _coerce_list(val)
             continue
+        if isinstance(val, (list, tuple)) and len(val) == 1:
+            val = val[0]
+            out[key] = val
         ann = param.annotation
         ann_s = ann if isinstance(ann, str) else getattr(ann, "__name__", str(ann))
         if str(ann_s).lower() in ("str", "string"):
@@ -1913,7 +2149,8 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
             out[key] = _coerce_scalar(val)
         # Live excavation ask-2 sent bulking=25 (percent) not 0.25.
         # Values in (1, 100] are percents; 1.25 stays a multiplier.
-        if key in {"bulking_factor", "swell_factor"}:
+        # cost_buildup_rebar waste_pct=10 was the same class (wrong_number 40590).
+        if key in {"bulking_factor", "swell_factor"} | _FRACTION_PCT_KEYS:
             number = out[key]
             if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0:
                 out[key] = float(number) / 100.0
@@ -2180,11 +2417,16 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             return {"status": "error", "error": "params must be an object of keyword arguments."}
         else:
             params = {}
+    positional = _pop_positional(params) if isinstance(params, dict) else None
     # Shared with Agent C / #636 / #639 / #652: nested ``params`` / ``input``
     # + top-level siblings (volume / BCWS / excavation_bank_m3 / water_depth_m)
     # must reach the calculator. Flatten before E4 so a nested concrete ask
     # still pins.
     params = _flatten_calc_kwargs(params)
+    if positional is None:
+        positional = _pop_positional(params)
+    else:
+        params.pop(_POSITIONAL_KEY, None)
     # Live UI pack E4: a concrete/raft ask (or leftover-L6 excavation name
     # plus "documented waste factor" in ``text``) must apply the project's
     # 5% waste. Resolve before the name lookup so a missing calculation
@@ -2220,6 +2462,10 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             "error": f"Unknown calculation '{name}'.",
             "available": available_calculations(),
         }
+    if positional:
+        for key, val in _bind_sequence_params(fn, positional, name).items():
+            if params.get(key) in (None, ""):
+                params[key] = val
     # Signature-derived bind (case-insensitive + unit-suffix synonyms).
     # Generalises #636's calculate_evm PMI aliases — do not re-add a
     # name-specific filter here (Agent C / DIR7 share this path).
