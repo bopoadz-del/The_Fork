@@ -9055,7 +9055,12 @@ class Agent:
         # routing to heavy-reasoning (or another agent) does not strip project
         # grounding. Adds a system message AFTER the prompt + project context
         # but BEFORE the latest user turn.
-        _rag_sys_msg, _rag_audit = rag_inject(
+        # In a worker thread: rag_inject is synchronous (embedding + SQL +
+        # rerank) and froze the single worker's event loop for its whole
+        # duration -- live, one turn stalled /livez for 4.2 s. to_thread
+        # copies contextvars, so the caller-role gate still applies.
+        _rag_sys_msg, _rag_audit = await asyncio.to_thread(
+            rag_inject,
             user_message=user_message,
             project_id=project_id,
             conversation_id=conversation_id,
@@ -9604,7 +9609,8 @@ class Agent:
         if not missing:
             return final_text, None
         try:
-            sys_msg, _ = rag_inject(
+            sys_msg, _ = await asyncio.to_thread(
+                rag_inject,
                 user_message=_mi_query(missing, user_message),
                 project_id=project_id,
                 # No conversation_id: this is a targeted lookup, not a turn,
@@ -10014,7 +10020,12 @@ class Agent:
         # routing to heavy-reasoning (or another agent) does not strip project
         # grounding. Adds a system message AFTER the prompt + project context
         # but BEFORE the latest user turn.
-        _rag_sys_msg, _rag_audit = rag_inject(
+        # In a worker thread: rag_inject is synchronous (embedding + SQL +
+        # rerank) and froze the single worker's event loop for its whole
+        # duration -- live, one turn stalled /livez for 4.2 s. to_thread
+        # copies contextvars, so the caller-role gate still applies.
+        _rag_sys_msg, _rag_audit = await asyncio.to_thread(
+            rag_inject,
             user_message=user_message,
             project_id=project_id,
             conversation_id=conversation_id,
@@ -12334,11 +12345,19 @@ class Agent:
         if name == "construction_calc":
             from app.lib import construction_formulas as _cf
             calc_params = dict(args.get("params") or {})
-            # Live UI pack E4: the model often passes the user ask as
-            # ``text`` / ``formula`` beside (or instead of) ``params``.
-            for key in ("text", "formula"):
-                if args.get(key) and key not in calc_params:
-                    calc_params[key] = args[key]
+            # Models (and live calculate_evm calls) often put calculator
+            # kwargs next to ``calculation`` instead of inside ``params``.
+            # Container construction_calc already flattens; the tool path
+            # must too or PMI names (bcws/bcwp/acwp) never reach the fn.
+            # Also covers E4 ``text`` / ``formula`` beside ``params``.
+            for key, val in (args or {}).items():
+                if key in ("calculation", "name", "calculator", "params"):
+                    continue
+                if key in calc_params and calc_params[key] not in (None, ""):
+                    continue
+                if val is None or val == "":
+                    continue
+                calc_params[key] = val
             result = _cf.run_calculation(
                 args.get("calculation") or args.get("name") or args.get("calculator"),
                 calc_params,

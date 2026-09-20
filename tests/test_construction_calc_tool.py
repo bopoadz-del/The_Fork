@@ -103,6 +103,65 @@ def test_business_calculators_dispatch_via_construction_calc():
     assert risk["result"]["result"]["band"] == "RED"
 
 
+def _assert_evm_cpi_spi(envelope):
+    """Shared oracle: PV=500k EV=400k AC=450k → CPI=EV/AC, SPI=EV/PV."""
+    assert envelope["ok"] is True, envelope
+    assert envelope["result"]["status"] == "success", envelope
+    inner = envelope["result"]["result"]
+    assert inner["CPI"] == 0.889
+    assert inner["SPI"] == 0.8
+    assert inner["EV"] == 400_000
+    assert inner["PV"] == 500_000
+    assert inner["AC"] == 450_000
+
+
+def test_calculate_evm_run_calculation_accepts_pe_and_pmi_aliases():
+    """Live chat passed BCWS/BCWP/ACWP; run_calculation dropped them as
+    unknown kwargs and calculate_evm reported missing PV/EV/AC."""
+    from app.lib.construction_formulas import run_calculation
+
+    cases = (
+        {"pv": 500_000, "ev": 400_000, "ac": 450_000, "bac": 1_000_000},
+        {"bcws": 500_000, "bcwp": 400_000, "acwp": 450_000, "bac": 1_000_000},
+        {"pv": 500_000, "bcwp": 400_000, "acwp": 450_000, "bac": 1_000_000},
+        {"BCWS": 500_000, "BCWP": 400_000, "ACWP": 450_000, "BAC": 1_000_000},
+    )
+    for params in cases:
+        env = run_calculation("calculate_evm", params)
+        assert env["status"] == "success", (params, env)
+        inner = env["result"]
+        assert inner["CPI"] == 0.889, params
+        assert inner["SPI"] == 0.8, params
+
+
+def test_calculate_evm_construction_calc_accepts_pe_and_pmi_aliases():
+    agent = _agent(["construction"])
+    cases = (
+        {"pv": 500_000, "ev": 400_000, "ac": 450_000, "bac": 1_000_000},
+        {"bcws": 500_000, "bcwp": 400_000, "acwp": 450_000, "bac": 1_000_000},
+        {"pv": 500_000, "bcwp": 400_000, "acwp": 450_000, "bac": 1_000_000},
+        {"BCWS": 500_000, "BCWP": 400_000, "ACWP": 450_000, "BAC": 1_000_000},
+    )
+    for params in cases:
+        _assert_evm_cpi_spi(_call(agent, "calculate_evm", params))
+
+
+def test_calculate_evm_top_level_pmi_names_reach_the_calculator():
+    """Model puts bcws/bcwp/acwp beside calculation, not inside params."""
+    agent = _agent(["construction"])
+    tc = {"id": "c1", "function": {
+        "name": "construction_calc",
+        "arguments": json.dumps({
+            "calculation": "calculate_evm",
+            "BCWS": 500_000,
+            "BCWP": 400_000,
+            "ACWP": 450_000,
+            "BAC": 1_000_000,
+        }),
+    }}
+    _assert_evm_cpi_spi(_run(agent._run_tool_call(tc)))
+
+
 def test_business_calc_queries_force_the_tool():
     from app.agents.runtime import _forced_specific_tool
     avail = {"construction_calc"}
