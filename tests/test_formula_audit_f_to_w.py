@@ -258,6 +258,9 @@ class TestMobilizationCostEstimate:
         assert r["breakdown"]["warehouse_equipment_sar"] == pytest.approx(47_250, abs=1)
         # Breakdown camp line must not exceed the grand total.
         assert r["breakdown"]["camp_sar"] < r["grand_total_sar"]
+        assert r["unit"] == "SAR"
+        assert r["value"] == pytest.approx(9_927_900, abs=1)
+        assert "SAR" in str(r.get("note") or "")
 
     def test_hotel_urban_factor_one(self):
         # camp=4500; per-head=350+4500+220+150=5220; ×100×1.0=522,000 / month.
@@ -271,6 +274,8 @@ class TestMobilizationCostEstimate:
         )
         assert r["recurring_monthly_sar"] == pytest.approx(522_000, abs=1)
         assert r["grand_total_sar"] == pytest.approx(10_414_000, abs=1)
+        assert r["unit"] == "SAR"
+        assert r["value"] == pytest.approx(10_414_000, abs=1)
 
 
 class TestModulusOfElasticityConcrete:
@@ -687,6 +692,8 @@ class TestSlopeFosSimple:
         # tan30/tan20 = 0.577350/0.363970 = 1.586.
         r = _ok("slope_fos_simple", friction_angle_deg=30, slope_angle_deg=20)
         assert r["factor_of_safety"] == pytest.approx(math.tan(math.radians(30)) / math.tan(math.radians(20)), abs=0.002)
+        assert r["unit"] == "unitless"
+        assert "unitless" in str(r.get("note") or "").lower()
 
     def test_with_cohesion_and_zero_slope(self):
         # c-term = 5/(18×3×sin20×cos20)=0.288; FoS=1.874.
@@ -814,6 +821,8 @@ class TestFinenessModulus:
         # 10+25+45+70+90+98=338; FM=3.38.
         r = _ok("fineness_modulus", sieve_retained_percentages=[10, 25, 45, 70, 90, 98])
         assert r["value"] == pytest.approx(3.38, abs=0.001)
+        assert r["unit"] == "unitless"
+        assert "unitless" in str(r.get("note") or "").lower()
 
     def test_empty_list_is_zero(self):
         r = _ok("fineness_modulus", sieve_retained_percentages=[])
@@ -1033,6 +1042,9 @@ class TestScoreRisk:
         red = _ok("score_risk", probability=4, impact=5)
         assert red["score"] == 20
         assert red["band"] == "RED"
+        assert red["unit"] == "unitless"
+        assert red["value"] == 20
+        assert "unitless" in str(red.get("note") or "").lower()
         green = _ok("score_risk", probability=2, impact=2)
         assert green["score"] == 4
         assert green["band"] == "GREEN"
@@ -1216,6 +1228,8 @@ class TestFwIntentMapForcesConstructionCalc:
             "What is the unit weight of concrete, reinforced?",
             "Fineness modulus of this sand grading",
             "Wind pressure on the formwork face",
+            "Estimate the mobilization cost for 100 staff over 18 months",
+            "What is the site mobilisation cost?",
         ],
     )
     def test_fw_phrases_force_the_calculator(self, q):
@@ -1230,6 +1244,92 @@ class TestFwIntentMapForcesConstructionCalc:
             [{"role": "user", "content": "what is the rebar specification"}],
             self.AVAILABLE,
         ) is None
+
+
+class TestFwLeftoverUnitPresentation:
+    """Live leftover after #620: construction_calc fired but the stream
+    had a number and no unit (or unitless not stated)."""
+
+    def test_fineness_modulus_states_unitless(self):
+        env = run_calculation(
+            "fineness_modulus",
+            {"sieve_retained_percentages": [10, 25, 45, 70, 90, 98]},
+        )
+        assert env["status"] == "success", env
+        r = env["result"]
+        assert r["value"] == pytest.approx(3.38, abs=0.001)
+        assert r["unit"] == "unitless"
+        assert "unitless" in str(r["note"]).lower()
+
+    def test_score_risk_states_unitless(self):
+        env = run_calculation("score_risk", {"probability": 4, "impact": 5})
+        r = env["result"]
+        assert r["score"] == 20
+        assert r["value"] == 20
+        assert r["unit"] == "unitless"
+        assert "unitless" in str(r["note"]).lower()
+
+    def test_slope_fos_simple_states_unitless(self):
+        env = run_calculation(
+            "slope_fos_simple",
+            {"friction_angle_deg": 30, "slope_angle_deg": 20},
+        )
+        r = env["result"]
+        assert r["factor_of_safety"] == pytest.approx(1.586, abs=0.002)
+        assert r["value"] == pytest.approx(1.586, abs=0.002)
+        assert r["unit"] == "unitless"
+        assert "unitless" in str(r["note"]).lower()
+
+    def test_a_to_f_envelope_is_not_stamped(self):
+        """Shaping is F–W (#43–84) only — A–F results keep their own keys."""
+        env = run_calculation(
+            "dewatering_uplift_check",
+            {"water_depth": 23, "raft_thickness": 2, "floor_count": 5},
+        )
+        assert env["status"] == "success", env
+        assert "unit" not in (env.get("result") or {})
+
+
+class TestFwMobilizationFlake:
+    """Live leftover: 1/2 flake — sometimes no number. Both plain-engineer
+    asks must get construction_calc + a SAR headline."""
+
+    def test_no_figure_uk_spelling_still_returns_sar_number(self):
+        env = run_calculation(
+            "unit_cost_total",
+            {"text": "What is the site mobilisation cost?"},
+        )
+        assert env["status"] == "success", env
+        assert env["calculation"] == "mobilization_cost_estimate"
+        r = env["result"]
+        assert r["unit"] == "SAR"
+        assert r["value"] == pytest.approx(9_927_900, abs=1)
+        assert r["grand_total_sar"] == pytest.approx(9_927_900, abs=1)
+        assert "SAR" in str(r.get("note") or "")
+
+    def test_staff_and_months_are_read_from_the_ask(self):
+        name, params = resolve_fw_calc(
+            "unit_cost_total",
+            {"text": "Estimate the mobilization cost for 100 staff over 18 months"},
+        )
+        assert name == "mobilization_cost_estimate"
+        assert params["num_personnel"] == 100
+        assert params["duration_months"] == 18
+        env = run_calculation(
+            "mobilization_cost_estimate",
+            {"text": "Estimate the mobilization cost for 100 staff over 18 months"},
+        )
+        assert env["status"] == "success", env
+        assert env["result"]["unit"] == "SAR"
+        assert env["result"]["value"] == pytest.approx(9_927_900, abs=1)
+
+    def test_named_call_without_params_still_returns_sar(self):
+        env = run_calculation("mobilization_cost_estimate", {})
+        assert env["status"] == "success", env
+        assert env["calculation"] == "mobilization_cost_estimate"
+        assert env["result"]["unit"] == "SAR"
+        assert isinstance(env["result"]["value"], (int, float))
+        assert env["result"]["value"] > 0
 
 
 @pytest.mark.asyncio
