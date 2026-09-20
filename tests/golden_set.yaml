@@ -186,6 +186,9 @@ queries:
   - id: pilot_boq_total
     feature: boq_process
     project: "FIXTURE — BOQ"
+    # Self-seeded when missing: scripts/seed_fixtures.py --synthetic --only boq
+    # (synthetic_boq.xlsx). The gate runner must never send this display name
+    # as project_id — that 404s. Fail loud only if seed fails.
     # Mirrors feature_matrix must-cover boq_process (the client project BOQ project, 4
     # workbooks / 179 chunks). The memory value "demolition BOQ total
     # SAR 62,236,109" could NOT be verified anywhere in the repo, and a

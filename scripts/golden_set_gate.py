@@ -23,7 +23,13 @@ mode — so this script IS the gate.
 Auth (env only, same contract as feature_matrix_sweep / fork_cli — values
 are never printed or stored): FORK_TOKEN or FORK_API_KEY, or
 FORK_EMAIL+FORK_PASSWORD (logs in via /v1/users/login). Target from
-FORK_BASE_URL (default prod).
+FORK_BASE_URL (alias FORK_BASE) (default prod).
+
+Named fixtures (``FIXTURE — BOQ`` and the other ``FIXTURE — *`` projects)
+are resolved by display name. A missing named fixture is self-seeded via
+``scripts/seed_fixtures.py --synthetic``; the unresolved display name is
+never sent as ``project_id``. Seed failure is fatal. ``master_corpus``
+is not self-seeded.
 
 Usage:
   python scripts/golden_set_gate.py --dry-run          # validate, no network
@@ -60,9 +66,14 @@ except ImportError:  # pragma: no cover
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GOLDEN_SET = ROOT / "tests" / "golden_set.yaml"
-DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork-jn3t.onrender.com")
+DEFAULT_BASE = (
+    os.getenv("FORK_BASE_URL")
+    or os.getenv("FORK_BASE")
+    or "https://the-fork-jn3t.onrender.com"
+)
 RESULTS_JSONL = ROOT / "golden_set_results.jsonl"
 REPORT_MD = ROOT / "GOLDEN_SET_REPORT.md"
+MASTER_CORPUS_ALIAS = "master_corpus"
 
 PASS_BAR_PCT = 90  # the pilot gate: >= 90% of the golden set must PASS
 
@@ -80,6 +91,10 @@ MAX_ANSWER_STORED = 6000
 
 class GoldenSetError(ValueError):
     """Golden set fails validation (missing prompt, bad regex, dup id, ...)."""
+
+
+class FixtureUnresolvedError(GoldenSetError):
+    """A named golden fixture is missing and could not be seeded."""
 
 
 # ── golden set ───────────────────────────────────────────────────────────────
@@ -461,6 +476,166 @@ def generate_report(golden: dict) -> int:
     return 0 if met else 1
 
 
+# ── named-fixture resolve / self-seed ────────────────────────────────────────
+
+def collect_named_fixtures(queries: list) -> list:
+    """Canonical project names that are not the master_corpus alias."""
+    names: list = []
+    seen: set = set()
+    for q in queries:
+        value = (q.get("project") or "").strip()
+        if not value or value == MASTER_CORPUS_ALIAS:
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        names.append(value)
+    return names
+
+
+def lookup_live_project_id(client, value: str, *, base: str,
+                           headers: dict | None = None) -> str | None:
+    """Return the live project id for a canonical name or id, or None."""
+    r = client.get(f"{base}/v1/projects", headers=headers, timeout=30)
+    r.raise_for_status()
+    for p in (r.json().get("projects", []) or []):
+        if p.get("name") == value or p.get("id") == value:
+            pid = p.get("id")
+            if pid:
+                return str(pid)
+    return None
+
+
+def _default_named_fixture_seeder(name: str, *, base: str, headers: dict,
+                                  **_kw):
+    from scripts.seed_fixtures import ensure_named_fixture
+    return ensure_named_fixture(
+        name, base=base, headers=headers, synthetic=True,
+    )
+
+
+def resolve_golden_project(
+    client,
+    value: str,
+    *,
+    base: str,
+    headers: dict | None = None,
+    cache: dict | None = None,
+    seed_missing: bool = True,
+    lookup=None,
+    seeder=None,
+) -> str:
+    """Resolve a golden ``project`` field to a live project id.
+
+    ``master_corpus`` passes through. Named fixtures are looked up by
+    display name. If a seedable fixture is missing, the seed path runs
+    (``seed_fixtures --synthetic``) instead of sending the unresolved
+    display name as ``project_id`` (that 404s). Seed failure is fatal.
+    """
+    if not value or value == MASTER_CORPUS_ALIAS:
+        return value
+    cache = cache if cache is not None else {}
+    cached = cache.get(value)
+    if cached and cached != value:
+        return cached
+    if cached == value:
+        # A prior bug cached the display name as the id — refuse it.
+        cache.pop(value, None)
+
+    lookup_fn = lookup or lookup_live_project_id
+    found = None
+    try:
+        found = lookup_fn(client, value, base=base, headers=headers or {})
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        print(
+            f"[fixture] project lookup for {value!r} failed ({exc}); "
+            f"will try seed",
+            file=sys.stderr,
+        )
+        found = None
+
+    if found:
+        from scripts.seed_fixtures import fixture_key_for_name
+        if found == value and fixture_key_for_name(value):
+            found = None
+        else:
+            cache[value] = found
+            return found
+
+    if seed_missing:
+        from scripts.seed_fixtures import fixture_key_for_name
+        if fixture_key_for_name(value):
+            print(
+                f"[fixture] {value!r} missing — seeding via "
+                f"scripts/seed_fixtures.py --synthetic",
+                file=sys.stderr,
+            )
+            seeder_fn = seeder or _default_named_fixture_seeder
+            try:
+                result = seeder_fn(
+                    value, base=base, headers=headers or {}, client=client,
+                )
+            except FixtureUnresolvedError:
+                raise
+            except Exception as exc:
+                raise FixtureUnresolvedError(
+                    f"seed of {value!r} failed: {exc}"
+                ) from exc
+            pid = (result or {}).get("project_id")
+            if not pid or pid == value:
+                raise FixtureUnresolvedError(
+                    f"seed of {value!r} returned no live project_id"
+                )
+            confirmed = None
+            try:
+                confirmed = lookup_fn(
+                    client, value, base=base, headers=headers or {},
+                )
+            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                confirmed = None
+            resolved = confirmed or str(pid)
+            if resolved == value:
+                raise FixtureUnresolvedError(
+                    f"seed of {value!r} still unresolved; refusing to use "
+                    f"the display name as project_id"
+                )
+            cache[value] = resolved
+            return resolved
+
+    raise FixtureUnresolvedError(
+        f"project {value!r} is not on the target and is not a "
+        f"self-seedable fixture — refusing to send the display name "
+        f"as project_id"
+    )
+
+
+def preflight_named_fixtures(
+    client,
+    queries: list,
+    *,
+    base: str,
+    headers: dict | None = None,
+    cache: dict | None = None,
+    seed_missing: bool = True,
+    lookup=None,
+    seeder=None,
+) -> dict:
+    """Resolve/seed every non-master_corpus project before chat turns.
+
+    Returns the name -> project_id cache. Raises FixtureUnresolvedError
+    if any named fixture is missing and seed fails. A missing display
+    name is never stored as a project_id.
+    """
+    cache = cache if cache is not None else {}
+    for name in collect_named_fixtures(queries):
+        resolve_golden_project(
+            client, name,
+            base=base, headers=headers, cache=cache,
+            seed_missing=seed_missing, lookup=lookup, seeder=seeder,
+        )
+    return cache
+
+
 # ── run ──────────────────────────────────────────────────────────────────────
 
 def run_gate(args, golden: dict) -> int:
@@ -481,32 +656,16 @@ def run_gate(args, golden: dict) -> int:
 
     _project_cache: dict = {}
 
-    def _resolve_project(client, value):
-        """Resolve a golden `project` field (canonical NAME or id) to a live
-        project id BY NAME against the projects API — a rebuilt namespace can no
-        longer drift the fixtures (hardcoded-ID drift, third occurrence). The
-        master-corpus alias passes through unchanged."""
-        if not value or value == "master_corpus":
-            return value
-        if value in _project_cache:
-            return _project_cache[value]
-        resolved = value
-        try:
-            r = client.get(f"{args.base}/v1/projects", headers=headers, timeout=30)
-            for p in (r.json().get("projects", []) or []):
-                if p.get("name") == value or p.get("id") == value:
-                    resolved = p.get("id")
-                    break
-        except Exception as exc:  # noqa: BLE001 — fall back to the given id
-            print(
-                f"[warn] project lookup for {value!r} failed ({exc}); "
-                f"using unresolved id",
-                file=sys.stderr,
-            )
-        _project_cache[value] = resolved
-        return resolved
-
     with httpx.Client() as client:
+        try:
+            preflight_named_fixtures(
+                client, [q for _, q in plan],
+                base=args.base, headers=headers, cache=_project_cache,
+            )
+        except FixtureUnresolvedError as exc:
+            print(f"[fixture] FATAL: {exc}", file=sys.stderr)
+            return 1
+
         for n, (idx, entry) in enumerate(plan):
             if n and args.delay:
                 time.sleep(args.delay)
@@ -515,7 +674,10 @@ def run_gate(args, golden: dict) -> int:
             conversation_id = f"gsg-{uuid.uuid4().hex[:12]}"
             print(f"[{idx:>2}] {entry['id']}: {entry['prompt'][:60]}")
 
-            resolved_pid = _resolve_project(client, entry["project"])
+            resolved_pid = resolve_golden_project(
+                client, entry["project"],
+                base=args.base, headers=headers, cache=_project_cache,
+            )
             res = execute_with_retry(client, args.base, entry["agent"],
                                      headers, entry["prompt"],
                                      resolved_pid, conversation_id)
