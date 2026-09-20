@@ -5,6 +5,9 @@ change_order_impact (or the empty-fixture unindexed gate). Ask2 sometimes
 drafted VO-D-002 with ADD/OMIT lines MATCH. Owner requirement: the first
 variation-order ask that already carries synthetic ADD/OMIT + rates must
 return a drafted VO body (description, lines, net).
+
+These tests do NOT require CEREBRUM_DOMAIN_KITS=construction. Virgin CI
+skipped the kit-gated copies and dropped diff coverage below 50%.
 """
 from __future__ import annotations
 
@@ -12,7 +15,11 @@ import json
 
 import pytest
 
-from tests.conftest import requires_construction_kit
+from app.containers.construction.boq import (
+    _parse_vo_priced_lines,
+    _variation_has_draft_facts,
+)
+from app.core.site_vocab import message_wants_vo_draft
 
 
 # Self-contained first ask — no project corpus, no prior turn, priced lines
@@ -88,7 +95,55 @@ def _assert_drafted_vo_body(result: dict) -> None:
     assert vo_no.upper().startswith("VO"), vo_no
 
 
-@requires_construction_kit
+def test_message_wants_vo_draft_not_impact():
+    assert message_wants_vo_draft(FIRST_VO_ASK)
+    assert message_wants_vo_draft("issue a VO for extra blockwork")
+    assert not message_wants_vo_draft(
+        "assess the cost and time impact of variation order VO-12"
+    )
+    assert not message_wants_vo_draft("update the variation log")
+
+
+def test_parse_vo_priced_lines_add_omit_and_aliases():
+    assert _parse_vo_priced_lines("") == []
+    assert _parse_vo_priced_lines(None) == []
+    parsed = _parse_vo_priced_lines(FIRST_VO_ASK)
+    assert [p["kind"] for p in parsed] == ["ADD", "OMIT"]
+    assert parsed[0]["amount"] == pytest.approx(ADD_AMOUNT)
+    assert parsed[1]["amount"] == pytest.approx(-OMIT_AMOUNT)
+
+    alias = _parse_vo_priced_lines(
+        "OMISSION 40 m2 carpet @ 45 SAR/m2\n"
+        "DELETE 10 m2 paint @ 20\n"
+        "DEDUCT 5 m2 grout @ 10"
+    )
+    assert {r["kind"] for r in alias} == {"OMIT"}
+    assert all(r["amount"] < 0 for r in alias)
+
+    flipped = _parse_vo_priced_lines("ADD ceramic tiling 120 m2 @ 85 SAR/m2")
+    assert len(flipped) == 1
+    assert flipped[0]["quantity"] == 120.0
+    assert flipped[0]["rate"] == 85.0
+
+    dup = _parse_vo_priced_lines(
+        "ADD 120 m2 ceramic tiling @ 85\nADD 120 m2 ceramic tiling @ 85"
+    )
+    assert len(dup) == 1
+
+    skipped = _parse_vo_priced_lines("ADD 0 m2 ceramic tiling @ 85")
+    assert skipped == []
+
+
+def test_variation_has_draft_facts_from_priced_lines():
+    assert _variation_has_draft_facts({}, FIRST_VO_ASK) is True
+    assert _variation_has_draft_facts(None, FIRST_VO_ASK) is True
+    assert _variation_has_draft_facts({}, "Draft a variation order") is False
+    assert _variation_has_draft_facts(
+        {"description": "extra blockwork", "direct_cost": "not-a-number"},
+        "",
+    ) is False
+
+
 def test_first_vo_draft_ask_prefers_variation_order_manager():
     """change_order_impact must not steal a VO *draft* intent on ask1."""
     matched = _matched_actions(FIRST_VO_ASK)
@@ -97,7 +152,6 @@ def test_first_vo_draft_ask_prefers_variation_order_manager():
     assert "change_order_impact" not in matched
 
 
-@requires_construction_kit
 def test_impact_ask_still_reaches_change_order_impact():
     """Impact analysis stays on change_order_impact (not a draft intent)."""
     matched = _matched_actions(
@@ -107,7 +161,6 @@ def test_impact_ask_still_reaches_change_order_impact():
     assert "change_order_impact" in matched, matched
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_first_vo_ask_with_add_omit_rates_drafts_body():
     """First ask (no history, no vo_data) drafts description / lines / net."""
@@ -119,9 +172,9 @@ async def test_first_vo_ask_with_add_omit_rates_drafts_body():
     )
     _assert_drafted_vo_body(result)
     assert str(result.get("vo_number", "")).upper().startswith("VO-D"), result
+    assert result["vo_type"] == "mixed"
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_first_vo_ask_via_route_is_not_change_order_only():
     from app.containers.construction import ConstructionContainer
@@ -138,7 +191,6 @@ async def test_first_vo_ask_via_route_is_not_change_order_only():
         {"message": FIRST_VO_ASK, "text": FIRST_VO_ASK},
         {},
     )
-    # Impact-only is the live steal: success/error with no VO lines/net.
     stolen_lines = stolen.get("lines") or stolen.get("vo_lines") or []
     stolen_net = stolen.get("net")
     assert not (
@@ -149,15 +201,85 @@ async def test_first_vo_ask_via_route_is_not_change_order_only():
     ) or routed.get("action") != "change_order_analysis"
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
-async def test_first_vo_ask_predispatch_injects_draft():
+async def test_omit_only_and_add_only_drafts():
+    from app.containers.construction import ConstructionContainer
+
+    omit = await ConstructionContainer().variation_order_manager(
+        {"text": "Draft a variation order: OMIT 40 m2 carpet @ 45 SAR/m2"},
+        {},
+    )
+    assert omit["status"] == "success"
+    assert omit["vo_type"] == "omission"
+    assert omit["net"] == pytest.approx(-1800.0)
+    assert omit["vo_number"].startswith("VO-D-")
+
+    add = await ConstructionContainer().variation_order_manager(
+        {
+            "variation_data": {"description": "Draft a variation order"},
+            "text": "ADD 120 m2 ceramic tiling @ 85 SAR/m2",
+        },
+        {},
+    )
+    assert add["status"] == "success"
+    assert add["vo_type"] == "addition"
+    assert add["net"] == pytest.approx(ADD_AMOUNT)
+    assert "tiling" in add["description"].lower()
+
+
+@pytest.mark.asyncio
+async def test_priced_lines_plus_contract_value_still_drafts():
+    from app.containers.construction import ConstructionContainer
+
+    result = await ConstructionContainer().variation_order_manager(
+        {"message": FIRST_VO_ASK, "contract_value": 1_000_000},
+        {},
+    )
+    _assert_drafted_vo_body(result)
+    assert result["cumulative_impact"]["percent_of_contract"] is not None
+
+
+@pytest.mark.asyncio
+async def test_intelligent_workflow_draft_vs_impact_chain():
+    from app.containers.construction import ConstructionContainer
+
+    c = ConstructionContainer()
+    draft_chain = c._build_intelligent_chain(FIRST_VO_ASK, None)
+    actions = [s["action"] for s in draft_chain]
+    assert "variation_order_manager" in actions
+    assert "change_order_impact" not in actions
+
+    impact_chain = c._build_intelligent_chain(
+        "assess the cost and time impact of variation order VO-12",
+        None,
+    )
+    impact_actions = [s["action"] for s in impact_chain]
+    assert "change_order_impact" in impact_actions
+    assert "variation_order_manager" in impact_actions
+
+
+@pytest.mark.asyncio
+async def test_first_vo_ask_predispatch_injects_draft(monkeypatch):
     from app.agents.runtime import (
+        _conflicting_tools_after_predispatch,
+        _format_variation_order,
+        _message_wants_locked_deliverable,
         _message_wants_vo_draft,
         _predispatch_remaining_deliverables,
+        _recover_answer_from_tool_messages,
     )
+    from app.containers.construction import ConstructionContainer
 
     assert _message_wants_vo_draft(FIRST_VO_ASK)
+    assert _message_wants_locked_deliverable(FIRST_VO_ASK)
+    assert "change_order_impact" in _conflicting_tools_after_predispatch(
+        "variation_order_manager"
+    )
+
+    monkeypatch.setattr(
+        "app.dependencies.get_block_instance",
+        lambda name: ConstructionContainer() if name == "construction" else None,
+    )
 
     class _A:
         allowed_blocks = ["construction"]
@@ -174,6 +296,24 @@ async def test_first_vo_ask_predispatch_injects_draft():
     assert "ADD" in injected.upper()
     assert "OMIT" in injected.upper()
     assert "8400" in injected.replace(",", "").replace(" ", "") or "8,400" in injected
+
+    rendered = _format_variation_order(out["result"])
+    assert "VO-D" in rendered
+    assert "Net" in rendered
+    loose = _format_variation_order({
+        "action": "variation_order_processed",
+        "vo_number": "VO-D-009",
+        "description": "scope",
+        "lines": ["ADD leftover"],
+        "pricing": {"total_value": 1},
+    })
+    assert "ADD leftover" in loose
+
+    recovered = _recover_answer_from_tool_messages(
+        "HTTP 413",
+        [{"role": "tool", "content": json.dumps(out["result"])}],
+    )
+    assert "VO-D" in recovered
 
 
 def test_empty_fixture_vo_draft_is_not_an_unindexed_refusal():
@@ -193,3 +333,23 @@ def test_empty_fixture_vo_draft_is_not_an_unindexed_refusal():
         None,
         FIRST_VO_ASK,
     ) is False
+
+
+def test_generate_vo_document_lists_lines():
+    from app.containers.construction import ConstructionContainer
+
+    body = ConstructionContainer()._generate_vo_document(
+        "VO-D-001",
+        "tiling vs carpet",
+        {"total": 8400.0},
+        "mixed",
+        lines=[
+            {"kind": "ADD", "quantity": 120, "unit": "m2",
+             "description": "tiling", "rate": 85, "amount": 10200},
+            "bare-line",
+        ],
+    )
+    assert "VO-D-001" in body
+    assert "ADD 120" in body
+    assert "bare-line" in body
+    assert "Net: 8400" in body
