@@ -779,23 +779,45 @@ def parse_delay_period_days(query: str) -> int | None:
     return days if days > 0 else None
 
 
+def _window_is_whole_of_works_rate(blob: str) -> bool:
+    """True when the window is the whole-of-Works daily rate, not a Milestone.
+
+    Live Set3 E3 on 4ab5561: a packed particulars row said "per Milestone"
+    and then "Delay Damages (for the whole of the Works): 0.1%". First-
+    percent parse elected 0.1% and composed 70,180,178.25. The Contract
+    Data milestone rate is 0.015%.
+    """
+    return bool(_WHOLE_WORKS_RE.search(blob or ""))
+
+
 def parse_milestone_delay_rate_percent(
     excerpts: str,
     milestone: int,
 ) -> float | None:
-    """Per-day % for one Milestone row. Does not invent; ignores the cap."""
+    """Per-day % for one Milestone row. Does not invent; ignores the cap.
+
+    Rejects a whole-of-Works 0.1% packed under a "per Milestone" label —
+    that product is a different figure (live E3 vs 0.1% × 40).
+    """
     t = excerpts or ""
     if not t or milestone <= 0:
         return None
     for m in _MILESTONE_RATE_RE.finditer(t):
-        if int(m.group(1)) == milestone:
-            return float(m.group(2))
+        if int(m.group(1)) != milestone:
+            continue
+        window = t[max(0, m.start() - 96): m.end() + 48]
+        if _window_is_whole_of_works_rate(window):
+            continue
+        return float(m.group(2))
     try:
         from app.core.contract_data_chunks import filled_particulars_rows
         for key, val in filled_particulars_rows(t):
             if _DD_CAP_KEY_RE.search(key):
                 continue
-            if not re.search(rf"(?i)milestone\s+{milestone}\b", f"{key} {val}"):
+            blob = f"{key} {val}"
+            if not re.search(rf"(?i)milestone\s+{milestone}\b", blob):
+                continue
+            if _window_is_whole_of_works_rate(blob):
                 continue
             if not re.search(r"(?i)\bper\b", val):
                 continue
@@ -809,7 +831,13 @@ def parse_milestone_delay_rate_percent(
 
 def _shared_milestone_delay_rate(excerpts: str) -> float | None:
     """The per-Milestone rate when every listed row carries the same %."""
-    rates = [float(m.group(2)) for m in _MILESTONE_RATE_RE.finditer(excerpts or "")]
+    rates: list[float] = []
+    t = excerpts or ""
+    for m in _MILESTONE_RATE_RE.finditer(t):
+        window = t[max(0, m.start() - 96): m.end() + 48]
+        if _window_is_whole_of_works_rate(window):
+            continue
+        rates.append(float(m.group(2)))
     if not rates:
         return None
     first = rates[0]
