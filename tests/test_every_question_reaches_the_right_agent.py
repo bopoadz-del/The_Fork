@@ -32,3 +32,30 @@ def test_the_live_question_is_not_short_circuited():
     q = ("Our BOQ has 1,250 m2 of blockwork at SAR 62/m2 but site measured "
          "1,318 m2. What is the cost variance and is it within a 5% tolerance?")
     assert not _should_short_circuit_rag_miss({**_MISS, "extracted_identifiers": ["62/m2"]}, None, q)
+
+
+# ── a question in quotation marks is still a question ───────────────────────
+# Owner, live 0a95d03: the beam question typed WITH quotation marks around it
+# got "I could not confirm this reference in the indexed project sources";
+# without them, 112.5 kN·m. The extractor treats a quoted span as an exact
+# reference -- right for "LTR-MN-000372", wrong for a whole sentence.
+
+_QUOTED_QUESTIONS = [
+    "maximum bending moment in a 6 m simply supported beam carrying 25 kn/m?",
+    "what concrete volume is a slab 12 m by 8 m and 0.2 m thick",
+    "how many days of delay reach the 10% cap",
+]
+
+
+@pytest.mark.parametrize("sentence", _QUOTED_QUESTIONS)
+def test_a_quoted_sentence_is_not_a_document_reference(sentence):
+    q = f'"{sentence}"'
+    assert not _should_short_circuit_rag_miss(
+        {**_MISS, "extracted_identifiers": [sentence]}, None, q)
+
+
+@pytest.mark.parametrize("ref", ["ltr-mn-000372", "d/3/3", "dd-2023-118", "clause 13.5",
+                                 "vol 2 specification 6 of 9"])
+def test_a_quoted_reference_still_short_circuits(ref):
+    q = f'What does "{ref}" say?'
+    assert _should_short_circuit_rag_miss({**_MISS, "extracted_identifiers": [ref]}, None, q)
