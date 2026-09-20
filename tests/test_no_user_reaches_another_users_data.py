@@ -735,6 +735,16 @@ def test_plain_user_denied_admin_debug_governance(client, world, method, path, p
         f"{method} {path}: expected deny, got {resp.status_code} {resp.text[:200]}"
     )
     assert CANARY_B not in resp.text
+    # Status alone is not enough on /debug/env: the SPA catch-all used
+    # to answer 200 HTML with no payload. Production must 404, and the
+    # body must never carry process environment fields.
+    if path.rstrip("/").endswith("/debug/env") or path in ("/debug/env", "/v1/debug/env"):
+        body = resp.text
+        assert "data_dir" not in body, f"{path} leaked data_dir: {body[:200]}"
+        assert "DATA_DIR" not in body, f"{path} leaked DATA_DIR: {body[:200]}"
+        assert "<!doctype html" not in body.lstrip().lower(), (
+            f"{path} served the SPA shell ({resp.status_code})"
+        )
 
 
 def test_plain_user_cannot_probe_other_api_keys(client, world):

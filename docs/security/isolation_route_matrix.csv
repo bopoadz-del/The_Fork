@@ -120,8 +120,8 @@ POST,/v1/agents/{name}/chat/stream,agents.py,require_user,no,conversation_id: _e
 GET,/v1/hydration/latest,hydration.py,require_api_key,no,query project_id with NO ownership check,id_no_owner,UNPROVEN,Any authenticated principal can read any project's latest hydration row
 GET,/v1/hydration/history,hydration.py,require_api_key,no,query project_id unscoped,id_no_owner,UNPROVEN,Same
 POST,/v1/hydration/run,hydration.py,require_api_key,no,body.project_ids unscoped; triggers learning_engine hydrate,id_no_owner,UNPROVEN,Comment says admin-triggered; CODE has no admin check
-GET,/debug/env,debug.py,require_api_key,yes role==admin + non-prod,n/a,—,UNPROVEN,Router not mounted in production. Still UNPROVEN vs matrix.
-GET,/v1/debug/env,debug.py,require_api_key,yes (delegates),n/a,—,UNPROVEN,Alias
+GET,/debug/env,debug.py,require_api_key when mounted,yes role==admin + non-prod,n/a,—,OTHER_TENANCY,Production reserved prefix 404 empty (no env fields). Dest: 403 to a plain user.
+GET,/v1/debug/env,debug.py,require_api_key when mounted,yes (delegates),n/a,—,OTHER_TENANCY,Production 404 empty. Dest: 403 to a plain user.
 POST,/v1/projects/{project_id}/documents/{document_id}/redlines,redline.py,require_user,no,get_project(user_id) owner-only + doc.project_id == path,—,UNPROVEN,Owner-only (shared stranger 404). Child belonging checked. No alias.
 POST,/v1/feedback/route,feedback.py,require_api_key,no,body.project_id recorded with NO access check,id_no_owner,UNPROVEN,Writes learning_engine pattern under any project_id. Cross-tenant write to routing corpus.
 GET,/v1/projects/{project_id}/documents/search,doc_search.py,require_user,no,get_project include_admin_approved,—,UNPROVEN,Read-open. Not in matrix.
