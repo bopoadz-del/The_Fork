@@ -1625,6 +1625,7 @@ def _bind_sequence_params(
     try:
         sig = _inspect.signature(fn)
     except (TypeError, ValueError):
+        logger.debug("positional bind: calculator has no inspectable signature")
         return {}
     dests = [
         key for key, param in sig.parameters.items()
