@@ -727,6 +727,13 @@ async def _run_container_action(action: str, context: Dict[str, Any]) -> Optiona
         "document_ids": context.get("document_ids") or [],
     }
     envelope.update({k: v for k, v in (context.get("params") or {}).items() if v is not None})
+    if action == "payment_certificate":
+        try:
+            from app.containers.construction.boq import ipc_args_from_ask
+            filled = ipc_args_from_ask(context.get("message") or "", envelope)
+            envelope.update({k: v for k, v in filled.items() if v is not None})
+        except Exception:  # noqa: BLE001
+            logger.debug("IPC ask coercion skipped", exc_info=True)
     try:
         result = await con.execute(envelope)
     except Exception as e:  # noqa: BLE001

@@ -67,8 +67,11 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:2069": "baseline 2026-09-10",
     "app/agents/runtime.py:2737": "baseline 2026-09-10",
     "app/agents/runtime.py:3742": "baseline 2026-09-10",
-    "app/agents/runtime.py:4881": "baseline 2026-09-10",
-    "app/agents/runtime.py:5286": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20: IPC MOS lines in _format_payment_certificate.
+    # Same pre-existing handlers — only the line numbers moved. No new
+    # silent returns.
+    "app/agents/runtime.py:4887": "baseline 2026-09-10",
+    "app/agents/runtime.py:5292": "baseline 2026-09-10",
     "app/agents/runtime.py:643": "baseline 2026-09-10",
     "app/agents/runtime.py:874": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
@@ -99,7 +102,10 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # Re-indexed 2026-09-19: draft-VO ask refuse helpers inserted above
     # this pre-existing site. Same handler — only the line number moved.
     # No new silent returns.
-    "app/containers/construction/boq.py:833": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20: measured-works / MOS / ipc_args_from_ask
+    # inserted above this pre-existing site. Same handler — only the
+    # line number moved. No new silent returns.
+    "app/containers/construction/boq.py:900": "baseline 2026-09-10",
     "app/containers/construction/helpers.py:69": "baseline 2026-09-10",
     "app/core/doc_index.py:1063": "baseline 2026-09-10",
     "app/core/doc_index.py:1106": "baseline 2026-09-10",
