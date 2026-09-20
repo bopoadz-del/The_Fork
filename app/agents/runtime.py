@@ -793,6 +793,7 @@ _RFI_DRAFT_PHRASES = (
     "follow on rfi",
     "draft a rfi",
     "draft an rfi",
+    "draft one rfi",
     "generate a rfi",
     "generate an rfi",
     "create a rfi",
@@ -2460,6 +2461,7 @@ def _should_short_circuit_rag_miss(
         or _asks_for_export(user_message)
         or _message_wants_vo_draft(user_message)
         or _message_wants_primavera_parse(user_message)
+        or _message_wants_rfi_draft(user_message)
     ):
         return False
     # A unit RATE ("SAR 62/m2") is not a reference: it looks like page
