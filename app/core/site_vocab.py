@@ -141,8 +141,17 @@ def message_wants_vo_draft(text: str) -> bool:
     return bool(_VO_DRAFT.search(text or ""))
 
 
+# Post/send to Aconex/CDE — not a local draft. Bare "rfi" + "clash"
+# used to steal rfi_generator onto cde_post_rfi (live tip 50c37f ask1).
 _CLASH_CDE_RFI = re.compile(
-    r"\b(?:rfi|request\s+for\s+information|post\s+(?:an?\s+)?rfi|raise\s+(?:an?\s+)?rfi)\b",
+    r"(?:"
+    r"\b(?:post|send|upload|submit)\s+(?:an?\s+|the\s+|this\s+)?"
+    r"(?:rfi|request\s+for\s+information|draft)\b"
+    r"|"
+    r"\b(?:aconex|(?:the\s+)?cde)\b.{0,40}\b(?:rfi|request\s+for\s+information)\b"
+    r"|"
+    r"\b(?:rfi|request\s+for\s+information)\b.{0,40}\b(?:aconex|(?:the\s+)?cde)\b"
+    r")",
     re.IGNORECASE,
 )
 
@@ -170,5 +179,9 @@ def message_has_inline_boq_lines(text: str) -> bool:
 
 
 def message_wants_clash_cde_rfi(text: str) -> bool:
-    """Clash follow-up posts to the CDE — not a local Fork RFI number."""
+    """True only for an explicit CDE/Aconex RFI post, not a local draft.
+
+    Clash + the word RFI is not enough — live ask1 drafts an RFI from a
+    synthetic clash and must stay on rfi_generator.
+    """
     return bool(_CLASH_CDE_RFI.search(text or ""))
