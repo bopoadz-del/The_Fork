@@ -7051,13 +7051,16 @@ def _llm_http_timeout() -> float:
     back before it could answer, so the turn produced NOTHING. Give the
     primary room to finish, capped below the CHAT_STREAM deadline so the
     stream still ends cleanly.
-    Default 200s (stream deadline default is 240s). Override with
-    LLM_HTTP_TIMEOUT_SECONDS.
+    Default 150s (stream deadline default is 240s). A hung DeepSeek at the
+    old 200s default left ~40s — often too little for OpenRouter failover.
+    Longest documented successful non-streaming call is 126.8s; comments
+    cite 100–150s; recent flash TIMING is ≪5s. 150s leaves ~90s of the
+    turn for the fallback hop. Override with LLM_HTTP_TIMEOUT_SECONDS.
     """
     try:
-        return float(os.getenv("LLM_HTTP_TIMEOUT_SECONDS", "200"))
+        return float(os.getenv("LLM_HTTP_TIMEOUT_SECONDS", "150"))
     except ValueError:
-        return 200.0
+        return 150.0
 
 
 # Floor for a single LLM attempt. Below this there is no point starting one:
@@ -7431,6 +7434,12 @@ class _SynthStreamError(Exception):
     streaming chat loop catches it and — if nothing was streamed yet — falls
     back to the non-streaming ``_call_llm`` path, so streaming is never a
     one-way door away from the working behaviour."""
+
+
+# Mid-stream synthesis drop: keep the tokens already shown (do not restart
+# `_call_llm` — that would duplicate the body) and say the turn was cut off
+# so a partial is not persisted as a finished answer.
+_SYNTH_CUTOFF_NOTICE = "The answer was cut off — please ask again."
 
 
 _TPM_CHAR_BUDGET = 16000  # ~4k tokens; the default prompt-compaction budget
@@ -10377,6 +10386,7 @@ class Agent:
             if force_synthesis and _synth_stream_enabled:
                 streamed_any = False
                 fell_back = False
+                cut_off = False
                 tool_leak = False
                 acc: list[str] = []
                 pending = ""
@@ -10411,6 +10421,10 @@ class Agent:
                                 yield {"type": "token", "content": seg}
                 except _SynthStreamError as _se:
                     if streamed_any:
+                        # Tokens already left the provider. Do not restart
+                        # `_call_llm` (anti-duplicate). Finish with what
+                        # streamed and mark the cut-off before persist/`end`.
+                        cut_off = True
                         _LOG.warning("chat_stream: synthesis stream dropped mid-way (%s)", _se)
                     else:
                         _LOG.info("chat_stream: synthesis stream unavailable (%s) — non-streaming fallback", _se)
@@ -10614,6 +10628,17 @@ class Agent:
                             project_id=project_id,
                             audit_rec=_rag_audit,
                         )
+                        if cut_off and _SYNTH_CUTOFF_NOTICE not in final_text:
+                            suffix = (
+                                ("\n\n" if final_text.strip() else "")
+                                + _SYNTH_CUTOFF_NOTICE
+                            )
+                            final_text = (
+                                final_text.rstrip() + suffix
+                                if final_text.strip()
+                                else _SYNTH_CUTOFF_NOTICE
+                            )
+                            yield {"type": "token", "content": suffix}
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMED-SYNTH iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -11161,7 +11186,7 @@ class Agent:
 
         # Wall-clock budget. chat_stream caps the whole TURN; _call_llm walks
         # a provider fallback ladder INSIDE that cap, so without a shared
-        # deadline the ladder can spend _llm_http_timeout() per hop (200s by
+        # deadline the ladder can spend _llm_http_timeout() per hop (150s by
         # default) against a 240s turn cap and return nothing at all.
         #
         # Live request 43e40b3a-e8f: iter=0 took 126.8s and produced a dangling
