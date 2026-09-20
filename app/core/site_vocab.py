@@ -141,6 +141,28 @@ _CLASH_CDE_RFI = re.compile(
 )
 
 
+
+_INLINE_BOQ_LINES = re.compile(
+    # Do NOT match bare "boq_process" — that fires on uploaded-file asks.
+    r"(?is)synthetic\s+csv\s*/\s*boq|Item\s*,\s*Desc\s*,\s*Qty"
+    r"|(?:\d+\.\d+\s*,\s*[^,\n]+,\s*\d+)",
+)
+
+
+def message_has_inline_boq_lines(text: str) -> bool:
+    """True when the operator pasted BOQ/CSV lines for boq_process (no file)."""
+    t = text or ""
+    low = t.lower()
+    # Uploaded-file asks name boq_process + a path/extension — not inline.
+    if re.search(r"\.(xlsx|xls|csv|pdf)\b", low) and "synthetic" not in low:
+        return False
+    if "boq_process" in low and (
+        "synthetic" in low or "lines" in low or "Item,Desc" in t.replace(" ", "")
+    ):
+        return True
+    return bool(_INLINE_BOQ_LINES.search(t))
+
+
 def message_wants_clash_cde_rfi(text: str) -> bool:
     """Clash follow-up posts to the CDE — not a local Fork RFI number."""
     return bool(_CLASH_CDE_RFI.search(text or ""))
