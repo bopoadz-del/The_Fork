@@ -161,6 +161,42 @@ def test_named_calculator_still_forces_construction_calc():
     ) == "construction_calc"
 
 
+def test_empty_fixture_rfi_draft_is_not_an_unindexed_refusal():
+    """Empty FIXTURE projects must not early-return the unindexed refusal."""
+    from app.agents.runtime import _project_has_non_rag_context
+
+    ask = (
+        "draft an RFI asking the engineer to clarify the "
+        "rebar detail at the transfer beam"
+    )
+    assert _project_has_non_rag_context("empty-fixture", ask) is True
+    assert _project_has_non_rag_context("FIXTURE-Programme", ask) is True
+
+
+def test_rfi_ask_does_not_predispatch_construction_calc(monkeypatch):
+    """'rebar lap' is a named calculator; an RFI draft must not steal it."""
+    from app.agents import runtime
+
+    called = []
+
+    async def boom(*_a, **_k):
+        called.append(1)
+        raise AssertionError("construction_calc must not predispatch on an RFI draft")
+
+    agent = _agent(["construction"])
+    monkeypatch.setattr(agent, "_run_tool_call", boom)
+    rec = _run(runtime._predispatch_formula_calc(
+        agent,
+        [{
+            "role": "user",
+            "content": "use rfi_generator for the missing rebar lap detail",
+        }],
+        "empty-fixture",
+    ))
+    assert rec is None
+    assert called == []
+
+
 # ── Dispatch ────────────────────────────────────────────────────────────────
 
 
