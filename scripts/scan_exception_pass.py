@@ -72,8 +72,11 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:2153": "baseline 2026-09-10",
     "app/agents/runtime.py:2822": "baseline 2026-09-10",
     "app/agents/runtime.py:3829": "baseline 2026-09-10",
-    "app/agents/runtime.py:5110": "baseline 2026-09-10",
-    "app/agents/runtime.py:5519": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20: Set3 remaining E1 truncation detector
+    # + E3/E6/F1 grafts (#666). Same pre-existing handlers — only the
+    # line numbers moved. No new silent returns.
+    "app/agents/runtime.py:5133": "baseline 2026-09-10",
+    "app/agents/runtime.py:5544": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:942": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
