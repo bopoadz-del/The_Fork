@@ -14064,7 +14064,7 @@ def _should_handoff_unmatched_calc(text: str) -> bool:
         if message_has_inline_boq_lines(text):
             return False
     except Exception:  # noqa: BLE001
-        pass
+        _LOG.debug("inline-boq handoff guard skipped", exc_info=True)
     return _looks_like_self_contained_calculation(text) or _asks_self_coding(text)
 
 
