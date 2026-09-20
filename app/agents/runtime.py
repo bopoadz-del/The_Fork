@@ -1655,6 +1655,23 @@ def _message_wants_locked_deliverable(text: str) -> bool:
     )
 
 
+
+def _vo_draft_hard_excludes(user_message: str) -> set[str]:
+    """Tools that must not run on a VO-draft turn (live tip 0a95d03 ask2).
+
+    Predispatch steal only applies after a successful VO tool hit. Ask2 on
+    tip 0a95d03 skipped predispatch and called construction + sympy_reasoning
+    instead. Hard-exclude those whenever the operator ask is a VO draft.
+    """
+    if not _message_wants_vo_draft(user_message):
+        return set()
+    return {
+        "construction",
+        "sympy_reasoning",
+        "change_order_impact",
+        "construction_calc",
+    }
+
 def _conflicting_tools_after_predispatch(name: str) -> set[str]:
     """Tools that stole the live Infra Pack answers after a correct draft."""
     steal = {
@@ -3877,6 +3894,12 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     wants_rfi = _message_wants_rfi_draft(text)
     if "rfi_generator" in available and wants_rfi:
         return "rfi_generator"
+    # Live tip 0a95d03 ask2: VO draft still ran construction+sympy. Force
+    # variation_order_manager when the ask is a priced ADD/OMIT draft.
+    if _message_wants_vo_draft(text):
+        for name in ("variation_order_manager", "variation_order_generator"):
+            if name in available:
+                return name
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             if (
@@ -10012,6 +10035,13 @@ class Agent:
         SEARCH_TOOL_CAP = int(os.getenv("AGENT_SEARCH_TOOL_CAP", "2"))
         search_calls = 0
         excluded_tools: set = set()
+        # Live tip 0a95d03: VO ask2 stole to construction/sympy when
+        # predispatch missed — hard-exclude on draft intent alone.
+        try:
+            _op = _latest_operator_ask(messages) or ""
+            excluded_tools |= _vo_draft_hard_excludes(_op)
+        except Exception:  # noqa: BLE001
+            _LOG.debug("vo hard-exclude skipped", exc_info=True)
         # Once a deliverable (non-search) tool returns, force a tool-free
         # synthesis call — see the streaming loop for the full rationale (stops
         # the tool-loop and the Groq large-context tool_use_failed/429 hang).
@@ -11134,6 +11164,13 @@ class Agent:
         SEARCH_TOOL_CAP = int(os.getenv("AGENT_SEARCH_TOOL_CAP", "2"))
         search_calls = 0
         excluded_tools: set = set()
+        # Live tip 0a95d03: VO ask2 stole to construction/sympy when
+        # predispatch missed — hard-exclude on draft intent alone.
+        try:
+            _op = _latest_operator_ask(messages) or ""
+            excluded_tools |= _vo_draft_hard_excludes(_op)
+        except Exception:  # noqa: BLE001
+            _LOG.debug("vo hard-exclude skipped", exc_info=True)
         # Once a deliverable (non-search) tool has returned its result, the model
         # has what it needs — the next call is synthesis. Offering tools on that
         # synthesis call is pure downside: it lets the model loop, and on Groq a
