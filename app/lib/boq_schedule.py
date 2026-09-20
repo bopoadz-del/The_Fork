@@ -1020,6 +1020,8 @@ def activities_from_boq_scope_outline(
             "duration_days": 1,
             "predecessors": [prev] if prev else [],
             "resources": ["demolition"],
+            "wbs": act_id,
+            "wbs_code": act_id,
             "wbs_phase": phase_slug,
             "boq": {
                 "item_key": item.get("item_key") or code or None,

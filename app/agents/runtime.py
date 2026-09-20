@@ -6981,6 +6981,7 @@ def _build_exports_from_audit(
                 conversation_schedule_export_descriptor,
                 load_conversation_wbs,
             )
+            payload["conversation_id"] = conversation_id
             if load_conversation_wbs(str(conversation_id)):
                 exports.append(conversation_schedule_export_descriptor(
                     project_id, str(conversation_id), int(total or 0),
