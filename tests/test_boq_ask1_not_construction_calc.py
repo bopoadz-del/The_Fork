@@ -95,10 +95,13 @@ async def test_live_ask1_formula_predispatch_does_not_steal():
 async def test_live_ask1_predispatch_invokes_boq_process(monkeypatch):
     from app.agents.runtime import _predispatch_remaining_deliverables
     from app.containers.construction import ConstructionContainer
+    from app.dependencies import get_block_instance as _real_get_block
 
     monkeypatch.setattr(
         "app.dependencies.get_block_instance",
-        lambda name: ConstructionContainer() if name == "construction" else None,
+        lambda name: (
+            ConstructionContainer() if name == "construction" else _real_get_block(name)
+        ),
     )
 
     class _A:
