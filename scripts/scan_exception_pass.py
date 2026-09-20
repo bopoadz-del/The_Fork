@@ -131,7 +131,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/main.py:475": "baseline 2026-09-10",
     # Re-indexed 2026-09-18: #607 imported with_hat_signals at the top of
     # chat.py (one line). Same handler — only the line number moved.
-    "app/routers/chat.py:365": "baseline 2026-09-10",
+    "app/routers/chat.py:371": "baseline 2026-09-10; renumbered Agent D look_ahead synthetic helper",
     "app/routers/chat_watchdog.py:98": "baseline 2026-09-10",
     "app/routers/mcp.py:65": "baseline 2026-09-10",
     "app/worker/ingest_queue.py:33": "baseline 2026-09-10",
