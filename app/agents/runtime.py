@@ -766,6 +766,22 @@ _LOOKAHEAD_PHRASES = (
     "rolling look ahead", "short term programme", "short-term programme",
     "short term program", "short-term program",
 )
+_PROCUREMENT_LIST_PHRASES = (
+    "procurement_list_generator",
+    "procurement list",
+    "material list",
+    "purchase list",
+    "buy list",
+    "vendor list",
+    "materials list",
+    "what materials",
+    "need to buy",
+    "need to purchase",
+    "generate a procurement",
+    "produce a procurement",
+    "create a procurement",
+    "po_generator",
+)
 _HISTOGRAM_QA_RE = re.compile(
     r"\b(what is|what's|whats|explain|define)\b", re.IGNORECASE,
 )
@@ -797,6 +813,20 @@ def _message_wants_look_ahead(text: str) -> bool:
     return "look" in low and "ahead" in low and any(
         t in low for t in (".xer", "primavera", "p6", "schedule", "programme", "program")
     )
+
+
+def _message_wants_procurement_list(text: str) -> bool:
+    """True for a procurement-list deliverable, not schedule / definition Q&A.
+
+    Live Phase 2: "generate a procurement list" / "what materials do we
+    need to buy" / a tool-shaped ``procurement_list_generator`` ask must
+    not fall through to ``construction_calc``. Bare "how long is
+    procurement on the schedule?" is RAG / WBS and stays unforced.
+    """
+    low = (text or "").lower()
+    if not low or _HISTOGRAM_QA_RE.search(low):
+        return False
+    return any(p in low for p in _PROCUREMENT_LIST_PHRASES)
 
 
 def _resolve_histogram_schedule_file(
@@ -3454,6 +3484,7 @@ _DELIVERABLE_PHRASES = (
     # "when does commissioning start?") is left on tool_choice=auto.
     "commissioning checklist", "commissioning plan", "commissioning schedule",
     "testing and commissioning", "t&c checklist",
+    "procurement list", "material list", "materials list",
 )
 
 
@@ -3755,14 +3786,24 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
         return "resource_histogram"
     if "look_ahead" in available and _message_wants_look_ahead(text):
         return "look_ahead"
+    wants_procurement = _message_wants_procurement_list(text)
+    if "procurement_list_generator" in available and wants_procurement:
+        return "procurement_list_generator"
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             if (
                 tool == "construction_calc"
-                and _message_is_schedule_or_programme_deliverable(text)
+                and (
+                    _message_is_schedule_or_programme_deliverable(text)
+                    or wants_procurement
+                )
             ):
                 continue
             return tool
+    # A procurement-list ask must not fall through to construction_calc
+    # when the toolkit omitted the action — that is the live miss.
+    if wants_procurement:
+        return None
     # Keyword phrases reach ~a dozen of the 76 registered calculators. Catch
     # the rest by SHAPE: a question that supplies its own dimensions and asks
     # to compute is arithmetic, whatever the domain noun happens to be.
@@ -8747,6 +8788,64 @@ class Agent:
                     },
                 },
             })
+            # ── synthetic tool: procurement_list_generator ───────────────────
+            # Same reason as generate_wbs / cash_flow_forecast: the generic
+            # `construction` tool's input/params shape lets the model say
+            # "procurement_list_generator is not in my toolkit" and fall
+            # through to construction_calc (live Phase 2, second ask).
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "procurement_list_generator",
+                    "description": (
+                        "Build a prioritised procurement / buy list from BOQ "
+                        "line items or discrete quantities. CALL THIS when "
+                        "the user asks for a procurement list, material list, "
+                        "purchase list, or what materials to buy. Do not "
+                        "invent line items in prose and do not use "
+                        "construction_calc for this deliverable. Empty BOQ / "
+                        "quantities returns an honest empty list."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "quantities": {
+                                "type": "object",
+                                "description": (
+                                    "Discrete item → {quantity, unit} map "
+                                    "(e.g. {\"Rebar\": {\"quantity\": 3.2, "
+                                    "\"unit\": \"t\"}})."
+                                ),
+                            },
+                            "boq": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                                "description": "BOQ / estimate line items.",
+                            },
+                            "budget": {
+                                "type": ["number", "string"],
+                                "description": "Optional budget for variance.",
+                            },
+                            "location": {
+                                "type": "string",
+                                "description": "Rate-lookup location.",
+                            },
+                            "project_type": {
+                                "type": "string",
+                                "description": "Project type for rate lookup.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": (
+                                    "Original user request. Used when "
+                                    "quantities / boq are omitted."
+                                ),
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            })
 
         # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
         if self.can_delegate:
@@ -12110,6 +12209,63 @@ class Agent:
                 }
             return {
                 "name": "evm_calculate",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
+        # ── synthetic tool: procurement_list_generator ───────────────────────
+        if name == "procurement_list_generator":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            params: dict[str, Any] = {}
+            nested = args.get("params")
+            if isinstance(nested, dict):
+                params.update(nested)
+            for key in (
+                "quantities", "boq", "budget", "location", "project_type",
+                "schedule_start_date",
+            ):
+                if args.get(key) is not None:
+                    params.setdefault(key, args.get(key))
+            input_data = args.get("input")
+            if not isinstance(input_data, dict):
+                input_data = {}
+            else:
+                input_data = dict(input_data)
+            input_data.setdefault(
+                "message", args.get("message") or user_message or "",
+            )
+            try:
+                result = await container.procurement_list_generator(
+                    input_data, params,
+                )
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"procurement_list_generator failed: {e}",
+                    },
+                }
+            return {
+                "name": "procurement_list_generator",
                 "ok": isinstance(result, dict) and result.get("status") == "success",
                 "result": result,
             }

@@ -188,6 +188,7 @@ These phrases are direct instructions to call a tool. Calling the tool is the ri
 | "cost estimate", "budget", "cost breakdown" | `search_project_documents` for the BOQ path, then `boq_processor`, then `sympy_reasoning` |
 | "variance", "compare BOQ to drawings", "discrepancy" | `search_project_documents` for BOTH the BOQ and drawing paths, then `boq_processor` + `drawing_qto` + `sympy_reasoning` |
 | "recommendations", "what should we do about X" | `recommendation_template` |
+| "procurement list", "material list", "what materials do we need to buy", `procurement_list_generator` | `procurement_list_generator` — do NOT use `construction_calc` |
 | "dewatering", "uplift check", "mix design", "formwork striking", "modulus of rupture", "beam deflection", "bearing pressure", "crane capacity", "crane planning", "cost build-up", "concrete/rebar/formwork cost per unit", "well point spacing", "diaphragm wall volume" | `construction_calc` with the matching `calculation` |
 | ANY engineering / quantity / cost formula that has a defined calculation | `construction_calc` — do NOT compute it in prose |
 | A calculation `construction_calc` rejects as `Unknown calculation`, or any custom unit conversion with no named calculator | `delegate_to_agent` → `self-coding` **exactly once**. Do not retry `construction_calc`. |
@@ -312,7 +313,7 @@ Never end a "not found" reply with an offer of options. End with the general-kno
 
 ## When to delegate
 
-Delegate to `smart-orchestrator` ONLY when the user gives an imperative for something OUTSIDE your toolkit — e.g. "run a safety compliance audit on this site report", "process this Primavera .xer file", "generate the procurement list". For anything in your toolkit (WBS, BOQ, drawings, specs, cost, recommendations), DO IT YOURSELF — delegation is slower and is a failure mode.
+Delegate to `smart-orchestrator` ONLY when the user gives an imperative for something OUTSIDE your toolkit — e.g. "run a safety compliance audit on this site report", "process this Primavera .xer file". For anything in your toolkit (WBS, BOQ, drawings, specs, cost, recommendations, procurement list via `procurement_list_generator`), DO IT YOURSELF — delegation is slower and is a failure mode. Never say `procurement_list_generator` is not in your toolkit.
 
 ## Hard rules
 
