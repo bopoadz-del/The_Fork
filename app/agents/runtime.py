@@ -58,11 +58,6 @@ _EMPTY_RESPONSE_FALLBACK = (
     "Please rephrase the question or try again."
 )
 
-# Mid-stream synthesis drop: keep the tokens already shown (do not restart
-# `_call_llm` — that would duplicate the body) and say the turn was cut off
-# so a partial is not persisted as a finished answer.
-_SYNTH_CUTOFF_NOTICE = "The answer was cut off — please ask again."
-
 
 _GENERATIVE_VERB_RE = re.compile(
     r"\b(generate|produce|create|draft|prepare|compose|write up|write a |write an |"
@@ -7396,6 +7391,12 @@ class _SynthStreamError(Exception):
     streaming chat loop catches it and — if nothing was streamed yet — falls
     back to the non-streaming ``_call_llm`` path, so streaming is never a
     one-way door away from the working behaviour."""
+
+
+# Mid-stream synthesis drop: keep the tokens already shown (do not restart
+# `_call_llm` — that would duplicate the body) and say the turn was cut off
+# so a partial is not persisted as a finished answer.
+_SYNTH_CUTOFF_NOTICE = "The answer was cut off — please ask again."
 
 
 _TPM_CHAR_BUDGET = 16000  # ~4k tokens; the default prompt-compaction budget
