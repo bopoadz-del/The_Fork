@@ -1483,8 +1483,34 @@ class ConstructionContainer(
             return abs((d2 - d1).days)
         except Exception:
             return 0
-    def _generate_vo_document(self, vo_number: str, description: str, pricing: Dict, vo_type: str) -> str:
-        return f"Variation Order {vo_number}\nType: {vo_type}\nDescription: {description}\nTotal: {pricing['total']}"
+    def _generate_vo_document(
+        self,
+        vo_number: str,
+        description: str,
+        pricing: Dict,
+        vo_type: str,
+        lines: Optional[List[Dict]] = None,
+    ) -> str:
+        parts = [
+            f"Variation Order {vo_number}",
+            f"Type: {vo_type}",
+            f"Description: {description}",
+        ]
+        if lines:
+            parts.append("Lines:")
+            for line in lines:
+                if not isinstance(line, dict):
+                    parts.append(f"  {line}")
+                    continue
+                parts.append(
+                    f"  {line.get('kind')} {line.get('quantity')} "
+                    f"{line.get('unit')} {line.get('description')} "
+                    f"@ {line.get('rate')} = {line.get('amount')}"
+                )
+        net = pricing.get("total")
+        parts.append(f"Net: {net}")
+        parts.append(f"Total: {net}")
+        return "\n".join(parts)
     def _list_vo_documents(self, vo_data: Dict) -> List[str]:
         docs = vo_data.get("supporting_documents") or vo_data.get("attachments") or []
         if isinstance(docs, list):
