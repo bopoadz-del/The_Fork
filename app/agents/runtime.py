@@ -8913,7 +8913,12 @@ class Agent:
         # routing to heavy-reasoning (or another agent) does not strip project
         # grounding. Adds a system message AFTER the prompt + project context
         # but BEFORE the latest user turn.
-        _rag_sys_msg, _rag_audit = rag_inject(
+        # In a worker thread: rag_inject is synchronous (embedding + SQL +
+        # rerank) and froze the single worker's event loop for its whole
+        # duration -- live, one turn stalled /livez for 4.2 s. to_thread
+        # copies contextvars, so the caller-role gate still applies.
+        _rag_sys_msg, _rag_audit = await asyncio.to_thread(
+            rag_inject,
             user_message=user_message,
             project_id=project_id,
             conversation_id=conversation_id,
@@ -9462,7 +9467,8 @@ class Agent:
         if not missing:
             return final_text, None
         try:
-            sys_msg, _ = rag_inject(
+            sys_msg, _ = await asyncio.to_thread(
+                rag_inject,
                 user_message=_mi_query(missing, user_message),
                 project_id=project_id,
                 # No conversation_id: this is a targeted lookup, not a turn,
@@ -9872,7 +9878,12 @@ class Agent:
         # routing to heavy-reasoning (or another agent) does not strip project
         # grounding. Adds a system message AFTER the prompt + project context
         # but BEFORE the latest user turn.
-        _rag_sys_msg, _rag_audit = rag_inject(
+        # In a worker thread: rag_inject is synchronous (embedding + SQL +
+        # rerank) and froze the single worker's event loop for its whole
+        # duration -- live, one turn stalled /livez for 4.2 s. to_thread
+        # copies contextvars, so the caller-role gate still applies.
+        _rag_sys_msg, _rag_audit = await asyncio.to_thread(
+            rag_inject,
             user_message=user_message,
             project_id=project_id,
             conversation_id=conversation_id,
