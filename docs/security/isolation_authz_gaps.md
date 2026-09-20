@@ -1,7 +1,25 @@
 # Isolation authz gaps (Step 0 — UNPROVEN vs authz matrix sweep)
 
-Date: 2026-09-19. Reviewed against `666e223`. Mapping only. These are **untested against `tests/test_authz_matrix_sweep.py`**, not confirmed holes.
+Date: 2026-09-19. Reviewed against `666e223`, then F-doors against `60c8055`. Mapping only unless a later section says a cell was proven.
 Do not call the platform ready or secure from this list.
+
+## Agent F privileged doors (added on `60c8055`, not a live probe)
+
+These are **not** in the four-cell authz MATRIX sweep. They are covered by
+`tests/test_no_agent_hands_a_user_the_server.py` and the two-user cells in
+`tests/test_no_user_reaches_another_users_data.py`. Live confirm from two
+browser accounts waits for `theshovel.ai` `build_sha >= 60c8055`.
+
+| Surface | Plain user A | Plain user B |
+| --- | --- | --- |
+| `POST /v1/execute` `{block: mcp_consumer\|local_drive\|web\|webhook\|google_drive\|onedrive\|code\|sandbox}` | 403 | 403 |
+| `GET /v1/agents/{self-coding\|external-mcp\|document-ingestion}` | 404 | 404 |
+| `POST /v1/agents/{name}/chat[/stream]` for those names | 404 | 404 |
+| `POST /v1/chat/stream` `"agent"` pin to those names | SSE error `not available` | same |
+
+A new `app/blocks/*.py` that starts a process or reaches the network fails
+CI unless the block `name` is in `PRIVILEGED_BLOCKS` or the reviewed
+allowlist next to `test_every_block_that_starts_a_process_is_privileged_or_reviewed`.
 
 ## Diff
 
@@ -67,7 +85,7 @@ Severity here is **potential blast radius if the untested path is wrong**, not a
 - Guard: `require_user`; admin: privileged_blocks_only
 - Ownership: none — body.input/params may carry project_id/document_id with no store check
 - Flags: id_no_owner
-- Why ranked: Any signed-in user; raise_if_privileged_block(code/sandbox); construction/rag/etc. run with caller-supplied ids
+- Why ranked: Any signed-in user; raise_if_privileged_block on PRIVILEGED_BLOCKS (Agent F); construction/rag/etc. still run with caller-supplied ids when not privileged
 
 ### 3. `GET /mcp/sse` (score 90)
 
@@ -91,7 +109,7 @@ Severity here is **potential blast radius if the untested path is wrong**, not a
 - Guard: `require_user`; admin: privileged_blocks_only
 - Ownership: none — delegates to /execute
 - Flags: id_no_owner
-- Why ranked: EXISTS. Guard=require_user (JWT or API key→system user). Not admin. Not require_api_key-only. Privileged blocks code/sandbox admin-only.
+- Why ranked: EXISTS. Guard=require_user (JWT or API key→system user). Not admin. Not require_api_key-only. PRIVILEGED_BLOCKS 403 to a plain user (Agent F).
 
 ### 6. `POST /v1/auth/check` (score 75)
 
@@ -146,8 +164,8 @@ Severity here is **potential blast radius if the untested path is wrong**, not a
 
 ### `id_no_owner`
 
-- `POST /execute` (`require_user`) — Any signed-in user; raise_if_privileged_block(code/sandbox); construction/rag/etc. run with caller-supplied ids
-- `POST /v1/execute` (`require_user`) — EXISTS. Guard=require_user (JWT or API key→system user). Not admin. Not require_api_key-only. Privileged blocks code/sandbox admin-only.
+- `POST /execute` (`require_user`) — PRIVILEGED_BLOCKS 403 to a plain user (Agent F); nested ids granted in #623
+- `POST /v1/execute` (`require_user`) — same as /execute
 - `POST /chain` (`require_user`) — Orchestrator chain; same privilege gate as execute
 - `POST /v1/chain` (`require_user`) — Alias of /chain
 - `POST /upload` (`require_api_key`) — File lands in DATA_DIR even when project_id missing/unowned. API key→SYSTEM_USER_ID. No child-id.
