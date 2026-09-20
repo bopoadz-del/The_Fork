@@ -120,6 +120,21 @@ def message_reports_slipped_delivery(text: str) -> bool:
     return bool(_DELIVERY_SLIPPED.search(text or ""))
 
 
+# Live Phase 2: "draft a variation order" + priced ADD/OMIT must stay on
+# variation_order_manager. The bare word "variation" used to score
+# change_order_impact first, so ask1 never drafted.
+_VO_DRAFT = re.compile(
+    r"(?:draft|issue|create|generate|write|prepare|make)\s+"
+    r"(?:a(?:n)?\s+)?(?:variation(?:\s+order)?|vo\b|change\s+order)",
+    re.IGNORECASE,
+)
+
+
+def message_wants_vo_draft(text: str) -> bool:
+    """True for a VO / change-order *draft* intent, not impact or log Q&A."""
+    return bool(_VO_DRAFT.search(text or ""))
+
+
 _CLASH_CDE_RFI = re.compile(
     r"\b(?:rfi|request\s+for\s+information|post\s+(?:an?\s+)?rfi|raise\s+(?:an?\s+)?rfi)\b",
     re.IGNORECASE,

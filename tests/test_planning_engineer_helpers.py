@@ -221,6 +221,19 @@ def test_productivity_refuses_without_pairs():
     assert isinstance(r.get("error"), str)
 
 
+def test_productivity_rate_plus_crew_cost_computes_sar():
+    """Live A2-1 first call: productivity_rate + crew_cost_per_day."""
+    r = productivity_manpower_duration(
+        quantity=3400,
+        productivity_rate=42,
+        rate_unit="m2 per gang-day",
+        crew_cost_per_day=1950,
+    )
+    assert r.get("error") is None
+    assert r["duration"] == pytest.approx(3400 / 42, abs=0.01)
+    assert r["total_cost"] == pytest.approx(3400 / 42 * 1950, abs=0.5)
+
+
 # ---------------------------------------------------------------------------
 # Unit conversions + material / concrete mix refuse-without-inputs
 # ---------------------------------------------------------------------------

@@ -42,6 +42,75 @@ async def test_offline_template_when_no_provider_available(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_deepseek_402_does_not_serve_offline_when_fallback_is_ready(monkeypatch):
+    """Live tip 78bd9ca: POST /v1/chat returned the offline template while
+    GET /v1/health said primary_ready + fallback_ready. ChatBlock treated a
+    DeepSeek 402 as 'no language model is reachable' and never walked
+    ``_llm_fallback_ladder``.
+    """
+    import httpx
+
+    from app.agents.runtime import DEEPSEEK_API_URL, OPENROUTER_API_URL
+    from app.core.health_probes import probe_llm
+
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-secret")
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-secret")
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+
+    assert probe_llm() == {"primary_ready": True, "fallback_ready": True}
+
+    urls: list[str] = []
+
+    class _Resp:
+        def __init__(self, status_code, payload=None, text=""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text if text else (
+                "" if payload is None else __import__("json").dumps(payload)
+            )
+
+        def json(self):
+            return self._payload
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None, **kwargs):
+            urls.append(url)
+            if url.startswith(DEEPSEEK_API_URL.rsplit("/", 2)[0]):
+                return _Resp(
+                    402,
+                    text='{"error":{"message":"Insufficient Balance"}}',
+                )
+            return _Resp(
+                200,
+                payload={"choices": [{"message": {"content": "openrouter recovered"}}]},
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    block = ChatBlock()
+    result = await block.process("Hello, what is 2+2?", {"stream": False})
+
+    assert result["status"] == "success", result
+    assert result.get("provider") != "offline_template", result
+    assert "offline mode" not in (result.get("text") or "").lower()
+    assert result.get("text") == "openrouter recovered"
+    assert any(u.startswith(DEEPSEEK_API_URL.rsplit("/", 2)[0]) for u in urls)
+    assert any(u.startswith(OPENROUTER_API_URL.rsplit("/", 2)[0]) for u in urls)
+
+
+@pytest.mark.asyncio
 async def test_cloud_path_routes_through_llm_config_provider(monkeypatch):
     """process() selects the cloud provider via _llm_config and forwards that
     provider's key, URL and default model to _call_cloud."""

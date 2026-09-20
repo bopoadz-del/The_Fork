@@ -260,6 +260,8 @@ function friendlyErrorMessage(raw: string): string {
     return 'The assistant is misconfigured for this model. Please try again in a moment.'
   }
   if (
+    r.includes('temporarily unavailable') ||
+    r.includes('problem on our side') ||
     r.includes('errno -2') ||
     r.includes('errno -3') ||
     r.includes('name or service not known') ||
