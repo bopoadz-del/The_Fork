@@ -227,3 +227,7 @@ jobs:
       - name: ESLint (blocking — errors only)
         working-directory: frontend
         run: npm run lint
+
+      - name: Frontend unit tests (node --test, no framework)
+        working-directory: frontend
+        run: node --test src/lib/
