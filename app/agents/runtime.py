@@ -635,6 +635,10 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
     # Empty FIXTURE projects must not early-return the unindexed refusal.
     if _message_is_formula_style_ask(user_message):
         return True
+    # Live Phase 2: a priced VO draft is self-contained. Empty FIXTURE
+    # projects must not early-return the unindexed refusal on ask1.
+    if _message_wants_vo_draft(user_message):
+        return True
     try:
         from app.core.project_memory import build_project_context
 
@@ -1491,6 +1495,12 @@ def _message_wants_as_built_note(text: str) -> bool:
     return bool(re.search(r"as-built deviation|as built deviation", text or "", re.I))
 
 
+def _message_wants_vo_draft(text: str) -> bool:
+    """True for a first-ask variation-order draft, not impact / log Q&A."""
+    from app.core.site_vocab import message_wants_vo_draft
+    return message_wants_vo_draft(text or "")
+
+
 def _message_wants_job_requisition(text: str) -> bool:
     return bool(re.search(r"job requisition", text or "", re.I))
 
@@ -1630,6 +1640,7 @@ def _message_wants_locked_deliverable(text: str) -> bool:
             _message_wants_as_built_note,
             _message_wants_ipc_draft,
             _message_wants_commissioning,
+            _message_wants_vo_draft,
         )
     )
 
@@ -1660,6 +1671,7 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "payment_certificate": {"wir_form", "claims_builder"},
         "commissioning_checklist": {"wir_form", "om_manual_generator"},
         "wir_form": {"payment_certificate", "job_requisition", "rfp_draft", "rfi_generator"},
+        "variation_order_manager": {"change_order_impact", "wir_form"},
     }
     return set(steal.get(name) or ())
 
@@ -1846,6 +1858,14 @@ async def _predispatch_remaining_deliverables(
             "rfp_draft",
             _format_rfp_draft,
             "Present this RFP in full paragraphs. Do not draft a WIR.",
+        ),
+        (
+            "AGENT_VO_PREDISPATCH",
+            _message_wants_vo_draft,
+            "variation_order_manager",
+            _format_variation_order,
+            "Present this variation order in full. Do not run "
+            "change_order_impact. Do not reply with Status: Success only.",
         ),
     )
     for env_key, want_fn, action, format_fn, instruction in candidates:
@@ -2398,6 +2418,7 @@ def _should_short_circuit_rag_miss(
         or _looks_like_self_contained_calculation(user_message)
         or _message_is_formula_style_ask(user_message)
         or _asks_for_export(user_message)
+        or _message_wants_vo_draft(user_message)
     ):
         return False
     # A unit RATE ("SAR 62/m2") is not a reference: it looks like page
@@ -4373,6 +4394,34 @@ def _text_needs_tool_recovery(text: str) -> bool:
     return False
 
 
+def _format_variation_order(payload: dict[str, Any]) -> str:
+    lines = payload.get("lines") or payload.get("vo_lines") or []
+    parts = [
+        f"**Variation Order {payload.get('vo_number') or 'VO-D-001'}**",
+        f"**Description:** {payload.get('description') or ''}",
+        "",
+        "### Lines",
+    ]
+    for line in lines:
+        if isinstance(line, dict):
+            parts.append(
+                f"- {line.get('kind')} {line.get('quantity')} "
+                f"{line.get('unit')} {line.get('description')} "
+                f"@ {line.get('rate')} = {line.get('amount')}"
+            )
+        else:
+            parts.append(f"- {line}")
+    net = payload.get("net")
+    if net is None:
+        net = (payload.get("pricing") or {}).get("total_value")
+    parts.append("")
+    parts.append(f"**Net:** {net}")
+    body = payload.get("document_content") or payload.get("vo_document")
+    if body:
+        parts.extend(["", str(body)])
+    return "\n".join(parts).strip()
+
+
 def _format_payment_certificate(payload: dict[str, Any]) -> str:
     cert = payload.get("certificate") if isinstance(payload.get("certificate"), dict) else {}
     val = payload.get("valuation") if isinstance(payload.get("valuation"), dict) else {}
@@ -4737,6 +4786,8 @@ def _recover_answer_from_tool_messages(
             return _format_wir_form(inner)
         if action == "payment_certificate":
             return _format_payment_certificate(inner)
+        if action in {"variation_order_processed", "variation_order_manager"}:
+            return _format_variation_order(inner)
         if action == "as_built_deviation_report":
             return _format_as_built_note(inner)
         if action in {"claim_generated", "claims_builder"}:

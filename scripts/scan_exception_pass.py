@@ -58,10 +58,9 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20 train SO1: procurement toolkit (#644) +
-    # rfi_generator toolkit (#648) + SYNC2 empty-turn / user-rate
-    # closure + IPC MOS lines (#647). Same pre-existing handlers —
-    # only the line numbers moved. No new silent returns.
+    # Re-indexed 2026-09-20 train SO2: SO1 remaps + VO first-ask draft
+    # helpers (#646) inserted above these pre-existing handlers. Same
+    # sites — only the line numbers moved. No new silent returns.
     "app/agents/runtime.py:2058": "baseline 2026-09-10",
     "app/agents/runtime.py:2064": "baseline 2026-09-10",
     "app/agents/runtime.py:2127": "baseline 2026-09-10",
@@ -93,16 +92,18 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/containers/construction/__init__.py:1383": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:145": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:1484": "baseline 2026-09-10",
-    "app/containers/construction/__init__.py:1622": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20: VO document now lists ADD/OMIT lines.
+    # Same handler — only the line number moved.
+    "app/containers/construction/__init__.py:1648": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:407": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:414": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:555": "baseline 2026-09-10",
-    # Re-indexed 2026-09-19: draft-VO ask refuse helpers inserted above
+    # Re-indexed 2026-09-20: ADD/OMIT priced-line parser inserted above
     # this pre-existing site. Same handler — only the line number moved.
     # No new silent returns.
     # Re-indexed 2026-09-20: measured-works / MOS / ipc_args_from_ask
-    # inserted above this pre-existing site. Same handler — only the
-    # line number moved. No new silent returns.
+    # + VO ADD/OMIT priced-line parser. Same handler — only the line
+    # number moved. No new silent returns.
     "app/containers/construction/boq.py:900": "baseline 2026-09-10",
     "app/containers/construction/helpers.py:69": "baseline 2026-09-10",
     "app/core/doc_index.py:1063": "baseline 2026-09-10",
