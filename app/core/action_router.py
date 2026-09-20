@@ -375,6 +375,40 @@ def message_wants_look_ahead(text: str) -> bool:
     )
 
 
+
+# Cash-flow / S-curve asks share "schedule" / "programme" nouns with
+# generate_wbs; the keyword scorer then picks WBS. Detector is the steal-guard.
+_CASH_FLOW_PHRASES = (
+    "cash_flow_forecast",
+    "cash_flow",
+    "cash-flow",
+    "cash flow",
+    "cashflow",
+    "s-curve",
+    "s curve",
+    "spend curve",
+    "drawdown",
+)
+_CASH_FLOW_QA_RE = re.compile(
+    r"\b(what is|what's|whats|explain|define)\b",
+    re.IGNORECASE,
+)
+
+
+def message_wants_cash_flow(text: str) -> bool:
+    """True when the turn asks for a cash-flow / S-curve, not a WBS.
+
+    Live tip 50c37f: "Use cash_flow_forecast. Synthetic schedule/costs…"
+    classified as generate_wbs because schedule nouns outscored cash flow
+    (orchestrator keywords lacked the underscore tool name).
+    """
+    raw = text or ""
+    if not raw.strip() or _CASH_FLOW_QA_RE.search(raw):
+        return False
+    low = raw.lower()
+    return any(p in low for p in _CASH_FLOW_PHRASES)
+
+
 def needs_planning(action: Optional[str], confidence: float) -> bool:
     """True iff this orchestrator classification warrants the heavy-reasoning
     agent path instead of the fast single-shot chat block.
