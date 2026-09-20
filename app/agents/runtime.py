@@ -1495,6 +1495,16 @@ def _message_wants_as_built_note(text: str) -> bool:
     return bool(re.search(r"as-built deviation|as built deviation", text or "", re.I))
 
 
+def _message_wants_primavera_parse(text: str) -> bool:
+    """True when the operator asks to parse an uploaded .xer by name."""
+    t = (text or "").lower()
+    if "parse_primavera" in t or "primavera_parser" in t:
+        return True
+    if ".xer" in t and any(k in t for k in ("parse", "extract", "milestones", "activities")):
+        return True
+    return False
+
+
 def _message_wants_vo_draft(text: str) -> bool:
     """True for a first-ask variation-order draft, not impact / log Q&A."""
     from app.core.site_vocab import message_wants_vo_draft
@@ -2419,6 +2429,7 @@ def _should_short_circuit_rag_miss(
         or _message_is_formula_style_ask(user_message)
         or _asks_for_export(user_message)
         or _message_wants_vo_draft(user_message)
+        or _message_wants_primavera_parse(user_message)
     ):
         return False
     # A unit RATE ("SAR 62/m2") is not a reference: it looks like page
