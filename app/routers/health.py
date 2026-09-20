@@ -3,7 +3,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Response
 
 from app.blocks import BLOCK_REGISTRY, FAILED_BLOCKS
-from app.core.health_probes import probe_corpus_chunks, probe_database, probe_embedder
+from app.core.health_probes import (
+    probe_corpus_chunks,
+    probe_database,
+    probe_embedder,
+    probe_llm,
+)
 from app.dependencies import block_instances, MONITORING_AVAILABLE, get_monitoring_block
 from app.infra.monitoring import get_observability_health_payload
 
@@ -47,6 +52,7 @@ def _evaluate_health() -> dict:
         "checks": {
             "database": db,
             "embedder": emb,
+            "llm": probe_llm(),
         },
         # Derived from COUNT(*) on the active chunk table, not the stale
         # documents.chunk_count column. A probe error does not fail liveness.

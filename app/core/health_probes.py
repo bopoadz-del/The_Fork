@@ -101,3 +101,29 @@ def probe_embedder() -> Dict[str, Any]:
         return {"loaded": loaded, "identity": loaded_embedder_identity() if loaded else None}
     except Exception as exc:  # noqa: BLE001
         return {"loaded": False, "identity": None, "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+def probe_llm() -> Dict[str, Any]:
+    """Whether the chat can reach a language model, and whether it can SURVIVE
+    losing the primary one -- two booleans, nothing else.
+
+    Live 2026-09-19: LLM_FALLBACK_PROVIDER named `kimi`, a provider the code had
+    removed. `_cross_provider_fallback` resolved it back to the primary and
+    returned None: no fallback at all, and nothing anywhere said so. An unset
+    fallback key does the same. /health is public, so this names no provider,
+    model, variable or key -- only whether each is usable.
+    """
+    try:
+        import os
+
+        from app.agents.runtime import _llm_config, _llm_fallback_config
+
+        primary = _llm_config()
+        key = primary.get("env_key")
+        return {
+            "primary_ready": bool(os.getenv(key)) if key else True,
+            "fallback_ready": _llm_fallback_config(primary) is not None,
+        }
+    except Exception as exc:  # noqa: BLE001 - a probe never breaks /health
+        return {"primary_ready": False, "fallback_ready": False,
+                "error": type(exc).__name__}

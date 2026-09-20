@@ -35,6 +35,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from typing import AsyncIterator, Callable, Optional
 
@@ -102,6 +103,55 @@ def event_type(raw: str) -> Optional[str]:
     return None
 
 
+#: What a user sees when a turn failed for a reason that is ours to know.
+PROVIDER_FAILURE_MESSAGE = (
+    "The assistant service is temporarily unavailable. This is a problem on our "
+    "side, not with your question. Please try again in a minute."
+)
+
+# An error text that names the plumbing: a provider, an HTTP status, an
+# upstream JSON body, an exception or an environment variable. Live on the
+# fallback path: when DeepSeek AND OpenRouter both failed the user was shown
+# `openrouter HTTP 500: {"error":{"message": ...upstream body...}}`.
+_PLUMBING_RE = re.compile(
+    r"(?i)\b(?:deepseek|openrouter|moonshot|kimi|groq|ollama)\b"
+    r"|\bHTTP\s*\d{3}\b|\bLLM call\b|[{}]|Traceback|\bErrno\b"
+    r"|\b[A-Z][A-Z0-9]*_(?:API_KEY|KEY|SECRET|TOKEN|URL)\b"
+    r"|\b\w*(?:Error|Exception|Timeout)\b\s*[:(]|\bcrashed\b"
+)
+
+
+def user_safe_error(message: object) -> str:
+    """The message itself when it is meant for a user; otherwise one plain
+    sentence. The request_id travels in its own field, so nothing is lost for
+    support -- the original is in the log under that id."""
+    text = str(message or "")
+    if text and not _PLUMBING_RE.search(text):
+        return text
+    return PROVIDER_FAILURE_MESSAGE
+
+
+def sanitize_error_frame(raw: str, request_id: str = "") -> str:
+    """Rewrite one SSE ``error`` frame so no plumbing reaches the screen."""
+    if not isinstance(raw, str) or '"error"' not in raw:
+        return raw
+    body = raw[5:].strip() if raw.startswith("data:") else raw.strip()
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return raw
+    if not isinstance(data, dict) or data.get("type") != "error":
+        return raw
+    original = data.get("message")
+    safe = user_safe_error(original)
+    if safe == original:
+        return raw
+    _LOG.warning("sse: replaced a plumbing error for the user (request_id=%s): %s",
+                 data.get("request_id") or request_id, str(original)[:500])
+    data["message"] = safe
+    return frame(data)
+
+
 async def guarantee_terminal(
     frames: AsyncIterator[str],
     *,
@@ -125,7 +175,7 @@ async def guarantee_terminal(
     """
     if not watchdog_enabled():
         async for raw in frames:
-            yield raw
+            yield sanitize_error_frame(raw, request_id)
         return
 
     limit = watchdog_seconds() if timeout_s is None else timeout_s
@@ -176,7 +226,7 @@ async def guarantee_terminal(
                     saw_token = True
                 if kind in TERMINAL_TYPES:
                     saw_terminal = True
-            yield raw
+            yield sanitize_error_frame(raw, request_id)
     # No `except asyncio.CancelledError: raise` clause here, deliberately: on
     # Python 3.8+ CancelledError inherits from BaseException, not Exception,
     # so the handler below CANNOT swallow it and a client that went away
