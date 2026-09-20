@@ -6,7 +6,11 @@ conversions, and material/concrete-mix helpers that refuse invented rates.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+import logging
+import re
+from typing import Any, Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 def critical_path_float(
@@ -104,6 +108,58 @@ def progress_quantity(
     return out
 
 
+def _crew_cost_from_aliases(
+    crew_cost_per_day: Optional[float],
+    day_rate: Optional[float],
+    gang_cost_per_day: Optional[float],
+) -> Optional[float]:
+    for raw in (crew_cost_per_day, day_rate, gang_cost_per_day):
+        if raw is None or raw == "":
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _daily_production_from_rate_alias(
+    *,
+    productivity_rate: Optional[float],
+    rate_unit: Optional[str],
+    crew_cost: Optional[float],
+) -> Optional[float]:
+    """Live A2-1: ``productivity_rate`` + gang-day unit (or a crew day-rate).
+
+    ``productivity`` on this calculator is qty / man-hour. A rate quoted
+    per gang-day / crew-day is ``daily_production``, not that field.
+    """
+    if productivity_rate is None or productivity_rate == "":
+        return None
+    try:
+        rate = float(productivity_rate)
+    except (TypeError, ValueError):
+        logger.debug("productivity_rate is not numeric: %r", productivity_rate)
+        return None
+    if rate <= 0:
+        return None
+    unit = str(rate_unit or "").lower()
+    per_day = any(
+        token in unit
+        for token in ("gang-day", "gang day", "crew-day", "crew day", "per day", "/day")
+    )
+    if per_day or crew_cost is not None or not unit:
+        # No unit + crew cost (or a bare rate next to a day-cost) is the
+        # live plastering pairing. A unit that names hours stays on the
+        # man-hour path via ``productivity``.
+        if "hour" in unit or "/h" in unit:
+            return None
+        return rate
+    return None
+
+
 def productivity_manpower_duration(
     *,
     quantity_executed: Optional[float] = None,
@@ -117,12 +173,42 @@ def productivity_manpower_duration(
     daily_production: Optional[float] = None,
     remaining_qty: Optional[float] = None,
     remaining_days: Optional[float] = None,
+    productivity_rate: Optional[float] = None,
+    rate_unit: Optional[str] = None,
+    crew_cost_per_day: Optional[float] = None,
+    day_rate: Optional[float] = None,
+    gang_cost_per_day: Optional[float] = None,
 ) -> dict:
     """Qty → productivity → manpower → duration (PE formula sheet).
 
     Computes every output whose required inputs are present. Refuses when
     nothing can be computed — never invents a productivity rate.
+
+    Live A2-1: ``productivity_rate`` (m2 per gang-day) pairs with
+    ``quantity`` as daily production, and ``crew_cost_per_day`` prices
+    the resulting duration. Those aliases were previously stripped, so
+    the first live call failed "paired inputs" and the retry shipped a
+    formula-only note.
     """
+    crew_cost = _crew_cost_from_aliases(
+        crew_cost_per_day, day_rate, gang_cost_per_day,
+    )
+    if daily_production is None:
+        aliased_daily = _daily_production_from_rate_alias(
+            productivity_rate=productivity_rate,
+            rate_unit=rate_unit,
+            crew_cost=crew_cost,
+        )
+        if aliased_daily is not None:
+            daily_production = aliased_daily
+    if productivity is None and productivity_rate is not None and daily_production is None:
+        try:
+            prod_alias = float(productivity_rate)
+        except (TypeError, ValueError):
+            prod_alias = None
+        if prod_alias is not None and prod_alias > 0:
+            productivity = prod_alias
+
     results: Dict[str, Any] = {
         "formulas_used": [],
         "standard": "PE formula sheet (Productivity / Manpower / Duration)",
@@ -203,6 +289,13 @@ def productivity_manpower_duration(
             "Duration = Quantity / Daily Production"
         )
         computed = True
+        if crew_cost is not None:
+            cost = dur * crew_cost
+            results["total_cost"] = round(cost, 2)
+            results["crew_cost_per_day"] = round(crew_cost, 2)
+            results["formulas_used"].append(
+                "Cost = Duration × Crew Cost per Day"
+            )
 
     # Daily Required Production = Remaining Qty / Remaining Days
     if remaining_qty is not None and remaining_days is not None:
@@ -238,7 +331,18 @@ def productivity_manpower_duration(
             ],
         }
 
-    results["note"] = "; ".join(results["formulas_used"])
+    note_parts = list(results["formulas_used"])
+    if results.get("duration") is not None and quantity is not None and daily_production is not None:
+        note_parts.append(
+            f"{float(quantity):g} / {float(daily_production):g} = "
+            f"{results['duration']:g} days"
+        )
+    if results.get("total_cost") is not None and results.get("duration") is not None:
+        note_parts.append(
+            f"{results['duration']:g} × {results['crew_cost_per_day']:g} = "
+            f"{results['total_cost']:g}"
+        )
+    results["note"] = "; ".join(note_parts)
     return results
 
 
@@ -445,6 +549,127 @@ def concrete_mix_proportions(
             f"dry={dry:.4g}; cement={cement_vol:.4g}, sand={sand_vol:.4g}, "
             f"agg={agg_vol:.4g}."
         ),
+    }
+
+
+# Live A2-1: "remaining 3,400 m2 of plastering cost if productivity stays
+# at 42 m2 per gang-day and a gang costs SAR 1,950 per day"
+_PROD_COST_ASK_RE = re.compile(
+    r"(?i)\b(cost|price|sar|aed|usd|gbp|eur).{0,80}\b(gang|crew)|"
+    r"\b(gang|crew).{0,40}\b(cost|price|sar|aed|usd)"
+)
+_QTY_M2_RE = re.compile(r"(?i)(\d[\d,]*(?:\.\d+)?)\s*m2\b")
+_PER_GANG_DAY_RE = re.compile(
+    r"(?i)(\d[\d,]*(?:\.\d+)?)\s*m2\s+per\s+(?:gang|crew)[- ]?day"
+)
+_GANG_DAY_COST_RE = re.compile(
+    r"(?i)(?:(?:gang|crew).{0,32}(?:costs?|at)\s*)?(?:SAR|AED|USD|GBP|EUR)\s*"
+    r"(\d[\d,]*(?:\.\d+)?)\s*per\s+day"
+    r"|(?:gang|crew).{0,24}(?:costs?|at)\s*(\d[\d,]*(?:\.\d+)?)"
+)
+_CURRENCY_RE = re.compile(r"\b(SAR|AED|USD|GBP|EUR)\b", re.IGNORECASE)
+
+
+def looks_like_productivity_cost_ask(text: str) -> bool:
+    """True when the operator asked for cost from gang-day productivity."""
+    raw = text or ""
+    if not _PROD_COST_ASK_RE.search(raw):
+        return False
+    return bool(_PER_GANG_DAY_RE.search(raw) or _QTY_M2_RE.search(raw))
+
+
+def parse_productivity_cost_ask(
+    text: str,
+) -> Tuple[Optional[float], Optional[float], Optional[float], str]:
+    """Return (quantity, daily_production, crew_cost_per_day, currency)."""
+    raw = text or ""
+    qty = daily = cost = None
+    m_qty = _QTY_M2_RE.search(raw)
+    if m_qty:
+        qty = float(m_qty.group(1).replace(",", ""))
+    m_daily = _PER_GANG_DAY_RE.search(raw)
+    if m_daily:
+        daily = float(m_daily.group(1).replace(",", ""))
+    m_cost = _GANG_DAY_COST_RE.search(raw)
+    if m_cost:
+        raw_cost = next((g for g in m_cost.groups() if g), None)
+        if raw_cost:
+            cost = float(raw_cost.replace(",", ""))
+    curr_m = _CURRENCY_RE.search(raw)
+    currency = (curr_m.group(1) if curr_m else "SAR").upper()
+    return qty, daily, cost, currency
+
+
+def format_productivity_cost_line(inner: dict, currency: str = "SAR") -> str:
+    """User-facing duration + cost line from a productivity result dict."""
+    if not isinstance(inner, dict):
+        return ""
+    duration = inner.get("duration")
+    cost = inner.get("total_cost")
+    if duration is None:
+        return ""
+    try:
+        dur_f = float(duration)
+    except (TypeError, ValueError):
+        logger.debug("duration is not numeric: %r", duration)
+        return ""
+    qty = inner.get("quantity")
+    daily = inner.get("daily_production")
+    crew = inner.get("crew_cost_per_day")
+    bits = [f"Duration = {dur_f:.2f} gang-days"]
+    if qty not in (None, "") and daily not in (None, ""):
+        bits[0] = (
+            f"Duration = {float(qty):g} / {float(daily):g} = {dur_f:.2f} gang-days"
+        )
+    if cost is not None:
+        try:
+            cost_f = float(cost)
+        except (TypeError, ValueError):
+            cost_f = None
+        if cost_f is not None:
+            crew_bit = f" × {currency} {float(crew):,.2f}" if crew not in (None, "") else ""
+            bits.append(
+                f"Cost = {dur_f:.2f}{crew_bit} = {currency} {cost_f:,.2f}"
+            )
+    return ". ".join(bits) + "."
+
+
+def compose_productivity_cost_from_ask(text: str) -> dict | None:
+    """Run duration × gang-day rate from the operator ask (live A2-1)."""
+    if not looks_like_productivity_cost_ask(text):
+        return None
+    qty, daily, cost, currency = parse_productivity_cost_ask(text)
+    if qty is None or daily is None or cost is None:
+        return None
+    from app.lib import construction_formulas as _cf
+    env = _cf.run_calculation(
+        "productivity_manpower_duration",
+        {
+            "quantity": qty,
+            "daily_production": daily,
+            "crew_cost_per_day": cost,
+        },
+    )
+    if not isinstance(env, dict) or env.get("status") != "success":
+        return None
+    inner = env.get("result") if isinstance(env.get("result"), dict) else {}
+    if inner.get("total_cost") is None or inner.get("duration") is None:
+        return None
+    # Echo inputs so the formatter can show qty / daily × rate.
+    inner = dict(inner)
+    inner.setdefault("quantity", qty)
+    inner.setdefault("daily_production", daily)
+    inner.setdefault("crew_cost_per_day", cost)
+    line = format_productivity_cost_line(inner, currency)
+    if not line or currency not in line:
+        return None
+    return {
+        "duration": inner["duration"],
+        "total_cost": inner["total_cost"],
+        "currency": currency,
+        "line": line,
+        "envelope": env,
+        "result": inner,
     }
 
 
