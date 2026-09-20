@@ -477,6 +477,11 @@ def elect_answer_bearing_contract(
          lambda _name, text: chunk_states_part_summary_total(
              text, extract_asked_boq_page_refs(query),
          )),
+        # Set3 C3: "on what date was the demolition bill issued, and under
+        # which RFP number?" A Date:/RFP No. stamp is the answer. The
+        # demolition-titled earlier pack must not lock the pool.
+        (query_asks_for_bill_issue_identity,
+         lambda _name, text: chunk_states_bill_issue_stamp(text)),
     ]
     active = [is_answer for asks, is_answer in kinds if asks(query)]
     if not active:
@@ -1439,15 +1444,39 @@ _DOC_IDENTITY_ASK_RE = re.compile(
     r"(?i)\b(?:document|doc\.?|drawing|reference)\s+(?:number|no\b\.?|ref\b)|"
     r"\brevision\b|\bprepared\s+by\b|"
     r"\bwho\s+(?:prepared|authored|wrote|issued|checked|reviewed|approved)\b|"
-    # "What is the date of the priced BOQ", "when was the ... issued".
+    # "What is the date of the priced BOQ", "when / on what date was … issued".
     r"\bdate\s+of\s+(?:the\s+)?(?!commencement|completion|award|access|taking)|"
-    r"\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b"
+    r"\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b|"
+    r"\b(?:on\s+what\s+)?date\s+was\b[^?]{0,80}"
+    r"\b(?:issued|prepared|dated|published|revised)\b|"
+    r"\bunder\s+which\s+rfp\b|"
+    r"\bwhich\s+rfp\s+(?:number|no)\b|"
+    r"\brfp\s+(?:number|no)\b"
 )
 _DOC_IDENTITY_ASK_WORDS = frozenset({
     "document", "number", "revision", "prepared", "authored", "wrote",
     "issued", "checked", "reviewed", "approved", "reference", "drawing",
-    "date", "dated", "title", "author",
+    "date", "dated", "title", "author", "rfp",
 })
+# Set3 C3: issue date + RFP of a named bill. Not B6 (who prepared /
+# revision) and not C1 ("date of the priced BOQ and the Employer's
+# contract reference") — those stay on the cover-block path.
+_BILL_ISSUE_ASK_RE = re.compile(
+    r"(?i)\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b|"
+    r"\b(?:on\s+what\s+)?date\s+was\b[^?]{0,80}"
+    r"\b(?:issued|prepared|dated|published|revised)\b|"
+    r"\bunder\s+which\s+rfp\b|"
+    r"\bwhich\s+rfp\s+(?:number|no)\b|"
+    r"\brfp\s+(?:number|no)\b"
+)
+# Live BOQ page stamp: "Date: July 10, 2023 … RFP No. DD-2023-118".
+# Fixture dates use the same shape with a non-live year.
+_BILL_ISSUE_DATE_RE = re.compile(
+    r"(?i)\bdate\s*:\s*[A-Za-z]+\s+\d{1,2},\s+\d{4}"
+)
+_BILL_ISSUE_RFP_RE = re.compile(
+    r"(?i)\brfp\s+no\.?\s*[A-Za-z]{2,}-\d{4}-\d+"
+)
 _DOC_CONTROL_BLOCK_LABEL_RES = tuple(
     re.compile(p, re.IGNORECASE) for p in (
         r"\bdocument\s+no\b", r"\brevision\s+no\b", r"\bprepared\s+by\b",
@@ -1480,17 +1509,36 @@ _DOC_IDENTITY_TITLE_RE = re.compile(
     r"(?i)\b(?:number|no\.?|revision|date|reference|ref|status|title|author)\s+"
     r"of\s+(?:the\s+)?(?P<title>.+?)(?=\s+and\s+(?:the|who|what|its|when)\b|[,;?]|$)"
 )
+# "On what date was the Demolition and Site Clearance bill issued"
+_DOC_IDENTITY_WAS_ISSUED_TITLE_RE = re.compile(
+    r"(?i)\b(?:date|when)\s+was\s+(?:the\s+)?(?P<title>.+?)\s+"
+    r"(?:issued|prepared|dated|published|revised)\b"
+)
 
 
 def document_identity_title_terms(query: str) -> List[str]:
     """The words of the ask that NAME the document, not the ones that ask."""
     q = query or ""
-    pointed = _DOC_IDENTITY_TITLE_RE.search(q)
+    pointed = (
+        _DOC_IDENTITY_WAS_ISSUED_TITLE_RE.search(q)
+        or _DOC_IDENTITY_TITLE_RE.search(q)
+    )
     scope = pointed.group("title") if pointed else q
     return sorted(
         t for t in _significant_terms(scope)
         if t not in _DOC_IDENTITY_ASK_WORDS
     )
+
+
+def query_asks_for_bill_issue_identity(query: str) -> bool:
+    """True for "on what date was X issued, and under which RFP number?"."""
+    return bool(_BILL_ISSUE_ASK_RE.search(query or ""))
+
+
+def chunk_states_bill_issue_stamp(text: str) -> bool:
+    """True for a BOQ page stamp that prints Date: and RFP No. PREFIX-YEAR-SEQ."""
+    blob = text or ""
+    return bool(_BILL_ISSUE_DATE_RE.search(blob) and _BILL_ISSUE_RFP_RE.search(blob))
 
 
 def document_control_label_count(text: str) -> int:
@@ -1563,6 +1611,100 @@ def _rescue_document_identity_chunks(
             break
     if recovered:
         logger.info("document-identity rescue recovered %d chunk(s)", recovered)
+    return recovered
+
+
+def _bill_issue_stamp_needles(terms: List[str]) -> List[str]:
+    """Needles that find a Date:/RFP stamp of the named bill.
+
+    Filename rescue cannot see a Volume 4 schedule whose name does not
+    repeat "Demolition and Site Clearance". The stamp itself does.
+    """
+    needles = ["rfp"]
+    for token in ("demolition", "clearance", "priced", "quantities"):
+        if token in terms:
+            needles.append(token)
+    if len(needles) < 2:
+        needles.extend(t for t in terms if t not in needles)
+    return needles[:6]
+
+
+def _rescue_bill_issue_stamp_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> int:
+    """Pull Date:/RFP No. stamps of the named bill into ``fused``.
+
+    Live Set3 C3: cosine and filename ``require_all`` lock onto the
+    DD-2022-175 demolition-titled pack. The executed DD-2023-118 stamp
+    lives in Volume 4 and is fetched here, then year-locked.
+    Kill-switch: RAG_DOCUMENT_IDENTITY_RESCUE=0.
+    """
+    if not document_identity_rescue_enabled():
+        return 0
+    if not query_asks_for_bill_issue_identity(query):
+        return 0
+    terms = document_identity_title_terms(query)
+    if len(terms) < 2:
+        return 0
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return 0
+    needles = _bill_issue_stamp_needles(terms)
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    stamps: List[Tuple[str, object]] = []
+    for pid in pids:
+        try:
+            hits = fetch(pid, needles, k=20)
+        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+            logger.warning("bill-issue stamp rescue for %s failed: %s", pid, exc)
+            continue
+        for chunk in hits:
+            text = chunk.text or ""
+            if not chunk_states_bill_issue_stamp(text):
+                continue
+            blob = text.lower()
+            if sum(1 for t in terms if t in blob) < 2:
+                continue
+            try:
+                name = _doc_name_for_id(chunk.doc_id) or ""
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "bill-issue stamp name lookup for %s failed: %s",
+                    chunk.doc_id, exc,
+                )
+                name = ""
+            stamps.append((name, chunk))
+    if not stamps:
+        return 0
+    winner = elect_answer_bearing_contract(
+        query, ((name, chunk.text or "") for name, chunk in stamps),
+    )
+    recovered = 0
+    kept = 0
+    for name, chunk in stamps:
+        ids = extract_contract_doc_ids(name)
+        if winner and ids and winner not in ids:
+            continue
+        if kept >= _DOC_IDENTITY_MAX_CHUNKS:
+            break
+        kept += 1
+        prev = fused.get(chunk.chunk_id)
+        if prev is not None:
+            fused[chunk.chunk_id] = (
+                prev[0], prev[1], max(prev[2], _DOC_IDENTITY_BONUS),
+            )
+            continue
+        fused[chunk.chunk_id] = (chunk, 0.0, _DOC_IDENTITY_BONUS)
+        recovered += 1
+    if recovered:
+        logger.info(
+            "bill-issue stamp rescue recovered %d chunk(s) winner=%s",
+            recovered, winner,
+        )
     return recovered
 
 
@@ -7968,6 +8110,10 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
+    _rescue_bill_issue_stamp_chunks(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
     _rescue_e1_real_aca_from_pool_docs(
         query, project_id, fused_lex, store,
     )
@@ -8541,6 +8687,12 @@ def retrieve_with_filter(
     )
     # B6: number / revision / author of a document the question names.
     _rescue_document_identity_chunks(
+        query, project_id, fused, store,
+        extra_pids=extra_rescue_pids,
+    )
+    # Set3 C3: Date:/RFP stamp of the named bill. Filename rescue cannot
+    # see a later-year Volume 4 whose name does not repeat the bill title.
+    _rescue_bill_issue_stamp_chunks(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
     )
