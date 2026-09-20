@@ -5,7 +5,8 @@ The chat must never go completely dark on the user. Order of attempts:
 1. **Local fine-tuned model** (opt-in ``use_local_model``) — the LoRA-tuned
    model from the learning subsystem, when installed. Off by default.
 2. **Active cloud provider** (DeepSeek primary / OpenRouter fallback, via
-   _llm_config).
+   ``_llm_config`` and ``_llm_fallback_ladder``). A primary 402 with
+   fallback_ready hops; it must not become the offline template.
 3. **Graceful template responder** — a deterministic, non-AI fallback that
    acknowledges the question, surfaces the reason the model layer is down,
    and points the operator at the env vars that would restore it. This
@@ -216,43 +217,44 @@ class ChatBlock(TypedBlock):
 
         # ── Cloud provider selection via _llm_config() (same as the agent
         # runtime) so LLM_PROVIDER=deepseek|openrouter applies uniformly across
-        # the chat block route and the agent path.
-        from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
+        # the chat block route and the agent path. Walk the same fallback
+        # ladder ``_call_llm`` / ``llm_client.complete`` use: a DeepSeek 402
+        # with fallback_ready must not become the offline template.
+        from app.agents.runtime import (  # local import: avoid cycle at module load
+            _llm_config,
+            _llm_fallback_ladder,
+            _resolve_attempt_model,
+        )
         cfg = _llm_config()
-        # Provider auth. ``_llm_config`` sets env_key to the provider's API-key
-        # env (DEEPSEEK_API_KEY / OPENROUTER_API_KEY). The cloud call is ready
-        # only when that key is actually present; otherwise fall through to the
-        # graceful offline template below.
-        if cfg["env_key"]:
-            provider_key = os.getenv(cfg["env_key"])
-            cloud_ready = bool(provider_key)
-        else:
-            provider_key = ""
-            cloud_ready = True
+        attempts: list[tuple[dict[str, Any], str]] = [
+            (cfg, os.getenv(cfg["env_key"]) or "" if cfg.get("env_key") else ""),
+        ]
+        for fb in _llm_fallback_ladder(cfg):
+            attempts.append(
+                (fb, os.getenv(fb["env_key"]) or "" if fb.get("env_key") else ""),
+            )
+        extra_kwargs = {"system_prompt": system_prompt_text} if system_prompt_text else {}
         primary_error = None
-
-        if cloud_ready:
-            # Use the caller's model when one is pinned, else the active
-            # provider's default (from _llm_config — DeepSeek primary /
-            # OpenRouter fallback).
-            effective_model = model or cfg["default_model"]
-            # Only forward system_prompt when one was resolved — older
-            # tests stub _call_cloud with a fixed signature that ends at
-            # ``cfg=None`` and can't absorb unknown kwargs.
-            extra_kwargs = {"system_prompt": system_prompt_text} if system_prompt_text else {}
+        for a_cfg, a_key in attempts:
+            if a_cfg.get("env_key") and not a_key:
+                primary_error = f"{a_cfg['env_key']} not configured"
+                continue
+            # Remap leftover ChatRequest defaults (deepseek-chat / kimi-k2.6)
+            # the same way the agent path does, or the OpenRouter hop 404s.
+            effective_model = _resolve_attempt_model(a_cfg, model)
             result = await self._call_cloud(
                 message, effective_model, max_tokens, temperature, stream,
-                provider_key, cfg,
+                a_key, a_cfg,
                 **extra_kwargs,
             )
             if result.get("status") == "success":
                 return result
-            primary_error = result.get("error", f"{cfg['provider']} call failed")
-        else:
-            primary_error = f"{cfg['env_key']} not configured"
+            primary_error = result.get("error", f"{a_cfg['provider']} call failed")
 
         # ── Graceful template — chat must not go dark ──────────────────────
-        return self._offline_template(message, primary_error)
+        return self._offline_template(
+            message, primary_error or "no language model is reachable",
+        )
 
     # ────────────────────────────────────────────────────────────────────────
     # System prompt resolution + message-list construction
