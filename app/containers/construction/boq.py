@@ -43,15 +43,75 @@ def _vo_scope_after_ask(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip(" .:-")
 
 
+_VO_LINE_UNIT = (
+    r"m[23]?|lm|sqm|cum|nr|no|ea|each|items?|t|tonnes?|kg"
+)
+_VO_LINE_NUM = r"(?:[0-9][0-9,.]*[0-9]|[0-9])"
+_VO_LINE_RE = re.compile(
+    r"\b(?P<kind>ADD|OMIT|OMISSION|DELETE|DEDUCT)\b\s+"
+    r"(?:"
+    r"(?P<qty1>" + _VO_LINE_NUM + r")\s*(?P<unit1>" + _VO_LINE_UNIT + r")\s+"
+    r"(?P<desc1>[^\n@]+?)"
+    r"|"
+    r"(?P<desc2>[^\n@]+?)\s+(?P<qty2>" + _VO_LINE_NUM + r")\s*(?P<unit2>"
+    + _VO_LINE_UNIT + r")"
+    r")"
+    r"\s+(?:@|at)\s*(?:(?:sar|aed|usd|qar|omr|bhd|kwd|\$)\s*)?"
+    r"(?P<rate>" + _VO_LINE_NUM + r")"
+    r"(?:\s*/\s*(?:" + _VO_LINE_UNIT + r"))?",
+    re.I,
+)
+
+
+def _parse_vo_priced_lines(text: str) -> List[Dict[str, Any]]:
+    """Parse ADD/OMIT qty-unit-desc @ rate lines from an operator ask."""
+    lines: List[Dict[str, Any]] = []
+    if not text:
+        return lines
+    seen: set[tuple] = set()
+    for m in _VO_LINE_RE.finditer(text):
+        kind = m.group("kind").upper()
+        if kind in {"OMISSION", "DELETE", "DEDUCT"}:
+            kind = "OMIT"
+        qty = _parse_money_str(m.group("qty1") or m.group("qty2") or "0")
+        unit = (m.group("unit1") or m.group("unit2") or "").strip()
+        desc = (m.group("desc1") or m.group("desc2") or "").strip(" :-")
+        rate = _parse_money_str(m.group("rate") or "0")
+        if qty is None or rate is None or qty <= 0 or rate <= 0:
+            continue
+        amount = round(float(qty) * float(rate), 2)
+        signed = -amount if kind == "OMIT" else amount
+        key = (kind, float(qty), unit.lower(), desc.lower(), float(rate))
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append({
+            "kind": kind,
+            "description": desc,
+            "quantity": float(qty),
+            "unit": unit,
+            "rate": float(rate),
+            "amount": signed,
+        })
+    return lines
+
+
 def _variation_has_draft_facts(vo_data: Any, text: str) -> bool:
-    """True only when there is a works description and a positive cost."""
+    """True when there is a works description and a positive cost.
+
+    Priced ADD/OMIT lines in the operator ask are draft facts — live Phase 2
+    ask1 used to refuse because only ``vo_data.direct_cost`` counted.
+    """
     data = vo_data if isinstance(vo_data, dict) else {}
     desc = str(data.get("description") or "").strip()
+    joined = " ".join(x for x in (desc, text) if x)
+    if _parse_vo_priced_lines(joined):
+        return True
     try:
         cost = float(data.get("direct_cost") or 0)
     except (TypeError, ValueError):
         cost = 0.0
-    scope = _vo_scope_after_ask(" ".join(x for x in (desc, text) if x))
+    scope = _vo_scope_after_ask(joined)
     return bool(scope) and cost > 0
 
 
@@ -1754,9 +1814,48 @@ class ConstructionBoqMixin:
                 ),
             }
 
-        vo_number = vo_data.get("vo_number", f"VO-{len(existing_vos)+1:03d}")
-        vo_description = vo_data.get("description", "")
-        vo_type = vo_data.get("type", "addition")
+        priced_lines = list(vo_data.get("lines") or []) if isinstance(vo_data.get("lines"), list) else []
+        if not priced_lines:
+            priced_lines = _parse_vo_priced_lines(
+                " ".join(
+                    x for x in (
+                        vo_data.get("description"),
+                        ask_text,
+                    ) if x
+                )
+            )
+        priced_net = (
+            round(sum(float(l.get("amount") or 0) for l in priced_lines), 2)
+            if priced_lines else None
+        )
+
+        vo_description = str(vo_data.get("description") or "").strip()
+        if priced_lines and (
+            not vo_description or _DRAFT_VO_ASK_RE.search(vo_description)
+        ):
+            vo_description = "; ".join(
+                f"{l.get('kind')} {l.get('quantity')} {l.get('unit')} "
+                f"{l.get('description')}".strip()
+                for l in priced_lines
+            )
+        if not vo_description:
+            vo_description = _vo_scope_after_ask(ask_text)
+
+        if priced_lines:
+            kinds = {str(l.get("kind") or "").upper() for l in priced_lines}
+            if kinds == {"OMIT"}:
+                default_type = "omission"
+            elif kinds == {"ADD"}:
+                default_type = "addition"
+            else:
+                default_type = "mixed"
+        else:
+            default_type = "addition"
+        vo_type = vo_data.get("type", default_type)
+        vo_number = vo_data.get(
+            "vo_number",
+            f"VO-D-{len(existing_vos)+1:03d}" if priced_lines else f"VO-{len(existing_vos)+1:03d}",
+        )
 
         contract_terms = {}
         if contract_file:
@@ -1764,13 +1863,55 @@ class ConstructionBoqMixin:
             contract_terms = self._extract_variation_clauses(contract_data)
 
         category = self._categorize_variation(vo_description)
-        pricing = self._calculate_variation_price(vo_data, vo_type)
-        cumulative = self._calculate_cumulative_variations(existing_vos, pricing["total"], contract_value)
-        if isinstance(cumulative, dict) and cumulative.get("status") == "error":
-            return cumulative
-        workflow = self._determine_approval_workflow(pricing["total"], cumulative["percent_of_contract"], vo_type)
+        if priced_lines and priced_net is not None:
+            # Operator-stated ADD/OMIT rates are the draft; do not reload
+            # prelim / OH / profit on top (live MATCH is the line net).
+            pricing = {
+                "direct": priced_net,
+                "indirect": 0.0,
+                "overhead": 0.0,
+                "profit": 0.0,
+                "total": priced_net,
+                "breakdown": vo_data.get("resource_breakdown", {}),
+            }
+        else:
+            pricing = self._calculate_variation_price(vo_data, vo_type)
+        if contract_value:
+            cumulative = self._calculate_cumulative_variations(
+                existing_vos, pricing["total"], contract_value,
+            )
+            if isinstance(cumulative, dict) and cumulative.get("status") == "error":
+                return cumulative
+        elif priced_lines:
+            # First-ask priced draft is self-contained; percent-of-contract
+            # stays unset until a contract value is supplied.
+            cumulative = {
+                "previous_vo_count": len(existing_vos),
+                "previous_vo_value": sum(
+                    v.get("total", v.get("value", 0)) for v in existing_vos
+                ),
+                "this_vo_value": pricing["total"],
+                "cumulative_value": sum(
+                    v.get("total", v.get("value", 0)) for v in existing_vos
+                ) + pricing["total"],
+                "percent_of_contract": None,
+                "approaching_cap": False,
+            }
+        else:
+            cumulative = self._calculate_cumulative_variations(
+                existing_vos, pricing["total"], contract_value,
+            )
+            if isinstance(cumulative, dict) and cumulative.get("status") == "error":
+                return cumulative
+        workflow = self._determine_approval_workflow(
+            pricing["total"],
+            float(cumulative.get("percent_of_contract") or 0),
+            vo_type,
+        )
         schedule_impact = vo_data.get("schedule_impact_days", 0)
-        vo_document = self._generate_vo_document(vo_number, vo_description, pricing, vo_type)
+        vo_document = self._generate_vo_document(
+            vo_number, vo_description, pricing, vo_type, lines=priced_lines,
+        )
     
         return {
             "status": "success",
@@ -1778,7 +1919,9 @@ class ConstructionBoqMixin:
             "vo_number": vo_number,
             "vo_type": vo_type,
             "category": category,
-            "description": vo_description[:100],
+            "description": vo_description[:200] if vo_description else "",
+            "lines": priced_lines,
+            "net": priced_net if priced_net is not None else pricing["total"],
             "pricing": {
                 "direct_costs": pricing["direct"],
                 "indirect_costs": pricing["indirect"],
