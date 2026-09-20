@@ -66,16 +66,19 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # inserted two lines in `_forced_specific_tool`. Same handlers at
     # `_cg_to_number` / `_aca_claim_amount` — only the line numbers
     # moved (+2). Handler text is byte-identical. No new silent returns.
-    "app/agents/runtime.py:2118": "baseline 2026-09-10",
-    "app/agents/runtime.py:2124": "baseline 2026-09-10",
-    "app/agents/runtime.py:2187": "baseline 2026-09-10",
-    "app/agents/runtime.py:2193": "baseline 2026-09-10",
-    "app/agents/runtime.py:2863": "baseline 2026-09-10",
-    "app/agents/runtime.py:3883": "baseline 2026-09-10",
-    "app/agents/runtime.py:5201": "baseline 2026-09-10",
-    "app/agents/runtime.py:5612": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20 #670: merge main (53b8b29) then this branch's
+    # leftover RFI-draft phrases in runtime.py. Same handlers — only the
+    # line numbers moved from main's consistent pairs. No new silent returns.
+    "app/agents/runtime.py:2119": "baseline 2026-09-10",
+    "app/agents/runtime.py:2125": "baseline 2026-09-10",
+    "app/agents/runtime.py:2188": "baseline 2026-09-10",
+    "app/agents/runtime.py:2194": "baseline 2026-09-10",
+    "app/agents/runtime.py:2865": "baseline 2026-09-10",
+    "app/agents/runtime.py:3885": "baseline 2026-09-10",
+    "app/agents/runtime.py:5203": "baseline 2026-09-10",
+    "app/agents/runtime.py:5614": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
-    "app/agents/runtime.py:970": "baseline 2026-09-10",
+    "app/agents/runtime.py:971": "baseline 2026-09-10",
     # Re-indexed 2026-09-20: Set3 remaining E1 truncation detector
     # + E3/E6/F1 grafts (#666). Same pre-existing handlers — only the
     # line numbers moved. No new silent returns.
