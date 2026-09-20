@@ -47,3 +47,4 @@ def test_orchestrator_promotes_rfi_over_drawing_qto():
     assert out
     assert out[0]["action"] == "rfi_generator", out[:4]
     assert not any(r["action"] == "drawing_qto" for r in out), out[:6]
+    assert not any(r["action"] == "cde_post_rfi" for r in out), out[:6]
