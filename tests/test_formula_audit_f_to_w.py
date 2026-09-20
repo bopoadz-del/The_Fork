@@ -963,6 +963,17 @@ class TestProductivityManpowerDuration:
     def test_missing_pairs_is_error(self):
         _err("productivity_manpower_duration")
 
+    def test_live_a2_plastering_rate_plus_crew_cost(self):
+        r = _ok(
+            "productivity_manpower_duration",
+            quantity=3400,
+            productivity_rate=42,
+            rate_unit="m2 per gang-day",
+            crew_cost_per_day=1950,
+        )
+        assert r["duration"] == pytest.approx(3400 / 42, abs=1e-4)
+        assert r["total_cost"] == pytest.approx(3400 / 42 * 1950, abs=0.05)
+
 
 class TestProductivityRate:
     """rate = output / labour_hours; per-worker = rate / crew_size."""
@@ -1021,6 +1032,17 @@ class TestRebarWeight:
     def test_zero_diameter_is_zero_mass(self):
         r = _ok("rebar_weight", bar_diameter_mm=0, total_length_m=12, quantity=50)
         assert r["total_mass_kg"] == pytest.approx(0.0, abs=1e-9)
+
+    def test_weight_to_length_12t_y16(self):
+        unit = (math.pi / 4.0) * (0.016 ** 2) * 7850.0
+        r = _ok(
+            "rebar_weight",
+            bar_diameter_mm=16,
+            total_weight_kg=12000,
+            mode="weight_to_length",
+        )
+        assert r["metres_run"] == pytest.approx(12000 / unit, abs=0.5)
+        assert r["total_length_m"] > 1000
 
 
 class TestRoiCalculator:

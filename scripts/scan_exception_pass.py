@@ -67,8 +67,11 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:2069": "baseline 2026-09-10",
     "app/agents/runtime.py:2737": "baseline 2026-09-10",
     "app/agents/runtime.py:3742": "baseline 2026-09-10",
-    "app/agents/runtime.py:4881": "baseline 2026-09-10",
-    "app/agents/runtime.py:5286": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20: A2 formula-template recovery check inserted
+    # above these pre-existing handlers. Same handler text — only the
+    # line numbers moved. No new silent returns.
+    "app/agents/runtime.py:4883": "baseline 2026-09-10",
+    "app/agents/runtime.py:5288": "baseline 2026-09-10",
     "app/agents/runtime.py:643": "baseline 2026-09-10",
     "app/agents/runtime.py:874": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
