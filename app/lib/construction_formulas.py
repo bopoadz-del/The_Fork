@@ -965,6 +965,7 @@ _NON_CALCULATORS = {
     "describe_calculation_params",
     "coerce_calc_params",
     "extract_calculation_params_from_text",
+    "calculator_name_from_text",
 }
 
 
@@ -1057,6 +1058,72 @@ CALCULATORS: Dict[str, Any] = _build_calculator_registry()
 
 def available_calculations() -> List[str]:
     return sorted(CALCULATORS)
+
+
+# Stem collisions: first two tokens are a document/schedule lookup, not a calc.
+_FORMULA_NAME_STEM_COLLISIONS = frozenset({
+    "critical path",
+})
+# Optional dests that error unless the incoming key is the real name.
+# "sand" / "dune sand" must not suffix-bind onto dune_sand_pct (live mix
+# table SGs were scored tool_error).
+_EXPLICIT_BIND_ONLY = frozenset({
+    "dune_sand_pct",
+})
+
+
+def calculator_name_from_text(text: str) -> Optional[str]:
+    """Unique registry name implied by ``text``, or None if absent/ambiguous.
+
+    Full underscore / spaced names beat 2-token stems so
+    ``concrete mix design sg`` is not tied with ``concrete_mix_slip_form``
+    and ``cost buildup concrete`` is not tied with ``cost_buildup_rebar``.
+    A unique 3-token tail (``well point spacing``) also counts — live
+    dewatering asks omit the leading ``dewatering_``.
+    """
+    raw = text or ""
+    if not raw.strip():
+        return None
+    underscored = raw.lower().replace("-", "_")
+    spaced = raw.lower().replace("-", " ").replace("_", " ")
+    full: List[str] = []
+    triples: List[str] = []
+    pairs: List[str] = []
+    stems: List[str] = []
+    for name in CALCULATORS:
+        if len(name) < 6:
+            continue
+        tokens = [tok for tok in name.lower().split("_") if tok]
+        spaced_name = name.replace("_", " ")
+        if name.lower() in underscored or (
+            len(tokens) >= 3 and spaced_name in spaced
+        ):
+            full.append(name)
+            continue
+        if len(tokens) >= 3:
+            for i in range(len(tokens) - 2):
+                chunk = " ".join(tokens[i:i + 3])
+                if chunk in spaced:
+                    triples.append(name)
+                    break
+            for i in range(len(tokens) - 1):
+                chunk = " ".join(tokens[i:i + 2])
+                if len(chunk) >= 10 and chunk in spaced:
+                    pairs.append(name)
+            stem = " ".join(tokens[:2])
+            if (
+                len(stem) >= 8
+                and stem in spaced
+                and stem not in _FORMULA_NAME_STEM_COLLISIONS
+            ):
+                stems.append(name)
+    for group in (full, triples, pairs, stems):
+        uniq = list(dict.fromkeys(group))
+        if len(uniq) == 1:
+            return uniq[0]
+        if len(uniq) > 1:
+            return None
+    return None
 
 
 # PMI (BCWS/BCWP/ACWP/BAC) and long PE-sheet names → calculate_evm kwargs.
@@ -1396,6 +1463,18 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "bulking": ("bulking_factor",),
     "swell": ("bulking_factor",),
     "bulk": ("bulking_factor",),
+    "cut": ("cut_volume_m3",),
+    "cut_vol": ("cut_volume_m3",),
+    "cut_volume": ("cut_volume_m3",),
+    "fill": ("fill_volume_m3",),
+    "fill_vol": ("fill_volume_m3",),
+    "fill_volume": ("fill_volume_m3",),
+    "permeability": ("soil_permeability_m_s",),
+    "k": ("soil_permeability_m_s",),
+    "k_m_s": ("soil_permeability_m_s",),
+    "soil_k": ("soil_permeability_m_s",),
+    "drawdown": ("required_drawdown_m",),
+    "required_drawdown": ("required_drawdown_m",),
 }
 
 # Signature defaults that must NOT silently succeed (live wrong_number /
@@ -1496,11 +1575,13 @@ def _is_junk_key(key: Any) -> bool:
 
 _POSITIONAL_KEY = "_positional"
 _KV_ASSIGN_RE = re.compile(
-    r"([A-Za-z_][\w]*)\s*[:=]\s*"
+    r"([A-Za-z_][\w]*(?:/[A-Za-z_][\w]*)*)\s*[:=]\s*"
     r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|"
     r"\"[^\"]*\"|'[^']*')",
 )
-_KV_JSON_START_RE = re.compile(r"([A-Za-z_][\w]*)\s*[:=]\s*([\[{])")
+_KV_JSON_START_RE = re.compile(
+    r"([A-Za-z_][\w]*(?:/[A-Za-z_][\w]*)*)\s*[:=]\s*([\[{])",
+)
 _TONNE_INCOMING = frozenset({
     "quantity_t", "qty_t", "tonnes", "tons", "tonne", "ton",
 })
@@ -1742,20 +1823,36 @@ def _unique_semantic_dest(incoming: str, accepted: Dict[str, str]) -> Optional[s
     return None
 
 
-def _unique_stem_dest(incoming: str, accepted: Dict[str, str]) -> Optional[str]:
-    """Bind volume → volume_m3 / diameter → column_diameter_mm / water_depth_m → water_depth when unique."""
+def _unique_stem_dest(
+    incoming: str,
+    accepted: Dict[str, str],
+    required: Optional[set] = None,
+) -> Optional[str]:
+    """Bind volume → volume_m3 / diameter → column_diameter_mm / water_depth_m → water_depth when unique.
+
+    Suffix matches (sand → dune_sand_pct, cement → cement_sg) only land on
+    *required* dests. Optional dests need an explicit name or semantic alias
+    so a mix-design table SG cannot raise dune_sand_pct.
+    """
     stem = _param_stem(incoming)
     if len(stem) < 3:
         return None
-    exact = [dest for dest in accepted.values() if _param_stem(dest) == stem]
+    exact = [
+        dest for dest in accepted.values()
+        if _param_stem(dest) == stem and dest not in _EXPLICIT_BIND_ONLY
+    ]
     if len(exact) == 1:
         return exact[0]
     if exact:
         return None
     suffix = [
         dest for dest in accepted.values()
-        if _param_stem(dest).endswith(stem) and len(_param_stem(dest)) > len(stem)
+        if dest not in _EXPLICIT_BIND_ONLY
+        and _param_stem(dest).endswith(stem)
+        and len(_param_stem(dest)) > len(stem)
     ]
+    if required is not None:
+        suffix = [dest for dest in suffix if dest in required]
     if len(suffix) == 1:
         return suffix[0]
     return None
@@ -1777,6 +1874,11 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     ]
     accepted_norm = {_snake_key(k): k for k in accepted_list}
     has_var_kw = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+    required = {
+        key for key, param in sig.parameters.items()
+        if param.default is param.empty
+        and param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+    }
 
     bound: Dict[str, Any] = {}
     leftovers: Dict[str, Any] = {}
@@ -1786,10 +1888,12 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
         if _is_junk_key(key):
             continue
         dest = accepted_norm.get(_snake_key(key))
+        if dest in _EXPLICIT_BIND_ONLY and _snake_key(key) != _snake_key(dest):
+            dest = None
         if dest is None:
             dest = _unique_semantic_dest(_snake_key(key), accepted_norm)
         if dest is None:
-            dest = _unique_stem_dest(key, accepted_norm)
+            dest = _unique_stem_dest(key, accepted_norm, required=required)
         if dest is None:
             leftovers[key] = val
             continue
@@ -1961,8 +2065,8 @@ def _extract_maturity_from_ask(text: str, out: Dict[str, Any]) -> None:
         )
         if match is None:
             match = re.search(
-                rf"(?:temps?|temperatures?|temperature_history(?:_c)?)\s*[:=]?\s*"
-                rf"((?:{_ASK_NUM}\s*,\s*){{1,}}{_ASK_NUM})",
+                rf"(?:temps?|temperatures?|temperature_history(?:_c)?)\s*[:=]?\s*\[?\s*"
+                rf"((?:{_ASK_NUM}\s*,\s*){{1,}}{_ASK_NUM})\s*\]?",
                 text, re.IGNORECASE,
             )
         if match:
@@ -1977,8 +2081,8 @@ def _extract_maturity_from_ask(text: str, out: Dict[str, Any]) -> None:
         )
         if match is None:
             match = re.search(
-                rf"(?:hours?|intervals?|time_intervals(?:_hours)?|dt)\s*[:=]?\s*"
-                rf"((?:{_ASK_NUM}\s*,\s*){{1,}}{_ASK_NUM})",
+                rf"(?:hours?|intervals?|time_intervals(?:_hours)?|dt)\s*[:=]?\s*\[?\s*"
+                rf"((?:{_ASK_NUM}\s*,\s*){{1,}}{_ASK_NUM})\s*\]?",
                 text, re.IGNORECASE,
             )
         if match:
@@ -2041,6 +2145,12 @@ def _extract_calc_kwargs_from_ask(
     blob = _ask_blob(out)
     if not blob.strip():
         return out
+    # Live predispatch often ships only {text: ask}. Assignment strings
+    # (temps=[20,22,25], w/c=0.48, cut=5000) must become kwargs here —
+    # coerce_calc_params only sees the params object, not the ask blob.
+    for key, val in _parse_kv_assignments(blob).items():
+        if out.get(key) in (None, ""):
+            out[key] = val
     calc = str(name or "").strip().lower()
     if calc == "beam_shear_simple":
         _extract_beam_shear_from_ask(blob, out)
@@ -2227,13 +2337,15 @@ def _text_label_map(fn: Any) -> Dict[str, str]:
 
     for dest in accepted_list:
         add(dest, dest)
+        add(dest.replace("_", " "), dest)
+        if dest in _EXPLICIT_BIND_ONLY:
+            continue
         stem = dest
         for suf, _unit in _BIND_UNIT_SUFFIXES:
             if stem.endswith(suf) and len(stem) > len(suf):
                 stem = stem[: -len(suf)]
                 add(stem, dest)
                 break
-        add(dest.replace("_", " "), dest)
         add(stem.replace("_", " "), dest)
 
     for incoming, dests in _BIND_SEMANTIC_ALIASES.items():
@@ -2457,6 +2569,17 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             "Exception", exc_info=True,
         )
     fn = CALCULATORS.get(name)
+    if fn is None:
+        # Recover only from the ask/params prose (text/formula/message/query).
+        # Do not feed the unknown *name* into calculator_name_from_text —
+        # "calculate_delay_damages" contains "delay damages" and would
+        # silently bind delay_damages_daily, dropping the Unknown-calculation
+        # envelope (and its ``available`` list) that the model needs to retry.
+        blob = _ask_blob(params) if isinstance(params, dict) else ""
+        recovered = calculator_name_from_text(blob) if str(blob).strip() else None
+        if recovered:
+            name = recovered
+            fn = CALCULATORS.get(name)
     if fn is None:
         return {
             "status": "error",
