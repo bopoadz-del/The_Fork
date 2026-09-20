@@ -33,6 +33,7 @@ AVAILABLE = {
     "search_project_documents",
     "resource_histogram",
     "generate_wbs",
+    "rfi_generator",
 }
 
 
