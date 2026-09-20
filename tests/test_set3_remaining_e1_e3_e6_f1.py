@@ -383,6 +383,23 @@ def test_f1_composes_longest_547_exceeds_shortest_by_150():
     assert 8 in composed["longest_milestones"]
 
 
+def test_f1_last_chance_scans_northern_days_from_loaded_cd(monkeypatch):
+    """Live 4ab5561: top-k stopped at Milestone 5; 547 sits later in the volume."""
+    from app.core.rag.retriever import compose_named_community_tfc_span
+
+    volume = "\n\n".join((CD_LIST, CD_TIMES_FIRST, CD_TIMES_CONT))
+    monkeypatch.setattr(
+        "app.core.rag.retriever.community_tfc_span_excerpts_from_loaded_cd_volume",
+        lambda *a, **k: volume,
+    )
+    rag = _sys(CD_LIST, CD_TIMES_FIRST)
+    assert compose_named_community_tfc_span(F1, rag["content"]) is None
+    out = _postprocess_answer(LIVE_F1_REFUSE, rag, _msgs(F1), project_id=ACTIVE)
+    assert re.search(r"\b547\b", out)
+    assert re.search(r"\b150\b", out)
+    assert "Milestones 1–5 only" not in out
+
+
 def test_f1_empty_or_refuse_grafts_547_and_150():
     from app.core.rag.retriever import format_named_community_tfc_span_line
 
