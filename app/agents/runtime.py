@@ -1540,6 +1540,16 @@ def _message_wants_vo_draft(text: str) -> bool:
     return message_wants_vo_draft(text or "")
 
 
+def _message_wants_inline_boq(text: str) -> bool:
+    """True when the operator pasted SYNTHETIC CSV/BOQ lines for boq_process."""
+    try:
+        from app.core.site_vocab import message_has_inline_boq_lines
+        return bool(message_has_inline_boq_lines(text or ""))
+    except Exception:  # noqa: BLE001
+        _LOG.debug("inline boq detect skipped", exc_info=True)
+        return False
+
+
 def _message_wants_job_requisition(text: str) -> bool:
     return bool(re.search(r"job requisition", text or "", re.I))
 
@@ -1680,6 +1690,7 @@ def _message_wants_locked_deliverable(text: str) -> bool:
             _message_wants_ipc_draft,
             _message_wants_commissioning,
             _message_wants_vo_draft,
+            _message_wants_inline_boq,
         )
     )
 
@@ -1699,6 +1710,10 @@ def _vo_draft_hard_excludes(user_message: str) -> set[str]:
         "sympy_reasoning", "recommendation_template",
         "change_order_impact", "validation_pipeline", "delegate_to_agent",
         "construction_calc",
+        # Live tip d9d5971 ask2: after #683 excludes, the model still
+        # called search_project_documents + fetch_document and answered
+        # index chatter instead of drafting VO-D-002.
+        "search_project_documents", "fetch_document", "list_project_documents",
     }
 
 
@@ -1743,7 +1758,14 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "payment_certificate": {"wir_form", "claims_builder"},
         "commissioning_checklist": {"wir_form", "om_manual_generator"},
         "wir_form": {"payment_certificate", "job_requisition", "rfp_draft", "rfi_generator"},
-        "variation_order_manager": {"change_order_impact", "wir_form", "sympy_reasoning", "construction", "formula_executor_v2", "formula_executor", "recommendation_template", "validation_pipeline", "delegate_to_agent"},
+        "variation_order_manager": {
+            "change_order_impact", "wir_form", "sympy_reasoning",
+            "construction", "formula_executor_v2", "formula_executor",
+            "recommendation_template", "validation_pipeline",
+            "delegate_to_agent",
+            "search_project_documents", "fetch_document",
+            "list_project_documents",
+        },
         "boq_process": {"construction_calc", "generate_wbs", "formula_executor_v2", "formula_executor"},
         "boq_processor": {"construction_calc", "generate_wbs", "formula_executor_v2", "formula_executor"},
     }
@@ -1941,6 +1963,15 @@ async def _predispatch_remaining_deliverables(
             "Present this variation order in full. Do not run "
             "change_order_impact. Do not reply with Status: Success only.",
         ),
+        (
+            "AGENT_BOQ_PREDISPATCH",
+            _message_wants_inline_boq,
+            "boq_process",
+            _format_boq_process,
+            "Present this BOQ processing result in full. Do not run "
+            "construction_calc. Do not refuse for a missing file_path — "
+            "the lines were already parsed from the operator message.",
+        ),
     )
     for env_key, want_fn, action, format_fn, instruction in candidates:
         out = await _predispatch_construction_draft(
@@ -2125,6 +2156,21 @@ def _should_force_synthesis(tool_result: Any) -> bool:
         if _looks_like_self_contained_calculation(claim):
             return False
     return True
+
+
+def _vo_draft_ready_for_synthesis(user_message: str, tool_name: str | None) -> bool:
+    """On a VO-draft turn, only variation_order_manager may lock synthesis.
+
+    Live tip d9d5971 ask2: fetch_document is a deliverable, so the first
+    search/fetch pair armed force_synthesis and the model never called
+    variation_order_manager. Search/fetch/list must not close the turn.
+    """
+    if not _message_wants_vo_draft(user_message or ""):
+        return True
+    return (tool_name or "") in {
+        "variation_order_manager",
+        "variation_order_generator",
+    }
 
 
 def _has_unread_windows(content: str) -> bool:
@@ -3897,6 +3943,10 @@ def _looks_like_self_contained_calculation(text: str) -> bool:
         "0", "false", "no", "off",
     ):
         return False
+    # Live tip d9d5971 ask1: the pasted CSV word "Excavation" is a BOQ
+    # row, not a volume calculator. Do not elect construction_calc.
+    if _message_wants_inline_boq(text):
+        return False
     if not text or not _CALC_VERB_RE.search(text):
         return False
     if _ARITH_EXPR_RE.search(text):
@@ -4576,6 +4626,28 @@ def _format_variation_order(payload: dict[str, Any]) -> str:
     body = payload.get("document_content") or payload.get("vo_document")
     if body:
         parts.extend(["", str(body)])
+    return "\n".join(parts).strip()
+
+
+def _format_boq_process(payload: dict[str, Any]) -> str:
+    """Render a boq_processor / boq_process result for predispatch inject."""
+    items = payload.get("line_items") or payload.get("items") or []
+    total = payload.get("total_cost")
+    currency = payload.get("currency") or ""
+    parts = [
+        f"**BOQ processed — {payload.get('item_count') or len(items)} lines**",
+        f"**Total:** {total} {currency}".strip(),
+        "",
+        "### Lines",
+    ]
+    for it in items:
+        if isinstance(it, dict):
+            parts.append(
+                f"- {it.get('description')} {it.get('quantity')} "
+                f"{it.get('unit')} @ {it.get('unit_cost')} = {it.get('total_cost')}"
+            )
+        else:
+            parts.append(f"- {it}")
     return "\n".join(parts).strip()
 
 
@@ -10354,6 +10426,7 @@ class Agent:
                 if (
                     _force_synth_enabled and ok
                     and _should_force_synthesis(tool_result)
+                    and _vo_draft_ready_for_synthesis(_op, tool_result.get("name"))
                     and not _has_unread_windows(_tool_content)
                 ):
                     force_synthesis = True
@@ -11910,6 +11983,10 @@ class Agent:
                     _force_synth_enabled
                     and tool_result.get("ok", True)
                     and _should_force_synthesis(tool_result)
+                    and _vo_draft_ready_for_synthesis(
+                        locals().get("_op") or user_message or "",
+                        tool_result.get("name"),
+                    )
                     and not _has_unread_windows(_tool_content)
                 ):
                     force_synthesis = True
@@ -13930,6 +14007,8 @@ def _message_is_formula_style_ask(text: str) -> bool:
     raw = text or ""
     if not raw.strip():
         return False
+    if _message_wants_inline_boq(raw):
+        return False
     if _message_is_schedule_or_programme_deliverable(raw):
         return False
     try:
@@ -14116,6 +14195,8 @@ async def _predispatch_formula_calc(
         if not detect:
             return None
         if _message_wants_rfi_draft(detect) or _message_wants_vo_draft(detect):
+            return None
+        if _message_wants_inline_boq(detect):
             return None
         if _message_wants_drawing_qto(detect):
             return None

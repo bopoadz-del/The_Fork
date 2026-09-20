@@ -58,19 +58,18 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20 #670: merge main (53b8b29) then this branch's
-    # leftover RFI-draft phrases in runtime.py. Same handlers — only the
-    # line numbers moved from main's consistent pairs. No new silent returns.
+    # Re-indexed 2026-09-20 SO8: #685 + #686 runtime handlers. Same
+    # handlers — only the line numbers moved. No new silent returns.
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:971": "baseline 2026-09-10",
-    "app/agents/runtime.py:2152": "baseline 2026-09-10",
-    "app/agents/runtime.py:2158": "baseline 2026-09-10",
-    "app/agents/runtime.py:2221": "baseline 2026-09-10",
-    "app/agents/runtime.py:2227": "baseline 2026-09-10",
-    "app/agents/runtime.py:2911": "baseline 2026-09-10",
-    "app/agents/runtime.py:3931": "baseline 2026-09-10",
-    "app/agents/runtime.py:5265": "baseline 2026-09-10",
-    "app/agents/runtime.py:5676": "baseline 2026-09-10",
+    "app/agents/runtime.py:2198": "baseline 2026-09-10",
+    "app/agents/runtime.py:2204": "baseline 2026-09-10",
+    "app/agents/runtime.py:2267": "baseline 2026-09-10",
+    "app/agents/runtime.py:2273": "baseline 2026-09-10",
+    "app/agents/runtime.py:2957": "baseline 2026-09-10",
+    "app/agents/runtime.py:3981": "baseline 2026-09-10",
+    "app/agents/runtime.py:5337": "baseline 2026-09-10",
+    "app/agents/runtime.py:5748": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
@@ -96,7 +95,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/containers/construction/__init__.py:1383": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:1484": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:1648": "baseline 2026-09-10",
-    "app/containers/construction/boq.py:960": "baseline 2026-09-10",
+    "app/containers/construction/boq.py:962": "baseline 2026-09-10",
     "app/containers/construction/helpers.py:69": "baseline 2026-09-10",
     "app/core/doc_index.py:196": "baseline 2026-09-10",
     "app/core/doc_index.py:304": "baseline 2026-09-10",
