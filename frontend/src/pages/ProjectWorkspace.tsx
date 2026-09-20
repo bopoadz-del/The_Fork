@@ -11,6 +11,7 @@ import { type Project } from './ProjectCard'
 import { apiGet, apiPost, apiPostForm, ApiError } from '../lib/api'
 import { getToken } from '../lib/token'
 import { exportEndpointForWorkspace } from '../lib/exportEndpoint'
+import { ReconnectGaveUp, sendWithReconnect } from '../lib/reconnect'
 import WorkspaceShell from '../layout/WorkspaceShell'
 import LeftPanel from '../layout/LeftPanel'
 import RightPanel from '../layout/RightPanel'
@@ -1025,7 +1026,9 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
       // orchestrator decides: predefined reasoning for a known workflow, else it
       // dispatches to the project-assistant agent (which self-routes generative
       // turns to heavy-reasoning). Everything flows through one entry point.
-      const res = await fetch(`${API_BASE}/v1/chat/stream`, {
+      // A deploy swaps the single instance and the site answers 502 for a
+      // while. Ride through it: see lib/reconnect.js for what is safe to retry.
+      const res = await sendWithReconnect(() => fetch(`${API_BASE}/v1/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1045,7 +1048,22 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
             : undefined,
         }),
         signal: controller.signal,
+      }),
+      async () => (await fetch(`${API_BASE}/livez`, { signal: controller.signal })).ok,
+      {
+        signal: controller.signal,
+        onReconnecting: () =>
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId
+                ? { ...m, toolStatus: 'Reconnecting… your message will be sent as soon as the assistant is back.' }
+                : m
+            )
+          ),
       })
+      setMessages((prev) =>
+        prev.map((m) => (m.id === assistantMsgId ? { ...m, toolStatus: undefined } : m))
+      )
       // Sent (ok or not) — the server-side marker parser covers any retry.
       pendingAttachedDocIdsRef.current = []
 
@@ -1247,7 +1265,7 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
         return
       }
       const rawMsg = err instanceof Error ? err.message : 'stream failed'
-      const friendly = friendlyErrorMessage(rawMsg)
+      const friendly = err instanceof ReconnectGaveUp ? err.message : friendlyErrorMessage(rawMsg)
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsgId
