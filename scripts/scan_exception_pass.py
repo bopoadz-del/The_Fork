@@ -58,22 +58,20 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20: SYNC2 empty-turn / user-rate closure inserts.
+    # Re-indexed 2026-09-20 train SO1: procurement toolkit insert (#644)
+    # + SYNC2 empty-turn / user-rate closure + IPC MOS lines (#647).
     # Same pre-existing handlers — only the line numbers moved. No new
     # silent returns.
-    "app/agents/runtime.py:1994": "baseline 2026-09-10",
-    "app/agents/runtime.py:2000": "baseline 2026-09-10",
-    "app/agents/runtime.py:2063": "baseline 2026-09-10",
-    "app/agents/runtime.py:2069": "baseline 2026-09-10",
-    "app/agents/runtime.py:2737": "baseline 2026-09-10",
-    "app/agents/runtime.py:3742": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20: IPC MOS lines in _format_payment_certificate.
-    # Same pre-existing handlers — only the line numbers moved. No new
-    # silent returns.
-    "app/agents/runtime.py:4887": "baseline 2026-09-10",
-    "app/agents/runtime.py:5292": "baseline 2026-09-10",
+    "app/agents/runtime.py:2024": "baseline 2026-09-10",
+    "app/agents/runtime.py:2030": "baseline 2026-09-10",
+    "app/agents/runtime.py:2093": "baseline 2026-09-10",
+    "app/agents/runtime.py:2099": "baseline 2026-09-10",
+    "app/agents/runtime.py:2767": "baseline 2026-09-10",
+    "app/agents/runtime.py:3773": "baseline 2026-09-10",
+    "app/agents/runtime.py:4928": "baseline 2026-09-10",
+    "app/agents/runtime.py:5333": "baseline 2026-09-10",
     "app/agents/runtime.py:643": "baseline 2026-09-10",
-    "app/agents/runtime.py:874": "baseline 2026-09-10",
+    "app/agents/runtime.py:904": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
