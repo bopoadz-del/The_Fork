@@ -782,6 +782,26 @@ _PROCUREMENT_LIST_PHRASES = (
     "create a procurement",
     "po_generator",
 )
+_RFI_DRAFT_PHRASES = (
+    "rfi_generator",
+    "request for information",
+    "follow-on rfi",
+    "follow on rfi",
+    "draft a rfi",
+    "draft an rfi",
+    "generate a rfi",
+    "generate an rfi",
+    "create a rfi",
+    "create an rfi",
+    "raise an rfi",
+    "raise a rfi",
+    "write an rfi",
+    "write a rfi",
+    "produce an rfi",
+    "produce a rfi",
+    "issue an rfi",
+    "issue a rfi",
+)
 _HISTOGRAM_QA_RE = re.compile(
     r"\b(what is|what's|whats|explain|define)\b", re.IGNORECASE,
 )
@@ -827,6 +847,20 @@ def _message_wants_procurement_list(text: str) -> bool:
     if not low or _HISTOGRAM_QA_RE.search(low):
         return False
     return any(p in low for p in _PROCUREMENT_LIST_PHRASES)
+
+
+def _message_wants_rfi_draft(text: str) -> bool:
+    """True for an RFI-draft deliverable, not status / definition Q&A.
+
+    Live Phase 2: "draft an RFI … rebar detail" / "create a request for
+    information document" / a tool-shaped ``rfi_generator`` ask must
+    not fall through to ``construction_calc``. Bare "what is an RFI?"
+    and "how many RFIs are open?" stay unforced.
+    """
+    low = (text or "").lower()
+    if not low or _HISTOGRAM_QA_RE.search(low):
+        return False
+    return any(p in low for p in _RFI_DRAFT_PHRASES)
 
 
 def _resolve_histogram_schedule_file(
@@ -3491,6 +3525,7 @@ _DELIVERABLE_PHRASES = (
     "commissioning checklist", "commissioning plan", "commissioning schedule",
     "testing and commissioning", "t&c checklist",
     "procurement list", "material list", "materials list",
+    "request for information", "draft an rfi", "draft a rfi",
 )
 
 
@@ -3795,6 +3830,9 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     wants_procurement = _message_wants_procurement_list(text)
     if "procurement_list_generator" in available and wants_procurement:
         return "procurement_list_generator"
+    wants_rfi = _message_wants_rfi_draft(text)
+    if "rfi_generator" in available and wants_rfi:
+        return "rfi_generator"
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             if (
@@ -3802,13 +3840,15 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
                 and (
                     _message_is_schedule_or_programme_deliverable(text)
                     or wants_procurement
+                    or wants_rfi
                 )
             ):
                 continue
             return tool
-    # A procurement-list ask must not fall through to construction_calc
-    # when the toolkit omitted the action — that is the live miss.
-    if wants_procurement:
+    # A procurement-list or RFI-draft ask must not fall through to
+    # construction_calc when the toolkit omitted the action — that is
+    # the live miss.
+    if wants_procurement or wants_rfi:
         return None
     # Keyword phrases reach ~a dozen of the 76 registered calculators. Catch
     # the rest by SHAPE: a question that supplies its own dimensions and asks
@@ -8951,6 +8991,54 @@ class Agent:
                     },
                 },
             })
+            # ── synthetic tool: rfi_generator ────────────────────────────────
+            # Same reason as generate_wbs / cash_flow_forecast: the generic
+            # `construction` tool's input/params shape lets the model say
+            # "rfi_generator is not in my toolkit" and fall through to
+            # construction_calc or write RFI prose (live Phase 2).
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "rfi_generator",
+                    "description": (
+                        "Draft a Request for Information (RFI) from an "
+                        "engineering clarification, drawing/spec issue, or "
+                        "follow-on question. CALL THIS when the user asks "
+                        "to draft / raise / create an RFI or a request for "
+                        "information. Do not invent the RFI in prose and "
+                        "do not use construction_calc for this deliverable."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "issues": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                                "description": (
+                                    "Runnable issues to turn into RFIs "
+                                    "({description, type, severity})."
+                                ),
+                            },
+                            "drawing_ref": {
+                                "type": "string",
+                                "description": "Drawing / spec reference.",
+                            },
+                            "project_name": {
+                                "type": "string",
+                                "description": "Project name on the RFI.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": (
+                                    "Original user request. Used to draft "
+                                    "the question when issues are omitted."
+                                ),
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            })
 
         # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
         if self.can_delegate:
@@ -12395,6 +12483,66 @@ class Agent:
                 }
             return {
                 "name": "procurement_list_generator",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
+        # ── synthetic tool: rfi_generator ────────────────────────────────────
+        if name == "rfi_generator":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            params: dict[str, Any] = {}
+            nested = args.get("params")
+            if isinstance(nested, dict):
+                params.update(nested)
+            for key in (
+                "issues", "drawing_ref", "project_name",
+                "contractor_name", "engineer_name", "start_number",
+                "text", "user_message",
+            ):
+                if args.get(key) is not None:
+                    params.setdefault(key, args.get(key))
+            input_data = args.get("input")
+            if not isinstance(input_data, dict):
+                input_data = {}
+            else:
+                input_data = dict(input_data)
+            input_data.setdefault(
+                "message", args.get("message") or user_message or "",
+            )
+            params.setdefault("user_message", input_data.get("message") or "")
+            params.setdefault("text", input_data.get("message") or "")
+            try:
+                result = await container.rfi_generator(
+                    input_data, params,
+                )
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"rfi_generator failed: {e}",
+                    },
+                }
+            return {
+                "name": "rfi_generator",
                 "ok": isinstance(result, dict) and result.get("status") == "success",
                 "result": result,
             }
