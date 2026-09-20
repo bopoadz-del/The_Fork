@@ -143,7 +143,8 @@ _CLASH_CDE_RFI = re.compile(
 
 
 _INLINE_BOQ_LINES = re.compile(
-    r"(?is)boq_process|synthetic\s+csv\s*/\s*boq|Item\s*,\s*Desc\s*,\s*Qty"
+    # Do NOT match bare "boq_process" — that fires on uploaded-file asks.
+    r"(?is)synthetic\s+csv\s*/\s*boq|Item\s*,\s*Desc\s*,\s*Qty"
     r"|(?:\d+\.\d+\s*,\s*[^,\n]+,\s*\d+)",
 )
 
@@ -151,8 +152,12 @@ _INLINE_BOQ_LINES = re.compile(
 def message_has_inline_boq_lines(text: str) -> bool:
     """True when the operator pasted BOQ/CSV lines for boq_process (no file)."""
     t = text or ""
-    if "boq_process" in t.lower() and (
-        "synthetic" in t.lower() or "lines" in t.lower() or "Item,Desc" in t.replace(" ", "")
+    low = t.lower()
+    # Uploaded-file asks name boq_process + a path/extension — not inline.
+    if re.search(r"\.(xlsx|xls|csv|pdf)\b", low) and "synthetic" not in low:
+        return False
+    if "boq_process" in low and (
+        "synthetic" in low or "lines" in low or "Item,Desc" in t.replace(" ", "")
     ):
         return True
     return bool(_INLINE_BOQ_LINES.search(t))
