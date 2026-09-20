@@ -15,7 +15,6 @@ Locks:
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
@@ -117,11 +116,9 @@ async def test_generate_wbs_refuses_look_ahead_ask(message):
         {},
         {"brief": message, "user_message": message, "target_count": 50},
     )
-    assert result.get("action") != "look_ahead" or result.get("status") == "error"
     assert result.get("status") == "error", result
     err = (result.get("error") or "").lower()
     assert "look-ahead" in err or "look ahead" in err or "lookahead" in err
-    assert "activit" not in json.dumps(result.get("activities") or []).lower() or not result.get("activities")
     assert not result.get("activities"), "generate_wbs must not emit a WBS for a look-ahead ask"
 
 

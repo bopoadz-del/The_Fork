@@ -134,7 +134,12 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
                                 "cost variance", "schedule variance", "bcwp", "bcws", "acwp"]),
     ("resource_histogram",    ["resource", "manpower", "histogram", "crew", "labor loading", "workforce"]),
     ("look_ahead",            ["look ahead", "lookahead", "look-ahead", "3 week look", "4 week look",
-                                "three week look", "four week look", "rolling look ahead",
+                                "three week look", "four week look", "2 week look", "2-week look",
+                                "two week look", "14 day look", "14-day look",
+                                "rolling look ahead", "rolling look-ahead",
+                                "look-ahead programme", "lookahead programme",
+                                "look ahead programme", "look-ahead schedule",
+                                "lookahead schedule", "look ahead schedule",
                                 "short term programme", "short-term programme"]),
     ("forensic_delay_analysis", ["delay analysis", "eot", "extension of time", "delay claim", "forensic"]),
     # BIM / IFC
@@ -729,6 +734,25 @@ class SmartOrchestratorBlock(UniversalBlock):
         from app.core.conversation_wbs import message_wants_wbs_export
         if message_wants_wbs_export(message):
             results = [r for r in results if r["action"] != "generate_wbs"]
+        from app.core.action_router import message_wants_look_ahead
+        if message_wants_look_ahead(message):
+            # Schedule nouns ("construction schedule", "programme", "xer")
+            # outscore the look-ahead cue and dispatch generate_wbs /
+            # parse_primavera. Promote look_ahead; drop the WBS builder.
+            results = [r for r in results if r["action"] != "generate_wbs"]
+            if not any(r["action"] == "look_ahead" for r in results):
+                results.insert(0, {
+                    "action": "look_ahead",
+                    "confidence": 0.4,
+                    "keywords_matched": ["look-ahead"],
+                })
+            else:
+                results.sort(
+                    key=lambda r: (
+                        0 if r["action"] == "look_ahead" else 1,
+                        -float(r.get("confidence") or 0.0),
+                    )
+                )
         return self._apply_correctness_filters(message, results)
 
     def _apply_correctness_filters(
