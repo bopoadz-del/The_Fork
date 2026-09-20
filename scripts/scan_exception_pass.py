@@ -58,17 +58,17 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-19: formula-ask scope + unit-rate identifier
-    # filter (60c8055) + privilege gates. Same pre-existing handlers —
-    # only the line numbers moved. No new silent returns.
+    # Re-indexed 2026-09-20: SYNC2 empty-turn / user-rate closure inserts.
+    # Same pre-existing handlers — only the line numbers moved. No new
+    # silent returns.
     "app/agents/runtime.py:1994": "baseline 2026-09-10",
     "app/agents/runtime.py:2000": "baseline 2026-09-10",
     "app/agents/runtime.py:2063": "baseline 2026-09-10",
     "app/agents/runtime.py:2069": "baseline 2026-09-10",
     "app/agents/runtime.py:2737": "baseline 2026-09-10",
-    "app/agents/runtime.py:3736": "baseline 2026-09-10",
-    "app/agents/runtime.py:4862": "baseline 2026-09-10",
-    "app/agents/runtime.py:5243": "baseline 2026-09-10",
+    "app/agents/runtime.py:3742": "baseline 2026-09-10",
+    "app/agents/runtime.py:4881": "baseline 2026-09-10",
+    "app/agents/runtime.py:5286": "baseline 2026-09-10",
     "app/agents/runtime.py:643": "baseline 2026-09-10",
     "app/agents/runtime.py:874": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
