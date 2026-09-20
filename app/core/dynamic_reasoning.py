@@ -81,10 +81,19 @@ async def understand_intent(message: str, has_documents: bool = False) -> Dict[s
         return empty
     from app.core.contract_lookup_intent import message_is_contract_data_lookup
     from app.core.answer_report_intent import message_wants_answer_report
+    from app.core.action_router import message_wants_look_ahead
     if message_is_contract_data_lookup(message):
         return empty
     if message_wants_answer_report(message):
         return empty
+    if message_wants_look_ahead(message):
+        return {
+            "workflow": "look_ahead",
+            "action": "look_ahead",
+            "mode": "produce",
+            "deliverable": True,
+            "params": {},
+        }
     from app.core.conversation_wbs import message_wants_wbs_export
     if message_wants_wbs_export(message):
         return empty

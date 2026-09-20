@@ -78,6 +78,9 @@ def message_wants_wbs_export(text: str) -> bool:
     raw = text or ""
     if not raw.strip():
         return False
+    from app.core.action_router import message_wants_look_ahead
+    if message_wants_look_ahead(raw):
+        return False
     from app.core.answer_report_intent import message_wants_answer_report
     if message_wants_answer_report(raw):
         return False
