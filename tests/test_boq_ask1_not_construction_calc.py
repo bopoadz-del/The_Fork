@@ -94,15 +94,23 @@ async def test_live_ask1_formula_predispatch_does_not_steal():
 @pytest.mark.asyncio
 async def test_live_ask1_predispatch_invokes_boq_process(monkeypatch):
     from app.agents.runtime import _predispatch_remaining_deliverables
+    from app.blocks.boq_processor import BOQProcessorBlock
     from app.containers.construction import ConstructionContainer
     from app.dependencies import get_block_instance as _real_get_block
 
-    monkeypatch.setattr(
-        "app.dependencies.get_block_instance",
-        lambda name: (
-            ConstructionContainer() if name == "construction" else _real_get_block(name)
-        ),
-    )
+    # Virgin CI does not load the construction kit, so get_block_instance
+    # ("boq_processor") 503s. Instantiate the block class directly — the
+    # same path tests/test_boq_process_inline_lines.py already uses.
+    boq_block = BOQProcessorBlock()
+
+    def _get(name: str):
+        if name == "construction":
+            return ConstructionContainer()
+        if name == "boq_processor":
+            return boq_block
+        return _real_get_block(name)
+
+    monkeypatch.setattr("app.dependencies.get_block_instance", _get)
 
     class _A:
         allowed_blocks = ["construction"]
