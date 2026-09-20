@@ -729,6 +729,25 @@ class SmartOrchestratorBlock(UniversalBlock):
         from app.core.conversation_wbs import message_wants_wbs_export
         if message_wants_wbs_export(message):
             results = [r for r in results if r["action"] != "generate_wbs"]
+        from app.core.action_router import message_wants_look_ahead
+        if message_wants_look_ahead(message):
+            # Schedule nouns ("construction schedule", "programme", "xer")
+            # outscore the look-ahead cue and dispatch generate_wbs /
+            # parse_primavera. Promote look_ahead; drop the WBS builder.
+            results = [r for r in results if r["action"] != "generate_wbs"]
+            if not any(r["action"] == "look_ahead" for r in results):
+                results.insert(0, {
+                    "action": "look_ahead",
+                    "confidence": 0.4,
+                    "keywords_matched": ["look-ahead"],
+                })
+            else:
+                results.sort(
+                    key=lambda r: (
+                        0 if r["action"] == "look_ahead" else 1,
+                        -float(r.get("confidence") or 0.0),
+                    )
+                )
         return self._apply_correctness_filters(message, results)
 
     def _apply_correctness_filters(

@@ -157,10 +157,13 @@ def lookup_question_hijack(message: str, confidence: float) -> bool:
     """
     from app.core.contract_lookup_intent import message_is_contract_data_lookup
     from app.core.answer_report_intent import message_wants_answer_report
+    from app.core.action_router import message_wants_look_ahead
     if message_is_contract_data_lookup(message):
         return True
     if message_wants_answer_report(message):
         return True
+    if message_wants_look_ahead(message):
+        return False
     from app.core.conversation_wbs import message_wants_wbs_export
     if message_wants_wbs_export(message):
         return True
