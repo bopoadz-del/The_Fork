@@ -1695,8 +1695,8 @@ def _vo_draft_hard_excludes(user_message: str) -> set[str]:
     if not _message_wants_vo_draft(user_message):
         return set()
     return {
-        "construction",
-        "sympy_reasoning",
+        "construction", "formula_executor_v2", "formula_executor",
+        "sympy_reasoning", "recommendation_template",
         "change_order_impact",
         "construction_calc",
     }
@@ -1743,7 +1743,7 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "payment_certificate": {"wir_form", "claims_builder"},
         "commissioning_checklist": {"wir_form", "om_manual_generator"},
         "wir_form": {"payment_certificate", "job_requisition", "rfp_draft", "rfi_generator"},
-        "variation_order_manager": {"change_order_impact", "wir_form", "sympy_reasoning", "construction"},
+        "variation_order_manager": {"change_order_impact", "wir_form", "sympy_reasoning", "construction", "formula_executor_v2", "formula_executor", "recommendation_template"},
         "boq_process": {"construction_calc", "generate_wbs", "formula_executor_v2", "formula_executor"},
         "boq_processor": {"construction_calc", "generate_wbs", "formula_executor_v2", "formula_executor"},
     }
@@ -3746,7 +3746,7 @@ def _message_wants_named_calculator(text: str) -> bool:
     # Live tip 50c37f: drawing_qto / quantity-takeoff asks carry L×W×D
     # dims ("Compute concrete volumes") and were stolen onto
     # named_calculator → construction_calc. Keep them on drawing_qto.
-    if _message_wants_drawing_qto(raw):
+    if _message_wants_drawing_qto(raw) or _message_wants_vo_draft(raw):
         return False
     if _looks_like_self_contained_calculation(raw):
         return True
@@ -14081,36 +14081,17 @@ def _formula_calculator_name_from_message(text: str) -> str | None:
     Used only to invoke construction_calc. Does not invent a mapping
     among audit #43–84 — if two names match, we pass no name and the
     tool returns an honest unknown-calculation envelope.
+
+    Shared with ``calculator_name_from_text``: full names beat 2-token
+    stems (mix-design vs slip-form, cost-buildup concrete vs rebar) and
+    a unique 3-token tail (``well point spacing``) counts.
     """
     try:
-        from app.lib.construction_formulas import CALCULATORS
+        from app.lib.construction_formulas import calculator_name_from_text
+        return calculator_name_from_text(text)
     except Exception:  # noqa: BLE001
-        _LOG.debug("CALCULATORS import failed", exc_info=True)
+        _LOG.debug("calculator_name_from_text failed", exc_info=True)
         return None
-    raw = text or ""
-    underscored = raw.lower().replace("-", "_")
-    spaced = raw.lower().replace("-", " ").replace("_", " ")
-    hits: list[str] = []
-    for name in CALCULATORS:
-        if len(name) < 6:
-            continue
-        tokens = [t for t in name.lower().split("_") if t]
-        if name.lower() in underscored:
-            hits.append(name)
-            continue
-        if len(tokens) >= 3 and name.replace("_", " ") in spaced:
-            hits.append(name)
-            continue
-        if len(tokens) >= 3:
-            stem = " ".join(tokens[:2])
-            if (
-                len(stem) >= 8
-                and stem in spaced
-                and stem not in _FORMULA_STEM_LOOKUP_COLLISIONS
-            ):
-                hits.append(name)
-    uniq = list(dict.fromkeys(hits))
-    return uniq[0] if len(uniq) == 1 else None
 
 
 async def _predispatch_formula_calc(
@@ -14134,7 +14115,7 @@ async def _predispatch_formula_calc(
         detect = (operator_text or user_msg or "").strip()
         if not detect:
             return None
-        if _message_wants_rfi_draft(detect):
+        if _message_wants_rfi_draft(detect) or _message_wants_vo_draft(detect):
             return None
         if _message_wants_drawing_qto(detect):
             return None
@@ -14211,7 +14192,7 @@ def _should_handoff_unmatched_calc(text: str) -> bool:
     # (which then called formula_executor_v2 and 429'd).
     try:
         from app.core.site_vocab import message_has_inline_boq_lines
-        if message_has_inline_boq_lines(text):
+        if message_has_inline_boq_lines(text) or _message_wants_vo_draft(text):
             return False
     except Exception:  # noqa: BLE001
         _LOG.debug("inline-boq handoff guard skipped", exc_info=True)
