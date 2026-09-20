@@ -2499,7 +2499,13 @@ def compose_named_community_tfc_span(
     needle = community.lower()
     days_by_ms: Dict[int, int] = {}
     for match in _MILESTONE_DAYS_ROW_RE.finditer(excerpts):
-        window = excerpts[match.start(): match.end() + 200]
+        # Cut at the next Milestone, not a fixed char window — a 200-char
+        # reach stained East Quarter 640 days as Northern Community when
+        # the next row named it. A wrap that keeps the community on the
+        # same item still counts.
+        nxt = re.search(r"(?i)milestone\s+\d+", excerpts[match.end():])
+        end = match.end() + (nxt.start() if nxt else 240)
+        window = excerpts[match.start(): end]
         if needle not in window.lower():
             continue
         days_by_ms[int(match.group(1))] = int(match.group(2))
