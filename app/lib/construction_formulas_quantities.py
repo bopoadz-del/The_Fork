@@ -596,11 +596,13 @@ def concrete_volume(
         expr = f"{length_m}*{width_m}*{thickness_m}"
     with_waste = net * (1.0 + waste_factor)
     headline = round(with_waste, 3)
+    net_r = round(net, 3)
     return {
         "shape": s,
         "volume_m3": headline,
-        "net_volume_m3": round(net, 3),
+        "net_volume_m3": net_r,
         "volume_with_waste_m3": headline,
+        "value": headline,
         "waste_factor": waste_factor,
         "standard": "geometry",
         "note": (f"Net = {expr} = {net:.3f} m3; "

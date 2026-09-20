@@ -1179,8 +1179,9 @@ _BIND_JUNK_KEYS = frozenset({
     "block", "unit", "formula", "text", "ok", "status",
     "input", "project_id", "conversation_id", "user_id",
     "message", "history", "messages", "chat",
+    "kwargs", "arguments", "variables", "values",
 })
-_FLATTEN_NEST_KEYS = ("params", "input")
+_FLATTEN_NEST_KEYS = ("params", "input", "kwargs", "arguments", "variables", "values")
 _E4_PASSTHROUGH_KEYS = frozenset({"text", "formula"})
 
 # Longest-first unit suffixes stripped when matching volume ↔ volume_m3.
@@ -1442,8 +1443,39 @@ def _is_junk_key(key: Any) -> bool:
     return _snake_key(key) in {_snake_key(j) for j in _BIND_JUNK_KEYS}
 
 
+_KV_ASSIGN_RE = re.compile(
+    r"([A-Za-z_][\w]*)\s*[:=]\s*"
+    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|"
+    r"\"[^\"]*\"|'[^']*')",
+)
+
+
+def _parse_kv_assignments(text: str) -> Dict[str, Any]:
+    """Parse ``udl_w_kn_m=20, span_m=6`` / ``length=10,width=5,thickness=0.3``.
+
+    Live standing-exit probe prints and often *sends* params as assignment
+    strings, not JSON objects. Only keep a parse that yielded a number so
+    ``status: error`` prose is not treated as kwargs.
+    """
+    if not text or ("=" not in text and ":" not in text):
+        return {}
+    out: Dict[str, Any] = {}
+    for match in _KV_ASSIGN_RE.finditer(text):
+        raw = match.group(2).strip().strip("\"'")
+        number = raw.replace(",", "").strip()
+        unit = re.match(r"^([+-]?\d+(?:\.\d+)?)(?:\s*[A-Za-zµμ/%²³³°]+)?$", number)
+        if unit:
+            token = unit.group(1)
+            out[match.group(1)] = float(token) if "." in token else int(token)
+        else:
+            out[match.group(1)] = raw
+    if not any(isinstance(val, (int, float)) for val in out.values()):
+        return {}
+    return out
+
+
 def coerce_calc_params(raw: Any) -> Dict[str, Any]:
-    """Accept a dict or a JSON-object string. Models often stringify ``params``.
+    """Accept a dict, JSON-object string, or ``k=v, k=v`` assignment string.
 
     Never invent keys. A non-object / empty / undecodable value is ``{}``.
     """
@@ -1453,14 +1485,20 @@ def coerce_calc_params(raw: Any) -> Dict[str, Any]:
         return dict(raw)
     if isinstance(raw, str):
         text = raw.strip()
-        if not text or text[0] not in "{[":
+        if not text:
             return {}
-        try:
-            obj = json.loads(text)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            logger.debug("coerce_calc_params: undecodable params string (%s)", exc)
-            return {}
-        return dict(obj) if isinstance(obj, dict) else {}
+        if text[0] in "{[":
+            try:
+                obj = json.loads(text)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                logger.debug("coerce_calc_params: undecodable params string (%s)", exc)
+                obj = None
+            if isinstance(obj, dict):
+                return dict(obj)
+        parsed = _parse_kv_assignments(text)
+        if parsed:
+            return parsed
+        return {}
     return {}
 
 
@@ -1848,6 +1886,12 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
             continue
         if isinstance(val, str):
             out[key] = _coerce_scalar(val)
+        # Live excavation ask-2 sent bulking=25 (percent) not 0.25.
+        # Values in (1, 100] are percents; 1.25 stays a multiplier.
+        if key in {"bulking_factor", "swell_factor"}:
+            number = out[key]
+            if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0:
+                out[key] = float(number) / 100.0
     return out
 
 
@@ -1915,10 +1959,14 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     cost so the answer stays grounded.
     """
     params = params or {}
-    if params and not isinstance(params, dict):
-        return {"status": "error", "error": "params must be an object of keyword arguments."}
     if not isinstance(params, dict):
-        params = {}
+        coerced = coerce_calc_params(params)
+        if coerced:
+            params = coerced
+        elif params:
+            return {"status": "error", "error": "params must be an object of keyword arguments."}
+        else:
+            params = {}
     # Shared with Agent C / #636 / #639 / #652: nested ``params`` / ``input``
     # + top-level siblings (volume / BCWS / excavation_bank_m3 / water_depth_m)
     # must reach the calculator. Flatten before E4 so a nested concrete ask

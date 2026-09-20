@@ -23,9 +23,12 @@ def excavation_volume(
         return {"error": "bulking_factor must be >= 0."}
     bank = float(length_m) * float(width_m) * float(depth_m)
     loose = bank * (1.0 + bulking_factor)
+    bank_r = round(bank, 3)
+    loose_r = round(loose, 3)
     return {
-        "bank_volume_m3": round(bank, 3),
-        "loose_volume_m3": round(loose, 3),
+        "bank_volume_m3": bank_r,
+        "loose_volume_m3": loose_r,
+        "bulked_volume_m3": loose_r,
         "bulking_factor": bulking_factor,
         "standard": "geometry / soil bulking",
         "note": (f"Bank = {length_m}*{width_m}*{depth_m} = {bank:.2f} m3; "
