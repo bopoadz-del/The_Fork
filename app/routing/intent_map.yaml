@@ -51,6 +51,26 @@ rows:
       - generate a procurement list for the MEP package
       - what materials do we need to buy for the substructure works?
 
+  # Quantity takeoff from drawings is a file tool, not a calculator.
+  # Must sit above construction_calc so "quantity takeoff" / tool-shaped
+  # `drawing_qto` asks cannot fall through to construction_calc (live
+  # exit 78bd9ca: drawing_qto ask stolen by construction_calc because
+  # tool_choice=required had no named tool). Self-contained L×W×D
+  # volume asks do not match these phrases and stay on construction_calc
+  # (leftover L6).
+  - tool: drawing_qto
+    phrases:
+      - drawing_qto
+      - quantity takeoff
+      - quantity take-off
+      - extract quantities
+      - measure the floor area
+      - floor plan drawing
+      - infrastructure drawings
+    phrasings:
+      - do a quantity takeoff from the infrastructure drawings - pipe lengths and manhole counts
+      - measure the floor area from the ground floor plan drawing
+
   # RFI draft is a construction-container deliverable, not a
   # calculator. Must sit above construction_calc so "rebar detail"
   # / tool-shaped asks cannot fall through to construction_calc.
