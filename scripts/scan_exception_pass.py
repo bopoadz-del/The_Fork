@@ -62,16 +62,16 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # + A2 formula-template recovery (#649) + Set3 empty-turn / A3-1
     # priced-takeoff grafts (#651). Same pre-existing handlers — only
     # the line numbers moved. No new silent returns.
-    "app/agents/runtime.py:2058": "baseline 2026-09-10",
-    "app/agents/runtime.py:2064": "baseline 2026-09-10",
-    "app/agents/runtime.py:2127": "baseline 2026-09-10",
-    "app/agents/runtime.py:2133": "baseline 2026-09-10",
-    "app/agents/runtime.py:2801": "baseline 2026-09-10",
-    "app/agents/runtime.py:3808": "baseline 2026-09-10",
-    "app/agents/runtime.py:4968": "baseline 2026-09-10",
-    "app/agents/runtime.py:5373": "baseline 2026-09-10",
-    "app/agents/runtime.py:643": "baseline 2026-09-10",
-    "app/agents/runtime.py:938": "baseline 2026-09-10",
+    "app/agents/runtime.py:2078": "baseline 2026-09-10",
+    "app/agents/runtime.py:2084": "baseline 2026-09-10",
+    "app/agents/runtime.py:2147": "baseline 2026-09-10",
+    "app/agents/runtime.py:2153": "baseline 2026-09-10",
+    "app/agents/runtime.py:2822": "baseline 2026-09-10",
+    "app/agents/runtime.py:3829": "baseline 2026-09-10",
+    "app/agents/runtime.py:5108": "baseline 2026-09-10",
+    "app/agents/runtime.py:5517": "baseline 2026-09-10",
+    "app/agents/runtime.py:647": "baseline 2026-09-10",
+    "app/agents/runtime.py:942": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
@@ -105,7 +105,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # Re-indexed 2026-09-20: measured-works / MOS / ipc_args_from_ask
     # + VO ADD/OMIT priced-line parser. Same handler — only the line
     # number moved. No new silent returns.
-    "app/containers/construction/boq.py:900": "baseline 2026-09-10",
+    "app/containers/construction/boq.py:960": "baseline 2026-09-10",
     "app/containers/construction/helpers.py:69": "baseline 2026-09-10",
     "app/core/doc_index.py:1063": "baseline 2026-09-10",
     "app/core/doc_index.py:1106": "baseline 2026-09-10",
