@@ -15,9 +15,12 @@ import json
 
 import pytest
 
+from app.lib import construction_formulas as _cf
 from app.lib.construction_formulas import (
     CALCULATORS,
+    _BIND_SEMANTIC_ALIASES,
     bind_calculation_params,
+    extract_calculation_params_from_text,
     run_calculation,
 )
 from tests.test_construction_calc_tool import _agent, _run
@@ -272,3 +275,136 @@ def test_empty_text_still_names_required_does_not_invent():
         {"text": "rc_beam_moment_capacity"},
     )
     assert bound == {}
+
+
+# C #663 (7d67f9e) dests that the B union must keep. Adding dests is OK;
+# dropping a C dest (or the key) is a bind regression.
+_C663_ALIAS_DESTS = {
+    "ab": ("bolt_area_mm2",),
+    "ac": ("ac", "acwp"),
+    "aca": ("contract_amount",),
+    "accepted_contract_amount": ("contract_amount",),
+    "actual_cost": ("ac", "acwp"),
+    "ae": ("net_area_mm2",),
+    "ag": ("gross_area_mm2",),
+    "age": ("time_days",),
+    "age_days": ("time_days",),
+    "an": ("net_area_mm2",),
+    "anet": ("net_area_mm2",),
+    "as": ("steel_area_mm2",),
+    "ast": ("steel_area_mm2",),
+    "at": ("tributary_area_m2", "area_m2"),
+    "axial": ("axial_load_kn",),
+    "axial_load": ("axial_load_kn",),
+    "b": ("width_mm",),
+    "bank": ("excavation_bank_m3",),
+    "bank_volume": ("excavation_bank_m3",),
+    "bolt_area": ("bolt_area_mm2",),
+    "budget_at_completion": ("bac",),
+    "bw": ("width_mm",),
+    "cert": ("certified_amount",),
+    "certified": ("certified_amount",),
+    "claim": ("claimed_amount",),
+    "claimed": ("claimed_amount",),
+    "contract_value": ("contract_amount",),
+    "d": ("eff_depth_mm", "bar_diameter_mm"),
+    "days": ("time_days",),
+    "delay_rate": ("rate_percent",),
+    "dia": ("column_diameter_mm", "diameter_mm", "bolt_diameter_mm"),
+    "diameter": ("column_diameter_mm", "diameter_mm", "bolt_diameter_mm"),
+    "earned_value": ("ev", "bcwp"),
+    "esh_ult": ("ultimate_shrinkage_microstrain",),
+    "ev": ("ev", "bcwp"),
+    "excavation": ("excavation_bank_m3",),
+    "excavation_bank": ("excavation_bank_m3",),
+    "fc": ("fc_mpa", "fck_n_mm2"),
+    "fck": ("fck_n_mm2", "fc_mpa"),
+    "fdd": ("field_dry_density",),
+    "field": ("field_dry_density",),
+    "field_density": ("field_dry_density",),
+    "floors": ("floor_count",),
+    "fm": ("masonry_strength_mpa",),
+    "fu": ("fu_mpa",),
+    "fy": ("fy_mpa",),
+    "gross": ("gross_valuation",),
+    "gross_value": ("gross_valuation",),
+    "h": ("height_mm", "formwork_height_m"),
+    "h_w": ("water_depth",),
+    "height": ("height_mm", "formwork_height_m", "height_m"),
+    "hw": ("water_depth",),
+    "ie": ("ie",),
+    "kll": ("kll",),
+    "l": ("span_m", "length_m"),
+    "l0": ("base_live_load_kn_m2",),
+    "lab_density": ("max_dry_density",),
+    "live_load": ("live_load_kn_m2",),
+    "ll": ("live_load_kn_m2",),
+    "max_density": ("max_dry_density",),
+    "mdd": ("max_dry_density",),
+    "n_floors": ("floor_count",),
+    "nfloors": ("floor_count",),
+    "p": ("central_point_load_kn", "axial_load_kn", "point_load_kn"),
+    "planned_value": ("pv", "bcws"),
+    "pv": ("pv", "bcws"),
+    "raft": ("raft_thickness",),
+    "rate": ("rate_percent",),
+    "retention": ("retention_percent", "retention_rate"),
+    "sds": ("sds",),
+    "slab": ("slab_thickness_m",),
+    "slab_thickness": ("slab_thickness_m",),
+    "span": ("span_m",),
+    "structure": ("structure_volume_m3",),
+    "structure_volume": ("structure_volume_m3",),
+    "t": ("time_days", "thickness_mm", "slab_thickness_m"),
+    "time": ("time_days",),
+    "traft": ("raft_thickness",),
+    "udl": ("udl_w_kn_m",),
+    "udl_w": ("udl_w_kn_m",),
+    "ultimate_shrinkage": ("ultimate_shrinkage_microstrain",),
+    "v": ("wind_velocity_m_s", "wind_speed_m_s"),
+    "valuation": ("gross_valuation",),
+    "vol": ("volume_m3",),
+    "volume": ("volume_m3",),
+    "w": ("udl_w_kn_m", "seismic_weight_kn", "formwork_width_m"),
+    "water_head": ("water_depth",),
+    "water_table": ("water_depth",),
+    "width": ("width_mm", "formwork_width_m", "width_m"),
+}
+
+
+def test_bind_alias_map_is_union_of_c663_dests():
+    """One `_BIND_SEMANTIC_ALIASES` — B dests may grow; C #663 dests stay."""
+    assert len(_C663_ALIAS_DESTS) == 89
+    missing_keys = sorted(set(_C663_ALIAS_DESTS) - set(_BIND_SEMANTIC_ALIASES))
+    assert missing_keys == [], missing_keys
+    drops = []
+    for key, dests in _C663_ALIAS_DESTS.items():
+        have = _BIND_SEMANTIC_ALIASES[key]
+        lost = [d for d in dests if d not in have]
+        if lost:
+            drops.append((key, dests, have, lost))
+    assert drops == [], drops
+
+
+def test_extract_from_text_runs_on_empty_and_partial_kwargs(monkeypatch):
+    """C #663 extract must run when kwargs are empty/partial and text is set."""
+    calls: list[tuple[str, str]] = []
+    real = extract_calculation_params_from_text
+
+    def _spy(fn, text):
+        calls.append((getattr(fn, "__name__", ""), str(text)))
+        return real(fn, text)
+
+    monkeypatch.setattr(_cf, "extract_calculation_params_from_text", _spy)
+    empty = run_calculation("rc_beam_moment_capacity", {"text": _RC_ASK})
+    assert empty.get("status") == "success", empty
+    assert any(name == "rc_beam_moment_capacity" for name, _ in calls), calls
+    calls.clear()
+    partial = run_calculation("rc_beam_moment_capacity", {
+        "text": _RC_ASK, "fy": 420,
+    })
+    assert partial.get("status") == "success", partial
+    assert any(name == "rc_beam_moment_capacity" for name, _ in calls), calls
+    assert "steel_area_mm2" in extract_calculation_params_from_text(
+        CALCULATORS["rc_beam_moment_capacity"], _RC_ASK,
+    )

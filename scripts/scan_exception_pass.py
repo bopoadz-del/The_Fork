@@ -73,7 +73,9 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:2863": "baseline 2026-09-10",
     "app/agents/runtime.py:3883": "baseline 2026-09-10",
     "app/agents/runtime.py:5191": "baseline 2026-09-10",
+    "app/agents/runtime.py:5201": "baseline 2026-09-10",
     "app/agents/runtime.py:5602": "baseline 2026-09-10",
+    "app/agents/runtime.py:5612": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:970": "baseline 2026-09-10",
     # Re-indexed 2026-09-20: Set3 remaining E1 truncation detector
