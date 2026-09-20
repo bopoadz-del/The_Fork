@@ -760,6 +760,12 @@ _HISTOGRAM_PHRASES = (
     "resource histogram", "crew histogram", "workforce histogram",
     "labor loading", "labour loading",
 )
+_LOOKAHEAD_PHRASES = (
+    "look ahead", "look-ahead", "lookahead",
+    "3 week look", "4 week look", "three week look", "four week look",
+    "rolling look ahead", "short term programme", "short-term programme",
+    "short term program", "short-term program",
+)
 _HISTOGRAM_QA_RE = re.compile(
     r"\b(what is|what's|whats|explain|define)\b", re.IGNORECASE,
 )
@@ -782,13 +788,15 @@ def _message_wants_resource_histogram(text: str) -> bool:
 
 
 def _message_wants_look_ahead(text: str) -> bool:
-    """True when the turn asks for a rolling / N-day look-ahead from a programme.
-
-    Delegates to ``action_router.message_wants_look_ahead`` so forced-tool
-    and the keyword classifier cannot drift (Agent D look-ahead steal-guard).
-    """
-    from app.core.action_router import message_wants_look_ahead
-    return message_wants_look_ahead(text)
+    """True when the turn asks for a 3–4 week look-ahead from a .xer."""
+    low = (text or "").lower()
+    if not low or _HISTOGRAM_QA_RE.search(low):
+        return False
+    if any(p in low for p in _LOOKAHEAD_PHRASES):
+        return True
+    return "look" in low and "ahead" in low and any(
+        t in low for t in (".xer", "primavera", "p6", "schedule", "programme", "program")
+    )
 
 
 def _resolve_histogram_schedule_file(
