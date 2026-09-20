@@ -2570,10 +2570,13 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         )
     fn = CALCULATORS.get(name)
     if fn is None:
+        # Recover only from the ask/params prose (text/formula/message/query).
+        # Do not feed the unknown *name* into calculator_name_from_text —
+        # "calculate_delay_damages" contains "delay damages" and would
+        # silently bind delay_damages_daily, dropping the Unknown-calculation
+        # envelope (and its ``available`` list) that the model needs to retry.
         blob = _ask_blob(params) if isinstance(params, dict) else ""
-        recovered = calculator_name_from_text(
-            " ".join(x for x in (name, blob) if x),
-        )
+        recovered = calculator_name_from_text(blob) if str(blob).strip() else None
         if recovered:
             name = recovered
             fn = CALCULATORS.get(name)
