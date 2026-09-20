@@ -409,6 +409,49 @@ def message_wants_cash_flow(text: str) -> bool:
     return any(p in low for p in _CASH_FLOW_PHRASES)
 
 
+# RFI drafts often name Drawing S-### / A-### refs; drawing_qto keywords
+# then win. Detector is the steal-guard (live tip 50c37f ask1).
+_RFI_DRAFT_PHRASES = (
+    "rfi_generator",
+    "request for information",
+    "follow-on rfi",
+    "follow on rfi",
+    "draft a rfi",
+    "draft an rfi",
+    "draft one rfi",
+    "generate a rfi",
+    "generate an rfi",
+    "create a rfi",
+    "create an rfi",
+    "raise an rfi",
+    "raise a rfi",
+    "write an rfi",
+    "write a rfi",
+    "produce an rfi",
+    "produce a rfi",
+    "issue an rfi",
+    "issue a rfi",
+)
+_RFI_QA_RE = re.compile(
+    r"\b(what is|what's|whats|explain|define|how many)\b",
+    re.IGNORECASE,
+)
+
+
+def message_wants_rfi_draft(text: str) -> bool:
+    """True for an RFI-draft deliverable, not a drawing_qto / definition ask.
+
+    Live tip 50c37f: "Use rfi_generator. Draft ONE RFI … Drawing S-201"
+    classified as drawing_qto then RAG-miss refused. Clash + the word RFI
+    is still a draft, not a CDE post.
+    """
+    raw = text or ""
+    if not raw.strip() or _RFI_QA_RE.search(raw):
+        return False
+    low = raw.lower()
+    return any(p in low for p in _RFI_DRAFT_PHRASES)
+
+
 def needs_planning(action: Optional[str], confidence: float) -> bool:
     """True iff this orchestrator classification warrants the heavy-reasoning
     agent path instead of the fast single-shot chat block.
