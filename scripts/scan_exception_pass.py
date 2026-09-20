@@ -66,14 +66,14 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # inserted two lines in `_forced_specific_tool`. Same handlers at
     # `_cg_to_number` / `_aca_claim_amount` — only the line numbers
     # moved (+2). Handler text is byte-identical. No new silent returns.
-    "app/agents/runtime.py:2090": "baseline 2026-09-10",
-    "app/agents/runtime.py:2096": "baseline 2026-09-10",
-    "app/agents/runtime.py:2159": "baseline 2026-09-10",
-    "app/agents/runtime.py:2165": "baseline 2026-09-10",
-    "app/agents/runtime.py:2835": "baseline 2026-09-10",
-    "app/agents/runtime.py:3850": "baseline 2026-09-10",
-    "app/agents/runtime.py:5154": "baseline 2026-09-10",
-    "app/agents/runtime.py:5565": "baseline 2026-09-10",
+    "app/agents/runtime.py:2107": "baseline 2026-09-10",
+    "app/agents/runtime.py:2113": "baseline 2026-09-10",
+    "app/agents/runtime.py:2176": "baseline 2026-09-10",
+    "app/agents/runtime.py:2182": "baseline 2026-09-10",
+    "app/agents/runtime.py:2852": "baseline 2026-09-10",
+    "app/agents/runtime.py:3867": "baseline 2026-09-10",
+    "app/agents/runtime.py:5177": "baseline 2026-09-10",
+    "app/agents/runtime.py:5588": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:942": "baseline 2026-09-10",
     # Re-indexed 2026-09-20: Set3 remaining E1 truncation detector
