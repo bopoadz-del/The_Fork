@@ -128,6 +128,8 @@ class BOQProcessorBlock(UniversalBlock):
         params = params or {}
         data = input_data if isinstance(input_data, dict) else {}
 
+        file_path = data.get("file_path") or params.get("file_path") or data.get("text") or data.get("input") or (input_data if isinstance(input_data, str) else "")
+
         # Inline CSV/BOQ pasted in the chat message (no uploaded file).
         inline_boq_csv = False
         raw_text = data.get("text") or data.get("content") or data.get("lines") or params.get("text") or params.get("content") or ""

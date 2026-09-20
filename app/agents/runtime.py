@@ -3649,8 +3649,8 @@ def _message_wants_named_calculator(text: str) -> bool:
         from app.core.site_vocab import message_has_inline_boq_lines
         if message_has_inline_boq_lines(text or ""):
             return False
-    except Exception:
-        pass
+    except Exception as exc:
+        _LOG.debug("inline_boq_lines check skipped: %s", exc)
     raw = text or ""
     # "Build a plumbing flow programme" is a schedule deliverable.
     # intent_map "plumbing flow" must not steal it onto named_calculator.
