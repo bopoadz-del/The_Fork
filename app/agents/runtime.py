@@ -12110,11 +12110,19 @@ class Agent:
         if name == "construction_calc":
             from app.lib import construction_formulas as _cf
             calc_params = dict(args.get("params") or {})
-            # Live UI pack E4: the model often passes the user ask as
-            # ``text`` / ``formula`` beside (or instead of) ``params``.
-            for key in ("text", "formula"):
-                if args.get(key) and key not in calc_params:
-                    calc_params[key] = args[key]
+            # Models (and live calculate_evm calls) often put calculator
+            # kwargs next to ``calculation`` instead of inside ``params``.
+            # Container construction_calc already flattens; the tool path
+            # must too or PMI names (bcws/bcwp/acwp) never reach the fn.
+            # Also covers E4 ``text`` / ``formula`` beside ``params``.
+            for key, val in (args or {}).items():
+                if key in ("calculation", "name", "calculator", "params"):
+                    continue
+                if key in calc_params and calc_params[key] not in (None, ""):
+                    continue
+                if val is None or val == "":
+                    continue
+                calc_params[key] = val
             result = _cf.run_calculation(
                 args.get("calculation") or args.get("name") or args.get("calculator"),
                 calc_params,
