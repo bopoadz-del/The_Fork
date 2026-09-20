@@ -3930,6 +3930,12 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     wants_drawing_qto = _message_wants_drawing_qto(text)
     if "drawing_qto" in available and wants_drawing_qto:
         return "drawing_qto"
+    # Live tip 0a95d03 ask2: VO draft still ran construction+sympy. Force
+    # variation_order_manager when the ask is a priced ADD/OMIT draft.
+    if _message_wants_vo_draft(text):
+        for name in ("variation_order_manager", "variation_order_generator"):
+            if name in available:
+                return name
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             if (
