@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.agents.runtime import Agent, _SynthStreamError
+from app.agents.runtime import Agent, _SYNTH_CUTOFF_NOTICE, _SynthStreamError
 
 
 # ── DeepSeek config so the streaming gate (provider in the allowlist) opens ──
@@ -98,6 +98,15 @@ def _mk_stream_raise():
     return fake_stream
 
 
+def _mk_stream_midway_drop(deltas):
+    """Yield 1–2 deltas then raise — the A4 mid-stream cut-off shape."""
+    async def fake_stream(self, messages, api_key, **kwargs):
+        for d in deltas:
+            yield d
+        raise _SynthStreamError("mid-stream drop")
+    return fake_stream
+
+
 def _mk_stream_empty():
     async def fake_stream(self, messages, api_key, **kwargs):
         return
@@ -152,6 +161,35 @@ def test_pretoken_stream_error_falls_back_to_non_streaming(deepseek_streaming):
     assert call_llm.state["n"] == 2, "should fall back to non-streaming _call_llm"
     assert "NON-STREAMED fallback answer." in _tokens(events)
     assert events[-1]["type"] == "end"
+
+
+# ── A4: mid-stream drop is honest, not a finished answer ──────────────────────
+
+def test_midstream_synth_error_appends_cutoff_notice(deepseek_streaming):
+    """Tokens already left the provider. Finish with them — do not restart
+    `_call_llm` (that would duplicate the body) — and mark the cut-off on
+    persist/`end` so a partial is not saved as a complete answer.
+    """
+    call_llm = _tool_then_final()
+    deltas = [
+        "The raft volume is 30 × 20 × 1.5 = 900 m³.\n",
+        "Including the documented ",
+    ]
+    with patch.object(Agent, "_call_llm", call_llm), \
+         patch.object(Agent, "_run_tool_call", _tool_ok), \
+         patch.object(Agent, "_stream_synthesis", _mk_stream_midway_drop(deltas)):
+        events = _run_turn(_pa_agent())
+
+    assert call_llm.state["n"] == 1, (
+        "mid-stream drop must not restart _call_llm (anti-duplicate)"
+    )
+    assert events[-1]["type"] == "end"
+    end_content = events[-1].get("content") or ""
+    assert _SYNTH_CUTOFF_NOTICE in end_content, end_content
+    assert "900 m³" in end_content
+    assert "NON-STREAMED" not in end_content
+    assert "NON-STREAMED" not in _tokens(events)
+    assert _SYNTH_CUTOFF_NOTICE in _tokens(events)
 
 
 # ── citation sanitisation on streamed lines ───────────────────────────────────

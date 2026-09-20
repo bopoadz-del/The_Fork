@@ -11,12 +11,13 @@ in seven days of logs there is none at all. The retry was awaited and never
 returned: the producer task was cancelled inside it when the 240s turn
 deadline fired. The user waited four minutes and got a timeout banner.
 
-The arithmetic never worked. LLM_HTTP_TIMEOUT_SECONDS defaults to 200 PER
+The arithmetic never worked. LLM_HTTP_TIMEOUT_SECONDS defaults to 150 PER
 CALL and _call_llm walks a provider fallback ladder inside that, while
 CHAT_STREAM_TIMEOUT_SECONDS caps the WHOLE TURN at 240. Any turn that needs
 a second call -- which #454 made far more likely by dropping the
 request-type gate on the forced retry -- can exceed the turn cap before the
-second call has a chance to finish.
+second call has a chance to finish. The 200s default left ~40s after a hung
+primary — often no budget for OpenRouter. 150s leaves ~90s.
 
 Two rules, both pinned here:
 
@@ -39,6 +40,7 @@ from app.agents.runtime import (
     _MIN_LLM_ATTEMPT_SECONDS,
     Agent,
     _forced_retry_min_seconds,
+    _llm_http_timeout,
 )
 
 # The exact string that tripped the forced retry on the live request.
@@ -202,10 +204,10 @@ def test_call_llm_caps_the_attempt_timeout_at_the_remaining_budget(monkeypatch):
     """The per-call timeout must shrink to what the turn has left.
 
     Without this the fallback ladder spends _llm_http_timeout() per hop
-    (200s by default) against a 240s turn cap.
+    (150s by default) against a 240s turn cap.
     """
     _setup_provider(monkeypatch)
-    monkeypatch.setenv("LLM_HTTP_TIMEOUT_SECONDS", "200")
+    monkeypatch.setenv("LLM_HTTP_TIMEOUT_SECONDS", "150")
     a = _agent()
 
     seen: List[float] = []
@@ -231,9 +233,9 @@ def test_call_llm_caps_the_attempt_timeout_at_the_remaining_budget(monkeypatch):
 
 
 def test_call_llm_without_a_deadline_is_unchanged(monkeypatch):
-    """No deadline (chat(), tools, internal callers) => the old timeout."""
+    """No deadline (chat(), tools, internal callers) => the configured timeout."""
     _setup_provider(monkeypatch)
-    monkeypatch.setenv("LLM_HTTP_TIMEOUT_SECONDS", "200")
+    monkeypatch.delenv("LLM_HTTP_TIMEOUT_SECONDS", raising=False)
     a = _agent()
 
     seen: List[float] = []
@@ -246,7 +248,18 @@ def test_call_llm_without_a_deadline_is_unchanged(monkeypatch):
     with patch("app.agents.runtime.httpx.AsyncClient", _Capture):
         asyncio.run(a._call_llm([{"role": "user", "content": "hi"}], "key"))
 
-    assert seen and seen[0] == 200.0, seen
+    assert seen and seen[0] == 150.0, seen
+
+
+def test_llm_http_timeout_default_is_150(monkeypatch):
+    """A5: hung DeepSeek at 200s burned the 240s turn; 150s leaves failover room."""
+    monkeypatch.delenv("LLM_HTTP_TIMEOUT_SECONDS", raising=False)
+    assert _llm_http_timeout() == 150.0
+
+
+def test_llm_http_timeout_garbage_falls_back_to_150(monkeypatch):
+    monkeypatch.setenv("LLM_HTTP_TIMEOUT_SECONDS", "not-a-number")
+    assert _llm_http_timeout() == 150.0
 
 
 # ── naming the stalled component ─────────────────────────────────────────────
