@@ -960,6 +960,37 @@ def test_http_status_is_retryable_includes_402():
 # ── DeepSeek primary → OpenRouter fallback (the documented recipe) ───────
 
 @pytest.mark.asyncio
+async def test_deepseek_402_insufficient_credit_falls_back_to_openrouter(
+    monkeypatch, http,
+):
+    """Live tip 78bd9ca: DeepSeek HTTP 402 Insufficient Balance ended the
+    stream in 0.8s with no OpenRouter hop, even though health said
+    fallback_ready. ``_http_status_is_retryable(402)`` is True; the local
+    ``_is_retryable`` inside ``_call_llm`` omitted 402 so the ladder never
+    ran. OpenRouter generic 402 still must not burn DeepSeek — that
+    direction stays covered by ``test_openrouter_402_does_not_fall_back_to_deepseek``.
+    """
+    _deepseek_primary(monkeypatch)
+    _openrouter_fallback(monkeypatch)
+    fake = http(
+        _Resp(
+            402,
+            text='{"error":{"message":"Insufficient Balance","type":"unknown_error","code":"invalid_request_error"}}',
+        ),
+        _Resp(200, _ok_body("recovered on openrouter")),
+    )
+
+    result = await _agent()._call_llm(list(USER), "ds-test-key")
+
+    assert result["status"] == "success", result
+    assert fake.urls == [DEEPSEEK_API_URL, OPENROUTER_API_URL], fake.urls
+    assert fake.calls[0]["headers"]["Authorization"] == "Bearer ds-test-key"
+    assert fake.calls[1]["headers"]["Authorization"] == "Bearer or-test-key"
+    content = result["choice"]["message"]["content"]
+    assert content == "recovered on openrouter"
+
+
+@pytest.mark.asyncio
 async def test_deepseek_primary_falls_back_to_openrouter(monkeypatch, http):
     """Operator recipe: LLM_PROVIDER=deepseek, LLM_FALLBACK_PROVIDER=openrouter."""
     _deepseek_primary(monkeypatch)
