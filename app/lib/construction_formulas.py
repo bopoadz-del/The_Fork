@@ -940,19 +940,22 @@ def concrete_maturity_strength(
 import dataclasses as _dc
 import inspect as _inspect
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
 
 # Public functions in this module that are DISPATCH infrastructure, not
 # calculators — excluded from the registry regardless of definition order.
-# bind_calculation_params / describe_calculation_params are the shared
-# dispatcher helpers (#639 + Agent C / #636 / #652). Do not register them.
+# bind_calculation_params / describe_calculation_params /
+# extract_calculation_params_from_text are the shared dispatcher helpers
+# (#639 + Agent C / #636 / #652). Do not register them.
 _NON_CALCULATORS = {
     "available_calculations",
     "run_calculation",
     "bind_calculation_params",
     "describe_calculation_params",
+    "extract_calculation_params_from_text",
 }
 
 
@@ -1246,11 +1249,38 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "max_density": ("max_dry_density",),
     "axial": ("axial_load_kn",),
     "axial_load": ("axial_load_kn",),
-    "w": ("udl_w_kn_m",),
+    "w": ("udl_w_kn_m", "seismic_weight_kn", "formwork_width_m"),
     "udl": ("udl_w_kn_m",),
     "udl_w": ("udl_w_kn_m",),
     "span": ("span_m",),
     "l": ("span_m", "length_m"),
+    "as": ("steel_area_mm2",),
+    "ast": ("steel_area_mm2",),
+    "ag": ("gross_area_mm2",),
+    "ae": ("net_area_mm2",),
+    "anet": ("net_area_mm2",),
+    "an": ("net_area_mm2",),
+    "fy": ("fy_mpa",),
+    "fu": ("fu_mpa",),
+    "fc": ("fc_mpa", "fck_n_mm2"),
+    "fck": ("fck_n_mm2", "fc_mpa"),
+    "fm": ("masonry_strength_mpa",),
+    "b": ("width_mm",),
+    "bw": ("width_mm",),
+    "d": ("eff_depth_mm", "bar_diameter_mm"),
+    "l0": ("base_live_load_kn_m2",),
+    "at": ("tributary_area_m2", "area_m2"),
+    "kll": ("kll",),
+    "ll": ("live_load_kn_m2",),
+    "live_load": ("live_load_kn_m2",),
+    "slab": ("slab_thickness_m",),
+    "slab_thickness": ("slab_thickness_m",),
+    "sds": ("sds",),
+    "ie": ("ie",),
+    "h": ("height_mm", "formwork_height_m"),
+    "height": ("height_mm", "formwork_height_m", "height_m"),
+    "width": ("width_mm", "formwork_width_m", "width_m"),
+    "v": ("wind_velocity_m_s", "wind_speed_m_s"),
     "p": ("central_point_load_kn", "axial_load_kn", "point_load_kn"),
     "rate": ("rate_percent",),
     "delay_rate": ("rate_percent",),
@@ -1266,7 +1296,7 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "floors": ("floor_count",),
     "n_floors": ("floor_count",),
     "nfloors": ("floor_count",),
-    "t": ("time_days",),
+    "t": ("time_days", "thickness_mm", "slab_thickness_m"),
     "time": ("time_days",),
     "days": ("time_days",),
     "age": ("time_days",),
@@ -1488,6 +1518,194 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     return bound
 
 
+# Thousand separators must be interior (1,000) — a trailing comma is list
+# punctuation ("100, man_hours 50") and must not be eaten as part of the number.
+_TEXT_NUM_RE = r"[+-]?\d+(?:,\d{3})*(?:\.\d+)?"
+_TEXT_UNIT_RE = (
+    r"(?:kN/m2|kN/m²|N/mm2|N/mm²|mm2|mm²|m2|m²|m3|m³|"
+    r"MPa|kPa|kN|mm|m/s|m|%|deg)"
+)
+_CODE_ACI_RE = re.compile(r"\b(?:aci|asce|aisc|tms)\b", re.IGNORECASE)
+_CODE_EC_RE = re.compile(r"\b(?:eurocode|en\s*199\d)\b", re.IGNORECASE)
+_UNIT_EQ = {
+    "mpa": "mpa",
+    "n/mm2": "mpa",
+    "kpa": "kpa",
+    "kn/m2": "kn/m2",
+    "m2": "m2",
+    "mm2": "mm2",
+    "m3": "m3",
+    "m": "m",
+    "mm": "mm",
+    "kn": "kn",
+    "m/s": "m/s",
+    "%": "%",
+    "deg": "deg",
+}
+
+
+def _norm_label(raw: Any) -> str:
+    return _snake_key(str(raw or "").replace(" ", "_").replace("/", "_"))
+
+
+def _norm_unit_token(raw: Any) -> str:
+    s = str(raw or "").strip().lower().replace("²", "2").replace("³", "3")
+    s = s.replace(" ", "").replace(".", "")
+    return _UNIT_EQ.get(s, s)
+
+
+def _parse_text_number(raw: str) -> Optional[float]:
+    try:
+        return float(str(raw).replace(",", ""))
+    except (TypeError, ValueError):
+        logger.debug("engineer-ask token %r is not numeric", raw)
+        return None
+
+
+def _text_label_map(fn: Any) -> Dict[str, str]:
+    """Normalized ask labels → unique signature dest for this calculator."""
+    sig = _inspect.signature(fn)
+    accepted_list = [
+        key for key, param in sig.parameters.items()
+        if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+        and not key.startswith("_")
+    ]
+    accepted_norm = {_snake_key(k): k for k in accepted_list}
+    out: Dict[str, str] = {}
+    ambiguous: set[str] = set()
+
+    def add(label: str, dest: str) -> None:
+        key = _norm_label(label)
+        if not key or key in ambiguous:
+            return
+        prev = out.get(key)
+        if prev is None:
+            out[key] = dest
+        elif prev != dest:
+            out.pop(key, None)
+            ambiguous.add(key)
+
+    for dest in accepted_list:
+        add(dest, dest)
+        stem = dest
+        for suf, _unit in _BIND_UNIT_SUFFIXES:
+            if stem.endswith(suf) and len(stem) > len(suf):
+                stem = stem[: -len(suf)]
+                add(stem, dest)
+                break
+        add(dest.replace("_", " "), dest)
+        add(stem.replace("_", " "), dest)
+
+    for incoming, dests in _BIND_SEMANTIC_ALIASES.items():
+        dest = _unique_semantic_dest(_snake_key(incoming), accepted_norm)
+        if dest:
+            add(incoming, dest)
+    return out
+
+
+def extract_calculation_params_from_text(
+    fn: Any,
+    text: str,
+) -> Dict[str, Any]:
+    """Pull labeled engineering numbers out of ask text. Never invents.
+
+    Matches As1500 / fy=420 / span 8m / W=10000 kN against this calculator's
+    signature + aliases. A leftover number+unit binds only when exactly one
+    still-missing required param has that unit (D7).
+    """
+    raw = str(text or "").strip()
+    if not raw or fn is None:
+        return {}
+    labels = _text_label_map(fn)
+    if not labels:
+        return {}
+    found: Dict[str, Any] = {}
+    consumed: List[Tuple[int, int]] = []
+
+    def _overlaps(span: Tuple[int, int]) -> bool:
+        return any(span[0] < c[1] and c[0] < span[1] for c in consumed)
+
+    for label, dest in sorted(labels.items(), key=lambda kv: len(kv[0]), reverse=True):
+        if dest in found:
+            continue
+        pat = r"[\s_]+".join(re.escape(part) for part in label.split("_") if part)
+        compact = label.replace("_", "")
+        match = None
+        if len(compact) == 1:
+            rx = re.compile(
+                rf"(?<![A-Za-z0-9]){pat}\s*[=:]\s*({_TEXT_NUM_RE})"
+                rf"(?:\s*({_TEXT_UNIT_RE}))?",
+                re.IGNORECASE,
+            )
+            glued = re.compile(
+                rf"(?<![A-Za-z0-9]){pat}({_TEXT_NUM_RE})(?![A-Za-z])"
+                rf"(?:\s*({_TEXT_UNIT_RE}))?",
+                re.IGNORECASE,
+            )
+            match = rx.search(raw) or glued.search(raw)
+        else:
+            rx = re.compile(
+                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+)({_TEXT_NUM_RE})"
+                rf"(?:\s*({_TEXT_UNIT_RE}))?",
+                re.IGNORECASE,
+            )
+            match = rx.search(raw)
+            if match is None and len(compact) <= 4:
+                glued = re.compile(
+                    rf"(?<![A-Za-z0-9]){pat}({_TEXT_NUM_RE})(?![A-Za-z0-9])"
+                    rf"(?:\s*({_TEXT_UNIT_RE}))?",
+                    re.IGNORECASE,
+                )
+                match = glued.search(raw)
+        if match is None or _overlaps(match.span()):
+            continue
+        num = _parse_text_number(match.group(1))
+        if num is None:
+            continue
+        found[dest] = num
+        consumed.append(match.span())
+
+    accepted = {
+        row["name"] for row in describe_calculation_params(fn)
+    }
+    if "code" in accepted and "code" not in found:
+        aci = bool(_CODE_ACI_RE.search(raw))
+        euro = bool(_CODE_EC_RE.search(raw))
+        if aci and not euro:
+            found["code"] = "aci"
+        elif euro and not aci:
+            found["code"] = "eurocode"
+
+    required_by_unit: Dict[str, List[str]] = {}
+    for row in describe_calculation_params(fn):
+        if not row.get("required") or row["name"] in found:
+            continue
+        unit = _norm_unit_token(_unit_from_name(row["name"]))
+        if not unit:
+            continue
+        required_by_unit.setdefault(unit, []).append(row["name"])
+
+    leftover_rx = re.compile(
+        rf"({_TEXT_NUM_RE})\s*({_TEXT_UNIT_RE})\b",
+        re.IGNORECASE,
+    )
+    leftovers: Dict[str, List[float]] = {}
+    for match in leftover_rx.finditer(raw):
+        if _overlaps(match.span()):
+            continue
+        num = _parse_text_number(match.group(1))
+        unit = _norm_unit_token(match.group(2))
+        if num is None or not unit:
+            continue
+        leftovers.setdefault(unit, []).append(num)
+        consumed.append(match.span())
+    for unit, nums in leftovers.items():
+        dests = required_by_unit.get(unit) or []
+        if len(nums) == 1 and len(dests) == 1:
+            found[dests[0]] = nums[0]
+    return found
+
+
 def _missing_required(fn: Any, bound: Dict[str, Any], name: Optional[str] = None) -> List[str]:
     missing: List[str] = []
     groups = _REQUIRED_GROUPS.get(str(name or "").strip().lower())
@@ -1601,6 +1819,18 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # name-specific filter here (Agent C / DIR7 share this path).
     if str(name or "").strip().lower() == "calculate_evm":
         params = _alias_calculate_evm_params(params)
+    # Named-calculator / predispatch often ships ``text`` only. Pull labeled
+    # numbers (As1500, span 8m, W=10000 kN) into kwargs. Explicit keys win.
+    # D7: extract never invents a figure that is not in the ask.
+    text_blob = " ".join(
+        str(x) for x in (
+            params.get("text"), params.get("formula"), params.get("message"),
+        ) if x not in (None, "")
+    )
+    if text_blob:
+        for key, val in extract_calculation_params_from_text(fn, text_blob).items():
+            if params.get(key) in (None, ""):
+                params[key] = val
     params = bind_calculation_params(fn, params)
     missing = _missing_required(fn, params, name=str(name))
     if missing:
