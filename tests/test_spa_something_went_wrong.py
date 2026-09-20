@@ -163,6 +163,74 @@ def test_provider_failure_message_is_not_the_spa_generic_banner():
     )
 
 
+@pytest.fixture
+def deepseek_402_openrouter_ok(monkeypatch):
+    """Live /health: both keys set. DeepSeek 402s; OpenRouter answers.
+
+    Matches the additional UI/curl capture: POST /v1/chat returned the
+    offline-mode template while fallback_ready was true.
+    """
+    import httpx
+
+    from app.agents.runtime import DEEPSEEK_API_URL
+
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-not-real")
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-not-real")
+
+    class _Resp:
+        def __init__(self, status_code, payload=None, text=""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text or ("" if payload is None else json.dumps(payload))
+
+        def json(self):
+            return self._payload
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None, **kwargs):
+            if str(url).startswith(DEEPSEEK_API_URL.rsplit("/", 2)[0]):
+                return _Resp(
+                    402,
+                    text='{"error":{"message":"Insufficient Balance"}}',
+                )
+            return _Resp(
+                200,
+                payload={"choices": [{"message": {"content": "openrouter recovered"}}]},
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+
+def test_v1_chat_does_not_serve_offline_when_fallback_is_ready(
+    client, deepseek_402_openrouter_ok,
+):
+    """Live curl: POST /v1/chat 200 body started with offline-mode text."""
+    actor = _register(client, "curl")
+    r = client.post(
+        "/v1/chat",
+        headers=_headers(actor),
+        json={"message": "Hello, what is 2+2?"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    text = (body.get("text") or "").lower()
+    assert "offline mode" not in text, body
+    assert "no language model is currently reachable" not in text, body
+    assert body.get("provider") != "offline_template", body
+    assert "openrouter recovered" in (body.get("text") or "")
+
+
 def test_watchdog_rewrite_must_not_become_spa_something_went_wrong(client, deepseek_402):
     """The sentence the API actually sends must be classified by the SPA.
 
