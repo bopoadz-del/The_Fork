@@ -1681,7 +1681,7 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "payment_certificate": {"wir_form", "claims_builder"},
         "commissioning_checklist": {"wir_form", "om_manual_generator"},
         "wir_form": {"payment_certificate", "job_requisition", "rfp_draft", "rfi_generator"},
-        "variation_order_manager": {"change_order_impact", "wir_form", "sympy_reasoning"},
+        "variation_order_manager": {"change_order_impact", "wir_form", "sympy_reasoning", "construction"},
         "boq_process": {"construction_calc", "generate_wbs"},
         "boq_processor": {"construction_calc", "generate_wbs"},
     }

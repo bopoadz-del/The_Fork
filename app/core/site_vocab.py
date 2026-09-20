@@ -125,7 +125,8 @@ def message_reports_slipped_delivery(text: str) -> bool:
 # change_order_impact first, so ask1 never drafted.
 _VO_DRAFT = re.compile(
     r"(?:draft|issue|create|generate|write|prepare|make)\s+"
-    r"(?:a(?:n)?\s+)?(?:variation(?:\s+order)?|vo\b|change\s+order)",
+    r"(?:a(?:n)?\s+)?(?:variation(?:\s+order)?|vo\b|vo-\w+|change\s+order)"
+    r"|variation_order_manager\s*:\s*draft",
     re.IGNORECASE,
 )
 
