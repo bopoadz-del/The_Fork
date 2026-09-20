@@ -390,10 +390,10 @@ def _looks_like_mobilization(_params: dict, blob: str) -> bool:
 def _int_from_match(match: re.Match[str] | None) -> int | None:
     if match is None:
         return None
-    try:
-        return int(match.group(1).replace(",", ""))
-    except (TypeError, ValueError):
+    raw = (match.group(1) or "").replace(",", "")
+    if not raw.isdigit():
         return None
+    return int(raw)
 
 
 def _alias_mobilization_params(out: dict, blob: str = "") -> None:
