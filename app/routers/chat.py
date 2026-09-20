@@ -259,6 +259,30 @@ _ACTION_FILE_PARAMS: Dict[str, List[tuple]] = {
 }
 
 
+
+def _message_has_synthetic_look_ahead_programme(user_message: Optional[str]) -> bool:
+    """True when the ask already carries an embedded activity list / durations.
+
+    Live exit: FIXTURE projects with multiple uploaded .xer copies caused
+    look_ahead to return ask-which instead of using the synthetic programme
+    in the operator message. Prefer the message programme in that case.
+    """
+    low = (user_message or "").lower()
+    if not low:
+        return False
+    if "synthetic" in low and ("activit" in low or "programme" in low or "program" in low):
+        return True
+    if "do not" in low and ("upload" in low or "xer" in low or "primavera" in low):
+        return True
+    # duration-bearing activity list markers
+    if "look_ahead" in low or "look-ahead" in low or "lookahead" in low:
+        if any(tok in low for tok in (" wd)", " (wd)", "days)", "d)", "duration")) and (
+            "a1 " in low or "activit" in low or "mobilisation" in low or "mobilization" in low
+        ):
+            return True
+    return False
+
+
 def _resolve_predefined_file_params(
     action: str,
     project_id: Optional[str],
@@ -311,6 +335,11 @@ def _resolve_predefined_file_params(
                     if (d.get("original_name") or "").strip().lower() in low
                 ]
                 resolved[slot] = (exact[0] if exact else named[0])["file_path"]
+                continue
+            # Synthetic programme in the message: do not block look_ahead on
+            # ask-which — leave schedule_file unset so the action uses the
+            # embedded activity list (Agent D exit 78bd9ca).
+            if action == "look_ahead" and _message_has_synthetic_look_ahead_programme(user_message):
                 continue
             names = ", ".join(sorted((d.get("original_name") or "?") for d in matches))
             return resolved, (
