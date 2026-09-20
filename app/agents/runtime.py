@@ -12595,30 +12595,31 @@ class Agent:
                 )
             from app.lib import construction_formulas as _cf
             calc_params = dict(args.get("params") or {})
-            # SHARED WITH AGENT C / #636: models put calculator kwargs
-            # next to ``calculation`` instead of inside ``params``. The
-            # container path already flattens; the tool path must too or
-            # known names (excavation_bank_m3, volume, BCWS, …) never
-            # reach run_calculation. Also covers E4 ``text`` / ``formula``.
+            # SHARED WITH AGENT C / #636 / #639 / #652: models put calculator
+            # kwargs next to ``calculation`` instead of inside ``params``.
+            # The container path already flattens; the tool path must too or
+            # known names (excavation_bank_m3, volume, BCWS, PMI bcws/bcwp/acwp)
+            # never reach run_calculation. Also covers E4 ``text`` / ``formula``.
             # Envelope keys (text/formula/input/project_id) are stripped
             # in bind_calculation_params — never passed as calc kwargs.
+            # Unwrap ``input`` the same way as ``params`` (DIR7) — never copy
+            # the envelope key itself as a calculator kwarg.
             _envelope = {
                 "calculation", "name", "calculator", "params", "input",
                 "project_id", "conversation_id", "user_id",
             }
+            nested_input = args.get("input")
+            if isinstance(nested_input, dict):
+                for ik, iv in nested_input.items():
+                    if ik in _envelope:
+                        continue
+                    if ik in calc_params and calc_params[ik] not in (None, ""):
+                        continue
+                    if iv is None or iv == "":
+                        continue
+                    calc_params[ik] = iv
             for key, val in (args or {}).items():
                 if key in _envelope:
-                    # Unwrap ``input`` the same way as ``params`` (DIR7).
-                    # Never copy the envelope key itself as a calc kwarg.
-                    if key == "input" and isinstance(val, dict):
-                        for ik, iv in val.items():
-                            if ik in _envelope:
-                                continue
-                            if ik in calc_params and calc_params[ik] not in (None, ""):
-                                continue
-                            if iv is None or iv == "":
-                                continue
-                            calc_params[ik] = iv
                     continue
                 if key in calc_params and calc_params[key] not in (None, ""):
                     continue
