@@ -24,6 +24,7 @@ from app.agents.runtime import (
     _forced_specific_tool,
     _message_wants_vo_draft,
     _vo_draft_hard_excludes,
+    _vo_draft_ready_for_synthesis,
 )
 from app.containers.construction.boq import (
     _parse_vo_priced_lines,
@@ -74,6 +75,15 @@ def test_live_ask2_predispatch_steals_doc_search_and_fetch():
     steal = _conflicting_tools_after_predispatch("variation_order_manager")
     for name in DOC_STEAL:
         assert name in steal, name
+
+
+def test_live_ask2_fetch_does_not_lock_synthesis():
+    """fetch_document must not force_synthesis on a VO-draft turn."""
+    assert _vo_draft_ready_for_synthesis(LIVE_ASK2, "fetch_document") is False
+    assert _vo_draft_ready_for_synthesis(LIVE_ASK2, "search_project_documents") is False
+    assert _vo_draft_ready_for_synthesis(LIVE_ASK2, "list_project_documents") is False
+    assert _vo_draft_ready_for_synthesis(LIVE_ASK2, "variation_order_manager") is True
+    assert _vo_draft_ready_for_synthesis("what is the concrete spec?", "fetch_document") is True
 
 
 def test_live_ask2_forces_variation_order_manager_not_doc_search():
