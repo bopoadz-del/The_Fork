@@ -217,6 +217,52 @@ def test_rebar_by_area_engineer_ask_binds():
     assert inner["total_mass_kg"] == pytest.approx(88.8, abs=0.2)
 
 
+def test_masonry_wall_engineer_ask_binds():
+    inner = _ok("masonry_wall_capacity", {
+        "text": "masonry_wall_capacity fm=10 MPa, An=190000 mm2, h=3000 mm, t=190 mm",
+    })
+    assert inner["capacity_kn"] == pytest.approx(402.5, abs=1.0)
+
+
+def test_wind_load_on_formwork_engineer_ask_binds():
+    inner = _ok("wind_load_on_formwork", {
+        "text": "wind_load_on_formwork V=30 m/s, formwork area 50 m2, height 3 m, width 8 m",
+    })
+    assert inner["wind_force_kn"] == pytest.approx(27.585, abs=0.01)
+
+
+def test_productivity_comma_list_does_not_eat_next_label():
+    """'100, man_hours 50' must not swallow the comma and the leading m."""
+    inner = _ok("productivity_manpower_duration", {
+        "text": "productivity_manpower_duration quantity_executed 100, man_hours 50",
+    })
+    assert inner.get("productivity") == pytest.approx(2.0, abs=0.01)
+
+
+def test_progress_quantity_engineer_ask_binds():
+    inner = _ok("progress_quantity", {
+        "text": "progress_quantity total_qty 1000, planned_qty 400, actual_qty 350",
+    })
+    assert inner["actual_percent"] == pytest.approx(35.0, abs=0.01)
+
+
+def test_resource_line_cost_engineer_ask_binds():
+    inner = _ok("resource_line_cost", {
+        "text": "resource_line_cost quantity 100, daily_output 10, day_rate 280",
+    })
+    assert inner["labour_cost"] == pytest.approx(2800.0, abs=0.05)
+
+
+def test_precast_beam_engineer_ask_binds():
+    inner = _ok("precast_beam_erection_check", {
+        "text": (
+            "precast_beam_erection_check beam weight 20 t, beam length 15 m, "
+            "crane capacity 50 t, lift radius 12 m"
+        ),
+    })
+    assert inner["utilization_pct"] == pytest.approx(51.2, abs=0.15)
+
+
 def test_empty_text_still_names_required_does_not_invent():
     env = _err("rc_beam_moment_capacity", {"text": "rc_beam_moment_capacity"})
     assert "missing required" in env["error"]
