@@ -4373,6 +4373,27 @@ def _format_wir_form(payload: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+_TOOL_TRUNCATION_NOTICE_RE = re.compile(
+    r"(?i)tool result exceeded\s+\d+\s+characters|"
+    r"char_offset=\d+|"
+    r"chars_remaining is 0",
+)
+
+
+def _looks_like_tool_truncation_notice(text: str) -> bool:
+    """True for the fetch-window truncation envelope shipped as an answer.
+
+    Live Set3 E1 on 4ab5561: the bubble was "Tool result exceeded 4000
+    characters and was truncated. Call this tool again with … char_offset=…"
+    instead of 10% × ACA. That prose is an internal fetch hint, never a
+    money answer.
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+    return bool(_TOOL_TRUNCATION_NOTICE_RE.search(t))
+
+
 def _text_needs_tool_recovery(text: str) -> bool:
     """True when the LLM hop died and a tool/predispatch draft should speak."""
     t = (text or "").strip()
@@ -4392,6 +4413,8 @@ def _text_needs_tool_recovery(text: str) -> bool:
     if _looks_like_tool_error_json(t):
         return True
     if _looks_like_formula_template(t):
+        return True
+    if _looks_like_tool_truncation_notice(t):
         return True
     try:
         from app.lib.construction_formulas_commercial import (
@@ -5433,7 +5456,9 @@ def gate_cost_answer(
         text = _graft_asked_contract_particular(
             text, rag_sys_msg, messages, project_id=project_id,
         )
-        text = _graft_composed_percentage_of_aca(text, rag_sys_msg, messages)
+        text = _graft_composed_percentage_of_aca(
+            text, rag_sys_msg, messages, project_id=project_id,
+        )
         return _cost_grounding_gate(text, rag_sys_msg, messages)
     except Exception:  # noqa: BLE001 — a gate must never break an answer
         _LOG.exception("gate_cost_answer failed; passing answer through")
@@ -6006,6 +6031,28 @@ def _graft_composed_delay_damages_over_period(
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         composed = compose_delay_damages_over_period_from_excerpts(user, rag)
         if not composed:
+            # Live Set3 E3: top-k packed the whole-of-Works 0.1% under
+            # "per Milestone". Scan the loaded CD volume for the
+            # Milestone N | 0.015% rows + excl-VAT ACA.
+            try:
+                from app.core.rag.retriever import (
+                    milestone_period_excerpts_from_loaded_cd_volume,
+                )
+                extra = milestone_period_excerpts_from_loaded_cd_volume(
+                    user, project_id or "", rag_context=rag,
+                    extra_pids=extra_project_ids,
+                )
+                if extra:
+                    composed = compose_delay_damages_over_period_from_excerpts(
+                        user, extra,
+                    )
+            except Exception:  # noqa: BLE001 — volume scan must never break
+                _LOG.debug(
+                    "e3 loaded-volume compose failed; keeping excerpt compose",
+                    exc_info=True,
+                )
+                composed = None
+        if not composed:
             return text
         line = format_delay_damages_period_line(composed)
         payload = json.dumps({
@@ -6054,6 +6101,8 @@ def _graft_composed_percentage_of_aca(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
+    project_id: str | None = None,
+    extra_project_ids: list[str] | None = None,
 ) -> str:
     """Set3 E1: named percentage × ACA when synthesis hung empty."""
     try:
@@ -6068,6 +6117,29 @@ def _graft_composed_percentage_of_aca(
             return text
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         composed = compose_percentage_of_aca_from_excerpts(user, rag)
+        if not composed:
+            # Live Set3 E1: top-k had neither 10% nor ACA; the model
+            # shipped the fetch truncation notice. Scan the loaded CD
+            # volume for Advance Payment 10% + excl-VAT ACA.
+            try:
+                from app.core.rag.retriever import (
+                    percentage_of_aca_excerpts_from_loaded_cd_volume,
+                )
+                extra = percentage_of_aca_excerpts_from_loaded_cd_volume(
+                    user, project_id or "", rag_context=rag,
+                    extra_pids=extra_project_ids,
+                )
+                if extra:
+                    composed = compose_percentage_of_aca_from_excerpts(
+                        user, extra,
+                    )
+            except Exception:  # noqa: BLE001 — volume scan must never break
+                _LOG.debug(
+                    "e1 percentage loaded-volume compose failed; "
+                    "keeping excerpt compose",
+                    exc_info=True,
+                )
+                composed = None
         if not composed:
             return text
         line = format_percentage_of_aca_line(composed)
@@ -6584,6 +6656,122 @@ _PART_SUMMARY_MISS_RE = re.compile(
     r"(?i)part\s+summary|priced\s+boq|not\s+found|could\s+not\s+find|"
     r"cannot\s+find|no\s+(?:printed\s+)?total",
 )
+_F1_MILESTONES_ONLY_RE = re.compile(
+    r"(?i)milestones?\s+1\s*[–-]\s*5\s+only|none of those are\s+"
+    r"northern|no northern",
+)
+
+
+def _graft_combined_part_summary_total(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Set3 E6: sum printed page totals when the model added 1,000,000.
+
+    Live 4ab5561: d/3/1 + d/3/2 + d/3/3 printed 34,645,529 + 1,852,848
+    + 17,496,857 = 53,995,234 and the bubble said 54,995,234. Compose
+    the printed figures; do not invent a page. Kill-switch:
+    COMPOSE_PART_SUMMARY=0. One-page B3 stays on
+    ``_graft_part_summary_total``.
+    """
+    try:
+        from app.core.rag.retriever import (
+            answer_states_part_summary,
+            compose_combined_part_summary_total,
+            format_combined_part_summary_line,
+            part_summary_compose_enabled,
+            query_asks_combined_part_summary,
+        )
+        if not part_summary_compose_enabled():
+            return text
+        user = _latest_operator_ask(messages)
+        if not query_asks_combined_part_summary(user):
+            return text
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        parsed = compose_combined_part_summary_total(user, rag)
+        if not parsed:
+            return text
+        line = format_combined_part_summary_line(parsed)
+        if not line:
+            return text
+        payload = json.dumps({
+            "combined_part_summary_total": {
+                "pages": parsed.get("pages"),
+                "amount": parsed.get("amount"),
+                "page_amounts": parsed.get("page_amounts"),
+                "currency": parsed.get("currency") or "",
+                "note": line,
+            }
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "combined_part_summary_total" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        raw = text or ""
+        if answer_states_part_summary(raw, parsed):
+            return text
+        return line
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        _LOG.exception("combined part-summary compose failed; passing answer through")
+        return text
+
+
+def _graft_named_community_tfc_span(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Set3 F1: longest/shortest Time for Completion in a named community.
+
+    Live 4ab5561 answered Milestones 1–5 only and said none were
+    Northern Community. The continuation table states 547 / 397
+    (delta 150). Compose from excerpts; do not invent days.
+    """
+    try:
+        from app.core.rag.retriever import (
+            compose_named_community_tfc_span,
+            format_named_community_tfc_span_line,
+            query_asks_named_community_tfc_span,
+        )
+        user = _latest_operator_ask(messages)
+        if not query_asks_named_community_tfc_span(user):
+            return text
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        composed = compose_named_community_tfc_span(user, rag)
+        if not composed:
+            return text
+        line = format_named_community_tfc_span_line(composed)
+        if not line:
+            return text
+        raw = text or ""
+        longest = str(composed.get("longest_days") or "")
+        delta = str(composed.get("delta") or "")
+        if longest and delta and longest in raw and delta in raw:
+            return text
+        body = raw.strip()
+        if (
+            not body
+            or body == _CG_REFUSAL
+            or body == _EMPTY_RESPONSE_FALLBACK
+            or _GENERIC_ACK_RE.search(body)
+            or _MISSING_PARTICULAR_RE.search(body)
+            or _F1_MILESTONES_ONLY_RE.search(body)
+            or re.search(
+                r"(?i)cannot (?:answer|confirm|find)|could not|"
+                r"not in the (?:retrieved )?excerpts",
+                body,
+            )
+        ):
+            return line
+        return line
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        _LOG.exception("named-community TFC span compose failed; passing through")
+        return text
+
 
 
 def _graft_part_summary_total(
@@ -6753,6 +6941,11 @@ def _postprocess_answer(
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
+    # Live Set3 E1: the fetch-window truncation notice is not an
+    # answer. Blank it so later grafts can compose, and so we never
+    # ship "Tool result exceeded … char_offset=" to the operator.
+    if _looks_like_tool_truncation_notice(text):
+        text = ""
     # Empty / incomplete construction_calc: a formula-name note or a
     # 1 m rebar demo is not a complete answer. Graft the computed ask.
     text = _graft_complete_calc_answer(text, messages)
@@ -6792,12 +6985,21 @@ def _postprocess_answer(
     )
     # Set3 E1: named percentage × ACA when the ask wants SAR, not
     # the percentage-only particular.
-    text = _graft_composed_percentage_of_aca(text, rag_sys_msg, messages)
+    text = _graft_composed_percentage_of_aca(
+        text, rag_sys_msg, messages, project_id=pid,
+        extra_project_ids=extra_pids,
+    )
     # WAVE 2 B4/B5 first: a priced CESMM row beats Rate Only / Excluded
     # siblings. G4 Rate Only runs after so it cannot overwrite 280,320.
     text = _graft_priced_boq_item(text, rag_sys_msg, messages)
     # F-BAT-D H3 / B3: Part Summary page total (no CESMM code).
     text = _graft_part_summary_total(text, rag_sys_msg, messages)
+    # Set3 E6: combined printed page totals (d/3/1+d/3/2+d/3/3).
+    # One-page B3 stays on the graft above.
+    text = _graft_combined_part_summary_total(text, rag_sys_msg, messages)
+    # Set3 F1: longest/shortest Time for Completion among a named
+    # community's milestones (Northern Community 547 / 150).
+    text = _graft_named_community_tfc_span(text, rag_sys_msg, messages)
     # OLD-pack G4: state Rate Only when the retrieved BOQ row already
     # says so and no priced triple exists. The live FAIL greeted
     # ("I'm ready to help…") and never named D529.3 / Rate Only.

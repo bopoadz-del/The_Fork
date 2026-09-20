@@ -2391,9 +2391,11 @@ def named_particulars_row_match(query: str, text: str) -> int:
 # (or n+2: a scan can drop a row). A chunk that merely comes next does not
 # qualify, so the retention rows after the milestones are not dragged along.
 _ENUMERATED_ITEM_RE = re.compile(r"(?m)^[\s|:]*([A-Z][a-z]{3,})\s+(\d{1,2})\b")
-_CONTINUATION_LOOKAHEAD_CHUNKS = 3
+_CONTINUATION_LOOKAHEAD_CHUNKS = 5
 _CONTINUATION_MAX_CHUNKS = 2
-_CONTINUATION_OPENING_CHARS = 400
+# Live Set3 F1: a repeated OCR header pushed Milestone 6 past 400
+# chars, so enumeration rescue never saw 547 / Northern Community.
+_CONTINUATION_OPENING_CHARS = 1600
 
 
 def _last_enumerated_item(text: str) -> Optional[Tuple[str, int]]:
@@ -2440,6 +2442,105 @@ def _enumeration_continuations(parent: Chunk, sheet: List[Chunk]) -> List[Chunk]
         if len(out) >= _CONTINUATION_MAX_CHUNKS:
             break
     return out
+
+
+_NAMED_COMMUNITY_AMONG_RE = re.compile(
+    r"(?i)\bamong\s+the\s+(.+?)\s+milestones\b",
+)
+_NAMED_COMMUNITY_NAME_RE = re.compile(
+    r"(?i)\b((?:northern|southern|boulevard|eastern|western|central|east|west)"
+    r"(?:\s+community|\s+quarter))\b",
+)
+_NAMED_COMMUNITY_SPAN_RE = re.compile(
+    r"(?i)\b(?:longest|shortest|exceed)\b",
+)
+_MILESTONE_DAYS_ROW_RE = re.compile(
+    r"(?i)milestone\s+(\d+)(?:\s*[|:]\s*)+(\d+)\s*days",
+)
+
+
+def extract_asked_community_name(query: str) -> str:
+    """Community / quarter the question names, or ''."""
+    q = query or ""
+    among = _NAMED_COMMUNITY_AMONG_RE.search(q)
+    if among:
+        return re.sub(r"\s+", " ", among.group(1)).strip()
+    named = _NAMED_COMMUNITY_NAME_RE.search(q)
+    if named:
+        return re.sub(r"\s+", " ", named.group(1)).strip()
+    return ""
+
+
+def query_asks_named_community_tfc_span(query: str) -> bool:
+    """True for F1: longest/shortest Time for Completion in a named community."""
+    q = query or ""
+    if not extract_asked_community_name(q):
+        return False
+    if not _NAMED_COMMUNITY_SPAN_RE.search(q):
+        return False
+    return bool(
+        re.search(r"(?i)time\s+for\s+completion|milestones?", q)
+    )
+
+
+def compose_named_community_tfc_span(
+    query: str, excerpts: str,
+) -> Optional[Dict[str, Any]]:
+    """Longest / shortest Time for Completion among a named community.
+
+    Live Set3 F1: Northern Community milestones are 397 / 547 / 520 /
+    400 days. Longest 547 exceeds shortest 397 by 150. Does not invent
+    days; every figure must already be printed on a Milestone row that
+    names the community.
+    """
+    community = extract_asked_community_name(query)
+    if not community or not excerpts:
+        return None
+    needle = community.lower()
+    days_by_ms: Dict[int, int] = {}
+    for match in _MILESTONE_DAYS_ROW_RE.finditer(excerpts):
+        window = excerpts[match.start(): match.end() + 200]
+        if needle not in window.lower():
+            continue
+        days_by_ms[int(match.group(1))] = int(match.group(2))
+    if not days_by_ms:
+        return None
+    longest_days = max(days_by_ms.values())
+    shortest_days = min(days_by_ms.values())
+    return {
+        "community": community,
+        "longest_days": longest_days,
+        "shortest_days": shortest_days,
+        "delta": longest_days - shortest_days,
+        "longest_milestones": tuple(
+            sorted(n for n, d in days_by_ms.items() if d == longest_days)
+        ),
+        "shortest_milestones": tuple(
+            sorted(n for n, d in days_by_ms.items() if d == shortest_days)
+        ),
+        "days_by_milestone": days_by_ms,
+    }
+
+
+def format_named_community_tfc_span_line(composed: Dict[str, Any]) -> str:
+    """User-facing longest/shortest community TFC sentence."""
+    if not composed:
+        return ""
+    community = composed.get("community") or "named community"
+    longest = int(composed["longest_days"])
+    shortest = int(composed["shortest_days"])
+    delta = int(composed["delta"])
+    long_ms = composed.get("longest_milestones") or ()
+    short_ms = composed.get("shortest_milestones") or ()
+    long_txt = " and ".join(f"Milestone {n}" for n in long_ms) or "the longest"
+    short_txt = " and ".join(f"Milestone {n}" for n in short_ms) or "the shortest"
+    verb = "has" if len(long_ms) == 1 else "have"
+    exceed = "exceeds" if len(long_ms) == 1 else "exceed"
+    return (
+        f"Among the {community} milestones, {long_txt} {verb} the longest "
+        f"Time for Completion ({longest} days) and {exceed} the shortest "
+        f"({short_txt}, {shortest} days) by {delta} days."
+    )
 
 
 def _rescue_named_particulars_rows(
@@ -2490,6 +2591,21 @@ def _rescue_named_particulars_rows(
         for cont in _enumeration_continuations(parent, sheet):
             if all(cont.chunk_id != c.chunk_id for c in chosen):
                 chosen.append(cont)
+    # Set3 F1: a named-community Time-for-Completion span needs the
+    # continuation rows that name the community AND state days, even
+    # when the opening header is too long for enumeration rescue.
+    if query_asks_named_community_tfc_span(query):
+        community = extract_asked_community_name(query)
+        needle = (community or "").lower()
+        if needle:
+            for chunk in sheet:
+                text = chunk.text or ""
+                if needle not in text.lower():
+                    continue
+                if not re.search(r"(?i)\d+\s*days", text):
+                    continue
+                if all(chunk.chunk_id != c.chunk_id for c in chosen):
+                    chosen.append(chunk)
     recovered = 0
     # Live 24d1c0c E2, 0/3: the 0.015%-per-day row ranked first and the answer
     # stopped, correctly, at "0.45% of the Contract Price — which is not in
@@ -5426,6 +5542,141 @@ def e1_compose_excerpts_from_loaded_cd_volume(
     return "\n\n".join(rate_parts[:3] + aca_parts[:3])
 
 
+def _loaded_cd_chunk_texts(
+    project_id: str,
+    extra_pids: Optional[Iterable[str]] = None,
+    store=None,
+) -> List[str]:
+    """Every Contract Data chunk text in the loaded volume, or []."""
+    pids = _e1_scan_project_ids(project_id, extra_pids)
+    if store is None:
+        try:
+            store = get_lexical_store()
+        except Exception:  # noqa: BLE001 — never break a turn over the store
+            logger.debug("loaded-CD store open failed", exc_info=True)
+            return []
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return []
+    try:
+        from app.core.projects import documents_matching_title_phrase
+    except Exception:  # noqa: BLE001 — listing is optional
+        logger.debug("loaded-CD projects import failed", exc_info=True)
+        return []
+    texts: List[str] = []
+    seen: Set[str] = set()
+    for pid in pids or [project_id]:
+        if not pid:
+            continue
+        try:
+            docs = documents_matching_title_phrase(pid, "contract data") or []
+            hits = fetch(pid, [d["id"] for d in docs], k_per_doc=40) if docs else []
+        except Exception as exc:  # noqa: BLE001 — extras must not break
+            logger.warning("loaded-CD volume scan for %s failed: %s", pid, exc)
+            continue
+        for chunk in hits or []:
+            cid = getattr(chunk, "chunk_id", None) or str(id(chunk))
+            if cid in seen:
+                continue
+            seen.add(cid)
+            text = getattr(chunk, "text", "") or ""
+            if text:
+                texts.append(text)
+    return texts
+
+
+def percentage_of_aca_excerpts_from_loaded_cd_volume(
+    query: str,
+    project_id: str,
+    store=None,
+    *,
+    rag_context: str = "",
+    extra_pids: Optional[Iterable[str]] = None,
+) -> str:
+    """Join Advance Payment % + excl-VAT ACA from the loaded CD volume.
+
+    Live Set3 E1: top-k had neither operand and the model shipped the
+    fetch truncation notice. When those rows exist later in the same
+    volume, return them so compose can state SAR — do not invent a
+    figure. Kill-switch: COMPOSE_PERCENTAGE_OF_ACA=0.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            compose_percentage_of_aca_enabled,
+            extract_named_percentage_particular,
+            query_asks_percentage_particular_in_money,
+        )
+    except Exception:  # noqa: BLE001 — never break a turn over an import
+        logger.debug("percentage-of-ACA import failed", exc_info=True)
+        return ""
+    if not compose_percentage_of_aca_enabled():
+        return ""
+    if not query_asks_percentage_particular_in_money(query):
+        return ""
+    pct_parts: List[str] = []
+    aca_parts: List[str] = []
+    texts = list(_loaded_cd_chunk_texts(project_id, extra_pids, store))
+    if rag_context:
+        texts.append(rag_context)
+    for text in texts:
+        if extract_named_percentage_particular(query, text):
+            if text not in pct_parts:
+                pct_parts.append(text)
+        if _e1_has_standalone_excl_vat(text) and text not in aca_parts:
+            aca_parts.append(text)
+    if not pct_parts or not aca_parts:
+        return ""
+    return "\n\n".join(pct_parts[:3] + aca_parts[:3])
+
+
+def milestone_period_excerpts_from_loaded_cd_volume(
+    query: str,
+    project_id: str,
+    store=None,
+    *,
+    rag_context: str = "",
+    extra_pids: Optional[Iterable[str]] = None,
+) -> str:
+    """Join Milestone N | 0.015% rows + excl-VAT ACA from the loaded volume.
+
+    Live Set3 E3: top-k packed whole-of-Works 0.1% under "per Milestone".
+    Scan for the real milestone rate rows. Kill-switch:
+    COMPOSE_DELAY_DAMAGES_PERIOD=0.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            compose_delay_damages_period_enabled,
+            parse_asked_milestones,
+            parse_milestone_delay_rate_percent,
+            query_asks_delay_damages_over_a_period,
+        )
+    except Exception:  # noqa: BLE001 — never break a turn over an import
+        logger.debug("milestone-period import failed", exc_info=True)
+        return ""
+    if not compose_delay_damages_period_enabled():
+        return ""
+    if not query_asks_delay_damages_over_a_period(query):
+        return ""
+    milestones = parse_asked_milestones(query)
+    rate_parts: List[str] = []
+    aca_parts: List[str] = []
+    texts = list(_loaded_cd_chunk_texts(project_id, extra_pids, store))
+    if rag_context:
+        texts.append(rag_context)
+    for text in texts:
+        if milestones and any(
+            parse_milestone_delay_rate_percent(text, n) is not None
+            for n in milestones
+        ):
+            if text not in rate_parts:
+                rate_parts.append(text)
+        if _e1_has_standalone_excl_vat(text) and text not in aca_parts:
+            aca_parts.append(text)
+    if not rate_parts or not aca_parts:
+        return ""
+    return "\n\n".join(rate_parts[:3] + aca_parts[:3])
+
+
 def _a2_fused_chunk(entry) -> Optional[Chunk]:
     if isinstance(entry, tuple) and entry:
         chunk = entry[0]
@@ -6828,6 +7079,75 @@ def format_part_summary_line(parsed: Dict[str, Any]) -> str:
     currency = (parsed.get("currency") or "").strip()
     money = f"{currency} {amt_s}".strip() if currency else amt_s
     return f"Part Summary total for page {page}: {money}."
+
+
+def query_asks_combined_part_summary(query: str) -> bool:
+    """True for E6: combined Part Summary of several named bill pages.
+
+    One-page B3 stays on ``query_asks_for_part_summary_total``.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if query_asks_for_boq_item_amount(q):
+        return False
+    refs = extract_asked_boq_page_refs(q)
+    if len(refs) < 2:
+        return False
+    return query_names_part_summary_pages(q)
+
+
+def compose_combined_part_summary_total(
+    query: str, excerpt: str,
+) -> Optional[Dict[str, Any]]:
+    """Sum the printed Part Summary totals of every named page.
+
+    Live Set3 E6: 34,645,529 + 1,852,848 + 17,496,857 = 53,995,234.
+    Does not invent a missing page and does not elect a neighbour.
+    """
+    if not part_summary_compose_enabled():
+        return None
+    if not query_asks_combined_part_summary(query):
+        return None
+    refs = extract_asked_boq_page_refs(query)
+    if len(refs) < 2 or not excerpt:
+        return None
+    blob = _normalize_boq_page_refs_in_text(
+        _normalize_retrieval_ws((excerpt or "").replace("|", " "))
+    )
+    totals = _part_summary_totals(blob)
+    found: Dict[str, Dict[str, Any]] = {}
+    for ref in refs:
+        chosen = next((t for t in totals if ref in t["pages"]), None)
+        if not chosen:
+            return None
+        found[ref] = chosen
+    amount = sum(float(t["amount"]) for t in found.values())
+    currency = next(
+        (t.get("currency") or "" for t in found.values() if t.get("currency")),
+        "",
+    )
+    return {
+        "amount": amount,
+        "pages": list(found.keys()),
+        "page_amounts": {ref: float(found[ref]["amount"]) for ref in found},
+        "currency": currency or _part_summary_currency(blob),
+    }
+
+
+def format_combined_part_summary_line(parsed: Dict[str, Any]) -> str:
+    """User-facing combined Part Summary sentence."""
+    if not parsed:
+        return ""
+    pages = parsed.get("pages") or []
+    if len(pages) >= 2:
+        listed = ", ".join(pages[:-1]) + f" and {pages[-1]}"
+    else:
+        listed = pages[0] if pages else "the named pages"
+    amt_s = f"{float(parsed['amount']):,.2f}"
+    currency = (parsed.get("currency") or "").strip()
+    money = f"{currency} {amt_s}".strip() if currency else amt_s
+    return f"The combined Part Summary total of pages {listed} is {money}."
 
 
 def answer_states_part_summary(text: str, parsed: Dict[str, Any]) -> bool:
