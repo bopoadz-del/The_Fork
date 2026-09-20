@@ -3006,17 +3006,23 @@ def _sanitize_final_text(
         # Unwrap a sole markdown fence / BOM before the tool-JSON detector so
         # ```json {"name":"search_project_documents",...} ``` cannot bypass.
         normalized = _normalize_tool_json_text(cleaned)
-        if normalized != cleaned and _looks_like_internal_tool_json(normalized):
+        # Tool ERROR envelopes (Unknown calculation, …) are not tool-CALL
+        # JSON. Convert them to a plain sentence here so the user never
+        # sees raw {"status":"error",...} (live SYNC2 A2 plastering).
+        error_plain = _plain_sentence_for_tool_error_json(normalized)
+        if error_plain:
+            cleaned = error_plain
+        elif normalized != cleaned and _looks_like_internal_tool_json(normalized):
             _LOG.warning("raw tool args inside markdown code block; replacing with fallback")
             cleaned = _TOOL_FORMAT_FALLBACK
 
-        if cleaned != _TOOL_FORMAT_FALLBACK and _looks_like_xml_tool_leak(cleaned):
+        if not error_plain and cleaned != _TOOL_FORMAT_FALLBACK and _looks_like_xml_tool_leak(cleaned):
             _LOG.warning("xml tool-call leak in final answer; replacing with fallback")
             cleaned = _TOOL_FORMAT_FALLBACK
-        elif cleaned != _TOOL_FORMAT_FALLBACK and _looks_like_internal_tool_json(cleaned):
+        elif not error_plain and cleaned != _TOOL_FORMAT_FALLBACK and _looks_like_internal_tool_json(cleaned):
             _LOG.warning("raw tool-call JSON detected in final answer; replacing with fallback")
             cleaned = _TOOL_FORMAT_FALLBACK
-        elif cleaned != _TOOL_FORMAT_FALLBACK and _looks_like_internal_context_leak(cleaned):
+        elif not error_plain and cleaned != _TOOL_FORMAT_FALLBACK and _looks_like_internal_context_leak(cleaned):
             # Both branches funnel through here, so the platform's own
             # context cannot reach a user down either one. The streaming
             # guards above stop the bytes earlier; this stops what is
@@ -4281,6 +4287,8 @@ def _text_needs_tool_recovery(text: str) -> bool:
     # thread) instead of shipping the promise.
     if _looks_like_search_preamble(t):
         return True
+    if _looks_like_tool_error_json(t):
+        return True
     return False
 
 
@@ -4608,6 +4616,7 @@ def _recover_answer_from_tool_messages(
     surface that draft instead of an empty bubble or a 413 error."""
     if not _text_needs_tool_recovery(text):
         return text
+    error_fallback = ""
     for m in reversed(messages or []):
         if m.get("role") == "user":
             raw_user = str(m.get("content") or "")
@@ -4681,7 +4690,17 @@ def _recover_answer_from_tool_messages(
         formatted = _format_construction_calc(inner)
         if formatted:
             return formatted
-    return text
+        generic = _format_any_calc_result(inner)
+        if generic:
+            return generic
+        err_payload = _tool_error_payload(inner)
+        if (
+            err_payload
+            and not error_fallback
+            and _is_calc_tool_error(m, inner, err_payload)
+        ):
+            error_fallback = _format_tool_error_plain(err_payload)
+    return error_fallback or text
 
 
 def _unwrap_construction_calc_inner(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -5046,6 +5065,30 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
                 grounded.add(round(base[i] / base[j], 4))
             if base[i]:
                 grounded.add(round(base[j] / base[i], 4))
+    # User-supplied arithmetic beyond one pairwise hop: a×b×c, qty×rate
+    # after a quotient (3400/42 × 1950), and a×(1+p%) for waste /
+    # contingency the operator stated. Seeded from USER figures only —
+    # a rate the user never typed still fails the gate.
+    user_seed: set = set()
+    user_blob: list[str] = []
+    for msg in messages or []:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        user_blob.append(content)
+        cleaned = _cg_strip_unit_noise(content)
+        for tok in _CG_NUM_RE.findall(cleaned):
+            v = _cg_to_number(tok)
+            if v is not None:
+                user_seed.add(v)
+        for v in _cg_english_and_percent_values(content):
+            user_seed.add(v)
+        for _frag, v in _cg_money_values(content):
+            user_seed.add(v)
+    if user_seed:
+        grounded |= _cg_user_arithmetic_closure(" ".join(user_blob), user_seed)
     return grounded
 
 
@@ -13250,3 +13293,247 @@ def _summarize_result(result: Any) -> str:
     if isinstance(result, list):
         return f"list[{len(result)}]"
     return str(result)[:200]
+
+
+# ── SYNC2 A2 / A3 helpers (tool-error prose + user-supplied cost arithmetic) ──
+
+_CG_PERCENT_RE = re.compile(
+    rf"({_CG_NUM})\s*(?:%|percent\b|per\s*cent\b)",
+    re.IGNORECASE,
+)
+_CG_DIM_CHAIN_RE = re.compile(
+    rf"{_CG_NUM}(?:\s*[x×*]\s*{_CG_NUM})+",
+    re.IGNORECASE,
+)
+# "410/m3" / "300 mm" — the unit digit is not a quantity the user typed.
+_CG_UNIT_NOISE_RE = re.compile(
+    r"(?:/m[23³²]|/mm|/cm|/kg)|(?<=\d)\s*(?:m[23³²]|mm|cm)\b",
+    re.IGNORECASE,
+)
+
+
+def _current_request_id() -> str:
+    """Best-effort request id for a user-facing failure sentence (#626)."""
+    try:
+        from app.infra.monitoring import get_request_id
+        return str(get_request_id() or "")
+    except Exception:
+        _LOG.debug("request_id unavailable for tool-error sentence", exc_info=True)
+        return ""
+
+
+def _parse_json_object(text: str) -> dict[str, Any] | None:
+    stripped = _normalize_tool_json_text(text or "")
+    if not stripped.startswith("{"):
+        return None
+    try:
+        obj = json.loads(stripped)
+    except json.JSONDecodeError:
+        _LOG.debug("tool-error JSON parse miss", exc_info=True)
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _tool_error_payload(obj: Any, _depth: int = 0) -> dict[str, Any] | None:
+    """The error envelope inside a tool result, or None."""
+    if not isinstance(obj, dict) or _depth > 3:
+        return None
+    status = str(obj.get("status") or "").strip().lower()
+    err = obj.get("error")
+    if status in _FAILURE_STATUSES and err:
+        return obj
+    if isinstance(err, str) and err.strip() and status not in ("success", "ok"):
+        return obj
+    inner = obj.get("result")
+    if isinstance(inner, dict):
+        return _tool_error_payload(inner, _depth + 1)
+    return None
+
+
+def _looks_like_tool_error_json(text: str) -> bool:
+    """True when ``text`` is a whole-string tool-error JSON envelope."""
+    obj = _parse_json_object(text)
+    return bool(obj and _tool_error_payload(obj))
+
+
+def _format_tool_error_plain(
+    payload: dict[str, Any] | None,
+    *,
+    request_id: str = "",
+) -> str:
+    """One honest sentence. Never the raw JSON the model echoed."""
+    err = ""
+    if isinstance(payload, dict):
+        err = str(payload.get("error") or "")
+        request_id = request_id or str(payload.get("request_id") or "")
+    request_id = request_id or _current_request_id()
+    low = err.lower()
+    if "unknown calculation" in low:
+        sentence = (
+            "The calculator does not have a formula for that request. "
+            "Please restate the inputs or name the calculation."
+        )
+    elif err:
+        cleaned = re.sub(r"[{}\[\]]", "", err).strip().rstrip(".")
+        if len(cleaned) > 180:
+            cleaned = cleaned[:177] + "..."
+        sentence = f"The tool could not complete that request ({cleaned})."
+    else:
+        sentence = "The tool could not complete that request."
+    if request_id:
+        sentence = f"{sentence} Request id: {request_id}."
+    return sentence
+
+
+def _plain_sentence_for_tool_error_json(text: str) -> str:
+    """Plain sentence if ``text`` is a tool-error JSON blob, else ''."""
+    obj = _parse_json_object(text)
+    if not obj:
+        return ""
+    payload = _tool_error_payload(obj)
+    if not payload:
+        return ""
+    return _format_tool_error_plain(payload)
+
+
+def _is_calc_tool_error(
+    msg: dict[str, Any] | None,
+    inner: dict[str, Any] | None,
+    err_payload: dict[str, Any] | None,
+) -> bool:
+    """True when the failed tool is a calculator, not a search/lookup."""
+    name = str((msg or {}).get("name") or "").lower()
+    if name in ("construction_calc", "formula_executor_v2", "formula_executor"):
+        return True
+    blob = inner or {}
+    err = err_payload or {}
+    if blob.get("calculation") or err.get("calculation"):
+        return True
+    if "unknown calculation" in str(err.get("error") or "").lower():
+        return True
+    if err.get("available"):
+        return True
+    return False
+
+
+def _format_any_calc_result(payload: dict[str, Any]) -> str:
+    """User-facing line from a successful non-volume construction_calc."""
+    if not isinstance(payload, dict):
+        return ""
+    if _tool_error_payload(payload):
+        return ""
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+    if not isinstance(result, dict):
+        return ""
+    for key in ("note", "summary", "message"):
+        val = result.get(key)
+        if isinstance(val, str) and val.strip() and "unknown calculation" not in val.lower():
+            return val.strip()
+    calc = payload.get("calculation") or result.get("calculation")
+    value = result.get("value")
+    if value is not None and calc:
+        return f"{calc}: {value}"
+    for key in (
+        "total_mass_kg", "total_mass_t", "unit_mass_kg_m",
+        "total_bar_length_m", "duration_days", "total_cost", "cost",
+        "volume_m3",
+    ):
+        if result.get(key) is not None:
+            return f"{key.replace('_', ' ')}: {result[key]}"
+    return ""
+
+
+def _cg_strip_unit_noise(text: str) -> str:
+    return _CG_UNIT_NOISE_RE.sub(" ", text or "")
+
+
+def _cg_user_arithmetic_closure(user_text: str, seeded: set) -> set:
+    """a×b×c, qty×rate after a quotient, and a×(1+p%) from user figures.
+
+    The pairwise pass in ``_cg_grounded_numbers`` is one hop. Live pad-footing
+    take-off (14 × 2.4 × 2.4 × 0.6 × 1.05 × 410 × 1.10) and plastering
+    (3400/42 × 1950) need this short extra closure. A rate the user never
+    wrote is still not in the set.
+    """
+    extra: set = set(seeded)
+    originals = [v for v in seeded if v is not None]
+    pct_raw: set = set()
+    pct_factors: list[float] = []
+    for m in _CG_PERCENT_RE.finditer(user_text or ""):
+        p = _cg_to_number(m.group(1))
+        if p is None or p <= 0 or p > 100:
+            continue
+        pct_raw.add(p)
+        factor = 1.0 + (p / 100.0)
+        pct_factors.append(factor)
+        extra.add(round(p / 100.0, 4))
+        extra.add(round(factor, 4))
+    for m in _CG_DIM_CHAIN_RE.finditer(user_text or ""):
+        parts = [_cg_to_number(p) for p in _CG_NUM_RE.findall(m.group(0))]
+        parts = [p for p in parts if p is not None]
+        if len(parts) < 2:
+            continue
+        prod = 1.0
+        for p in parts:
+            prod *= p
+        extra.add(round(prod, 4))
+    # Pairwise of the user's own figures (qty/productivity, qty×rate).
+    for i, a in enumerate(originals):
+        for b in originals[i:]:
+            extra.add(round(a * b, 4))
+            extra.add(round(a + b, 4))
+            extra.add(round(abs(a - b), 4))
+            if b:
+                extra.add(round(a / b, 4))
+            if a:
+                extra.add(round(b / a, 4))
+    # Triple products of small dimension-like seeds (2.4×2.4×0.6).
+    # Percent figures (5, 10) are factors, not dimensions.
+    small = [v for v in originals if 0 < v < 100 and v not in pct_raw]
+    if 3 <= len(small) <= 12:
+        for i in range(len(small)):
+            for j in range(i, len(small)):
+                for k in range(j, len(small)):
+                    extra.add(round(small[i] * small[j] * small[k], 4))
+
+    money = [v for _frag, v in _cg_money_values(user_text or "")]
+    if not money:
+        money = [v for v in originals if v >= 20]
+    money_set = set(money)
+    counts = [
+        v for v in originals
+        if (
+            v >= 2
+            and abs(v - round(v)) < 1e-9
+            and v not in pct_raw
+            and v not in money_set
+        )
+    ]
+
+    def _times(values: set, factors: list[float], *, min_qty: float = 0.0) -> set:
+        out = set(values)
+        for a in list(values):
+            if a < min_qty:
+                continue
+            for b in factors:
+                if not b:
+                    continue
+                out.add(round(a * b, 4))
+        return out
+
+    def _apply_pct(values: set) -> set:
+        out = set(values)
+        for a in list(values):
+            for f in pct_factors:
+                out.add(round(a * f, 4))
+        return out
+
+    # count × (a×b×c), then waste, then qty-scale × user rate, then
+    # contingency. Dimension leftovers (2.4×0.6=1.44) must not be priced
+    # — that collision grounded an invented SAR 650/m3.
+    extra = _times(extra, counts)
+    extra = _apply_pct(extra)
+    qty_floor = min(counts) if counts else 1.0
+    extra = _times(extra, money, min_qty=qty_floor)
+    extra = _apply_pct(extra)
+    return extra
