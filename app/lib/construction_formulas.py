@@ -1558,6 +1558,7 @@ def _parse_text_number(raw: str) -> Optional[float]:
     try:
         return float(str(raw).replace(",", ""))
     except (TypeError, ValueError):
+        logger.debug("engineer-ask token %r is not numeric", raw)
         return None
 
 
