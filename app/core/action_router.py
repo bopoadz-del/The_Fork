@@ -22,6 +22,7 @@ Unknown / weak matches return None, and the chat router falls through to
 plain chat unchanged.
 """
 
+import re
 from typing import Optional
 
 
@@ -325,6 +326,53 @@ GENERATIVE_INTENTS = frozenset({
     "change_order_impact",
     "variation_order_manager",
 })
+
+
+# Rolling / N-day look-ahead from a programme. These share schedule-like
+# nouns ("programme", "construction schedule", "master schedule") with
+# generate_wbs; the keyword scorer then picks WBS. Detector is the steal-guard.
+_LOOKAHEAD_PHRASES = (
+    "look ahead", "look-ahead", "lookahead",
+    "3 week look", "4 week look", "three week look", "four week look",
+    "2 week look", "2-week look", "two week look",
+    "rolling look ahead", "rolling look-ahead",
+    "short term programme", "short-term programme",
+    "short term program", "short-term program",
+)
+_LOOKAHEAD_WINDOW_RE = re.compile(
+    r"\b(?:\d+|two|three|four)\s*[-]?\s*(?:day|week)s?\s+[-]?\s*look"
+    r"|\blook\s*[-]?\s*ahead\b"
+    r"|\blookahead\b"
+    r"|\brolling\s+look"
+    r"|\bshort[-\s]term\s+program(?:me)?\b",
+    re.IGNORECASE,
+)
+_LOOKAHEAD_QA_RE = re.compile(
+    r"\b(what is|what's|whats|explain|define)\b",
+    re.IGNORECASE,
+)
+
+
+def message_wants_look_ahead(text: str) -> bool:
+    """True when the turn asks for a rolling / N-day look-ahead, not a WBS.
+
+    Live Phase 2: "14-day look-ahead from the synthetic programme" and
+    "look-ahead from the construction schedule" were classified as
+    generate_wbs because those schedule nouns score higher than "look-ahead".
+    """
+    raw = text or ""
+    if not raw.strip() or _LOOKAHEAD_QA_RE.search(raw):
+        return False
+    low = raw.lower()
+    if any(p in low for p in _LOOKAHEAD_PHRASES):
+        return True
+    if _LOOKAHEAD_WINDOW_RE.search(raw):
+        return True
+    return "look" in low and "ahead" in low and any(
+        t in low for t in (
+            ".xer", "primavera", "p6", "schedule", "programme", "program",
+        )
+    )
 
 
 def needs_planning(action: Optional[str], confidence: float) -> bool:
