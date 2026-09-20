@@ -1140,6 +1140,21 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             "error": result["error"],
         }
 
+    # Phase 2 F–W (#43–84) leftovers: stamp unit / unitless on the four
+    # results the live probe scored as "number present, unit missing".
+    try:
+        from app.lib.construction_formulas_quantities import (
+            FW_ROUTE_NAMES,
+            shape_fw_calc_result,
+        )
+        if name in FW_ROUTE_NAMES:
+            result = shape_fw_calc_result(name, result)
+    except Exception:  # noqa: BLE001 — never break a successful calc
+        logger.warning(
+            "swallowed %s in shape_fw_calc_result() — continuing",
+            "Exception", exc_info=True,
+        )
+
     return {
         "status": "success",
         "calculation": name,
