@@ -13178,6 +13178,17 @@ class Agent:
                 return await _dispatch_payment_certificate(
                     args, user_message=user_message,
                 )
+            # Live Phase-2: the model calls this tool with only
+            # ``{"action": "construction_calc"}``. #663 extract reads
+            # text/formula/message — inject the current user turn so
+            # bind sees As1500 / span 8m / W=10000 kN. D7: never invent.
+            args = _inject_user_ask_into_construction_calc_args(
+                args, user_message,
+            )
+            if not calc_name:
+                calc_name = _formula_calculator_name_from_message(
+                    str((args or {}).get("text") or user_message or ""),
+                )
             from app.lib import construction_formulas as _cf
             calc_params = dict(args.get("params") or {})
             # SHARED WITH AGENT C / #636 / #639 / #652: models put calculator
@@ -13212,7 +13223,7 @@ class Agent:
                     continue
                 calc_params[key] = val
             result = _cf.run_calculation(
-                args.get("calculation") or args.get("name") or args.get("calculator"),
+                calc_name,
                 calc_params,
             )
             return {
@@ -13889,6 +13900,44 @@ def _strip_master_corpus_preamble(text: str) -> str:
         raw = raw.replace(_MASTER_CORPUS_FALLBACK_NOTE.strip(), "")
     cleaned = _MC_BLEED_PREAMBLE_RE.sub("", raw, count=1)
     return cleaned.lstrip()
+
+
+_CALC_ASK_BLOB_KEYS = ("text", "formula", "message")
+
+
+def _calc_args_have_ask_blob(args: dict | None) -> bool:
+    """True when the tool kwargs already carry extractable ask text."""
+    if not isinstance(args, dict):
+        return False
+    if any(args.get(k) not in (None, "") for k in _CALC_ASK_BLOB_KEYS):
+        return True
+    for nest in ("params", "input"):
+        inner = args.get(nest)
+        if isinstance(inner, dict) and any(
+            inner.get(k) not in (None, "") for k in _CALC_ASK_BLOB_KEYS
+        ):
+            return True
+    return False
+
+
+def _inject_user_ask_into_construction_calc_args(
+    args: dict | None,
+    user_message: str | None,
+) -> dict:
+    """Copy the current user turn into empty construction_calc kwargs.
+
+    Live Phase-2 re-probe: the model calls construction_calc with only
+    ``{"action": "construction_calc"}``. #663 extract reads
+    text/formula/message — without the ask, bind never sees the labeled
+    numbers. D7: never invent a figure that is not in the ask. Existing
+    text/formula/message win so a later retry with real params is kept.
+    """
+    out = dict(args or {})
+    ask = str(user_message or "").strip()
+    if not ask or _calc_args_have_ask_blob(out):
+        return out
+    out["text"] = ask
+    return out
 
 
 def _formula_calculator_name_from_message(text: str) -> str | None:
