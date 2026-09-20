@@ -126,8 +126,13 @@ def message_reports_slipped_delivery(text: str) -> bool:
 _VO_DRAFT = re.compile(
     r"(?:draft|issue|create|generate|write|prepare|make)\s+"
     r"(?:a(?:n)?\s+)?(?:variation(?:\s+order)?|vo\b|vo-\w+|change\s+order)"
-    r"|variation_order_manager\s*:\s*draft",
-    re.IGNORECASE,
+    r"|variation_order_manager\s*:\s*draft"
+    # Live tip 0a95d03 ask2: "DRAFT VO-D-002 content … ADD:/OMIT:" still
+    # called construction+sympy_reasoning. Match DRAFT VO-D-* / VO-D-* draft.
+    r"|draft\s+vo-d-\w+"
+    r"|vo-d-\w+\s+content"
+    r"|\badd\s*:.*\bomit\s*:",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
