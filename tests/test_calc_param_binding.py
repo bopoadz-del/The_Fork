@@ -193,6 +193,7 @@ def test_bind_helpers_are_not_registered_calculators():
     from app.lib.construction_formulas import CALCULATORS
     assert "bind_calculation_params" not in CALCULATORS
     assert "describe_calculation_params" not in CALCULATORS
+    assert "coerce_calc_params" not in CALCULATORS
     assert "extract_calculation_params_from_text" not in CALCULATORS
 
 
@@ -224,8 +225,10 @@ def test_beam_shear_simple_oracle_and_aliases():
     aliased = _ok("beam_shear_simple", {"w": 20, "span": 6})
     assert aliased["max_shear_kn"] == pytest.approx(60.0)
     # Unbound kwargs used to silently return 0 (live wrong_number).
-    zero = _ok("beam_shear_simple", {})
-    assert zero["max_shear_kn"] == pytest.approx(0.0)
+    env = _err("beam_shear_simple", {})
+    assert "missing required" in env["error"]
+    assert "udl_w_kn_m" in env["missing"]
+    assert "span_m" in env["missing"]
 
 
 def test_delay_damages_daily_oracle_and_aliases():
