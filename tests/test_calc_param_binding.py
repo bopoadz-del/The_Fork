@@ -253,3 +253,150 @@ def test_calculate_evm_uppercase_pmi_names_bind_without_special_case():
     })
     assert env["CPI"] == 0.889
     assert env["SPI"] == 0.8
+
+
+# ── DIR7: rc_beam_moment_capacity / steel_tension_capacity /
+#          post_tensioning_force — empty-args error + three input shapes +
+#          envelope-key strip. Owner: empty construction_calc → missing
+#          required (named + units). #634 did not touch calc args.
+
+_DIR7_ENVELOPE = {
+    "text": "compute this in chat",
+    "formula": "not-a-calc-kwarg",
+    "project_id": "ws-dir7-envelope",
+}
+
+_DIR7_CASES = {
+    "rc_beam_moment_capacity": {
+        "kwargs": dict(
+            steel_area_mm2=1500, fy_mpa=420, width_mm=300,
+            eff_depth_mm=550, fc_mpa=30,
+        ),
+        "result_key": "moment_capacity_kn_m",
+        "result_value": 288.50,
+        "abs": 0.3,
+        "required": (
+            ("steel_area_mm2", "mm2"),
+            ("fy_mpa", "MPa"),
+            ("width_mm", "mm"),
+            ("eff_depth_mm", "mm"),
+            ("fc_mpa", "MPa"),
+        ),
+    },
+    "steel_tension_capacity": {
+        "kwargs": dict(
+            gross_area_mm2=3000, net_area_mm2=2550,
+            fy_mpa=345, fu_mpa=450,
+        ),
+        "result_key": "capacity_kn",
+        "result_value": 860.63,
+        "abs": 0.05,
+        "required": (
+            ("gross_area_mm2", "mm2"),
+        ),
+    },
+    "post_tensioning_force": {
+        "kwargs": dict(span_m=8, slab_thickness_m=0.25, live_load_kn_m2=5),
+        "result_key": "tendon_force_kn",
+        "result_value": 1000.0,
+        "abs": 0.1,
+        "required": (
+            ("span_m", "m"),
+            ("slab_thickness_m", "m"),
+            ("live_load_kn_m2", "kN/m2"),
+        ),
+    },
+}
+
+
+def _dir7_tool(calculation, extra):
+    """construction_calc with a raw argument envelope (not only params=)."""
+    agent = _agent(["construction"])
+    tc = {"id": "c1", "function": {
+        "name": "construction_calc",
+        "arguments": json.dumps({"calculation": calculation, **extra}),
+    }}
+    return _run(agent._run_tool_call(tc))
+
+
+def _assert_dir7_success(envelope, spec):
+    assert envelope.get("ok") is True, envelope
+    assert envelope["result"]["status"] == "success", envelope
+    inner = envelope["result"]["result"]
+    assert inner[spec["result_key"]] == pytest.approx(
+        spec["result_value"], abs=spec["abs"]
+    ), envelope
+
+
+@pytest.mark.parametrize("calc", sorted(_DIR7_CASES))
+def test_dir7_empty_construction_calc_names_required_params_and_units(calc):
+    """(1) Empty kwargs → error that names every required param AND unit."""
+    spec = _DIR7_CASES[calc]
+    env = _dir7_tool(calc, {})
+    assert env.get("ok") is False, env
+    result = env["result"]
+    assert result["status"] == "error", result
+    err = result["error"]
+    assert "TypeError" not in err
+    assert "missing required" in err
+    expected = {row["name"]: row for row in result["expected_params"]}
+    for name, unit in spec["required"]:
+        assert name in err, (calc, name, err)
+        assert f"{name} ({unit})" in err, (calc, name, unit, err)
+        assert name in result["missing"], result["missing"]
+        assert expected[name]["unit"] == unit, expected[name]
+        assert expected[name]["required"] is True
+
+
+@pytest.mark.parametrize("calc", sorted(_DIR7_CASES))
+@pytest.mark.parametrize("shape", ("top_level", "params", "input"))
+def test_dir7_three_input_shapes_bind_same_number(calc, shape):
+    """(2) top-level / params= / input= all bind the same numeric values."""
+    spec = _DIR7_CASES[calc]
+    kwargs = spec["kwargs"]
+    if shape == "top_level":
+        extra = dict(kwargs)
+    elif shape == "params":
+        extra = {"params": dict(kwargs)}
+    else:
+        extra = {"input": dict(kwargs)}
+    _assert_dir7_success(_dir7_tool(calc, extra), spec)
+    # Same values through run_calculation for the same shape.
+    run_payload = dict(kwargs) if shape == "top_level" else {shape: dict(kwargs)}
+    inner = _ok(calc, run_payload)
+    assert inner[spec["result_key"]] == pytest.approx(
+        spec["result_value"], abs=spec["abs"]
+    )
+
+
+@pytest.mark.parametrize("calc", sorted(_DIR7_CASES))
+def test_dir7_flatten_strips_envelope_keys_not_passed_as_kwargs(calc):
+    """(3) #636 flatten must never pass text/formula/input/project_id.
+
+    Names the failure if bind still leaks envelope keys or treats them
+    as calculator kwargs (the DIR7 hypothesis).
+    """
+    from app.lib.construction_formulas import (
+        CALCULATORS,
+        _flatten_calc_kwargs,
+        bind_calculation_params,
+    )
+
+    spec = _DIR7_CASES[calc]
+    kwargs = spec["kwargs"]
+    leaked = {**kwargs, **_DIR7_ENVELOPE, "input": {"noise": 1}}
+    flat = _flatten_calc_kwargs(leaked)
+    for key in ("input", "project_id"):
+        assert key not in flat, f"flatten leaked {key!r} as a calc kwarg: {flat}"
+    bound = bind_calculation_params(CALCULATORS[calc], leaked)
+    for key in ("text", "formula", "input", "project_id"):
+        assert key not in bound, (
+            f"bind leaked envelope key {key!r} into calculator kwargs: {bound}"
+        )
+    # Mixed envelope + real kwargs still compute (tool + run_calculation).
+    inner = _ok(calc, leaked)
+    assert inner[spec["result_key"]] == pytest.approx(
+        spec["result_value"], abs=spec["abs"]
+    )
+    extra = {**kwargs, **_DIR7_ENVELOPE, "input": dict(kwargs)}
+    _assert_dir7_success(_dir7_tool(calc, extra), spec)

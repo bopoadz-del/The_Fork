@@ -1095,12 +1095,17 @@ def _result_is_failure(result: Dict[str, Any]) -> bool:
 
 
 # Keys the model / container / tool envelope add beside real calculator kwargs.
-# Dropped at bind time so they never TypeError; ``text`` / ``formula`` stay
-# available for the E4 / F–W resolvers that run *before* bind.
+# Flatten unwraps ``params`` / ``input`` then drops these so they never
+# reach fn(**kwargs). ``text`` / ``formula`` stay available for the E4 /
+# F–W resolvers that run *before* bind, and are stripped at bind time.
 _BIND_JUNK_KEYS = frozenset({
     "action", "calculation", "name", "calculator", "params",
     "block", "unit", "formula", "text", "ok", "status",
+    "input", "project_id", "conversation_id", "user_id",
+    "message", "history", "messages", "chat",
 })
+_FLATTEN_NEST_KEYS = ("params", "input")
+_E4_PASSTHROUGH_KEYS = frozenset({"text", "formula"})
 
 # Longest-first unit suffixes stripped when matching volume ↔ volume_m3.
 _BIND_UNIT_SUFFIXES: Tuple[Tuple[str, str], ...] = (
@@ -1215,23 +1220,40 @@ def _ann_label(annotation: Any) -> str:
     return getattr(annotation, "__name__", None) or str(annotation).replace("typing.", "")
 
 
-def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge a nested ``params`` object into the top-level kwargs.
+def _is_junk_key(key: Any) -> bool:
+    return _snake_key(key) in {_snake_key(j) for j in _BIND_JUNK_KEYS}
 
-    Live Phase-2 / #636: the model often puts calculator kwargs next to
-    ``calculation`` *or* nests them under ``params``. Nested keys lose to
-    an explicit top-level of the same name.
+
+def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge nested ``params`` / ``input`` into top-level calculator kwargs.
+
+    Live Phase-2 / #636 / DIR7: the model often puts calculator kwargs
+    next to ``calculation`` *or* nests them under ``params`` or ``input``.
+    Envelope keys (text, formula, input, project_id, …) are never copied
+    through as calculator kwargs. ``text`` / ``formula`` are the E4
+    exception — they survive flatten for the resolvers, then bind drops
+    them. Nested keys lose to an explicit top-level of the same name.
     """
     if not isinstance(params, dict):
         return {}
-    nested = params.get("params")
+    junk = {_snake_key(j) for j in _BIND_JUNK_KEYS}
+    e4 = {_snake_key(j) for j in _E4_PASSTHROUGH_KEYS}
     out: Dict[str, Any] = {}
-    if isinstance(nested, dict):
-        out.update(nested)
-    for key, val in params.items():
-        if key == "params":
+    for nest_key in _FLATTEN_NEST_KEYS:
+        nested = params.get(nest_key)
+        if not isinstance(nested, dict):
             continue
+        for key, val in nested.items():
+            if val is None or val == "":
+                continue
+            if _snake_key(key) in junk:
+                continue
+            out[key] = val
+    for key, val in params.items():
         if val is None or val == "":
+            continue
+        nk = _snake_key(key)
+        if nk in junk and nk not in e4:
             continue
         out[key] = val
     return out
@@ -1311,7 +1333,7 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     for key, val in raw.items():
         if val is None or val == "":
             continue
-        if _snake_key(key) in {_snake_key(j) for j in _BIND_JUNK_KEYS}:
+        if _is_junk_key(key):
             continue
         dest = accepted_norm.get(_snake_key(key))
         if dest is None:
