@@ -128,9 +128,33 @@ class BOQProcessorBlock(UniversalBlock):
         params = params or {}
         data = input_data if isinstance(input_data, dict) else {}
 
-        file_path = data.get("file_path") or params.get("file_path") or data.get("text") or data.get("input") or (input_data if isinstance(input_data, str) else "")
+        # Inline CSV/BOQ pasted in the chat message (no uploaded file).
+        inline_boq_csv = False
+        raw_text = data.get("text") or data.get("content") or data.get("lines") or params.get("text") or params.get("content") or ""
+        if isinstance(input_data, dict):
+            raw_text = raw_text or input_data.get("text") or input_data.get("content") or ""
+        if (not file_path or ("\n" in str(file_path) and "," in str(file_path))) and raw_text and "," in str(raw_text) and "\n" in str(raw_text):
+            import tempfile
+            inline_boq_csv = True
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8")
+            # strip leading instruction lines; keep CSV-looking rows
+            body_lines = []
+            for ln in str(raw_text if raw_text else file_path).splitlines():
+                if "," in ln and not ln.strip().lower().startswith("use boq"):
+                    body_lines.append(ln)
+            tmp.write("\n".join(body_lines) + "\n")
+            tmp.close()
+            file_path = tmp.name
+        elif isinstance(file_path, str) and "\n" in file_path and "," in file_path:
+            import tempfile
+            inline_boq_csv = True
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8")
+            body_lines = [ln for ln in file_path.splitlines() if "," in ln]
+            tmp.write("\n".join(body_lines) + "\n")
+            tmp.close()
+            file_path = tmp.name
         if not file_path:
-            return {"status": "error", "error": "No file_path provided. Requires an .xlsx, .csv, or .pdf BOQ file path."}
+            return {"status": "error", "error": "No file_path provided. Requires an .xlsx, .csv, or .pdf BOQ file path, or inline CSV lines."}
 
         # LLM callers typically pass a bare filename ("Demolition BOQ.pdf") rather
         # than the stored absolute path. Try to resolve that against the project's
