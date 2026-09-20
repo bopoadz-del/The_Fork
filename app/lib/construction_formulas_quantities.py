@@ -299,6 +299,12 @@ _FW_PRESENTATION = {
         "unit": "SAR",
         "value_keys": ("grand_total_sar", "value"),
     },
+    # #628 unitless/SAR twin: live probe computed seismic but the envelope
+    # had no unit the stream could copy (tool-but-no-unit).
+    "seismic_base_shear": {
+        "unit": "kN",
+        "value_keys": ("base_shear_kn", "value"),
+    },
 }
 
 

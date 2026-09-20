@@ -193,6 +193,7 @@ def test_bind_helpers_are_not_registered_calculators():
     from app.lib.construction_formulas import CALCULATORS
     assert "bind_calculation_params" not in CALCULATORS
     assert "describe_calculation_params" not in CALCULATORS
+    assert "extract_calculation_params_from_text" not in CALCULATORS
 
 
 def test_bind_is_case_insensitive_on_canonical_names():
