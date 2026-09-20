@@ -292,6 +292,7 @@ def test_bind_helpers_are_not_registered_calculators():
     assert "bind_calculation_params" not in CALCULATORS
     assert "describe_calculation_params" not in CALCULATORS
     assert "coerce_calc_params" not in CALCULATORS
+    assert "extract_calculation_params_from_text" not in CALCULATORS
 
 
 def test_describe_evm_marks_pv_ev_ac_required_with_currency():
