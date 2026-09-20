@@ -134,12 +134,7 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
                                 "cost variance", "schedule variance", "bcwp", "bcws", "acwp"]),
     ("resource_histogram",    ["resource", "manpower", "histogram", "crew", "labor loading", "workforce"]),
     ("look_ahead",            ["look ahead", "lookahead", "look-ahead", "3 week look", "4 week look",
-                                "three week look", "four week look", "2 week look", "2-week look",
-                                "two week look", "14 day look", "14-day look",
-                                "rolling look ahead", "rolling look-ahead",
-                                "look-ahead programme", "lookahead programme",
-                                "look ahead programme", "look-ahead schedule",
-                                "lookahead schedule", "look ahead schedule",
+                                "three week look", "four week look", "rolling look ahead",
                                 "short term programme", "short-term programme"]),
     ("forensic_delay_analysis", ["delay analysis", "eot", "extension of time", "delay claim", "forensic"]),
     # BIM / IFC
