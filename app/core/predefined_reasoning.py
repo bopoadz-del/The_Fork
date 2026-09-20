@@ -157,10 +157,13 @@ def lookup_question_hijack(message: str, confidence: float) -> bool:
     """
     from app.core.contract_lookup_intent import message_is_contract_data_lookup
     from app.core.answer_report_intent import message_wants_answer_report
+    from app.core.action_router import message_wants_look_ahead
     if message_is_contract_data_lookup(message):
         return True
     if message_wants_answer_report(message):
         return True
+    if message_wants_look_ahead(message):
+        return False
     from app.core.conversation_wbs import message_wants_wbs_export
     if message_wants_wbs_export(message):
         return True
@@ -727,6 +730,13 @@ async def _run_container_action(action: str, context: Dict[str, Any]) -> Optiona
         "document_ids": context.get("document_ids") or [],
     }
     envelope.update({k: v for k, v in (context.get("params") or {}).items() if v is not None})
+    if action == "payment_certificate":
+        try:
+            from app.containers.construction.boq import ipc_args_from_ask
+            filled = ipc_args_from_ask(context.get("message") or "", envelope)
+            envelope.update({k: v for k, v in filled.items() if v is not None})
+        except Exception:  # noqa: BLE001
+            logger.debug("IPC ask coercion skipped", exc_info=True)
     try:
         result = await con.execute(envelope)
     except Exception as e:  # noqa: BLE001

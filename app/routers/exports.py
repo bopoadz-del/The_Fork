@@ -203,8 +203,9 @@ class ScheduleFromBriefRequest(BaseModel):
     """Generate a cost-loaded L2 schedule straight from a brief: runs the
     DETERMINISTIC generate_wbs (template-based, no LLM) then bridges + renders.
     The chat turn strips the full activity list from generate_wbs' result to
-    keep the SSE payload small, so the download re-derives it from the same
-    brief params — identical output because generate_wbs is deterministic."""
+    keep the SSE payload small. When ``conversation_id`` is set the download
+    exports that conversation's staged WBS (same codes as chat). Without it
+    the endpoint re-derives from the brief params."""
     project_name: Optional[str] = None
     currency: str = "SAR"
     brief: str = ""
@@ -834,13 +835,20 @@ def _workbook_from_wbs_activities(
     day_rate: Optional[float] = None,
     crew_per_trade: int = 4,
     target_milestones: Optional[List[Dict[str, Any]]] = None,
+    wbs_tree: Optional[Dict[str, Any]] = None,
 ) -> Any:
-    """Bridge generate_wbs-style rows and write the cost-loaded workbook."""
+    """Bridge generate_wbs-style rows and write the cost-loaded workbook.
+
+    Hierarchical chat codes (``1.1``, ``2.1``) are stamped onto each row
+    before the bridge so the L2 WBS column matches the staged outline.
+    """
+    from app.core.conversation_wbs import stamp_hierarchical_wbs_codes
     from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
     from app.lib.pm_excel import generate_cost_loaded_schedule
 
+    acts = stamp_hierarchical_wbs_codes(list(activities or []), wbs_tree)
     bridged = bridge_wbs_to_cost_loaded(
-        activities, crew_per_trade=crew_per_trade, day_rate=day_rate,
+        acts, crew_per_trade=crew_per_trade, day_rate=day_rate,
     )
     meta: Dict[str, Any] = {"project": name, "currency": currency}
     if start_date:
@@ -862,10 +870,10 @@ async def export_schedule_from_brief(
     (CPM, man-days S-curve, manpower histogram, milestones). This backs the
     chat 'Schedule (Excel)' download offer.
 
-    When ``conversation_id`` is set and that conversation has a staged WBS,
-    that snapshot is exported instead of regenerating (F-BAT-D H2). A
-    BOQ-scope WBS ask that would otherwise emit the template scaffold is
-    refused with 422.
+    When ``conversation_id`` is set, the conversation's staged WBS is
+    exported (F-BAT-D H2 / Phase 2 code match). Missing snapshot is 404 —
+    a template is never substituted. A BOQ-scope WBS ask that would
+    otherwise emit the template scaffold is refused with 422.
     """
     proj = _check_owner(project_id, auth["user_id"])
     if req.conversation_id:
@@ -876,8 +884,14 @@ async def export_schedule_from_brief(
         refuse_scaffold_for_boq_wbs_ask,
     )
 
-    staged = load_conversation_wbs(req.conversation_id) if req.conversation_id else None
-    if staged:
+    if req.conversation_id:
+        staged = load_conversation_wbs(req.conversation_id)
+        if not staged:
+            raise HTTPException(
+                404,
+                "No WBS or schedule is staged in this conversation. "
+                "Generate a WBS first; a generic template will not be substituted.",
+            )
         acts = staged.get("activities") or []
         wb = _workbook_from_wbs_activities(
             acts, name,
@@ -886,6 +900,7 @@ async def export_schedule_from_brief(
             day_rate=req.day_rate,
             crew_per_trade=req.crew_per_trade,
             target_milestones=staged.get("target_milestones") or None,
+            wbs_tree=staged.get("wbs_tree"),
         )
         fd, path = tempfile.mkstemp(prefix="sched_conv_", suffix=".xlsx"); os.close(fd)
         wb.save(path)
@@ -919,6 +934,7 @@ async def export_schedule_from_brief(
         day_rate=req.day_rate,
         crew_per_trade=req.crew_per_trade,
         target_milestones=wbs.get("target_milestones") or None,
+        wbs_tree=wbs.get("wbs_tree"),
     )
     fd, path = tempfile.mkstemp(prefix="sched_brief_", suffix=".xlsx"); os.close(fd)
     wb.save(path)
@@ -1266,6 +1282,7 @@ async def export_conversation_schedule(
         acts, name,
         start_date=staged.get("start_date"),
         target_milestones=staged.get("target_milestones") or None,
+        wbs_tree=staged.get("wbs_tree"),
     )
     fd, path = tempfile.mkstemp(prefix="sched_conv_", suffix=".xlsx"); os.close(fd)
     wb.save(path)
@@ -1395,6 +1412,7 @@ async def export_conversation_message(
                 acts, project_name,
                 start_date=staged.get("start_date"),
                 target_milestones=staged.get("target_milestones") or None,
+                wbs_tree=staged.get("wbs_tree"),
             )
             fd, path = tempfile.mkstemp(
                 prefix=f"export-{conversation_id[:8]}-", suffix=".xlsx",
