@@ -62,18 +62,17 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # + A2 formula-template recovery (#649) + Set3 empty-turn / A3-1
     # priced-takeoff grafts (#651). Same pre-existing handlers — only
     # the line numbers moved. No new silent returns.
-    # Re-indexed 2026-09-20 #657+#660: cash_flow_forecast underscore
-    # force (+2 in _forced_specific_tool) plus inline BOQ CSV (+2 steal
-    # map, +~8 named_calculator guard). Same handlers — only line
-    # numbers moved. No new silent returns.
-    "app/agents/runtime.py:2080": "baseline 2026-09-10",
-    "app/agents/runtime.py:2086": "baseline 2026-09-10",
-    "app/agents/runtime.py:2149": "baseline 2026-09-10",
-    "app/agents/runtime.py:2155": "baseline 2026-09-10",
-    "app/agents/runtime.py:2824": "baseline 2026-09-10",
-    "app/agents/runtime.py:3839": "baseline 2026-09-10",
-    "app/agents/runtime.py:5120": "baseline 2026-09-10",
-    "app/agents/runtime.py:5529": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20 #657+#660+#661: cash_flow force, inline
+    # BOQ CSV, and `_message_wants_primavera_parse` (+10 fn, +1 call
+    # site). Same handlers — only line numbers moved.
+    "app/agents/runtime.py:2090": "baseline 2026-09-10",
+    "app/agents/runtime.py:2096": "baseline 2026-09-10",
+    "app/agents/runtime.py:2159": "baseline 2026-09-10",
+    "app/agents/runtime.py:2165": "baseline 2026-09-10",
+    "app/agents/runtime.py:2835": "baseline 2026-09-10",
+    "app/agents/runtime.py:3850": "baseline 2026-09-10",
+    "app/agents/runtime.py:5131": "baseline 2026-09-10",
+    "app/agents/runtime.py:5540": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:942": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
