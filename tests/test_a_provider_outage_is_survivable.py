@@ -72,7 +72,14 @@ def _behave(kind, text):
         raise httpx.ConnectError("[Errno 111] Connection refused to api.deepseek.com")
     if kind == "timeout":
         raise httpx.ReadTimeout("ReadTimeout")
-    if kind in ("500", "503", "429", "402"):
+    if kind == "402":
+        # Live DeepSeek body on tip 78bd9ca — not the OpenRouter in-flight
+        # wording. Must still hop to the fallback.
+        return _Resp(
+            402,
+            '{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}',
+        )
+    if kind in ("500", "503", "429"):
         return _Resp(int(kind), UPSTREAM)
     if kind == "empty":
         return _Resp(200, _completion(""))
@@ -202,7 +209,7 @@ def test_a_healthy_primary_answers_and_the_fallback_is_not_called(providers):
     assert not any(w == "or" for w, _ in fake.calls)
 
 
-@pytest.mark.parametrize("failure", ["refused", "timeout", "500", "503", "429", "empty", "garbage"])
+@pytest.mark.parametrize("failure", ["refused", "timeout", "500", "503", "429", "402", "empty", "garbage"])
 def test_when_the_primary_fails_the_user_gets_the_fallbacks_answer(providers, failure):
     fake = providers(failure, "ok")
     shown, errors = _ask()

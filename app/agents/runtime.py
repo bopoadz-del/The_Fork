@@ -11424,7 +11424,13 @@ class Agent:
             fb_key = os.getenv(fb["env_key"]) if fb.get("env_key") else ""
             attempts.append((fb, fb_key, fb["default_model"]))
 
-        def _is_retryable(status: int) -> bool:
+        def _is_retryable(status: int, provider: str = "") -> bool:
+            # DeepSeek HTTP 402 (insufficient credit) is "primary
+            # unreachable" — hop to LLM_FALLBACK_PROVIDER. OpenRouter
+            # generic 402 stays same-hop only so we do not burn a paid
+            # DeepSeek fallback (test_openrouter_402_does_not_fall_back_to_deepseek).
+            if status == 402 and provider != "openrouter":
+                return True
             return status in (408, 413, 429) or status >= 500
 
         def _tool_choice_for(provider: str):
@@ -11644,7 +11650,13 @@ class Agent:
                 shape_400 = r.status_code == 400 and _http_400_is_retryable(body)
                 if shape_400:
                     skip_providers.add(str(a_cfg.get("provider") or ""))
-                if (_is_retryable(r.status_code) or tool_use_failed_unrecovered or shape_400) and not is_last:
+                if (
+                    _is_retryable(
+                        r.status_code, str(a_cfg.get("provider") or ""),
+                    )
+                    or tool_use_failed_unrecovered
+                    or shape_400
+                ) and not is_last:
                     reason = (
                         "tool_use_failed (prose)" if tool_use_failed_unrecovered
                         else ("conversation-shape 400" if shape_400 else f"HTTP {r.status_code}")
