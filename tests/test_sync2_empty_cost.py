@@ -12,16 +12,27 @@ A3-1  14 pad footings 2.4×2.4×0.6 m @ SAR 410/m3 + 5% waste + 10% contingency
       → refused "I don't have a rate on file" despite the user giving 410
 A3-2  500 m of 300 mm uPVC @ SAR 95 per metre
       → refused the user-supplied 95
+
+Live tip a8498b38: A2 empty is 0/2. construction_calc is called with
+empty / incomplete kwargs (or succeeds with a formula-only note / 1 m
+demo). Same class as empty-args payment_certificate. See
+uploads/SYNC2_A2_empty_repro.
 """
 from __future__ import annotations
 
 import json
+import re
+
+import pytest
 
 from app.agents.runtime import (
     _CG_REFUSAL,
     _EMPTY_RESPONSE_FALLBACK,
     _cost_grounding_gate,
+    _format_any_calc_result,
     _format_tool_error_plain,
+    _graft_complete_calc_answer,
+    _looks_like_formula_template,
     _looks_like_tool_error_json,
     _plain_sentence_for_tool_error_json,
     _postprocess_answer,
@@ -29,6 +40,7 @@ from app.agents.runtime import (
     _sanitize_final_text,
     _text_needs_tool_recovery,
 )
+from app.lib.construction_formulas import run_calculation
 
 
 # ── Live asks (synthetic figures only) ──────────────────────────────────────
@@ -213,3 +225,174 @@ def test_a2_plain_helper_matches_sanitize():
     assert _plain_sentence_for_tool_error_json(UNKNOWN_NONE) == _sanitize_final_text(
         UNKNOWN_NONE
     )
+
+
+# ── Live tip a8498b38: formula-only / 1 m demo after a green calc ───────────
+
+A2_PLASTER = (
+    "How much will the remaining 3,400 m2 of plastering cost if "
+    "productivity stays at 42 m2 per gang-day and a gang costs "
+    "SAR 1,950 per day?"
+)
+A2_REBAR = "What is the weight of 12 tonnes of Y16 bars in metres run?"
+
+# Live third construction_calc on A2-1 — duration only, formula-name note.
+A2_1_LIVE_OK = {
+    "status": "success",
+    "calculation": "productivity_manpower_duration",
+    "result": {
+        "formulas_used": ["Duration = Quantity / Daily Production"],
+        "standard": "PE formula sheet (Productivity / Manpower / Duration)",
+        "duration": 80.9524,
+        "duration_units": "days (same period as daily_production)",
+        "note": "Duration = Quantity / Daily Production",
+    },
+    "note": (
+        "Deterministic engineering calculation. Any cost figure uses the unit "
+        "rates provided (or indicative GCC defaults if none were given)."
+    ),
+}
+
+# Live second construction_calc on A2-2 — 1 m unit-mass demo.
+A2_2_LIVE_OK = {
+    "status": "success",
+    "calculation": "rebar_weight",
+    "result": {
+        "unit_mass_kg_m": 1.5783,
+        "total_mass_kg": 1.58,
+        "total_mass_t": 0.0016,
+        "note": (
+            "Unit mass = (pi/4)*(16.0/1000)^2*7850 = 1.5783 kg/m; "
+            "x 1 m x 1 = 1.58 kg."
+        ),
+    },
+}
+
+A2_1_FORMULA_SHIPPED = (
+    "Duration = Quantity / Daily Production\n"
+    "3354 of 3354 project documents indexed"
+)
+A2_2_DEMO_SHIPPED = (
+    "Unit mass = (pi/4)*(16.0/1000)^2*7850 = 1.5783 kg/m; "
+    "x 1 m x 1 = 1.58 kg.\n"
+    "3354 of 3354 project documents indexed"
+)
+
+
+def _has_sar_plaster_cost(text: str) -> bool:
+    compact = (text or "").replace(",", "").replace(" ", "")
+    return bool(re.search(r"SAR", text or "", re.I)) and "157" in compact
+
+
+def _has_metres_run(text: str) -> bool:
+    compact = (text or "").replace(",", "")
+    match = re.search(r"(\d+(?:\.\d+)?)\s*m(?:etres?)?\b", compact, re.I)
+    return bool(match) and float(match.group(1)) > 100
+
+
+def test_a2_1_live_params_compute_duration_and_cost():
+    env = run_calculation("productivity_manpower_duration", {
+        "quantity": 3400,
+        "unit": "m2",
+        "productivity_rate": 42,
+        "rate_unit": "m2 per gang-day",
+        "crew_cost_per_day": 1950,
+    })
+    assert env["status"] == "success", env
+    inner = env["result"]
+    assert inner["duration"] == pytest.approx(3400 / 42, abs=0.01)
+    assert inner["total_cost"] == pytest.approx(3400 / 42 * 1950, abs=0.5)
+    assert "157" in str(inner["total_cost"])
+
+
+def test_a2_2_weight_to_length_first_call():
+    env = run_calculation("rebar_weight", {
+        "bar_diameter_mm": 16,
+        "total_weight_kg": 12000,
+        "mode": "weight_to_length",
+    })
+    assert env["status"] == "success", env
+    inner = env["result"]
+    metres = inner.get("metres_run") or inner["total_length_m"]
+    assert metres == pytest.approx(12000 / inner["unit_mass_kg_m"], abs=1.0)
+    assert metres > 1000
+
+
+def test_a2_formula_template_needs_recovery():
+    assert _looks_like_formula_template("Duration = Quantity / Daily Production")
+    assert _looks_like_formula_template(A2_1_FORMULA_SHIPPED)
+    assert _text_needs_tool_recovery("Duration = Quantity / Daily Production")
+    assert _text_needs_tool_recovery(A2_1_FORMULA_SHIPPED)
+    assert not _text_needs_tool_recovery("Y16 unit mass is 1.578 kg/m.")
+
+
+def test_a2_1_format_skips_formula_only_note():
+    formatted = _format_any_calc_result(A2_1_LIVE_OK)
+    assert formatted
+    assert "Duration = Quantity / Daily Production" != formatted
+    assert "80.95" in formatted or "80.952" in formatted
+
+
+def test_a2_1_live_formula_note_recovers_sar_cost():
+    msgs = [_user(A2_PLASTER), _tool(A2_1_LIVE_OK)]
+    recovered = _recover_answer_from_tool_messages(A2_1_FORMULA_SHIPPED, msgs)
+    grafted = _graft_complete_calc_answer(recovered, msgs)
+    out = _postprocess_answer(A2_1_FORMULA_SHIPPED, None, msgs)
+    for text in (grafted, out):
+        assert _has_sar_plaster_cost(text), text
+        assert "unable to generate" not in text.lower()
+        assert "{" not in text
+
+
+def test_a2_2_live_1m_demo_recovers_metres_run():
+    msgs = [_user(A2_REBAR), _tool(A2_2_LIVE_OK)]
+    grafted = _graft_complete_calc_answer(A2_2_DEMO_SHIPPED, msgs)
+    out = _postprocess_answer(A2_2_DEMO_SHIPPED, None, msgs)
+    for text in (grafted, out):
+        assert _has_metres_run(text), text
+        assert "unable to generate" not in text.lower()
+
+
+def test_a2_1_empty_turn_after_duration_only_calc_has_cost():
+    msgs = [_user(A2_PLASTER), _tool(A2_1_LIVE_OK)]
+    out = _postprocess_answer("", None, msgs)
+    assert _has_sar_plaster_cost(out), out
+
+
+def test_a2_2_empty_turn_after_1m_demo_has_metres():
+    msgs = [_user(A2_REBAR), _tool(A2_2_LIVE_OK)]
+    out = _postprocess_answer(_EMPTY_RESPONSE_FALLBACK, None, msgs)
+    assert _has_metres_run(out), out
+
+
+def test_a2_empty_kwargs_name_required_params_with_units():
+    """Empty / incomplete construction_calc must name every required input."""
+    prod = run_calculation("productivity_manpower_duration", {})
+    assert prod["status"] == "error"
+    err = prod["error"]
+    assert "quantity (qty)" in err
+    assert "daily_production (qty/day)" in err
+    assert "crew_cost_per_day (currency/day)" in err
+    assert "productivity_rate (qty/gang-day)" in err
+
+    rebar = run_calculation("rebar_weight", {})
+    assert rebar["status"] == "error"
+    err = rebar["error"]
+    assert "bar_diameter_mm (mm)" in err
+    assert "total_length_m (m)" in err
+    assert "total_weight_kg (kg)" in err
+    assert "weight_to_length" in err
+    assert "missing 1 required positional" not in err.lower()
+
+    incomplete = run_calculation("rebar_weight", {
+        "bar_diameter_mm": 16, "total_weight_kg": 12000, "mode": "weight_to_length",
+    })
+    assert incomplete["status"] == "success", incomplete
+
+
+def test_a2_empty_kwargs_plain_error_keeps_units():
+    env = run_calculation("rebar_weight", {})
+    sentence = _format_tool_error_plain(env)
+    assert "bar_diameter_mm (mm)" in sentence
+    assert "total_weight_kg (kg)" in sentence
+    assert "{" not in sentence
