@@ -830,9 +830,9 @@ class SmartOrchestratorBlock(UniversalBlock):
                     "keywords_matched": ["variation order"],
                 }]
             results = vo + rest
+        # Tool-shaped / draft RFI asks stay on rfi_generator (clash/rebar/lap OK).
+        # The CDE collapse is for "post this clash RFI to Aconex/CDE" only.
         from app.core.action_router import message_wants_rfi_draft
-        # Draft an RFI (clash/rebar/lap OK) stays on rfi_generator.
-        # Only an explicit CDE/Aconex post steals onto cde_post_rfi.
         if (
             message_wants_clash(message)
             and message_wants_clash_cde_rfi(message)
