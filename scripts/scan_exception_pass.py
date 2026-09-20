@@ -62,14 +62,18 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # + A2 formula-template recovery (#649) + Set3 empty-turn / A3-1
     # priced-takeoff grafts (#651). Same pre-existing handlers — only
     # the line numbers moved. No new silent returns.
+    # Re-indexed 2026-09-20 #657: cash_flow_forecast underscore force
+    # inserted two lines in `_forced_specific_tool`. Same handlers at
+    # `_cg_to_number` / `_aca_claim_amount` — only the line numbers
+    # moved (+2). Handler text is byte-identical. No new silent returns.
     "app/agents/runtime.py:2078": "baseline 2026-09-10",
     "app/agents/runtime.py:2084": "baseline 2026-09-10",
     "app/agents/runtime.py:2147": "baseline 2026-09-10",
     "app/agents/runtime.py:2153": "baseline 2026-09-10",
     "app/agents/runtime.py:2822": "baseline 2026-09-10",
     "app/agents/runtime.py:3829": "baseline 2026-09-10",
-    "app/agents/runtime.py:5108": "baseline 2026-09-10",
-    "app/agents/runtime.py:5517": "baseline 2026-09-10",
+    "app/agents/runtime.py:5110": "baseline 2026-09-10",
+    "app/agents/runtime.py:5519": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:942": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",

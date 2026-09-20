@@ -1516,7 +1516,7 @@ def _message_wants_rfp_draft(text: str) -> bool:
 
 def _message_wants_cash_flow(text: str) -> bool:
     return bool(re.search(
-        r"cash[- ]flow|s-curve|s curve|spend curve|drawdown",
+        r"cash[_\- ]flow|s-curve|s curve|spend curve|drawdown",
         text or "",
         re.I,
     ))
@@ -3848,6 +3848,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
         return "resource_histogram"
     if "look_ahead" in available and _message_wants_look_ahead(text):
         return "look_ahead"
+    if "cash_flow_forecast" in available and _message_wants_cash_flow(text):
+        return "cash_flow_forecast"
     wants_procurement = _message_wants_procurement_list(text)
     if "procurement_list_generator" in available and wants_procurement:
         return "procurement_list_generator"
