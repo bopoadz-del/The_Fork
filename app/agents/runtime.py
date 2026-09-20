@@ -4393,6 +4393,14 @@ def _text_needs_tool_recovery(text: str) -> bool:
         return True
     if _looks_like_formula_template(t):
         return True
+    try:
+        from app.lib.construction_formulas_commercial import (
+            answer_is_unbound_delay_damages,
+        )
+        if answer_is_unbound_delay_damages(t):
+            return True
+    except Exception:  # noqa: BLE001 — recovery probe must never break a turn
+        _LOG.debug("unbound delay-damages probe failed", exc_info=True)
     return False
 
 
@@ -4959,6 +4967,7 @@ def _graft_composed_concrete_volume(
         if (
             not raw.strip()
             or raw.strip() == _CG_REFUSAL
+            or raw.strip() == _EMPTY_RESPONSE_FALLBACK
             or _looks_like_search_preamble(raw)
             or _GENERIC_ACK_RE.search(raw)
             or _MISSING_PARTICULAR_RE.search(raw)
@@ -4968,6 +4977,84 @@ def _graft_composed_concrete_volume(
     except Exception:  # noqa: BLE001 — compose must never break a turn
         _LOG.exception("concrete-volume compose failed; passing answer through")
         return text
+
+
+def _graft_composed_user_priced_takeoff(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Cost-gate A3-1: volume × user rate after 0-token force_synthesis.
+
+    Live FAIL: construction_calc succeeded, synthesis emitted nothing, and
+    volume-only recover (one footing, or 14× without the rate) shipped a
+    silent / incomplete bubble. Numbers are in the question; do not invent
+    a rate. Kill-switch ``COMPOSE_USER_PRICED_TAKEOFF=0`` restores the FAIL.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            answer_states_money_amount,
+            compose_user_priced_takeoff_from_ask,
+            format_user_priced_takeoff_line,
+            query_asks_user_priced_takeoff,
+        )
+        user = _latest_operator_ask(messages)
+        if not query_asks_user_priced_takeoff(user):
+            return text
+        composed = compose_user_priced_takeoff_from_ask(user)
+        if not composed:
+            return text
+        line = format_user_priced_takeoff_line(composed)
+        if not line:
+            return text
+        payload = json.dumps({
+            "calculation": "user_priced_takeoff",
+            "net_volume_m3": composed["net_volume_m3"],
+            "volume_with_waste_m3": composed["volume_with_waste_m3"],
+            "unit_rate": composed["unit_rate"],
+            "currency": composed["currency"],
+            "waste_percent": composed.get("waste_percent"),
+            "contingency_percent": composed.get("contingency_percent"),
+            "base_cost": composed["base_cost"],
+            "total_cost": composed["total_cost"],
+            "note": line,
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "user_priced_takeoff" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        raw = text or ""
+        if answer_states_money_amount(raw, float(composed["total_cost"])):
+            return text
+        return line
+    except Exception:  # noqa: BLE001 — compose must never break a turn
+        _LOG.exception("user-priced takeoff compose failed; passing answer through")
+        return text
+
+
+def _nonblank_after_empty_synthesis(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Never ship a blank bubble after a successful deliverable calc.
+
+    Prefer a priced take-off compose. If that is off / inapplicable and
+    ``construction_calc`` already ran, emit the cut-off sentence rather
+    than an empty end event.
+    """
+    raw = (text or "").strip()
+    if raw and raw != _EMPTY_RESPONSE_FALLBACK:
+        return text
+    priced = _graft_composed_user_priced_takeoff(raw, messages)
+    if priced.strip() and priced.strip() != _EMPTY_RESPONSE_FALLBACK:
+        return priced
+    if _turn_already_ran_construction_calc(messages) or _construction_calc_from_messages(
+        messages,
+    ):
+        return _SYNTH_CUTOFF_NOTICE
+    return text or _EMPTY_RESPONSE_FALLBACK
 
 
 def _construction_calc_tool_schema() -> dict[str, Any]:
@@ -5340,9 +5427,13 @@ def gate_cost_answer(
         text = _graft_composed_delay_damages_daily(
             text, rag_sys_msg, messages, project_id=project_id,
         )
+        text = _graft_composed_delay_damages_over_period(
+            text, rag_sys_msg, messages, project_id=project_id,
+        )
         text = _graft_asked_contract_particular(
             text, rag_sys_msg, messages, project_id=project_id,
         )
+        text = _graft_composed_percentage_of_aca(text, rag_sys_msg, messages)
         return _cost_grounding_gate(text, rag_sys_msg, messages)
     except Exception:  # noqa: BLE001 — a gate must never break an answer
         _LOG.exception("gate_cost_answer failed; passing answer through")
@@ -5671,6 +5762,40 @@ def _graft_asked_contract_particular(
                 return line
             body = raw.strip()
             return line if not body else f"{line}\n\n{body}"
+        # Set3 A7/A9: named percentage particular when synthesis hung empty.
+        from app.lib.construction_formulas_commercial import (
+            extract_named_percentage_particular,
+            format_named_percentage_line,
+            query_asks_named_percentage_particular,
+            query_asks_percentage_particular_in_money,
+        )
+        if query_asks_named_percentage_particular(user):
+            parsed = extract_named_percentage_particular(user, rag)
+            if not parsed:
+                return text
+            line = format_named_percentage_line(parsed)
+            raw = text or ""
+            already = (
+                f"{parsed['percent']:g}%" in raw.replace(" ", "")
+                or f"{parsed['percent']:g} %" in raw
+                or f"{int(parsed['percent'])}%" in raw
+            )
+            if already and not _MISSING_PARTICULAR_RE.search(raw):
+                return text
+            # A money ask ("Calculate … in SAR") still needs the product;
+            # do not lock the turn on the percentage-only line here.
+            if query_asks_percentage_particular_in_money(user) and already:
+                return text
+            if (
+                not raw.strip()
+                or _MISSING_PARTICULAR_RE.search(raw)
+                or _GENERIC_ACK_RE.search(raw)
+                or raw.strip() == _CG_REFUSAL
+                or raw.strip() == _EMPTY_RESPONSE_FALLBACK
+            ):
+                return line
+            body = raw.strip()
+            return line if not body else f"{line}\n\n{body}"
         return text
     except Exception:  # noqa: BLE001 — graft must never break a turn
         _LOG.exception("asked-particular graft failed; passing answer through")
@@ -5850,6 +5975,132 @@ def _graft_composed_delay_damages_daily(
         return line if not body else f"{line}\n\n{body}"
     except Exception:  # noqa: BLE001 — compose must never break a turn
         _LOG.exception("delay-damages daily compose failed; passing answer through")
+        return text
+
+
+def _graft_composed_delay_damages_over_period(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+    project_id: str | None = None,
+    extra_project_ids: list[str] | None = None,
+) -> str:
+    """Set3 E3: rate × ACA × days × named milestones when synthesis hung.
+
+    Live a8498b3 returned ``0% of SAR 0.00`` after ``delay_damages_daily``
+    ran with empty args. Both operands were already on the Contract Data
+    sheet. Compose the period product; do not invent a rate or a base.
+    Kill-switch: COMPOSE_DELAY_DAMAGES_PERIOD=0.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            answer_is_unbound_delay_damages,
+            answer_states_money_amount,
+            compose_delay_damages_over_period_from_excerpts,
+            format_delay_damages_period_line,
+            query_asks_delay_damages_over_a_period,
+        )
+        user = _latest_operator_ask(messages)
+        if not query_asks_delay_damages_over_a_period(user):
+            return text
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        composed = compose_delay_damages_over_period_from_excerpts(user, rag)
+        if not composed:
+            return text
+        line = format_delay_damages_period_line(composed)
+        payload = json.dumps({
+            "calculation": "delay_damages_over_period",
+            "amount": composed["amount"],
+            "days": composed["days"],
+            "rates": composed.get("rates"),
+            "milestones": composed.get("milestones"),
+            "contract_amount": composed["contract_amount"],
+            "currency": composed["currency"],
+            "note": composed.get("note") or line,
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "delay_damages_over_period" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        raw = text or ""
+        if answer_states_money_amount(raw, float(composed["amount"])):
+            return text
+        if (
+            not raw.strip()
+            or raw.strip() == _CG_REFUSAL
+            or raw.strip() == _EMPTY_RESPONSE_FALLBACK
+            or answer_is_unbound_delay_damages(raw)
+            or _MISSING_PARTICULAR_RE.search(raw)
+            or _GENERIC_ACK_RE.search(raw)
+            or re.search(
+                r"(?i)cannot calculate|could not calculate|"
+                r"(?:do|does) not contain|unbound delay-damages",
+                raw,
+            )
+        ):
+            return line
+        return line
+    except Exception:  # noqa: BLE001 — compose must never break a turn
+        _LOG.exception(
+            "delay-damages period compose failed; passing answer through"
+        )
+        return text
+
+
+def _graft_composed_percentage_of_aca(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Set3 E1: named percentage × ACA when synthesis hung empty."""
+    try:
+        from app.lib.construction_formulas_commercial import (
+            answer_states_money_amount,
+            compose_percentage_of_aca_from_excerpts,
+            format_percentage_of_aca_line,
+            query_asks_percentage_particular_in_money,
+        )
+        user = _latest_operator_ask(messages)
+        if not query_asks_percentage_particular_in_money(user):
+            return text
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        composed = compose_percentage_of_aca_from_excerpts(user, rag)
+        if not composed:
+            return text
+        line = format_percentage_of_aca_line(composed)
+        payload = json.dumps({
+            "calculation": "percentage_of_aca",
+            "amount": composed["amount"],
+            "percent": composed["percent"],
+            "contract_amount": composed["contract_amount"],
+            "currency": composed["currency"],
+            "label": composed.get("label"),
+            "note": line,
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "percentage_of_aca" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        raw = text or ""
+        if answer_states_money_amount(raw, float(composed["amount"])):
+            return text
+        if (
+            not raw.strip()
+            or raw.strip() == _CG_REFUSAL
+            or raw.strip() == _EMPTY_RESPONSE_FALLBACK
+            or _MISSING_PARTICULAR_RE.search(raw)
+            or _GENERIC_ACK_RE.search(raw)
+        ):
+            return line
+        return line
+    except Exception:  # noqa: BLE001 — compose must never break a turn
+        _LOG.exception("percentage-of-ACA compose failed; passing answer through")
         return text
 
 
@@ -6466,7 +6717,21 @@ def _compose_excerpt_boq_instead_of_retry(
     return (
         _compose_priced_boq_instead_of_retry(text, rag_sys_msg, messages)
         or _compose_part_summary_instead_of_retry(text, rag_sys_msg, messages)
+        or _compose_user_priced_takeoff_instead_of_retry(text, messages)
     )
+
+
+def _compose_user_priced_takeoff_instead_of_retry(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """A3-1: compose volume × user rate instead of a second empty LLM hop."""
+    grafted = _graft_composed_user_priced_takeoff(text, messages)
+    if not grafted.strip() or grafted.strip() == _EMPTY_RESPONSE_FALLBACK:
+        return ""
+    if grafted.strip() == (text or "").strip():
+        return ""
+    return grafted
 
 
 def _postprocess_answer(
@@ -6498,6 +6763,9 @@ def _postprocess_answer(
     # Leftover E4: compose raft volume + documented waste when the model
     # hung on "Let me validate…" and never wrote 945 m³.
     text = _graft_composed_concrete_volume(text, messages)
+    # Cost-gate A3-1: calc succeeded, force_synthesis emitted 0 tokens.
+    # Volume-only recover is not a priced take-off — compose from the ask.
+    text = _graft_composed_user_priced_takeoff(text, messages)
     # Live ~27d6940: user-supplied M#=Nd + common start is arithmetic.
     text = _graft_hypothetical_milestone_arithmetic(text, messages)
     # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
@@ -6509,12 +6777,22 @@ def _postprocess_answer(
         text, rag_sys_msg, messages, project_id=pid,
         extra_project_ids=extra_pids,
     )
+    # Set3 E3: a delay of N days (combined milestones) is a money
+    # answer. Runs after the daily composer so a period ask is not
+    # left on SAR/day or on the unbound 0% of 0 note.
+    text = _graft_composed_delay_damages_over_period(
+        text, rag_sys_msg, messages, project_id=pid,
+        extra_project_ids=extra_pids,
+    )
     # Wave-1 DeepSeek: A2 answered delay damages, A3/A9 said the
     # particular was absent. Graft the asked row from excerpts only.
     text = _graft_asked_contract_particular(
         text, rag_sys_msg, messages, project_id=pid,
         extra_project_ids=extra_pids or None,
     )
+    # Set3 E1: named percentage × ACA when the ask wants SAR, not
+    # the percentage-only particular.
+    text = _graft_composed_percentage_of_aca(text, rag_sys_msg, messages)
     # WAVE 2 B4/B5 first: a priced CESMM row beats Rate Only / Excluded
     # siblings. G4 Rate Only runs after so it cannot overwrite 280,320.
     text = _graft_priced_boq_item(text, rag_sys_msg, messages)
@@ -6575,7 +6853,9 @@ def _postprocess_answer(
     # After graft: #587's INTERNAL GUIDANCE did not stop extract from
     # electing the ENGINEER APPOINTMENT heading. Strip leftover steering
     # so JACOBS (or any other particular) is what the user sees.
-    return _strip_answer_routing_preamble(text)
+    text = _strip_answer_routing_preamble(text)
+    # 0-token force_synthesis must never persist an empty bubble.
+    return _nonblank_after_empty_synthesis(text, messages)
 
 
 _INGEST_NEXT_RE = re.compile(r"(?im)^Next:\s*\S+")
@@ -14192,6 +14472,14 @@ def _format_any_calc_result(payload: dict[str, Any]) -> str:
             and not _looks_like_formula_template(val)
             and not _looks_like_trivial_rebar_demo(result, val)
         ):
+            try:
+                from app.lib.construction_formulas_commercial import (
+                    answer_is_unbound_delay_damages,
+                )
+                if answer_is_unbound_delay_damages(val):
+                    continue
+            except Exception:  # noqa: BLE001 — formatter must never break
+                _LOG.debug("unbound delay-damages note check failed", exc_info=True)
             return val.strip()
     composed = _compose_calc_result_fields(result, payload)
     if composed:
