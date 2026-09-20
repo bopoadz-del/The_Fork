@@ -117,7 +117,7 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("procurement_list_generator", ["procurement", "material list", "purchase list", "buy list", "vendor list", "procurement list", "what materials", "need to buy", "materials list"]),
     ("procurement_optimizer", ["optimize procurement", "best supplier", "cheapest", "optimize cost"]),
     ("payment_certificate",   ["payment cert", "valuation", "progress payment", "invoice certificate", "payment invoice", "certificate"]),
-    ("cash_flow_forecast",    ["cash flow", "s-curve", "payment schedule", "fund flow", "s curve", "spend curve", "cumulative spend", "cumulative cost curve", "drawdown"]),
+    ("cash_flow_forecast",    ["cash_flow_forecast", "cash_flow", "cashflow", "cash-flow", "cash flow", "s-curve", "payment schedule", "fund flow", "s curve", "spend curve", "cumulative spend", "cumulative cost curve", "drawdown"]),
     # Specifications
     ("spec_analyze",          ["spec", "specification", "material spec", "grade requirement", "astm", "aci", "saso", "standard", "compliance check", "specification requirements", "material specs", "material specifications", "concrete specification", "specs"]),
     ("process_specification_full", ["full specification", "spec section", "csi division", "masterformat"]),
@@ -749,29 +749,22 @@ class SmartOrchestratorBlock(UniversalBlock):
                     )
                 )
 
-        from app.core.action_router import message_wants_rfi_draft
-        if message_wants_rfi_draft(message):
-            # Drawing S-### / A-### refs outscore rfi_generator onto
-            # drawing_qto (live tip 50c37f ask1 → tools=[] RAG-miss).
-            results = [
-                r for r in results
-                if r["action"] not in {
-                    "drawing_qto",
-                    "bim_clash_detection",
-                    "extract_quantities",
-                    "cde_post_rfi",
-                }
-            ]
-            if not any(r["action"] == "rfi_generator" for r in results):
+        from app.core.action_router import message_wants_cash_flow
+        if message_wants_cash_flow(message):
+            # "schedule" / "programme" nouns outscore cash_flow_forecast and
+            # dispatch generate_wbs (live tip 50c37f ask1). Promote cash flow;
+            # drop the WBS builder.
+            results = [r for r in results if r["action"] != "generate_wbs"]
+            if not any(r["action"] == "cash_flow_forecast" for r in results):
                 results.insert(0, {
-                    "action": "rfi_generator",
+                    "action": "cash_flow_forecast",
                     "confidence": 0.4,
-                    "keywords_matched": ["rfi_generator"],
+                    "keywords_matched": ["cash_flow_forecast"],
                 })
             else:
                 results.sort(
                     key=lambda r: (
-                        0 if r["action"] == "rfi_generator" else 1,
+                        0 if r["action"] == "cash_flow_forecast" else 1,
                         -float(r.get("confidence") or 0.0),
                     )
                 )
