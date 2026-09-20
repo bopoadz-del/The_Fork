@@ -768,6 +768,34 @@ class SmartOrchestratorBlock(UniversalBlock):
                         -float(r.get("confidence") or 0.0),
                     )
                 )
+
+        from app.core.action_router import message_wants_rfi_draft
+        if message_wants_rfi_draft(message):
+            # Drawing S-### / A-### refs outscore rfi_generator onto
+            # drawing_qto (live tip 50c37f ask1 → tools=[] RAG-miss).
+            # Clash + RFI must not collapse onto cde_post_rfi.
+            results = [
+                r for r in results
+                if r["action"] not in {
+                    "drawing_qto",
+                    "bim_clash_detection",
+                    "extract_quantities",
+                    "cde_post_rfi",
+                }
+            ]
+            if not any(r["action"] == "rfi_generator" for r in results):
+                results.insert(0, {
+                    "action": "rfi_generator",
+                    "confidence": 0.4,
+                    "keywords_matched": ["rfi_generator"],
+                })
+            else:
+                results.sort(
+                    key=lambda r: (
+                        0 if r["action"] == "rfi_generator" else 1,
+                        -float(r.get("confidence") or 0.0),
+                    )
+                )
         return self._apply_correctness_filters(message, results)
 
     def _apply_correctness_filters(
@@ -823,7 +851,14 @@ class SmartOrchestratorBlock(UniversalBlock):
                     "keywords_matched": ["variation order"],
                 }]
             results = vo + rest
-        if message_wants_clash(message) and message_wants_clash_cde_rfi(message):
+        # Tool-shaped / draft RFI asks stay on rfi_generator (clash/rebar/lap OK).
+        # The CDE collapse is for "post this clash RFI to Aconex/CDE" only.
+        from app.core.action_router import message_wants_rfi_draft
+        if (
+            message_wants_clash(message)
+            and message_wants_clash_cde_rfi(message)
+            and not message_wants_rfi_draft(message)
+        ):
             results = [r for r in results if r["action"] != "rfi_generator"]
             if not any(r["action"] == "cde_post_rfi" for r in results):
                 results.append({
