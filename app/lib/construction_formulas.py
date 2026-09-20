@@ -1457,7 +1457,8 @@ def coerce_calc_params(raw: Any) -> Dict[str, Any]:
             return {}
         try:
             obj = json.loads(text)
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.debug("coerce_calc_params: undecodable params string (%s)", exc)
             return {}
         return dict(obj) if isinstance(obj, dict) else {}
     return {}
