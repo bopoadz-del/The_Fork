@@ -13,9 +13,10 @@ A3-1  14 pad footings 2.4×2.4×0.6 m @ SAR 410/m3 + 5% waste + 10% contingency
 A3-2  500 m of 300 mm uPVC @ SAR 95 per metre
       → refused the user-supplied 95
 
-Live tip a8498b38 (after #634): A2 empty is still 0/2. construction_calc
-eventually returns status=ok, but the user gets a formula-only note
-(A2-1) or a 1 m Y16 demo (A2-2). See uploads/SYNC2_A2_empty_repro.
+Live tip a8498b38: A2 empty is 0/2. construction_calc is called with
+empty / incomplete kwargs (or succeeds with a formula-only note / 1 m
+demo). Same class as empty-args payment_certificate. See
+uploads/SYNC2_A2_empty_repro.
 """
 from __future__ import annotations
 
@@ -362,3 +363,36 @@ def test_a2_2_empty_turn_after_1m_demo_has_metres():
     msgs = [_user(A2_REBAR), _tool(A2_2_LIVE_OK)]
     out = _postprocess_answer(_EMPTY_RESPONSE_FALLBACK, None, msgs)
     assert _has_metres_run(out), out
+
+
+def test_a2_empty_kwargs_name_required_params_with_units():
+    """Empty / incomplete construction_calc must name every required input."""
+    prod = run_calculation("productivity_manpower_duration", {})
+    assert prod["status"] == "error"
+    err = prod["error"]
+    assert "quantity (qty)" in err
+    assert "daily_production (qty/day)" in err
+    assert "crew_cost_per_day (currency/day)" in err
+    assert "productivity_rate (qty/gang-day)" in err
+
+    rebar = run_calculation("rebar_weight", {})
+    assert rebar["status"] == "error"
+    err = rebar["error"]
+    assert "bar_diameter_mm (mm)" in err
+    assert "total_length_m (m)" in err
+    assert "total_weight_kg (kg)" in err
+    assert "weight_to_length" in err
+    assert "missing 1 required positional" not in err.lower()
+
+    incomplete = run_calculation("rebar_weight", {
+        "bar_diameter_mm": 16, "total_weight_kg": 12000, "mode": "weight_to_length",
+    })
+    assert incomplete["status"] == "success", incomplete
+
+
+def test_a2_empty_kwargs_plain_error_keeps_units():
+    env = run_calculation("rebar_weight", {})
+    sentence = _format_tool_error_plain(env)
+    assert "bar_diameter_mm (mm)" in sentence
+    assert "total_weight_kg (kg)" in sentence
+    assert "{" not in sentence
