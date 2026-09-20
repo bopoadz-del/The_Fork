@@ -35,6 +35,7 @@ AVAILABLE = {
     "generate_wbs",
     "procurement_list_generator",
     "rfi_generator",
+    "drawing_qto",
 }
 
 
