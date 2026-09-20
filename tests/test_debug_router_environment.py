@@ -132,3 +132,24 @@ def test_an_unset_env_interpreter_does_not_mount_the_debug_router(tmp_path):
     paths = _debug_paths_in_fresh_app(tmp_path, None)
     assert "/v1/debug/env" not in paths
     assert "/debug/env" not in paths
+
+
+def test_debug_is_a_reserved_spa_prefix():
+    from app.routers.static import _RESERVED_PREFIXES
+
+    assert any(p == "debug" or p.startswith("debug") for p in _RESERVED_PREFIXES)
+
+
+@pytest.mark.parametrize("path", ["debug/env", "debug", "v1/debug/env"])
+def test_spa_fallback_404s_debug_paths_without_env_data(path):
+    """Live leftover: /debug/env was 200 SPA HTML. Reserved prefix → 404."""
+    import asyncio
+
+    from app.routers.static import spa_fallback
+
+    resp = asyncio.run(spa_fallback(path))
+    assert resp.status_code == 404, (path, resp.status_code)
+    body = (resp.body or b"").decode("utf-8", errors="replace")
+    assert "data_dir" not in body
+    assert "DATA_DIR" not in body
+    assert "<!doctype html" not in body.lstrip().lower()
