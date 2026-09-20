@@ -58,27 +58,19 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20 train SO2: SO1 remaps + VO first-ask (#646)
-    # + A2 formula-template recovery (#649) + Set3 empty-turn / A3-1
-    # priced-takeoff grafts (#651). Same pre-existing handlers — only
-    # the line numbers moved. No new silent returns.
-    # Re-indexed 2026-09-20 #657: cash_flow_forecast underscore force
-    # inserted two lines in `_forced_specific_tool`. Same handlers at
-    # `_cg_to_number` / `_aca_claim_amount` — only the line numbers
-    # moved (+2). Handler text is byte-identical. No new silent returns.
-    "app/agents/runtime.py:2118": "baseline 2026-09-10",
-    "app/agents/runtime.py:2124": "baseline 2026-09-10",
-    "app/agents/runtime.py:2187": "baseline 2026-09-10",
-    "app/agents/runtime.py:2193": "baseline 2026-09-10",
-    "app/agents/runtime.py:2863": "baseline 2026-09-10",
-    "app/agents/runtime.py:3883": "baseline 2026-09-10",
-    "app/agents/runtime.py:5201": "baseline 2026-09-10",
-    "app/agents/runtime.py:5612": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20 #671: VO ask2 hard-exclude + force
+    # variation_order_manager. Same handlers — byte-identical.
+    # No new silent returns.
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:970": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20: Set3 remaining E1 truncation detector
-    # + E3/E6/F1 grafts (#666). Same pre-existing handlers — only the
-    # line numbers moved. No new silent returns.
+    "app/agents/runtime.py:2135": "baseline 2026-09-10",
+    "app/agents/runtime.py:2141": "baseline 2026-09-10",
+    "app/agents/runtime.py:2204": "baseline 2026-09-10",
+    "app/agents/runtime.py:2210": "baseline 2026-09-10",
+    "app/agents/runtime.py:2880": "baseline 2026-09-10",
+    "app/agents/runtime.py:3900": "baseline 2026-09-10",
+    "app/agents/runtime.py:5224": "baseline 2026-09-10",
+    "app/agents/runtime.py:5635": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
@@ -97,29 +89,16 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/blocks/smart_orchestrator.py:588": "baseline 2026-09-10",
     "app/blocks/validation_pipeline.py:159": "baseline 2026-09-10",
     "app/blocks/voice.py:43": "baseline 2026-09-10",
-    "app/containers/construction/__init__.py:1383": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:145": "baseline 2026-09-10",
-    "app/containers/construction/__init__.py:1484": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20: VO document now lists ADD/OMIT lines.
-    # Same handler — only the line number moved.
-    "app/containers/construction/__init__.py:1648": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:407": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:414": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:555": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20: ADD/OMIT priced-line parser inserted above
-    # this pre-existing site. Same handler — only the line number moved.
-    # No new silent returns.
-    # Re-indexed 2026-09-20: measured-works / MOS / ipc_args_from_ask
-    # + VO ADD/OMIT priced-line parser. Same handler — only the line
-    # number moved. No new silent returns.
+    "app/containers/construction/__init__.py:1383": "baseline 2026-09-10",
+    "app/containers/construction/__init__.py:1484": "baseline 2026-09-10",
+    "app/containers/construction/__init__.py:1648": "baseline 2026-09-10",
     "app/containers/construction/boq.py:960": "baseline 2026-09-10",
     "app/containers/construction/helpers.py:69": "baseline 2026-09-10",
-    "app/core/doc_index.py:1063": "baseline 2026-09-10",
-    "app/core/doc_index.py:1106": "baseline 2026-09-10",
-    "app/core/doc_index.py:1114": "baseline 2026-09-10",
-    "app/core/doc_index.py:1212": "baseline 2026-09-10",
     "app/core/doc_index.py:196": "baseline 2026-09-10",
-    "app/core/doc_index.py:2670": "baseline 2026-09-10",
     "app/core/doc_index.py:304": "baseline 2026-09-10",
     "app/core/doc_index.py:341": "baseline 2026-09-10",
     "app/core/doc_index.py:357": "baseline 2026-09-10",
@@ -128,6 +107,11 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/core/doc_index.py:938": "baseline 2026-09-10",
     "app/core/doc_index.py:952": "baseline 2026-09-10",
     "app/core/doc_index.py:974": "baseline 2026-09-10",
+    "app/core/doc_index.py:1063": "baseline 2026-09-10",
+    "app/core/doc_index.py:1106": "baseline 2026-09-10",
+    "app/core/doc_index.py:1114": "baseline 2026-09-10",
+    "app/core/doc_index.py:1212": "baseline 2026-09-10",
+    "app/core/doc_index.py:2670": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:333": "baseline 2026-09-10",
     "app/core/rag/vector_store.py:1785": "baseline 2026-09-10",
     "app/infra/monitoring.py:320": "baseline 2026-09-10",
@@ -136,8 +120,6 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/lib/pm_computations.py:340": "baseline 2026-09-10",
     "app/lib/wbs_duration_overrides.py:147": "baseline 2026-09-10",
     "app/main.py:475": "baseline 2026-09-10",
-    # Re-indexed 2026-09-18: #607 imported with_hat_signals at the top of
-    # chat.py (one line). Same handler — only the line number moved.
     "app/routers/chat.py:371": "baseline 2026-09-10; renumbered Agent D look_ahead synthetic helper",
     "app/routers/chat_watchdog.py:98": "baseline 2026-09-10",
     "app/routers/mcp.py:65": "baseline 2026-09-10",
