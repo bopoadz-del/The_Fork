@@ -376,46 +376,37 @@ def message_wants_look_ahead(text: str) -> bool:
 
 
 
-# RFI drafts often name Drawing S-### / A-### refs; drawing_qto keywords
-# then win. Detector is the steal-guard (live tip 50c37f ask1).
-_RFI_DRAFT_PHRASES = (
-    "rfi_generator",
-    "request for information",
-    "follow-on rfi",
-    "follow on rfi",
-    "draft a rfi",
-    "draft an rfi",
-    "draft one rfi",
-    "generate a rfi",
-    "generate an rfi",
-    "create a rfi",
-    "create an rfi",
-    "raise an rfi",
-    "raise a rfi",
-    "write an rfi",
-    "write a rfi",
-    "produce an rfi",
-    "produce a rfi",
-    "issue an rfi",
-    "issue a rfi",
+# Cash-flow / S-curve asks share "schedule" / "programme" nouns with
+# generate_wbs; the keyword scorer then picks WBS. Detector is the steal-guard.
+_CASH_FLOW_PHRASES = (
+    "cash_flow_forecast",
+    "cash_flow",
+    "cash-flow",
+    "cash flow",
+    "cashflow",
+    "s-curve",
+    "s curve",
+    "spend curve",
+    "drawdown",
 )
-_RFI_QA_RE = re.compile(
-    r"\b(what is|what's|whats|explain|define|how many)\b",
+_CASH_FLOW_QA_RE = re.compile(
+    r"\b(what is|what's|whats|explain|define)\b",
     re.IGNORECASE,
 )
 
 
-def message_wants_rfi_draft(text: str) -> bool:
-    """True for an RFI-draft deliverable, not a drawing_qto / definition ask.
+def message_wants_cash_flow(text: str) -> bool:
+    """True when the turn asks for a cash-flow / S-curve, not a WBS.
 
-    Live tip 50c37f: "Use rfi_generator. Draft ONE RFI … Drawing S-201"
-    classified as drawing_qto then RAG-miss refused.
+    Live tip 50c37f: "Use cash_flow_forecast. Synthetic schedule/costs…"
+    classified as generate_wbs because schedule nouns outscored cash flow
+    (orchestrator keywords lacked the underscore tool name).
     """
     raw = text or ""
-    if not raw.strip() or _RFI_QA_RE.search(raw):
+    if not raw.strip() or _CASH_FLOW_QA_RE.search(raw):
         return False
     low = raw.lower()
-    return any(p in low for p in _RFI_DRAFT_PHRASES)
+    return any(p in low for p in _CASH_FLOW_PHRASES)
 
 
 def needs_planning(action: Optional[str], confidence: float) -> bool:
