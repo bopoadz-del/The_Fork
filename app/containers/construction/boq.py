@@ -185,11 +185,20 @@ def _payment_figures_from_message(text: str) -> Dict[str, float]:
         # A % right after the number means it is a rate, not an amount.
         if t[m.end(1):].lstrip().startswith(("%", "percent")):
             return None
-        return _parse_money_str(m.group(1))
+        base = _parse_money_str(m.group(1))
+        if base is None:
+            return None
+        # Optional suffix group: "25M" / "25 million" on labelled amounts.
+        suffix = ""
+        if m.lastindex and m.lastindex >= 2:
+            suffix = (m.group(2) or "").lower()
+        return base * _MONEY_SUFFIX.get(suffix, 1)
 
     def _percent(pattern: str) -> Optional[float]:
         m = re.search(pattern, t)
         return float(m.group(1)) if m else None
+
+    _SFX = r"(million|billion|mn|bn|m|b)?"
 
     v = (_amount(rf"gross\s+(?:valuation|value|work\s+done(?:\s+to\s+date)?){_FIG_GAP}{_FIG_NUM}")
          # "gross 750000" — live F5; label without the word valuation.
@@ -202,9 +211,28 @@ def _payment_figures_from_message(text: str) -> Dict[str, float]:
          or _amount(rf"(?:this\s+period\s+)?certified\s+work{_FIG_GAP}{_FIG_NUM}"))
     if v:
         out["gross_valuation"] = v
+    # Live Phase 2 ask2: "measured works SAR 1,200,000" is the QS label
+    # for this-period executed work. Not a synonym of "gross valuation".
     v = (
-        _amount(rf"(?:accepted\s+)?contract\s+(?:amount|value|sum|price)(?:\s+of)?{_FIG_GAP}{_FIG_NUM}")
-        or _amount(rf"accepted\s+contract\s+amount{_FIG_GAP}{_FIG_NUM}")
+        _amount(rf"measured\s+works?{_FIG_GAP}{_FIG_NUM}\s*{_SFX}")
+        or _amount(rf"value\s+of\s+measured\s+works?{_FIG_GAP}{_FIG_NUM}\s*{_SFX}")
+    )
+    if v:
+        out["measured_works"] = v
+        out.setdefault("gross_valuation", v)
+    v = (
+        _amount(rf"materials?\s+on\s+site{_FIG_GAP}{_FIG_NUM}\s*{_SFX}")
+        or _amount(rf"\bmos\b{_FIG_GAP}{_FIG_NUM}\s*{_SFX}")
+    )
+    if v:
+        out["materials_on_site"] = v
+    v = (
+        _amount(rf"(?:accepted\s+)?contract\s+(?:amount|value|sum|price)(?:\s+of)?{_FIG_GAP}{_FIG_NUM}\s*{_SFX}")
+        or _amount(rf"accepted\s+contract\s+amount{_FIG_GAP}{_FIG_NUM}\s*{_SFX}")
+        # "SAR 25M contract" / "25 million contract" — require currency or a
+        # scale word so "Package 1 contract" is not a contract_value.
+        or _amount(rf"{_CCY}\s*{_FIG_NUM}\s*{_SFX}\s+contract")
+        or _amount(rf"{_FIG_NUM}\s*(million|billion|mn|bn|m|b)\s+contract")
     )
     if v:
         out["contract_value"] = v
@@ -237,6 +265,30 @@ def _payment_figures_from_message(text: str) -> Dict[str, float]:
     v = _amount(rf"previous\s+certif\w*(?:\s+total)?{_FIG_GAP}{_FIG_NUM}")
     if v:
         out["previous_certified"] = v
+    return out
+
+
+_IPC_EMPTY = (None, "", 0, 0.0)
+
+
+def ipc_args_from_ask(text: str, existing: Optional[Dict] = None) -> Dict[str, Any]:
+    """Fill an IPC tool-args dict from the operator ask.
+
+    Forced tool_choice and the generic ``construction`` envelope often arrive
+    as ``{}`` / ``{action: payment_certificate}``. The figures live in the
+    user message. Merge them onto the invocation so ``payment_certificate``
+    is never called empty when the ask supplied measured works, retention,
+    MOS, or a contract sum. Explicit keys in ``existing`` win.
+    """
+    out: Dict[str, Any] = dict(existing or {})
+    fig = _payment_figures_from_message(text)
+    for key, val in fig.items():
+        if out.get(key) in _IPC_EMPTY:
+            out[key] = val
+    if text:
+        out.setdefault("message", text)
+        out.setdefault("user_message", text)
+        out.setdefault("text", text)
     return out
 
 
@@ -590,9 +642,22 @@ class ConstructionBoqMixin:
         payment_period = p.get("payment_period", "Current Period")
         contractor = p.get("contractor_name", p.get("contractor", data.get("contractor_name", "Contractor")))
 
-        # Accept gross_valuation directly if contract_value not provided
+        measured_works = float(
+            p.get("measured_works") or data.get("measured_works")
+            or fig.get("measured_works") or 0
+        )
+        materials_on_site = float(
+            p.get("materials_on_site") or data.get("materials_on_site")
+            or fig.get("materials_on_site") or 0
+        )
+        # Accept gross_valuation directly if contract_value not provided.
+        # QS ask2: measured works + MOS is the gross when no labelled gross.
         direct_gross = float(p.get("gross_valuation") or data.get("gross_valuation", 0)
                              or fig.get("gross_valuation", 0))
+        if measured_works > 0:
+            parts = measured_works + materials_on_site
+            if direct_gross <= 0 or abs(direct_gross - measured_works) < 0.01:
+                direct_gross = parts
         if contract_value <= 0:
             if direct_gross > 0:
                 gross_valuation = round(direct_gross, 2)
@@ -635,6 +700,8 @@ class ConstructionBoqMixin:
                 "contract_value": contract_value,
                 "work_completed_percent": round(work_done_pct * 100, 1),
                 "gross_valuation": gross_valuation,
+                "measured_works": measured_works or None,
+                "materials_on_site": materials_on_site or None,
             },
             "deductions": {
                 "retention_percent": retention_pct * 100,

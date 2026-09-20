@@ -766,6 +766,42 @@ _LOOKAHEAD_PHRASES = (
     "rolling look ahead", "short term programme", "short-term programme",
     "short term program", "short-term program",
 )
+_PROCUREMENT_LIST_PHRASES = (
+    "procurement_list_generator",
+    "procurement list",
+    "material list",
+    "purchase list",
+    "buy list",
+    "vendor list",
+    "materials list",
+    "what materials",
+    "need to buy",
+    "need to purchase",
+    "generate a procurement",
+    "produce a procurement",
+    "create a procurement",
+    "po_generator",
+)
+_RFI_DRAFT_PHRASES = (
+    "rfi_generator",
+    "request for information",
+    "follow-on rfi",
+    "follow on rfi",
+    "draft a rfi",
+    "draft an rfi",
+    "generate a rfi",
+    "generate an rfi",
+    "create a rfi",
+    "create an rfi",
+    "raise an rfi",
+    "raise a rfi",
+    "write an rfi",
+    "write a rfi",
+    "produce an rfi",
+    "produce a rfi",
+    "issue an rfi",
+    "issue a rfi",
+)
 _HISTOGRAM_QA_RE = re.compile(
     r"\b(what is|what's|whats|explain|define)\b", re.IGNORECASE,
 )
@@ -797,6 +833,34 @@ def _message_wants_look_ahead(text: str) -> bool:
     return "look" in low and "ahead" in low and any(
         t in low for t in (".xer", "primavera", "p6", "schedule", "programme", "program")
     )
+
+
+def _message_wants_procurement_list(text: str) -> bool:
+    """True for a procurement-list deliverable, not schedule / definition Q&A.
+
+    Live Phase 2: "generate a procurement list" / "what materials do we
+    need to buy" / a tool-shaped ``procurement_list_generator`` ask must
+    not fall through to ``construction_calc``. Bare "how long is
+    procurement on the schedule?" is RAG / WBS and stays unforced.
+    """
+    low = (text or "").lower()
+    if not low or _HISTOGRAM_QA_RE.search(low):
+        return False
+    return any(p in low for p in _PROCUREMENT_LIST_PHRASES)
+
+
+def _message_wants_rfi_draft(text: str) -> bool:
+    """True for an RFI-draft deliverable, not status / definition Q&A.
+
+    Live Phase 2: "draft an RFI … rebar detail" / "create a request for
+    information document" / a tool-shaped ``rfi_generator`` ask must
+    not fall through to ``construction_calc``. Bare "what is an RFI?"
+    and "how many RFIs are open?" stay unforced.
+    """
+    low = (text or "").lower()
+    if not low or _HISTOGRAM_QA_RE.search(low):
+        return False
+    return any(p in low for p in _RFI_DRAFT_PHRASES)
 
 
 def _resolve_histogram_schedule_file(
@@ -3460,6 +3524,8 @@ _DELIVERABLE_PHRASES = (
     # "when does commissioning start?") is left on tool_choice=auto.
     "commissioning checklist", "commissioning plan", "commissioning schedule",
     "testing and commissioning", "t&c checklist",
+    "procurement list", "material list", "materials list",
+    "request for information", "draft an rfi", "draft a rfi",
 )
 
 
@@ -3761,14 +3827,29 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
         return "resource_histogram"
     if "look_ahead" in available and _message_wants_look_ahead(text):
         return "look_ahead"
+    wants_procurement = _message_wants_procurement_list(text)
+    if "procurement_list_generator" in available and wants_procurement:
+        return "procurement_list_generator"
+    wants_rfi = _message_wants_rfi_draft(text)
+    if "rfi_generator" in available and wants_rfi:
+        return "rfi_generator"
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             if (
                 tool == "construction_calc"
-                and _message_is_schedule_or_programme_deliverable(text)
+                and (
+                    _message_is_schedule_or_programme_deliverable(text)
+                    or wants_procurement
+                    or wants_rfi
+                )
             ):
                 continue
             return tool
+    # A procurement-list or RFI-draft ask must not fall through to
+    # construction_calc when the toolkit omitted the action — that is
+    # the live miss.
+    if wants_procurement or wants_rfi:
+        return None
     # Keyword phrases reach ~a dozen of the 76 registered calculators. Catch
     # the rest by SHAPE: a question that supplies its own dimensions and asks
     # to compute is arithmetic, whatever the domain noun happens to be.
@@ -4303,13 +4384,19 @@ def _format_payment_certificate(payload: dict[str, Any]) -> str:
         "",
         f"- Contract value: {val.get('contract_value')}",
         f"- Gross valuation: {val.get('gross_valuation')}",
+    ]
+    if val.get("measured_works") not in (None, "", 0, 0.0):
+        lines.append(f"- Measured works: {val.get('measured_works')}")
+    if val.get("materials_on_site") not in (None, "", 0, 0.0):
+        lines.append(f"- Materials on site: {val.get('materials_on_site')}")
+    lines.extend([
         f"- Retention ({ded.get('retention_percent')}%): {ded.get('retention_held')}",
         f"- Advance recovery: {ded.get('advance_recovery')}",
         f"- Net due this period: {pay.get('net_due_this_period')}",
         f"- Cumulative certified: {pay.get('cumulative_certified')}",
         "",
         str(payload.get("certificate_summary") or ""),
-    ]
+    ])
     return "\n".join(lines).strip()
 
 
@@ -6975,6 +7062,7 @@ def _build_exports_from_audit(
                 conversation_schedule_export_descriptor,
                 load_conversation_wbs,
             )
+            payload["conversation_id"] = conversation_id
             if load_conversation_wbs(str(conversation_id)):
                 exports.append(conversation_schedule_export_descriptor(
                     project_id, str(conversation_id), int(total or 0),
@@ -8682,6 +8770,61 @@ class Agent:
                     },
                 },
             })
+            # ── synthetic tool: payment_certificate (IPC) ───────────────────
+            # Forced tool_choice / the generic construction envelope emit
+            # ``{}`` and ask2 (measured works / MOS / contract sum) never
+            # reached the container. A typed top-level tool + NL coercion
+            # is the same lever as cash_flow_forecast.
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "payment_certificate",
+                    "description": (
+                        "Issue an Interim Payment Certificate from the "
+                        "operator's figures (measured works, retention, "
+                        "materials on site / MOS, contract sum). CALL THIS "
+                        "when the user asks for an IPC / payment certificate. "
+                        "Do not invent figures — this tool parses the ask."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "contract_value": {
+                                "type": ["number", "string"],
+                                "description": "Accepted contract amount / contract sum.",
+                            },
+                            "gross_valuation": {
+                                "type": ["number", "string"],
+                                "description": "This-period gross / certified work.",
+                            },
+                            "measured_works": {
+                                "type": ["number", "string"],
+                                "description": "Value of measured works this period.",
+                            },
+                            "materials_on_site": {
+                                "type": ["number", "string"],
+                                "description": "Materials on site (MOS) this period.",
+                            },
+                            "retention_percent": {
+                                "type": ["number", "string"],
+                                "description": "Retention percent (e.g. 5 or 10).",
+                            },
+                            "work_done_percent": {
+                                "type": ["number", "string"],
+                                "description": "Percent complete when no gross is given.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": (
+                                    "Original user request. Used to parse "
+                                    "figures when the numeric fields are omitted."
+                                ),
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            })
             # ── synthetic tool: resource_histogram ───────────────────────────
             # Same reason as cash_flow_forecast: pinned construction-pm will
             # otherwise call primavera_parser (the `xer` intent map) and
@@ -8785,6 +8928,112 @@ class Agent:
                             "bcws": {"type": "number"},
                             "bcwp": {"type": "number"},
                             "acwp": {"type": "number"},
+                        },
+                        "required": [],
+                    },
+                },
+            })
+            # ── synthetic tool: procurement_list_generator ───────────────────
+            # Same reason as generate_wbs / cash_flow_forecast: the generic
+            # `construction` tool's input/params shape lets the model say
+            # "procurement_list_generator is not in my toolkit" and fall
+            # through to construction_calc (live Phase 2, second ask).
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "procurement_list_generator",
+                    "description": (
+                        "Build a prioritised procurement / buy list from BOQ "
+                        "line items or discrete quantities. CALL THIS when "
+                        "the user asks for a procurement list, material list, "
+                        "purchase list, or what materials to buy. Do not "
+                        "invent line items in prose and do not use "
+                        "construction_calc for this deliverable. Empty BOQ / "
+                        "quantities returns an honest empty list."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "quantities": {
+                                "type": "object",
+                                "description": (
+                                    "Discrete item → {quantity, unit} map "
+                                    "(e.g. {\"Rebar\": {\"quantity\": 3.2, "
+                                    "\"unit\": \"t\"}})."
+                                ),
+                            },
+                            "boq": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                                "description": "BOQ / estimate line items.",
+                            },
+                            "budget": {
+                                "type": ["number", "string"],
+                                "description": "Optional budget for variance.",
+                            },
+                            "location": {
+                                "type": "string",
+                                "description": "Rate-lookup location.",
+                            },
+                            "project_type": {
+                                "type": "string",
+                                "description": "Project type for rate lookup.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": (
+                                    "Original user request. Used when "
+                                    "quantities / boq are omitted."
+                                ),
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            })
+            # ── synthetic tool: rfi_generator ────────────────────────────────
+            # Same reason as generate_wbs / cash_flow_forecast: the generic
+            # `construction` tool's input/params shape lets the model say
+            # "rfi_generator is not in my toolkit" and fall through to
+            # construction_calc or write RFI prose (live Phase 2).
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "rfi_generator",
+                    "description": (
+                        "Draft a Request for Information (RFI) from an "
+                        "engineering clarification, drawing/spec issue, or "
+                        "follow-on question. CALL THIS when the user asks "
+                        "to draft / raise / create an RFI or a request for "
+                        "information. Do not invent the RFI in prose and "
+                        "do not use construction_calc for this deliverable."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "issues": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                                "description": (
+                                    "Runnable issues to turn into RFIs "
+                                    "({description, type, severity})."
+                                ),
+                            },
+                            "drawing_ref": {
+                                "type": "string",
+                                "description": "Drawing / spec reference.",
+                            },
+                            "project_name": {
+                                "type": "string",
+                                "description": "Project name on the RFI.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": (
+                                    "Original user request. Used to draft "
+                                    "the question when issues are omitted."
+                                ),
+                            },
                         },
                         "required": [],
                     },
@@ -11983,6 +12232,19 @@ class Agent:
                 "result": result,
             }
 
+        # ── synthetic tool: payment_certificate (IPC from the ask) ───────────
+        if name == "payment_certificate":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            return await _dispatch_payment_certificate(args, user_message=user_message)
+
         # ── synthetic tool: commissioning_checklist ──────────────────────────
         if name == "commissioning_checklist":
             if "construction" not in self.allowed_blocks:
@@ -12168,6 +12430,123 @@ class Agent:
                 "result": result,
             }
 
+        # ── synthetic tool: procurement_list_generator ───────────────────────
+        if name == "procurement_list_generator":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            params: dict[str, Any] = {}
+            nested = args.get("params")
+            if isinstance(nested, dict):
+                params.update(nested)
+            for key in (
+                "quantities", "boq", "budget", "location", "project_type",
+                "schedule_start_date",
+            ):
+                if args.get(key) is not None:
+                    params.setdefault(key, args.get(key))
+            input_data = args.get("input")
+            if not isinstance(input_data, dict):
+                input_data = {}
+            else:
+                input_data = dict(input_data)
+            input_data.setdefault(
+                "message", args.get("message") or user_message or "",
+            )
+            try:
+                result = await container.procurement_list_generator(
+                    input_data, params,
+                )
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"procurement_list_generator failed: {e}",
+                    },
+                }
+            return {
+                "name": "procurement_list_generator",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
+        # ── synthetic tool: rfi_generator ────────────────────────────────────
+        if name == "rfi_generator":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            params: dict[str, Any] = {}
+            nested = args.get("params")
+            if isinstance(nested, dict):
+                params.update(nested)
+            for key in (
+                "issues", "drawing_ref", "project_name",
+                "contractor_name", "engineer_name", "start_number",
+                "text", "user_message",
+            ):
+                if args.get(key) is not None:
+                    params.setdefault(key, args.get(key))
+            input_data = args.get("input")
+            if not isinstance(input_data, dict):
+                input_data = {}
+            else:
+                input_data = dict(input_data)
+            input_data.setdefault(
+                "message", args.get("message") or user_message or "",
+            )
+            params.setdefault("user_message", input_data.get("message") or "")
+            params.setdefault("text", input_data.get("message") or "")
+            try:
+                result = await container.rfi_generator(
+                    input_data, params,
+                )
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"rfi_generator failed: {e}",
+                    },
+                }
+            return {
+                "name": "rfi_generator",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
         # ── synthetic tool: remember_fact ────────────────────────────────────
         if name == "remember_fact":
             from app.core import agent_memory
@@ -12187,6 +12566,21 @@ class Agent:
 
         # ── synthetic tool: construction_calc (deterministic formula library) ─
         if name == "construction_calc":
+            # Named-calculator / forced tool_choice often emits ``{}``.
+            # An IPC ask must not stay on an unknown calculation — coerce
+            # to payment_certificate with the ask's figures.
+            calc_name = (
+                (args or {}).get("calculation")
+                or (args or {}).get("name")
+                or (args or {}).get("calculator")
+            )
+            if (
+                not calc_name
+                and _ask_is_ipc_certificate(user_message or "")
+            ):
+                return await _dispatch_payment_certificate(
+                    args, user_message=user_message,
+                )
             from app.lib import construction_formulas as _cf
             calc_params = dict(args.get("params") or {})
             # Models (and live calculate_evm calls) often put calculator
@@ -12251,8 +12645,17 @@ class Agent:
                 from app.dependencies import get_block_instance
                 block = get_block_instance("construction")
                 params = dict(args.get("params") or {})
+                if route == "payment_certificate":
+                    params = _ipc_args_from_ask(user_message or "", params)
                 params["action"] = route
                 _alias_input = args.get("input") or args
+                if route == "payment_certificate":
+                    if isinstance(_alias_input, dict):
+                        _alias_input = _ipc_args_from_ask(
+                            user_message or "", _alias_input,
+                        )
+                    elif not _alias_input:
+                        _alias_input = _ipc_args_from_ask(user_message or "", {})
                 # F43: container file actions need the same original-name ->
                 # stored-path resolution as file-schema blocks (dicts only).
                 if project_id and isinstance(_alias_input, dict):
@@ -12314,6 +12717,29 @@ class Agent:
         else:
             block_input = args.get("input")
             block_params = args.get("params") or {}
+        if name == "construction" and isinstance(args, dict):
+            # Forced / NL calls put action + figures at the TOP level
+            # (``{action: payment_certificate}`` or ``{}``), not under
+            # input/params. Fold them so route() does not fall through
+            # to ``status``.
+            if not isinstance(block_params, dict):
+                block_params = {}
+            else:
+                block_params = dict(block_params)
+            for key, val in args.items():
+                if key in ("input", "params"):
+                    continue
+                if block_params.get(key) in (None, ""):
+                    block_params[key] = val
+            action = str(block_params.get("action") or "")
+            if action == "payment_certificate" or (
+                not action and _ask_is_ipc_certificate(user_message or "")
+            ):
+                return await _dispatch_payment_certificate(
+                    block_params, user_message=user_message,
+                )
+            if not block_input:
+                block_input = dict(block_params)
         if name == "validation_pipeline":
             # Leftover-hat L4: the model called validation_pipeline with
             # value=null on a prose claim (40 m span / 50 mm beam). The
@@ -12360,6 +12786,7 @@ class Agent:
             if action in {
                 "wir_form", "inspection_request", "job_requisition",
                 "rfp_draft", "rfp_management", "claims_builder",
+                "payment_certificate",
             }:
                 if isinstance(block_params, dict):
                     block_params = dict(block_params)
@@ -13581,3 +14008,67 @@ def _cg_user_arithmetic_closure(user_text: str, seeded: set) -> set:
     extra = _times(extra, money, min_qty=qty_floor)
     extra = _apply_pct(extra)
     return extra
+
+
+def _ipc_args_from_ask(text: str, existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Populate IPC tool args from the operator ask. Never invent figures."""
+    try:
+        from app.containers.construction.boq import ipc_args_from_ask
+        return ipc_args_from_ask(text or "", existing)
+    except Exception:  # noqa: BLE001
+        _LOG.debug("IPC ask coercion skipped", exc_info=True)
+        out = dict(existing or {})
+        if text:
+            out.setdefault("message", text)
+            out.setdefault("user_message", text)
+            out.setdefault("text", text)
+        return out
+
+
+def _ask_is_ipc_certificate(text: str) -> bool:
+    raw = text or ""
+    return bool(re.search(r"payment certificate|\bipc\b|interim payment", raw, re.I))
+
+
+async def _dispatch_payment_certificate(
+    args: dict[str, Any] | None,
+    *,
+    user_message: str | None,
+) -> dict[str, Any]:
+    """Run ConstructionContainer.payment_certificate with ask-coerced args."""
+    try:
+        from app.dependencies import get_block_instance
+        container = get_block_instance("construction")
+    except Exception as e:
+        return {
+            "name": "payment_certificate",
+            "ok": False,
+            "result": {"status": "error", "error": f"construction unavailable: {e}"},
+        }
+    params = _ipc_args_from_ask(user_message or "", args if isinstance(args, dict) else {})
+    payload = {
+        "message": params.get("message") or user_message or "",
+        "user_message": params.get("user_message") or user_message or "",
+        "text": params.get("text") or user_message or "",
+    }
+    for key in (
+        "contract_value", "gross_valuation", "measured_works",
+        "materials_on_site", "retention_percent", "work_done_percent",
+        "advance_payment", "advance_percent", "advance_recovery_percent",
+        "previous_certified",
+    ):
+        if params.get(key) not in (None, ""):
+            payload[key] = params[key]
+    try:
+        result = await container.payment_certificate(payload, params)
+    except Exception as e:
+        return {
+            "name": "payment_certificate",
+            "ok": False,
+            "result": {"status": "error", "error": f"payment_certificate failed: {e}"},
+        }
+    return {
+        "name": "payment_certificate",
+        "ok": isinstance(result, dict) and result.get("status") == "success",
+        "result": result,
+    }

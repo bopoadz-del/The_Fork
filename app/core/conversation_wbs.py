@@ -78,6 +78,9 @@ def message_wants_wbs_export(text: str) -> bool:
     raw = text or ""
     if not raw.strip():
         return False
+    from app.core.action_router import message_wants_look_ahead
+    if message_wants_look_ahead(raw):
+        return False
     from app.core.answer_report_intent import message_wants_answer_report
     if message_wants_answer_report(raw):
         return False
@@ -96,6 +99,63 @@ def message_looks_like_wbs_answer(text: str) -> bool:
     return any(marker in t for marker in _WBS_ANSWER_MARKERS)
 
 
+def is_outline_wbs_code(value: Any) -> bool:
+    """True for chat-style codes (``1``, ``1.1``, ``2.1.3``), not phase slugs."""
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    return all(part.isdigit() for part in raw.split("."))
+
+
+def hierarchical_wbs_code(
+    activity: dict[str, Any] | None,
+    wbs_tree: dict[str, Any] | None = None,
+) -> str:
+    """Package code the chat printed for this activity.
+
+    Prefers an existing outline ``wbs_code`` / ``wbs``, then the longest
+    ``wbs_tree`` key that prefixes the activity id (``1.1.3`` → ``1.1``).
+    Sequential integers and phase slugs are never invented here.
+    """
+    if not isinstance(activity, dict):
+        return ""
+    aid = str(activity.get("id") or activity.get("code") or "").strip()
+    existing = str(activity.get("wbs_code") or activity.get("wbs") or "").strip()
+    tree_keys = [
+        str(k).strip() for k in (wbs_tree or {}) if str(k).strip()
+    ]
+    tree_keys.sort(key=lambda k: (len(k.split(".")), k), reverse=True)
+    if is_outline_wbs_code(existing) and (
+        not tree_keys or existing in (wbs_tree or {}) or existing == aid
+    ):
+        return existing
+    for key in tree_keys:
+        if aid == key or aid.startswith(f"{key}."):
+            return key
+    if is_outline_wbs_code(aid):
+        parts = aid.split(".")
+        return ".".join(parts[:2]) if len(parts) >= 2 else aid
+    return existing or aid
+
+
+def stamp_hierarchical_wbs_codes(
+    activities: list[dict[str, Any]] | None,
+    wbs_tree: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Write chat ``wbs_tree`` codes onto each activity as ``wbs`` / ``wbs_code``."""
+    stamped: list[dict[str, Any]] = []
+    for raw in activities or []:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        code = hierarchical_wbs_code(row, wbs_tree)
+        if code:
+            row["wbs"] = code
+            row["wbs_code"] = code
+        stamped.append(row)
+    return stamped
+
+
 def snapshot_from_wbs(wbs: dict[str, Any] | None) -> Optional[dict[str, Any]]:
     """Compact, JSON-safe snapshot. None when there is nothing to export."""
     if not isinstance(wbs, dict):
@@ -106,6 +166,7 @@ def snapshot_from_wbs(wbs: dict[str, Any] | None) -> Optional[dict[str, Any]]:
     scaffold = wbs.get("scaffold") if isinstance(wbs.get("scaffold"), dict) else {}
     summary = wbs.get("summary") if isinstance(wbs.get("summary"), dict) else {}
     tree = wbs.get("wbs_tree") if isinstance(wbs.get("wbs_tree"), dict) else {}
+    acts = stamp_hierarchical_wbs_codes(acts, tree)
     return {
         "activities": acts,
         "wbs_tree": tree,
