@@ -36,7 +36,20 @@ def _duration(a: Dict[str, Any]) -> int:
 
 
 def _wbs(a: Dict[str, Any]) -> str:
-    return str(a.get("wbs") or a.get("wbs_phase") or a.get("phase") or "")
+    """Prefer the chat/staged hierarchical code over a phase slug.
+
+    ``generate_wbs`` used to emit only ``wbs_phase`` (``site_preparation``).
+    The L2 workbook then stored those slugs while chat printed ``1.1``.
+    ``wbs_code`` / outline ``wbs`` win when present.
+    """
+    for key in ("wbs_code", "wbs"):
+        value = a.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return str(a.get("wbs_phase") or a.get("phase") or "")
 
 
 def _manpower(a: Dict[str, Any], crew_per_trade: int) -> int:

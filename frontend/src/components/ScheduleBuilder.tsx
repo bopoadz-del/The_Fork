@@ -20,6 +20,7 @@ export interface ActivityRow {
 
 interface ScheduleBuilderProps {
   projectId: string
+  conversationId?: string
 }
 
 type Mode = 'brief' | 'documents' | 'activities'
@@ -59,7 +60,7 @@ async function downloadSchedule(
   URL.revokeObjectURL(url)
 }
 
-export default function ScheduleBuilder({ projectId }: ScheduleBuilderProps) {
+export default function ScheduleBuilder({ projectId, conversationId }: ScheduleBuilderProps) {
   const [mode, setMode] = useState<Mode>('brief')
   const [brief, setBrief] = useState('')
   const [targetCount, setTargetCount] = useState(200)
@@ -93,6 +94,7 @@ export default function ScheduleBuilder({ projectId }: ScheduleBuilderProps) {
           brief,
           target_count: targetCount,
           project_type: projectType || undefined,
+          ...(conversationId ? { conversation_id: conversationId } : {}),
         },
         'schedule.xlsx',
       )
