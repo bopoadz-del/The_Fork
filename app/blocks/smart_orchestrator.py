@@ -755,7 +755,12 @@ class SmartOrchestratorBlock(UniversalBlock):
             # drawing_qto (live tip 50c37f ask1 → tools=[] RAG-miss).
             results = [
                 r for r in results
-                if r["action"] not in {"drawing_qto", "bim_clash_detection", "extract_quantities"}
+                if r["action"] not in {
+                    "drawing_qto",
+                    "bim_clash_detection",
+                    "extract_quantities",
+                    "cde_post_rfi",
+                }
             ]
             if not any(r["action"] == "rfi_generator" for r in results):
                 results.insert(0, {
@@ -825,7 +830,14 @@ class SmartOrchestratorBlock(UniversalBlock):
                     "keywords_matched": ["variation order"],
                 }]
             results = vo + rest
-        if message_wants_clash(message) and message_wants_clash_cde_rfi(message):
+        from app.core.action_router import message_wants_rfi_draft
+        # Draft an RFI (clash/rebar/lap OK) stays on rfi_generator.
+        # Only an explicit CDE/Aconex post steals onto cde_post_rfi.
+        if (
+            message_wants_clash(message)
+            and message_wants_clash_cde_rfi(message)
+            and not message_wants_rfi_draft(message)
+        ):
             results = [r for r in results if r["action"] != "rfi_generator"]
             if not any(r["action"] == "cde_post_rfi" for r in results):
                 results.append({
