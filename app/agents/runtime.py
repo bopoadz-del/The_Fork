@@ -1655,6 +1655,22 @@ def _message_wants_locked_deliverable(text: str) -> bool:
     )
 
 
+
+def _inline_boq_hard_excludes(user_message: str) -> set[str]:
+    """Tools that must not run when the operator pasted BOQ lines.
+
+    Live tip 0a95d03 ask1 routed to self-coding and called formula_executor_v2
+    (HTTP 429) instead of boq_processor. Hard-exclude the formula path whenever
+    inline BOQ lines are present.
+    """
+    try:
+        from app.core.site_vocab import message_has_inline_boq_lines
+        if not message_has_inline_boq_lines(user_message or ""):
+            return set()
+    except Exception:  # noqa: BLE001
+        return set()
+    return {"formula_executor_v2", "formula_executor", "construction_calc"}
+
 def _conflicting_tools_after_predispatch(name: str) -> set[str]:
     """Tools that stole the live Infra Pack answers after a correct draft."""
     steal = {
@@ -1682,8 +1698,8 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "commissioning_checklist": {"wir_form", "om_manual_generator"},
         "wir_form": {"payment_certificate", "job_requisition", "rfp_draft", "rfi_generator"},
         "variation_order_manager": {"change_order_impact", "wir_form", "sympy_reasoning", "construction"},
-        "boq_process": {"construction_calc", "generate_wbs"},
-        "boq_processor": {"construction_calc", "generate_wbs"},
+        "boq_process": {"construction_calc", "generate_wbs", "formula_executor_v2", "formula_executor"},
+        "boq_processor": {"construction_calc", "generate_wbs", "formula_executor_v2", "formula_executor"},
     }
     return set(steal.get(name) or ())
 
@@ -3877,6 +3893,16 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     wants_rfi = _message_wants_rfi_draft(text)
     if "rfi_generator" in available and wants_rfi:
         return "rfi_generator"
+    # Live tip 0a95d03 ask1: inline CSV/BOQ routed to self-coding →
+    # formula_executor_v2 (429). Force boq_processor when lines are inline.
+    try:
+        from app.core.site_vocab import message_has_inline_boq_lines
+        if message_has_inline_boq_lines(text):
+            for name in ("boq_processor", "boq_process"):
+                if name in available:
+                    return name
+    except Exception:  # noqa: BLE001
+        _LOG.debug("inline boq force skipped", exc_info=True)
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             if (
@@ -10012,6 +10038,11 @@ class Agent:
         SEARCH_TOOL_CAP = int(os.getenv("AGENT_SEARCH_TOOL_CAP", "2"))
         search_calls = 0
         excluded_tools: set = set()
+        try:
+            _op = _latest_operator_ask(messages) or ""
+            excluded_tools |= _inline_boq_hard_excludes(_op)
+        except Exception:  # noqa: BLE001
+            _LOG.debug("inline-boq hard-exclude skipped", exc_info=True)
         # Once a deliverable (non-search) tool returns, force a tool-free
         # synthesis call — see the streaming loop for the full rationale (stops
         # the tool-loop and the Groq large-context tool_use_failed/429 hang).
@@ -11134,6 +11165,11 @@ class Agent:
         SEARCH_TOOL_CAP = int(os.getenv("AGENT_SEARCH_TOOL_CAP", "2"))
         search_calls = 0
         excluded_tools: set = set()
+        try:
+            _op = _latest_operator_ask(messages) or ""
+            excluded_tools |= _inline_boq_hard_excludes(_op)
+        except Exception:  # noqa: BLE001
+            _LOG.debug("inline-boq hard-exclude skipped", exc_info=True)
         # Once a deliverable (non-search) tool has returned its result, the model
         # has what it needs — the next call is synthesis. Offering tools on that
         # synthesis call is pure downside: it lets the model loop, and on Groq a
@@ -14021,6 +14057,14 @@ def _should_handoff_unmatched_calc(text: str) -> bool:
     """Computation-shaped, no registered formula name → self-coding once."""
     if _message_names_registered_calculator(text):
         return False
+    # Live tip 0a95d03: inline BOQ ask1 must not hand off to self-coding
+    # (which then called formula_executor_v2 and 429'd).
+    try:
+        from app.core.site_vocab import message_has_inline_boq_lines
+        if message_has_inline_boq_lines(text):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
     return _looks_like_self_contained_calculation(text) or _asks_self_coding(text)
 
 
