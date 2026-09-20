@@ -1464,8 +1464,12 @@ class ConstructionDocumentsMixin:
             chain.append({"action": "claims_builder", "params": {}})
     
         if any(k in goal for k in ["variation", "change order", "vo", "additional work", "omission"]):
-            chain.append({"action": "change_order_impact", "params": {}})
-            chain.append({"action": "variation_order_manager", "params": {}})
+            from app.core.site_vocab import message_wants_vo_draft
+            if message_wants_vo_draft(user_goal):
+                chain.append({"action": "variation_order_manager", "params": {}})
+            else:
+                chain.append({"action": "change_order_impact", "params": {}})
+                chain.append({"action": "variation_order_manager", "params": {}})
     
         if any(k in goal for k in ["cash flow", "s-curve", "payment", "invoice", "billing"]):
             chain.append({"action": "cash_flow_forecast", "params": {}})

@@ -744,6 +744,7 @@ class SmartOrchestratorBlock(UniversalBlock):
             message_reports_slipped_delivery,
             message_wants_clash_cde_rfi,
             message_wants_ifc_drawings,
+            message_wants_vo_draft,
         )
 
         if not claims_builder_permitted(message) or message_reports_slipped_delivery(message):
@@ -764,6 +765,25 @@ class SmartOrchestratorBlock(UniversalBlock):
                 r for r in results
                 if r["action"] not in {"change_order_impact", "variation_order_manager"}
             ]
+        if message_wants_vo_draft(message):
+            # Live Phase 2 ask1: "variation" scored change_order_impact first
+            # and the turn never drafted. Prefer variation_order_manager.
+            results = [
+                r for r in results if r["action"] != "change_order_impact"
+            ]
+            vo = [
+                r for r in results if r["action"] == "variation_order_manager"
+            ]
+            rest = [
+                r for r in results if r["action"] != "variation_order_manager"
+            ]
+            if not vo:
+                vo = [{
+                    "action": "variation_order_manager",
+                    "confidence": 0.8,
+                    "keywords_matched": ["variation order"],
+                }]
+            results = vo + rest
         if message_wants_clash(message) and message_wants_clash_cde_rfi(message):
             results = [r for r in results if r["action"] != "rfi_generator"]
             if not any(r["action"] == "cde_post_rfi" for r in results):

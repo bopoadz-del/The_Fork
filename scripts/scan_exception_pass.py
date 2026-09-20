@@ -58,19 +58,19 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20: SYNC2 empty-turn / user-rate closure inserts.
-    # Same pre-existing handlers — only the line numbers moved. No new
-    # silent returns.
-    "app/agents/runtime.py:1994": "baseline 2026-09-10",
-    "app/agents/runtime.py:2000": "baseline 2026-09-10",
-    "app/agents/runtime.py:2063": "baseline 2026-09-10",
-    "app/agents/runtime.py:2069": "baseline 2026-09-10",
-    "app/agents/runtime.py:2737": "baseline 2026-09-10",
-    "app/agents/runtime.py:3742": "baseline 2026-09-10",
-    "app/agents/runtime.py:4881": "baseline 2026-09-10",
-    "app/agents/runtime.py:5286": "baseline 2026-09-10",
-    "app/agents/runtime.py:643": "baseline 2026-09-10",
-    "app/agents/runtime.py:874": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20: VO first-ask draft helpers inserted above
+    # these pre-existing handlers. Same sites — only the line numbers
+    # moved. No new silent returns.
+    "app/agents/runtime.py:2014": "baseline 2026-09-10",
+    "app/agents/runtime.py:2020": "baseline 2026-09-10",
+    "app/agents/runtime.py:2083": "baseline 2026-09-10",
+    "app/agents/runtime.py:2089": "baseline 2026-09-10",
+    "app/agents/runtime.py:2758": "baseline 2026-09-10",
+    "app/agents/runtime.py:3763": "baseline 2026-09-10",
+    "app/agents/runtime.py:4932": "baseline 2026-09-10",
+    "app/agents/runtime.py:5337": "baseline 2026-09-10",
+    "app/agents/runtime.py:647": "baseline 2026-09-10",
+    "app/agents/runtime.py:878": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
@@ -92,14 +92,16 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/containers/construction/__init__.py:1383": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:145": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:1484": "baseline 2026-09-10",
-    "app/containers/construction/__init__.py:1622": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20: VO document now lists ADD/OMIT lines.
+    # Same handler — only the line number moved.
+    "app/containers/construction/__init__.py:1648": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:407": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:414": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:555": "baseline 2026-09-10",
-    # Re-indexed 2026-09-19: draft-VO ask refuse helpers inserted above
+    # Re-indexed 2026-09-20: ADD/OMIT priced-line parser inserted above
     # this pre-existing site. Same handler — only the line number moved.
     # No new silent returns.
-    "app/containers/construction/boq.py:833": "baseline 2026-09-10",
+    "app/containers/construction/boq.py:893": "baseline 2026-09-10",
     "app/containers/construction/helpers.py:69": "baseline 2026-09-10",
     "app/core/doc_index.py:1063": "baseline 2026-09-10",
     "app/core/doc_index.py:1106": "baseline 2026-09-10",
