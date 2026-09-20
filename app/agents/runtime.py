@@ -5126,6 +5126,7 @@ def _construction_calc_tool_schema() -> dict[str, Any]:
             ),
             "parameters": {
                 "type": "object",
+                "additionalProperties": True,
                 "properties": {
                     "calculation": {
                         "type": "string",
@@ -5133,13 +5134,22 @@ def _construction_calc_tool_schema() -> dict[str, Any]:
                         "description": "Which calculator to run.",
                     },
                     "params": {
-                        "type": "object",
+                        "type": ["object", "string"],
+                        "additionalProperties": True,
                         "description": (
                             "Keyword arguments for the chosen calculation (e.g. "
                             "cost_buildup_rebar needs quantity_kg and optionally "
-                            "material_price_sar_t / labour_rate_sar_hr / ...). On a bad "
-                            "call the tool returns the exact required signature."
+                            "material_price_sar_t / labour_rate_sar_hr / ...). "
+                            "Canonical names or aliases (w/span, length/width/"
+                            "thickness, water_depth_m/floors). A comma-separated "
+                            "assignment string is also accepted. On a bad call "
+                            "the tool returns the exact required signature."
                         ),
+                    },
+                    "input": {
+                        "type": ["object", "string"],
+                        "additionalProperties": True,
+                        "description": "Same calculator kwargs, nested.",
                     },
                 },
                 "required": ["calculation"],
@@ -13179,7 +13189,7 @@ class Agent:
                     args, user_message=user_message,
                 )
             from app.lib import construction_formulas as _cf
-            calc_params = dict(args.get("params") or {})
+            calc_params = _cf.coerce_calc_params(args.get("params"))
             # SHARED WITH AGENT C / #636 / #639 / #652: models put calculator
             # kwargs next to ``calculation`` instead of inside ``params``.
             # The container path already flattens; the tool path must too or
@@ -13193,8 +13203,8 @@ class Agent:
                 "calculation", "name", "calculator", "params", "input",
                 "project_id", "conversation_id", "user_id",
             }
-            nested_input = args.get("input")
-            if isinstance(nested_input, dict):
+            nested_input = _cf.coerce_calc_params(args.get("input"))
+            if nested_input:
                 for ik, iv in nested_input.items():
                     if ik in _envelope:
                         continue

@@ -72,8 +72,12 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:2165": "baseline 2026-09-10",
     "app/agents/runtime.py:2835": "baseline 2026-09-10",
     "app/agents/runtime.py:3850": "baseline 2026-09-10",
-    "app/agents/runtime.py:5154": "baseline 2026-09-10",
-    "app/agents/runtime.py:5565": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20 standing-exit B + Train G #667: construction_calc
+    # schema additionalProperties (params/input) on top of Train G's
+    # runtime remaps. Same `_cg_to_number` / `_aca_claim_amount`
+    # handlers — only the line numbers moved. No new silent returns.
+    "app/agents/runtime.py:5164": "baseline 2026-09-10",
+    "app/agents/runtime.py:5575": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:942": "baseline 2026-09-10",
     # Re-indexed 2026-09-20: Set3 remaining E1 truncation detector
