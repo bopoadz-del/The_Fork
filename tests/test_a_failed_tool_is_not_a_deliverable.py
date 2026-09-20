@@ -61,7 +61,20 @@ def test_the_live_call_really_is_an_error_with_the_valid_names_attached():
     it needed to recover, and then had the tool taken away."""
     reply = run_calculation("calculate_delay_damages", {"days": 30})
     assert reply["status"] == "error"
+    assert "Unknown calculation" in reply["error"]
     assert "delay_damages_daily" in reply["available"]
+
+
+def test_unknown_name_still_recovers_when_ask_text_names_the_calculator():
+    """Ask prose may name the real calculator; the unknown name string must not."""
+    recovered = run_calculation("calculate_delay_damages", {
+        "text": "delay_damages_daily",
+        "rate_percent": 0.015,
+        "contract_amount": 1_000_000_000,
+    })
+    assert recovered.get("status") == "success", recovered
+    assert recovered.get("calculation") == "delay_damages_daily"
+    assert recovered["result"]["daily_amount"] == pytest.approx(150_000.0)
 
 
 def test_an_unknown_calculation_does_not_disarm_the_tools():
