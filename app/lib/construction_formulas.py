@@ -946,7 +946,12 @@ logger = logging.getLogger(__name__)
 
 # Public functions in this module that are DISPATCH infrastructure, not
 # calculators — excluded from the registry regardless of definition order.
-_NON_CALCULATORS = {"available_calculations", "run_calculation"}
+_NON_CALCULATORS = {
+    "available_calculations",
+    "run_calculation",
+    "bind_calculation_params",
+    "describe_calculation_params",
+}
 
 
 def _build_calculator_registry() -> "Dict[str, Any]":
@@ -1087,6 +1092,348 @@ def _result_is_failure(result: Dict[str, Any]) -> bool:
     return isinstance(result.get("error"), str)
 
 
+# Keys the model / container / tool envelope add beside real calculator kwargs.
+# Flatten unwraps ``params`` / ``input`` then drops these so they never
+# reach fn(**kwargs). ``text`` / ``formula`` stay available for the E4 /
+# F–W resolvers that run *before* bind, and are stripped at bind time.
+_BIND_JUNK_KEYS = frozenset({
+    "action", "calculation", "name", "calculator", "params",
+    "block", "unit", "formula", "text", "ok", "status",
+    "input", "project_id", "conversation_id", "user_id",
+    "message", "history", "messages", "chat",
+})
+_FLATTEN_NEST_KEYS = ("params", "input")
+_E4_PASSTHROUGH_KEYS = frozenset({"text", "formula"})
+
+# Longest-first unit suffixes stripped when matching volume ↔ volume_m3.
+_BIND_UNIT_SUFFIXES: Tuple[Tuple[str, str], ...] = (
+    ("_kgco2e_m3", "kgCO2e/m3"),
+    ("_n_mm2", "N/mm2"),
+    ("_kn_m3", "kN/m3"),
+    ("_kn_m2", "kN/m2"),
+    ("_kn_m", "kN.m"),
+    ("_mm2", "mm2"),
+    ("_m2", "m2"),
+    ("_m3", "m3"),
+    ("_mm", "mm"),
+    ("_mpa", "MPa"),
+    ("_kpa", "kPa"),
+    ("_kn", "kN"),
+    ("_kg", "kg"),
+    ("_percent", "%"),
+    ("_pct", "%"),
+    ("_days", "d"),
+    ("_day", "d"),
+    ("_deg", "deg"),
+    ("_m", "m"),
+    ("_s", "s"),
+    ("_t", "t"),
+)
+
+# Incoming name (normalized) → candidate signature names. Only a candidate
+# that is actually on *this* calculator is used, and only when unique.
+_BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "pv": ("pv", "bcws"),
+    "planned_value": ("pv", "bcws"),
+    "ev": ("ev", "bcwp"),
+    "earned_value": ("ev", "bcwp"),
+    "ac": ("ac", "acwp"),
+    "actual_cost": ("ac", "acwp"),
+    "budget_at_completion": ("bac",),
+    "volume": ("volume_m3",),
+    "vol": ("volume_m3",),
+    "w": ("udl_w_kn_m",),
+    "udl": ("udl_w_kn_m",),
+    "udl_w": ("udl_w_kn_m",),
+    "span": ("span_m",),
+    "l": ("span_m", "length_m"),
+    "rate": ("rate_percent",),
+    "delay_rate": ("rate_percent",),
+    "aca": ("contract_amount",),
+    "accepted_contract_amount": ("contract_amount",),
+    "contract_value": ("contract_amount",),
+    "hw": ("water_depth",),
+    "h_w": ("water_depth",),
+    "water_table": ("water_depth",),
+    "water_head": ("water_depth",),
+    "raft": ("raft_thickness",),
+    "traft": ("raft_thickness",),
+    "floors": ("floor_count",),
+    "n_floors": ("floor_count",),
+    "nfloors": ("floor_count",),
+    "t": ("time_days",),
+    "time": ("time_days",),
+    "days": ("time_days",),
+    "age": ("time_days",),
+    "age_days": ("time_days",),
+    "esh_ult": ("ultimate_shrinkage_microstrain",),
+    "ultimate_shrinkage": ("ultimate_shrinkage_microstrain",),
+}
+
+# Signature defaults that must NOT silently succeed (live wrong_number /
+# tool_error). Any one name in a group satisfies the group.
+_REQUIRED_GROUPS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
+    "calculate_evm": (
+        ("pv", "bcws"),
+        ("ev", "bcwp"),
+        ("ac", "acwp"),
+    ),
+    "delay_damages_daily": (
+        ("rate_percent",),
+        ("contract_amount",),
+    ),
+}
+
+_PARAM_UNIT_OVERRIDE: Dict[str, str] = {
+    "pv": "currency",
+    "ev": "currency",
+    "ac": "currency",
+    "bcws": "currency",
+    "bcwp": "currency",
+    "acwp": "currency",
+    "bac": "currency",
+    "rate_percent": "%",
+    "contract_amount": "currency",
+    "water_depth": "m",
+    "raft_thickness": "m",
+    "floor_count": "floors",
+    "floor_thickness": "m",
+    "time_days": "d",
+    "time_constant_days": "d",
+    "ultimate_shrinkage_microstrain": "µε",
+}
+
+
+def _snake_key(raw: Any) -> str:
+    s = str(raw or "").strip().replace("-", "_")
+    out: List[str] = []
+    for i, ch in enumerate(s):
+        if ch.isupper() and i and (s[i - 1].islower() or s[i - 1].isdigit()):
+            out.append("_")
+        out.append(ch.lower())
+    return "".join(out).strip("_")
+
+
+def _param_stem(name: str) -> str:
+    n = _snake_key(name)
+    changed = True
+    while changed and n:
+        changed = False
+        for suf, _unit in _BIND_UNIT_SUFFIXES:
+            if n.endswith(suf) and len(n) > len(suf):
+                n = n[: -len(suf)]
+                changed = True
+                break
+    return n.replace("_", "")
+
+
+def _unit_from_name(name: str) -> str:
+    if name in _PARAM_UNIT_OVERRIDE:
+        return _PARAM_UNIT_OVERRIDE[name]
+    n = _snake_key(name)
+    for suf, unit in _BIND_UNIT_SUFFIXES:
+        if n.endswith(suf):
+            return unit
+    return ""
+
+
+def _ann_label(annotation: Any) -> str:
+    if annotation is _inspect.Parameter.empty:
+        return ""
+    return getattr(annotation, "__name__", None) or str(annotation).replace("typing.", "")
+
+
+def _is_junk_key(key: Any) -> bool:
+    return _snake_key(key) in {_snake_key(j) for j in _BIND_JUNK_KEYS}
+
+
+def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge nested ``params`` / ``input`` into top-level calculator kwargs.
+
+    Live Phase-2 / #636: the model often puts calculator kwargs next to
+    ``calculation`` *or* nests them under ``params`` or ``input``.
+    Envelope keys are never copied through as calculator kwargs.
+    ``text`` / ``formula`` survive flatten for the E4 resolvers, then bind
+    drops them. Nested keys lose to an explicit top-level of the same name.
+    """
+    if not isinstance(params, dict):
+        return {}
+    junk = {_snake_key(j) for j in _BIND_JUNK_KEYS}
+    e4 = {_snake_key(j) for j in _E4_PASSTHROUGH_KEYS}
+    out: Dict[str, Any] = {}
+    for nest_key in _FLATTEN_NEST_KEYS:
+        nested = params.get(nest_key)
+        if not isinstance(nested, dict):
+            continue
+        for key, val in nested.items():
+            if val is None or val == "":
+                continue
+            if _snake_key(key) in junk:
+                continue
+            out[key] = val
+    for key, val in params.items():
+        if val is None or val == "":
+            continue
+        nk = _snake_key(key)
+        if nk in junk and nk not in e4:
+            continue
+        out[key] = val
+    return out
+
+
+def describe_calculation_params(
+    fn: Any,
+    name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Signature-derived expected params with units (name suffix / override)."""
+    sig = _inspect.signature(fn)
+    required_names: set[str] = set()
+    if name:
+        for group in _REQUIRED_GROUPS.get(str(name).strip().lower(), ()):
+            required_names.update(group)
+    rows: List[Dict[str, Any]] = []
+    for key, param in sig.parameters.items():
+        if param.kind not in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY):
+            continue
+        if key.startswith("_"):
+            continue
+        required = param.default is param.empty or key in required_names
+        unit = _unit_from_name(key)
+        row: Dict[str, Any] = {
+            "name": key,
+            "required": required,
+            "unit": unit,
+            "annotation": _ann_label(param.annotation),
+        }
+        if param.default is not param.empty:
+            row["default"] = param.default
+        rows.append(row)
+    return rows
+
+
+def _unique_semantic_dest(incoming: str, accepted: Dict[str, str]) -> Optional[str]:
+    hits = []
+    for cand in _BIND_SEMANTIC_ALIASES.get(incoming, ()):
+        dest = accepted.get(_snake_key(cand))
+        if dest and dest not in hits:
+            hits.append(dest)
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
+def _unique_stem_dest(incoming: str, accepted: Dict[str, str]) -> Optional[str]:
+    """Bind volume → volume_m3 / water_depth_m → water_depth when unique."""
+    stem = _param_stem(incoming)
+    if len(stem) < 3:
+        return None
+    exact = [dest for dest in accepted.values() if _param_stem(dest) == stem]
+    if len(exact) == 1:
+        return exact[0]
+    if exact:
+        return None
+    suffix = [
+        dest for dest in accepted.values()
+        if _param_stem(dest).endswith(stem) and len(_param_stem(dest)) > len(stem)
+    ]
+    if len(suffix) == 1:
+        return suffix[0]
+    return None
+
+
+def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Map incoming kwargs onto ``fn``'s signature names.
+
+    Case-insensitive keys, unit-suffix stems, and a small synonym table.
+    Canonical names already present win. Shared with Agent C / #636 / #639.
+    """
+    raw = _flatten_calc_kwargs(params or {})
+    sig = _inspect.signature(fn)
+    accepted_list = [
+        key for key, param in sig.parameters.items()
+        if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+    ]
+    accepted_norm = {_snake_key(k): k for k in accepted_list}
+    has_var_kw = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+
+    bound: Dict[str, Any] = {}
+    leftovers: Dict[str, Any] = {}
+    for key, val in raw.items():
+        if val is None or val == "":
+            continue
+        if _is_junk_key(key):
+            continue
+        dest = accepted_norm.get(_snake_key(key))
+        if dest is None:
+            dest = _unique_semantic_dest(_snake_key(key), accepted_norm)
+        if dest is None:
+            dest = _unique_stem_dest(key, accepted_norm)
+        if dest is None:
+            leftovers[key] = val
+            continue
+        if dest not in bound or bound[dest] in (None, ""):
+            bound[dest] = val
+
+    if has_var_kw:
+        for key, val in leftovers.items():
+            bound.setdefault(key, val)
+    return bound
+
+
+def _missing_required(fn: Any, bound: Dict[str, Any], name: Optional[str] = None) -> List[str]:
+    missing: List[str] = []
+    groups = _REQUIRED_GROUPS.get(str(name or "").strip().lower())
+    if groups:
+        for group in groups:
+            if not any(k in bound and bound[k] not in (None, "") for k in group):
+                missing.append(group[0])
+        return missing
+    for row in describe_calculation_params(fn, name=name):
+        if row["required"] and row["name"] not in bound:
+            missing.append(row["name"])
+    return missing
+
+
+def _format_param_label(row: Dict[str, Any]) -> str:
+    name = row["name"]
+    unit = row.get("unit") or ""
+    if unit:
+        name = f"{name} ({unit})"
+    if row.get("required"):
+        return name
+    default = row.get("default")
+    return f"{name} (default {default!r})"
+
+
+def _bind_error_envelope(
+    name: str,
+    fn: Any,
+    missing: List[str],
+    extra: str = "",
+) -> Dict[str, Any]:
+    expected = describe_calculation_params(fn, name=name)
+    by_name = {row["name"]: row for row in expected}
+    missing_labels = [
+        _format_param_label(by_name[m]) if m in by_name else m for m in missing
+    ]
+    expected_labels = [_format_param_label(row) for row in expected]
+    if missing_labels:
+        detail = "missing required " + ", ".join(missing_labels)
+    else:
+        detail = "could not bind arguments"
+    expected_clause = ", ".join(expected_labels) if expected_labels else "(none)"
+    msg = f"Bad parameters for {name}: {detail}. Expected: {expected_clause}."
+    if extra:
+        msg = f"{msg} ({extra})"
+    return {
+        "status": "error",
+        "error": msg,
+        "signature": f"{name}{_inspect.signature(fn)}",
+        "expected_params": expected,
+        "missing": missing,
+    }
+
+
 def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run one whitelisted deterministic calculator by name with keyword params.
 
@@ -1101,6 +1448,10 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         return {"status": "error", "error": "params must be an object of keyword arguments."}
     if not isinstance(params, dict):
         params = {}
+    # Nested ``params`` / ``input`` + top-level siblings (BCWS, water_depth_m)
+    # must reach the calculator. Flatten before E4 so a nested concrete ask
+    # still pins.
+    params = _flatten_calc_kwargs(params)
     # Live UI pack E4: a concrete/raft ask (or leftover-L6 excavation name
     # plus "documented waste factor" in ``text``) must apply the project's
     # 5% waste. Resolve before the name lookup so a missing calculation
@@ -1138,25 +1489,19 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         }
     if str(name or "").strip().lower() == "calculate_evm":
         params = _alias_calculate_evm_params(params)
-    # LLMs (and the construction-block envelope) often pass extra keys
-    # like ``text`` / ``formula``. Drop unknowns rather than TypeError.
-    sig = _inspect.signature(fn)
-    accepted = {
-        k for k, p in sig.parameters.items()
-        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
-    }
-    if accepted and not any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values()):
-        params = {k: v for k, v in params.items() if k in accepted}
+    params = bind_calculation_params(fn, params)
+    missing = _missing_required(fn, params, name=str(name))
+    if missing:
+        return _bind_error_envelope(str(name), fn, missing)
     try:
         result = fn(**params)
     except TypeError as exc:
-        # Wrong / missing kwargs — surface the real signature, don't fabricate.
-        sig = str(_inspect.signature(fn))
-        return {
-            "status": "error",
-            "error": f"Bad parameters for {name}: {exc}",
-            "signature": f"{name}{sig}",
-        }
+        # Never a bare TypeError string alone — name the expected params.
+        still_missing = _missing_required(fn, params, name=str(name)) or [
+            row["name"] for row in describe_calculation_params(fn, name=str(name))
+            if row["required"]
+        ]
+        return _bind_error_envelope(str(name), fn, still_missing, extra=str(exc))
     except Exception as exc:  # noqa: BLE001 — never raise into the agent loop
         return {"status": "error", "error": f"{name} failed: {exc}"}
 
