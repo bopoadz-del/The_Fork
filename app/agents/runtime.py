@@ -12196,11 +12196,18 @@ class Agent:
             # reach run_calculation. Also covers E4 ``text`` / ``formula``.
             # Envelope keys (text/formula/input/project_id) are stripped
             # in bind_calculation_params — never passed as calc kwargs.
+            _envelope = {
+                "calculation", "name", "calculator", "params", "input",
+                "project_id", "conversation_id", "user_id",
+            }
             for key, val in (args or {}).items():
-                if key in ("calculation", "name", "calculator", "params", "input"):
+                if key in _envelope:
                     # Unwrap ``input`` the same way as ``params`` (DIR7).
+                    # Never copy the envelope key itself as a calc kwarg.
                     if key == "input" and isinstance(val, dict):
                         for ik, iv in val.items():
+                            if ik in _envelope:
+                                continue
                             if ik in calc_params and calc_params[ik] not in (None, ""):
                                 continue
                             if iv is None or iv == "":
