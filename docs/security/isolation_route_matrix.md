@@ -181,8 +181,8 @@ it is in `PRIVILEGED_BLOCKS` or the reviewed allowlist in
 
 | Method | Path | Guard | Admin | Ownership | Flags | Matrix | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET` | `/debug/env` | `require_api_key` | yes role==admin + non-prod | n/a | — | UNPROVEN | Router not mounted in production. Still UNPROVEN vs matrix. |
-| `GET` | `/v1/debug/env` | `require_api_key` | yes (delegates) | n/a | — | UNPROVEN | Alias |
+| `GET` | `/debug/env` | `require_api_key` when mounted | yes role==admin + non-prod | n/a | — | OTHER_TENANCY | Production: SPA reserved prefix → 404 empty, no env fields. Dest: 403 to a plain user. |
+| `GET` | `/v1/debug/env` | `require_api_key` when mounted | yes (delegates) | n/a | — | OTHER_TENANCY | Production: 404 empty (`v1/` reserved). Dest: 403 to a plain user. |
 
 ### `doc_search.py` (1)
 
