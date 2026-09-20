@@ -1672,6 +1672,8 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "commissioning_checklist": {"wir_form", "om_manual_generator"},
         "wir_form": {"payment_certificate", "job_requisition", "rfp_draft", "rfi_generator"},
         "variation_order_manager": {"change_order_impact", "wir_form", "sympy_reasoning", "construction"},
+        "boq_process": {"construction_calc", "generate_wbs"},
+        "boq_processor": {"construction_calc", "generate_wbs"},
     }
     return set(steal.get(name) or ())
 
@@ -3641,6 +3643,14 @@ def _message_wants_named_calculator(text: str) -> bool:
     Negative: "issue an interim payment certificate from the contract"
     with no figures is a predefined IPC deliverable — do not steal it.
     """
+    # Live tip 4ab55613: inline BOQ CSV lines for boq_process must not
+    # elect named_calculator → construction_calc.
+    try:
+        from app.core.site_vocab import message_has_inline_boq_lines
+        if message_has_inline_boq_lines(text or ""):
+            return False
+    except Exception as exc:
+        _LOG.debug("inline_boq_lines check skipped: %s", exc)
     raw = text or ""
     # "Build a plumbing flow programme" is a schedule deliverable.
     # intent_map "plumbing flow" must not steal it onto named_calculator.
