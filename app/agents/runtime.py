@@ -635,9 +635,9 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
     # Empty FIXTURE projects must not early-return the unindexed refusal.
     if _message_is_formula_style_ask(user_message):
         return True
-    # Live Phase 2: a priced VO draft is self-contained. Empty FIXTURE
-    # projects must not early-return the unindexed refusal on ask1.
-    if _message_wants_vo_draft(user_message):
+    # Live Phase 2: priced VO / RFI drafts are self-contained. Empty
+    # FIXTURE projects must not early-return the unindexed refusal on ask1.
+    if _message_wants_vo_draft(user_message) or _message_wants_rfi_draft(user_message):
         return True
     try:
         from app.core.project_memory import build_project_context
@@ -1526,7 +1526,7 @@ def _message_wants_rfp_draft(text: str) -> bool:
 
 def _message_wants_cash_flow(text: str) -> bool:
     return bool(re.search(
-        r"cash[- ]flow|s-curve|s curve|spend curve|drawdown",
+        r"cash[_\- ]flow|s-curve|s curve|spend curve|drawdown",
         text or "",
         re.I,
     ))
@@ -3859,6 +3859,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
         return "resource_histogram"
     if "look_ahead" in available and _message_wants_look_ahead(text):
         return "look_ahead"
+    if "cash_flow_forecast" in available and _message_wants_cash_flow(text):
+        return "cash_flow_forecast"
     wants_procurement = _message_wants_procurement_list(text)
     if "procurement_list_generator" in available and wants_procurement:
         return "procurement_list_generator"
@@ -13711,6 +13713,8 @@ async def _predispatch_formula_calc(
         user_msg, _history = _messages_user_and_history(messages)
         detect = (operator_text or user_msg or "").strip()
         if not detect:
+            return None
+        if _message_wants_rfi_draft(detect):
             return None
         if _message_is_schedule_or_programme_deliverable(detect):
             return None
