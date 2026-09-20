@@ -68,8 +68,11 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:2153": "baseline 2026-09-10",
     "app/agents/runtime.py:2822": "baseline 2026-09-10",
     "app/agents/runtime.py:3829": "baseline 2026-09-10",
-    "app/agents/runtime.py:5108": "baseline 2026-09-10",
-    "app/agents/runtime.py:5517": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20 standing-exit B: construction_calc tool
+    # schema additionalProperties (params/input) shifted two pre-existing
+    # empty-return handlers. Same sites — only the line numbers moved.
+    "app/agents/runtime.py:5118": "baseline 2026-09-10",
+    "app/agents/runtime.py:5527": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:942": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",

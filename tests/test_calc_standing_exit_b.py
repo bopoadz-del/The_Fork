@@ -223,6 +223,65 @@ def test_coerce_calc_params_accepts_json_object_string():
     assert coerce_calc_params(None) == {}
     assert coerce_calc_params("") == {}
     assert coerce_calc_params("not-json") == {}
+    assert coerce_calc_params("udl_w_kn_m=20, span_m=6") == {
+        "udl_w_kn_m": 20, "span_m": 6,
+    }
+    assert coerce_calc_params("status: error") == {}
+
+
+def test_live_probe_beam_shear_assignment_string_is_60_not_zero():
+    """standing_exit_b_probe: params udl_w_kn_m=20, span_m=6 → Vmax=60."""
+    inner = _ok("beam_shear_simple", "udl_w_kn_m=20, span_m=6")
+    assert inner["max_shear_kn"] == pytest.approx(60.0, abs=0.01)
+    env = _tool("beam_shear_simple", {"params": "udl_w_kn_m=20, span_m=6"})
+    assert env.get("ok") is True, env
+    assert env["result"]["result"]["max_shear_kn"] == pytest.approx(60.0, abs=0.01)
+
+
+def test_live_probe_dewatering_assignment_string_binds():
+    """standing_exit_b_probe: water_depth=23, raft_thickness=2.0, floor_count=5."""
+    inner = _ok(
+        "dewatering_uplift_check",
+        "water_depth=23, raft_thickness=2.0, floor_count=5",
+    )
+    assert inner["fos"] == pytest.approx(0.380, abs=0.001)
+    via_suffix = _ok("dewatering_uplift_check", {
+        "params": "water_depth_m=23, raft_thickness_m=2.0, floors=5",
+    })
+    assert via_suffix["fos"] == pytest.approx(0.380, abs=0.001)
+    nested = _ok("dewatering_uplift_check", {
+        "input": {"water_depth": 23, "raft_thickness": 2.0, "storeys": 5},
+    })
+    assert nested["fos"] == pytest.approx(0.380, abs=0.001)
+    via_input_str = _tool("dewatering_uplift_check", {
+        "input": "water_depth=23, raft_thickness=2.0, floor_count=5",
+    })
+    assert via_input_str.get("ok") is True, via_input_str
+    assert via_input_str["result"]["result"]["fos"] == pytest.approx(0.380, abs=0.001)
+
+
+def test_live_probe_concrete_volume_includes_net_15_and_waste_15_75():
+    """length=10,width=5,thickness=0.3 → net 15.0 and with-waste 15.75."""
+    inner = _ok("concrete_volume", "length=10,width=5,thickness=0.3")
+    assert inner["net_volume_m3"] == pytest.approx(15.0, abs=0.001)
+    assert inner["volume_m3"] == pytest.approx(15.75, abs=0.001)
+    assert inner["volume_with_waste_m3"] == pytest.approx(15.75, abs=0.001)
+    assert inner["waste_factor"] == pytest.approx(0.05, abs=1e-9)
+    env = run_calculation("concrete_volume", "length=10, width=5, thickness=0.3")
+    assert env.get("status") == "success", env
+
+
+def test_live_probe_excavation_keeps_bank_600_and_bulked_750():
+    """length=20,width=10,depth=3. Ask-2 wrong_number was bulking 25 vs 0.25."""
+    inner = _ok("excavation_volume", "length=20,width=10,depth=3")
+    assert inner["bank_volume_m3"] == pytest.approx(600.0, abs=0.01)
+    assert inner["loose_volume_m3"] == pytest.approx(750.0, abs=0.01)
+    assert inner["bulked_volume_m3"] == pytest.approx(750.0, abs=0.01)
+    percent = _ok("excavation_volume", {
+        "length": 20, "width": 10, "depth": 3, "bulking": 25,
+    })
+    assert percent["bank_volume_m3"] == pytest.approx(600.0, abs=0.01)
+    assert percent["loose_volume_m3"] == pytest.approx(750.0, abs=0.01)
 
 
 def test_json_string_params_nest_binds():
