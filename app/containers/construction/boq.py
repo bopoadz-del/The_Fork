@@ -44,11 +44,13 @@ def _vo_scope_after_ask(text: str) -> str:
 
 
 _VO_LINE_UNIT = (
-    r"m[23]?|lm|sqm|cum|nr|no|ea|each|items?|t|tonnes?|kg"
+    r"m[23]?|lm|sqm|cum|nr|nos?|ea|each|items?|fittings?|t|tonnes?|kg"
 )
 _VO_LINE_NUM = r"(?:[0-9][0-9,.]*[0-9]|[0-9])"
+# Live tip d9d5971 ask2: "ADD: additional drainage 45 m @ AED 180/m" —
+# optional colon/dash after the kind; "12 fittings @ AED 2500 each".
 _VO_LINE_RE = re.compile(
-    r"\b(?P<kind>ADD|OMIT|OMISSION|DELETE|DEDUCT)\b\s+"
+    r"\b(?P<kind>ADD|OMIT|OMISSION|DELETE|DEDUCT)\b(?:\s*[:.\-])?\s+"
     r"(?:"
     r"(?P<qty1>" + _VO_LINE_NUM + r")\s*(?P<unit1>" + _VO_LINE_UNIT + r")\s+"
     r"(?P<desc1>[^\n@]+?)"
