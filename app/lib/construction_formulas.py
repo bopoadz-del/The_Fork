@@ -1047,6 +1047,42 @@ def available_calculations() -> List[str]:
     return sorted(CALCULATORS)
 
 
+# PMI (BCWS/BCWP/ACWP/BAC) and long PE-sheet names → calculate_evm kwargs.
+# ``run_calculation`` keeps only exact signature names, so uppercase / long
+# aliases were dropped and the tool reported missing PV/EV/AC.
+_EVM_CALC_ALIASES: Dict[str, str] = {
+    "pv": "pv",
+    "planned_value": "pv",
+    "bcws": "bcws",
+    "ev": "ev",
+    "earned_value": "ev",
+    "bcwp": "bcwp",
+    "ac": "ac",
+    "actual_cost": "ac",
+    "acwp": "acwp",
+    "bac": "bac",
+    "budget_at_completion": "bac",
+}
+
+
+def _alias_calculate_evm_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Bind case-insensitive PMI / PE names onto ``calculate_evm`` kwargs.
+
+    Canonical keys already present win; aliases only fill holes so mixed
+    ``pv`` + ``BCWP`` + ``acwp`` still resolve.
+    """
+    out = dict(params)
+    for raw_key, val in params.items():
+        if val is None or val == "":
+            continue
+        dest = _EVM_CALC_ALIASES.get(str(raw_key).strip().lower())
+        if dest is None:
+            continue
+        if dest not in out or out[dest] in (None, ""):
+            out[dest] = val
+    return out
+
+
 def _result_is_failure(result: Dict[str, Any]) -> bool:
     """Did a calculator report failure by RETURNING rather than raising?
 
@@ -1395,8 +1431,10 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             "available": available_calculations(),
         }
     # Signature-derived bind (case-insensitive + unit-suffix synonyms).
-    # Replaces the old exact-name filter that dropped BCWS / volume / …
-    # and then raised a bare TypeError for the missing positional args.
+    # Generalises #636's calculate_evm PMI aliases — do not re-add a
+    # name-specific filter here (Agent C / DIR7 share this path).
+    if str(name or "").strip().lower() == "calculate_evm":
+        params = _alias_calculate_evm_params(params)
     params = bind_calculation_params(fn, params)
     missing = _missing_required(fn, params)
     if missing:

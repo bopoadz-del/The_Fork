@@ -543,6 +543,14 @@ async def _walk_drive_folder_into_project(
         else:
             doc_index.maybe_eager_index(project_id, doc_id)
 
+    # Drive file id -> the visible document imported from it, read ONCE.
+    imported_from: Dict[str, str] = {}
+    for d in store.list_documents(project_id):
+        if d.get("retrieval_visible", True):
+            fid = store.extract_document_source_pointers(d).get("drive_file_id")
+            if fid:
+                imported_from[fid] = d["id"]
+
     async with httpx.AsyncClient(timeout=60) as client:
         start = folder_id or "root"
         folder_paths[start] = ""
@@ -585,6 +593,11 @@ async def _walk_drive_folder_into_project(
                 except Exception as e:
                     skipped.append({"name": name_raw, "reason": f"download failed: {str(e)[:80]}"})
                     continue
+                # A 0-byte file was stored and indexed as a document that can
+                # never answer anything. Say so instead.
+                if not raw_bytes:
+                    skipped.append({"name": name_raw, "reason": "empty file (0 bytes)"})
+                    continue
                 # Re-validate the post-export extension for native Google types.
                 if exported_ext and exported_ext not in allowed:
                     skipped.append({"name": name_raw, "reason": f"exported ext {exported_ext} not allowed"})
@@ -608,6 +621,11 @@ async def _walk_drive_folder_into_project(
                         "reason": f"unchanged (sha {content_sha[:12]}...)",
                     })
                     continue
+                # The SAME Drive file with new bytes replaces what was imported
+                # from it: the old version was kept searchable next to the new
+                # one, so an answer could come from either. Superseded, never
+                # deleted (see store.add_document reingest_of).
+                previous = imported_from.get(child["id"])
                 file_uuid = str(uuid.uuid4())[:8]
                 stored_as = f"{file_uuid}_{stored_basename}"
                 filepath = os.path.join(projects_router.DATA_DIR, stored_as)
@@ -616,6 +634,7 @@ async def _walk_drive_folder_into_project(
                     project_id, stored_basename, stored_as,
                     filepath, len(raw_bytes),
                     content_sha256=content_sha,
+                    reingest_of=previous,
                     metadata={
                         "drive_file_id": child["id"],
                         "drive_path": child_path,
@@ -626,6 +645,7 @@ async def _walk_drive_folder_into_project(
                              document_id=doc["id"], name=stored_basename,
                              size=len(raw_bytes), user_id=user_id,
                              source="drive_walker")
+                imported_from[child["id"]] = doc["id"]
                 _schedule_index(doc["id"])
                 imported.append({
                     "drive_id": child["id"],
