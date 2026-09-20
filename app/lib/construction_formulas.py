@@ -939,7 +939,9 @@ def concrete_maturity_strength(
 
 import dataclasses as _dc
 import inspect as _inspect
+import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -953,6 +955,7 @@ _NON_CALCULATORS = {
     "run_calculation",
     "bind_calculation_params",
     "describe_calculation_params",
+    "coerce_calc_params",
 }
 
 
@@ -1218,10 +1221,12 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "ac": ("ac", "acwp"),
     "actual_cost": ("ac", "acwp"),
     "budget_at_completion": ("bac",),
-    "volume": ("volume_m3",),
-    "vol": ("volume_m3",),
-    "diameter": ("column_diameter_mm", "diameter_mm", "bolt_diameter_mm"),
-    "dia": ("column_diameter_mm", "diameter_mm", "bolt_diameter_mm"),
+    "volume": ("volume_m3", "quantity_m3"),
+    "vol": ("volume_m3", "quantity_m3"),
+    "qty": ("quantity_m3", "quantity_kg", "quantity", "volume_m3"),
+    "quantity": ("quantity_m3", "quantity_kg", "quantity"),
+    "diameter": ("column_diameter_mm", "diameter_mm", "bolt_diameter_mm", "diameter_m"),
+    "dia": ("column_diameter_mm", "diameter_mm", "bolt_diameter_mm", "diameter_m"),
     "excavation": ("excavation_bank_m3",),
     "excavation_bank": ("excavation_bank_m3",),
     "bank": ("excavation_bank_m3",),
@@ -1230,9 +1235,23 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "structure_volume": ("structure_volume_m3",),
     "bolt_area": ("bolt_area_mm2",),
     "ab": ("bolt_area_mm2",),
+    "ab_mm2": ("bolt_area_mm2",),
+    "area": ("bolt_area_mm2", "area", "floor_area_m2", "formwork_area_m2", "area_m2"),
+    "fnv": ("shear_strength_mpa",),
+    "fub": ("shear_strength_mpa",),
     "gross": ("gross_valuation",),
     "valuation": ("gross_valuation",),
     "gross_value": ("gross_valuation",),
+    "gross_amount": ("gross_valuation",),
+    "certified_gross": ("gross_valuation",),
+    "ipc": ("gross_valuation",),
+    "amount": ("gross_valuation", "total_cost", "claimed_amount"),
+    "cost": ("total_cost",),
+    "price": ("total_cost",),
+    "total": ("total_cost",),
+    "area_m2": ("area", "floor_area_m2", "area_m2"),
+    "gfa": ("floor_area_m2",),
+    "floor_area": ("floor_area_m2",),
     "claimed": ("claimed_amount",),
     "claim": ("claimed_amount",),
     "certified": ("certified_amount",),
@@ -1246,11 +1265,23 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "max_density": ("max_dry_density",),
     "axial": ("axial_load_kn",),
     "axial_load": ("axial_load_kn",),
-    "w": ("udl_w_kn_m",),
+    "load": ("axial_load_kn",),
+    "n_ed": ("axial_load_kn",),
+    "pu": ("axial_load_kn",),
+    "column_dia": ("column_diameter_mm",),
+    "col_dia": ("column_diameter_mm",),
+    "w": ("udl_w_kn_m", "width_m"),
     "udl": ("udl_w_kn_m",),
     "udl_w": ("udl_w_kn_m",),
+    "uniform_load": ("udl_w_kn_m",),
     "span": ("span_m",),
-    "l": ("span_m", "length_m"),
+    "l": ("span_m", "length_m", "panel_length"),
+    "b": ("width_m", "width_mm"),
+    "breadth": ("width_m",),
+    "d": ("depth_m", "excavation_depth"),
+    "h": ("height_m",),
+    "height": ("height_m", "depth_m"),
+    "height_m": ("height_m", "depth_m"),
     "p": ("central_point_load_kn", "axial_load_kn", "point_load_kn"),
     "rate": ("rate_percent",),
     "delay_rate": ("rate_percent",),
@@ -1261,18 +1292,58 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "h_w": ("water_depth",),
     "water_table": ("water_depth",),
     "water_head": ("water_depth",),
+    "groundwater": ("water_depth",),
+    "gwl": ("water_depth",),
+    "gw_depth": ("water_depth",),
+    "uplift_head": ("water_depth",),
     "raft": ("raft_thickness",),
     "traft": ("raft_thickness",),
-    "floors": ("floor_count",),
-    "n_floors": ("floor_count",),
-    "nfloors": ("floor_count",),
-    "t": ("time_days",),
+    "t_raft": ("raft_thickness",),
+    "raft_t": ("raft_thickness",),
+    "raft_thk": ("raft_thickness",),
+    "raft_depth": ("raft_thickness",),
+    "floors": ("floor_count", "num_floors"),
+    "n_floors": ("floor_count", "num_floors"),
+    "nfloors": ("floor_count", "num_floors"),
+    "num_floors": ("floor_count", "num_floors"),
+    "storeys": ("floor_count", "num_floors"),
+    "stories": ("floor_count", "num_floors"),
+    "storey": ("floor_count", "num_floors"),
+    "story": ("floor_count", "num_floors"),
+    "levels": ("floor_count", "num_floors"),
+    "n_storeys": ("floor_count", "num_floors"),
+    "no_of_floors": ("floor_count", "num_floors"),
+    "number_of_floors": ("floor_count", "num_floors"),
+    "t": ("time_days", "thickness_m", "wall_thickness", "raft_thickness"),
     "time": ("time_days",),
     "days": ("time_days",),
     "age": ("time_days",),
     "age_days": ("time_days",),
     "esh_ult": ("ultimate_shrinkage_microstrain",),
     "ultimate_shrinkage": ("ultimate_shrinkage_microstrain",),
+    "wc": ("w_c_ratio",),
+    "w_c": ("w_c_ratio",),
+    "wc_ratio": ("w_c_ratio",),
+    "water_cement": ("w_c_ratio",),
+    "water_cement_ratio": ("w_c_ratio",),
+    "wcr": ("w_c_ratio",),
+    "temps": ("temperature_history_c",),
+    "temperatures": ("temperature_history_c",),
+    "temperature": ("temperature_history_c",),
+    "temperature_history": ("temperature_history_c",),
+    "hours": ("time_intervals_hours",),
+    "intervals": ("time_intervals_hours",),
+    "time_intervals": ("time_intervals_hours",),
+    "dt": ("time_intervals_hours",),
+    "length": ("length_m", "panel_length", "total_length_m"),
+    "thickness": ("thickness_m", "wall_thickness", "raft_thickness"),
+    "depth": ("depth_m", "excavation_depth"),
+    "panel_l": ("panel_length",),
+    "wall_t": ("wall_thickness",),
+    "excavation_d": ("excavation_depth",),
+    "bulking": ("bulking_factor",),
+    "swell": ("bulking_factor",),
+    "bulk": ("bulking_factor",),
 }
 
 # Signature defaults that must NOT silently succeed (live wrong_number /
@@ -1286,6 +1357,10 @@ _REQUIRED_GROUPS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
     "delay_damages_daily": (
         ("rate_percent",),
         ("contract_amount",),
+    ),
+    "beam_shear_simple": (
+        ("udl_w_kn_m", "central_point_load_kn"),
+        ("span_m",),
     ),
 }
 
@@ -1306,11 +1381,26 @@ _PARAM_UNIT_OVERRIDE: Dict[str, str] = {
     "time_days": "d",
     "time_constant_days": "d",
     "ultimate_shrinkage_microstrain": "µε",
+    "udl_w_kn_m": "kN/m",
+    "central_point_load_kn": "kN",
+    "quantity_m3": "m3",
+    "w_c_ratio": "ratio",
+    "floor_area_m2": "m2",
+    "panel_length": "m",
+    "wall_thickness": "m",
+    "excavation_depth": "m",
+    "total_cost": "currency",
+    "area": "m2",
+    "gross_valuation": "currency",
+    "temperature_history_c": "°C",
+    "time_intervals_hours": "h",
+    "axial_load_kn": "kN",
+    "column_diameter_mm": "mm",
 }
 
 
 def _snake_key(raw: Any) -> str:
-    s = str(raw or "").strip().replace("-", "_")
+    s = str(raw or "").strip().replace("-", "_").replace("/", "_")
     out: List[str] = []
     for i, ch in enumerate(s):
         if ch.isupper() and i and (s[i - 1].islower() or s[i - 1].isdigit()):
@@ -1352,6 +1442,27 @@ def _is_junk_key(key: Any) -> bool:
     return _snake_key(key) in {_snake_key(j) for j in _BIND_JUNK_KEYS}
 
 
+def coerce_calc_params(raw: Any) -> Dict[str, Any]:
+    """Accept a dict or a JSON-object string. Models often stringify ``params``.
+
+    Never invent keys. A non-object / empty / undecodable value is ``{}``.
+    """
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text or text[0] not in "{[":
+            return {}
+        try:
+            obj = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return dict(obj) if isinstance(obj, dict) else {}
+    return {}
+
+
 def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
     """Merge nested ``params`` / ``input`` into top-level calculator kwargs.
 
@@ -1368,8 +1479,8 @@ def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
     e4 = {_snake_key(j) for j in _E4_PASSTHROUGH_KEYS}
     out: Dict[str, Any] = {}
     for nest_key in _FLATTEN_NEST_KEYS:
-        nested = params.get(nest_key)
-        if not isinstance(nested, dict):
+        nested = coerce_calc_params(params.get(nest_key))
+        if not nested:
             continue
         for key, val in nested.items():
             if val is None or val == "":
@@ -1488,6 +1599,257 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     return bound
 
 
+_ASK_NUM = r"(\d[\d,]*(?:\.\d+)?)"
+_NUM_UNIT_VALUE_RE = re.compile(
+    r"^[+\-]?\s*([\d,]+(?:\.\d+)?)\s*[A-Za-zµμ/%²³³°]+"
+)
+_PLAIN_NUM_RE = re.compile(r"^[+\-]?\s*[\d,]+(?:\.\d+)?\s*$")
+_LWD_WORDS_RE = re.compile(
+    rf"{_ASK_NUM}\s*m?\s*long\b.*?{_ASK_NUM}\s*m?\s*wide\b.*?"
+    rf"{_ASK_NUM}\s*m?\s*(?:deep|thick)",
+    re.IGNORECASE | re.DOTALL,
+)
+_FORMULA_TRIPLE_RE = re.compile(
+    rf"{_ASK_NUM}\s*[*×x]\s*{_ASK_NUM}\s*[*×x]\s*{_ASK_NUM}",
+    re.IGNORECASE,
+)
+
+
+def _ask_float(raw: str) -> float:
+    return float(str(raw).replace(",", ""))
+
+
+def _ask_present(params: Dict[str, Any], *keys: str) -> bool:
+    return any(params.get(k) not in (None, "") for k in keys)
+
+
+def _ask_blob(params: Dict[str, Any]) -> str:
+    return " ".join(
+        str(x) for x in (
+            params.get("text"),
+            params.get("formula"),
+            params.get("message"),
+            params.get("query"),
+        ) if x
+    )
+
+
+def _fill_lwd_from_text(text: str, out: Dict[str, Any], depth_key: str = "depth_m") -> None:
+    """Bank / trench L×W×D from the ask. Does not invent numbers."""
+    if _ask_present(out, "length_m") and _ask_present(out, "width_m") and _ask_present(
+        out, depth_key, "height_m", "thickness_m",
+    ):
+        return
+    dims = None
+    try:
+        from app.lib.construction_formulas_quantities import parse_lwt_metres
+        dims = parse_lwt_metres(text)
+    except (TypeError, ValueError, ImportError):
+        dims = None
+    if dims:
+        out.setdefault("length_m", dims[0])
+        out.setdefault("width_m", dims[1])
+        out.setdefault(depth_key, dims[2])
+        return
+    match = _LWD_WORDS_RE.search(text or "")
+    if match:
+        out.setdefault("length_m", _ask_float(match.group(1)))
+        out.setdefault("width_m", _ask_float(match.group(2)))
+        out.setdefault(depth_key, _ask_float(match.group(3)))
+        return
+    match = _FORMULA_TRIPLE_RE.search(text or "")
+    if match:
+        out.setdefault("length_m", _ask_float(match.group(1)))
+        out.setdefault("width_m", _ask_float(match.group(2)))
+        out.setdefault(depth_key, _ask_float(match.group(3)))
+
+
+def _extract_beam_shear_from_ask(text: str, out: Dict[str, Any]) -> None:
+    if not _ask_present(out, "udl_w_kn_m"):
+        match = re.search(
+            rf"(?:udl(?:_w)?|w)\s*[=:]?\s*{_ASK_NUM}\s*(?:kN\s*/\s*m|kn/m)?",
+            text, re.IGNORECASE,
+        )
+        if match is None:
+            match = re.search(rf"{_ASK_NUM}\s*kN\s*/\s*m", text, re.IGNORECASE)
+        if match:
+            out["udl_w_kn_m"] = _ask_float(match.group(1))
+    if not _ask_present(out, "span_m"):
+        match = re.search(
+            rf"(?:span|l)\s*[=:]?\s*{_ASK_NUM}\s*m?\b",
+            text, re.IGNORECASE,
+        )
+        if match:
+            out["span_m"] = _ask_float(match.group(1))
+
+
+def _extract_dewatering_from_ask(text: str, out: Dict[str, Any]) -> None:
+    if not _ask_present(out, "water_depth"):
+        match = re.search(
+            rf"{_ASK_NUM}\s*m(?:etre)?s?\s+(?:of\s+)?(?:water|head|groundwater|uplift)",
+            text, re.IGNORECASE,
+        )
+        if match is None:
+            match = re.search(
+                rf"(?:water|head|hw|groundwater)(?:\s+depth)?(?:\s+of)?\s*[:=]?\s*{_ASK_NUM}",
+                text, re.IGNORECASE,
+            )
+        if match:
+            out["water_depth"] = _ask_float(match.group(1))
+    if not _ask_present(out, "raft_thickness"):
+        match = re.search(
+            rf"{_ASK_NUM}\s*m(?:etre)?s?\s+(?:thick\s+)?raft",
+            text, re.IGNORECASE,
+        )
+        if match is None:
+            match = re.search(
+                rf"raft(?:\s+thickness)?(?:\s+of)?\s*[:=]?\s*{_ASK_NUM}",
+                text, re.IGNORECASE,
+            )
+        if match:
+            out["raft_thickness"] = _ask_float(match.group(1))
+    if not _ask_present(out, "floor_count"):
+        match = re.search(
+            rf"{_ASK_NUM}\s+(?:floors?|storeys?|stories|levels)\b",
+            text, re.IGNORECASE,
+        )
+        if match:
+            out["floor_count"] = int(_ask_float(match.group(1)))
+
+
+def _extract_carbon_from_ask(text: str, out: Dict[str, Any]) -> None:
+    if not _ask_present(out, "volume_m3"):
+        match = re.search(rf"{_ASK_NUM}\s*m\s*3\b", text, re.IGNORECASE)
+        if match is None:
+            match = re.search(rf"{_ASK_NUM}\s*m³", text, re.IGNORECASE)
+        if match:
+            out["volume_m3"] = _ask_float(match.group(1))
+    if not _ask_present(out, "grade"):
+        match = re.search(r"\b(c\s*\d{2})\b", text, re.IGNORECASE)
+        if match:
+            out["grade"] = match.group(1).replace(" ", "").lower()
+
+
+def _extract_mix_from_ask(text: str, out: Dict[str, Any]) -> None:
+    if _ask_present(out, "w_c_ratio"):
+        return
+    match = re.search(
+        rf"(?:w\s*/\s*c|w[_/]?c(?:\s+ratio)?)\s*[:=]?\s*{_ASK_NUM}",
+        text, re.IGNORECASE,
+    )
+    if match:
+        out["w_c_ratio"] = _ask_float(match.group(1))
+
+
+def _extract_calc_kwargs_from_ask(
+    name: str, params: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Fill missing kwargs from ``text`` / ``formula``. Never invent defaults."""
+    out = dict(params or {})
+    blob = _ask_blob(out)
+    if not blob.strip():
+        return out
+    calc = str(name or "").strip().lower()
+    if calc == "beam_shear_simple":
+        _extract_beam_shear_from_ask(blob, out)
+    elif calc == "dewatering_uplift_check":
+        _extract_dewatering_from_ask(blob, out)
+    elif calc == "excavation_volume":
+        _fill_lwd_from_text(blob, out, "depth_m")
+    elif calc == "concrete_volume":
+        _fill_lwd_from_text(blob, out, "thickness_m")
+    elif calc == "carbon_footprint_concrete":
+        _extract_carbon_from_ask(blob, out)
+    elif calc == "concrete_mix_design_sg":
+        _extract_mix_from_ask(blob, out)
+    elif calc == "diaphragm_wall_panel_volume":
+        _fill_lwd_from_text(blob, out, "excavation_depth")
+        if _ask_present(out, "length_m") and not _ask_present(out, "panel_length"):
+            out["panel_length"] = out["length_m"]
+        if _ask_present(out, "thickness_m") and not _ask_present(out, "wall_thickness"):
+            out["wall_thickness"] = out["thickness_m"]
+        elif _ask_present(out, "width_m") and not _ask_present(out, "wall_thickness"):
+            out["wall_thickness"] = out["width_m"]
+        if _ask_present(out, "depth_m") and not _ask_present(out, "excavation_depth"):
+            out["excavation_depth"] = out["depth_m"]
+    return out
+
+
+def _annotation_wants_list(annotation: Any) -> bool:
+    if annotation is _inspect.Parameter.empty:
+        return False
+    if isinstance(annotation, str):
+        low = annotation.replace(" ", "").lower()
+        return low.startswith("list[") or low == "list"
+    origin = getattr(annotation, "__origin__", None)
+    return origin in (list, List)
+
+
+def _coerce_scalar(val: Any) -> Any:
+    if isinstance(val, bool) or val is None or isinstance(val, (int, float)):
+        return val
+    if not isinstance(val, str):
+        return val
+    text = val.strip()
+    if not text:
+        return val
+    if _PLAIN_NUM_RE.match(text):
+        number = text.replace(",", "").replace(" ", "")
+        return float(number) if "." in number else int(number)
+    match = _NUM_UNIT_VALUE_RE.match(text)
+    if match:
+        number = match.group(1).replace(",", "")
+        return float(number) if "." in number else int(number)
+    return val
+
+
+def _coerce_list(val: Any) -> Any:
+    if isinstance(val, (list, tuple)):
+        return [_coerce_scalar(item) for item in val]
+    if isinstance(val, str):
+        text = val.strip()
+        if text.startswith("["):
+            try:
+                obj = json.loads(text)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                obj = None
+            if isinstance(obj, list):
+                return [_coerce_scalar(item) for item in obj]
+        parts = [part for part in re.split(r"[,\s]+", text) if part]
+        if parts and all(
+            _PLAIN_NUM_RE.match(part) or _NUM_UNIT_VALUE_RE.match(part)
+            for part in parts
+        ):
+            return [_coerce_scalar(part) for part in parts]
+    coerced = _coerce_scalar(val)
+    if isinstance(coerced, (int, float)):
+        return [coerced]
+    return val
+
+
+def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip unit suffixes from numeric strings; wrap list-typed scalars."""
+    try:
+        sig = _inspect.signature(fn)
+    except (TypeError, ValueError):
+        return bound
+    out = dict(bound)
+    for key, val in list(out.items()):
+        param = sig.parameters.get(key)
+        if param is None:
+            continue
+        if _annotation_wants_list(param.annotation):
+            out[key] = _coerce_list(val)
+            continue
+        ann = param.annotation
+        ann_s = ann if isinstance(ann, str) else getattr(ann, "__name__", str(ann))
+        if str(ann_s).lower() in ("str", "string"):
+            continue
+        if isinstance(val, str):
+            out[key] = _coerce_scalar(val)
+    return out
+
+
 def _missing_required(fn: Any, bound: Dict[str, Any], name: Optional[str] = None) -> List[str]:
     missing: List[str] = []
     groups = _REQUIRED_GROUPS.get(str(name or "").strip().lower())
@@ -1601,7 +1963,11 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # name-specific filter here (Agent C / DIR7 share this path).
     if str(name or "").strip().lower() == "calculate_evm":
         params = _alias_calculate_evm_params(params)
+    # Standing-exit B: model aliases / numbers live in ``text`` more often
+    # than in kwargs. Fill holes only — never invent defaults.
+    params = _extract_calc_kwargs_from_ask(str(name), params)
     params = bind_calculation_params(fn, params)
+    params = _coerce_bound_values(fn, params)
     missing = _missing_required(fn, params, name=str(name))
     if missing:
         env = _bind_error_envelope(str(name), fn, missing)

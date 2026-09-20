@@ -12930,7 +12930,7 @@ class Agent:
                     args, user_message=user_message,
                 )
             from app.lib import construction_formulas as _cf
-            calc_params = dict(args.get("params") or {})
+            calc_params = _cf.coerce_calc_params(args.get("params"))
             # SHARED WITH AGENT C / #636 / #639 / #652: models put calculator
             # kwargs next to ``calculation`` instead of inside ``params``.
             # The container path already flattens; the tool path must too or

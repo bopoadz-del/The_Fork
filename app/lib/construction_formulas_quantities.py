@@ -176,7 +176,15 @@ def resolve_concrete_volume_calc(
         ) if x
     )
     named = str(calc or "").strip()
-    is_concrete = named == "concrete_volume" or looks_like_concrete_volume_ask(blob)
+    # E4 may steal unnamed / excavation_volume when the ask is a raft/slab.
+    # A *named* calculator (dewatering, carbon, mix design, …) must stay on
+    # its signature even if the question mentions "raft" or "concrete".
+    # Live standing-exit: those names were remapped to concrete_volume and
+    # returned volume_m3=0 (tool_error×2 / 1-of-2).
+    _e4_stealable = {"", "excavation_volume", "concrete_volume"}
+    is_concrete = named == "concrete_volume" or (
+        named in _e4_stealable and looks_like_concrete_volume_ask(blob)
+    )
     if not is_concrete:
         return calc, out
 
