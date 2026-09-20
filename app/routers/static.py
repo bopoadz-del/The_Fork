@@ -31,6 +31,10 @@ _BUILD_MISSING_HTML = (
 _RESERVED_PREFIXES: tuple[str, ...] = (
     "v1/", "api", "dashboard/", "assets/",
     "health", "docs", "redoc", "openapi.json", "mcp",
+    # /debug/env must not fall through to the SPA shell. Production does
+    # not mount the debug router; a 200 HTML 200 looked like a hole on
+    # Windows and on live even though the body had no env payload.
+    "debug",
 )
 
 
