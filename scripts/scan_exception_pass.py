@@ -58,19 +58,18 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20 #671: VO ask2 hard-exclude + force
-    # variation_order_manager. Same handlers — byte-identical.
-    # No new silent returns.
+    # Re-indexed 2026-09-20 #671 after #670 merge: VO force + hard-exclude.
+    # Same handlers — byte-identical. No new silent returns.
     "app/agents/runtime.py:647": "baseline 2026-09-10",
-    "app/agents/runtime.py:970": "baseline 2026-09-10",
-    "app/agents/runtime.py:2135": "baseline 2026-09-10",
-    "app/agents/runtime.py:2141": "baseline 2026-09-10",
-    "app/agents/runtime.py:2204": "baseline 2026-09-10",
-    "app/agents/runtime.py:2210": "baseline 2026-09-10",
-    "app/agents/runtime.py:2880": "baseline 2026-09-10",
-    "app/agents/runtime.py:3900": "baseline 2026-09-10",
-    "app/agents/runtime.py:5224": "baseline 2026-09-10",
-    "app/agents/runtime.py:5635": "baseline 2026-09-10",
+    "app/agents/runtime.py:971": "baseline 2026-09-10",
+    "app/agents/runtime.py:2136": "baseline 2026-09-10",
+    "app/agents/runtime.py:2142": "baseline 2026-09-10",
+    "app/agents/runtime.py:2205": "baseline 2026-09-10",
+    "app/agents/runtime.py:2211": "baseline 2026-09-10",
+    "app/agents/runtime.py:2882": "baseline 2026-09-10",
+    "app/agents/runtime.py:3902": "baseline 2026-09-10",
+    "app/agents/runtime.py:5226": "baseline 2026-09-10",
+    "app/agents/runtime.py:5637": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
