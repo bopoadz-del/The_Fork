@@ -1697,7 +1697,7 @@ def _vo_draft_hard_excludes(user_message: str) -> set[str]:
     return {
         "construction", "formula_executor_v2", "formula_executor",
         "sympy_reasoning", "recommendation_template",
-        "change_order_impact",
+        "change_order_impact", "validation_pipeline", "delegate_to_agent",
         "construction_calc",
     }
 
@@ -1743,7 +1743,7 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "payment_certificate": {"wir_form", "claims_builder"},
         "commissioning_checklist": {"wir_form", "om_manual_generator"},
         "wir_form": {"payment_certificate", "job_requisition", "rfp_draft", "rfi_generator"},
-        "variation_order_manager": {"change_order_impact", "wir_form", "sympy_reasoning", "construction", "formula_executor_v2", "formula_executor", "recommendation_template"},
+        "variation_order_manager": {"change_order_impact", "wir_form", "sympy_reasoning", "construction", "formula_executor_v2", "formula_executor", "recommendation_template", "validation_pipeline", "delegate_to_agent"},
         "boq_process": {"construction_calc", "generate_wbs", "formula_executor_v2", "formula_executor"},
         "boq_processor": {"construction_calc", "generate_wbs", "formula_executor_v2", "formula_executor"},
     }
