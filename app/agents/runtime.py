@@ -2400,6 +2400,15 @@ _UNIT_RATE_TOKEN_RE = re.compile(
 )
 
 
+# A sentence, not a reference: it ends in "?", opens with a question word, or
+# runs to seven words or more ("vol 2 specification 6 of 9" is six).
+_QUOTED_SENTENCE_RE = re.compile(
+    r"(?i)\?\s*$|^(?:what|which|who|whom|when|where|why|how|is|are|does|do|can|"
+    r"could|should|calculate|compute|find|give|show|list|explain)\b"
+    r"|^(?:\S+\s+){6,}\S+"
+)
+
+
 def _should_short_circuit_rag_miss(
     audit_rec: dict[str, Any] | None,
     rag_sys_msg: dict[str, str] | None,
@@ -2437,9 +2446,13 @@ def _should_short_circuit_rag_miss(
     # A unit RATE ("SAR 62/m2") is not a reference: it looks like page
     # "d/3/3" to the extractor, and a variance question carrying all its own
     # numbers was refused as a missing document in 4 s.
+    # ...and neither is a whole SENTENCE that happened to be typed inside
+    # quotation marks: the extractor reads any quoted span as an exact
+    # reference, so a quoted question was refused as a missing document.
     identifiers = [
         i for i in (audit_rec.get("extracted_identifiers") or [])
         if not _UNIT_RATE_TOKEN_RE.fullmatch(i.strip())
+        and not _QUOTED_SENTENCE_RE.search(i.strip())
     ]
     # Require a digit to avoid short-circuiting generic phrases like
     # "contract value" that happen to match a reference label.
