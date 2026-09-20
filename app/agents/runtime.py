@@ -14081,36 +14081,17 @@ def _formula_calculator_name_from_message(text: str) -> str | None:
     Used only to invoke construction_calc. Does not invent a mapping
     among audit #43–84 — if two names match, we pass no name and the
     tool returns an honest unknown-calculation envelope.
+
+    Shared with ``calculator_name_from_text``: full names beat 2-token
+    stems (mix-design vs slip-form, cost-buildup concrete vs rebar) and
+    a unique 3-token tail (``well point spacing``) counts.
     """
     try:
-        from app.lib.construction_formulas import CALCULATORS
+        from app.lib.construction_formulas import calculator_name_from_text
+        return calculator_name_from_text(text)
     except Exception:  # noqa: BLE001
-        _LOG.debug("CALCULATORS import failed", exc_info=True)
+        _LOG.debug("calculator_name_from_text failed", exc_info=True)
         return None
-    raw = text or ""
-    underscored = raw.lower().replace("-", "_")
-    spaced = raw.lower().replace("-", " ").replace("_", " ")
-    hits: list[str] = []
-    for name in CALCULATORS:
-        if len(name) < 6:
-            continue
-        tokens = [t for t in name.lower().split("_") if t]
-        if name.lower() in underscored:
-            hits.append(name)
-            continue
-        if len(tokens) >= 3 and name.replace("_", " ") in spaced:
-            hits.append(name)
-            continue
-        if len(tokens) >= 3:
-            stem = " ".join(tokens[:2])
-            if (
-                len(stem) >= 8
-                and stem in spaced
-                and stem not in _FORMULA_STEM_LOOKUP_COLLISIONS
-            ):
-                hits.append(name)
-    uniq = list(dict.fromkeys(hits))
-    return uniq[0] if len(uniq) == 1 else None
 
 
 async def _predispatch_formula_calc(
