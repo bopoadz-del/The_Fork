@@ -6350,8 +6350,8 @@ def _postprocess_answer(
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
-    # Live A2 after #634: a successful calc that is only a formula
-    # template or a 1 m rebar demo is not a complete answer.
+    # Empty / incomplete construction_calc: a formula-name note or a
+    # 1 m rebar demo is not a complete answer. Graft the computed ask.
     text = _graft_complete_calc_answer(text, messages)
     # Leftover F1: refuse + DD-2022 CoC cite is FAIL. If generate_wbs
     # already produced a BOQ-derived tree, that draft is the answer.
@@ -13424,9 +13424,15 @@ def _format_tool_error_plain(
         )
     elif err:
         cleaned = re.sub(r"[{}\[\]]", "", err).strip().rstrip(".")
-        if len(cleaned) > 180:
-            cleaned = cleaned[:177] + "..."
-        sentence = f"The tool could not complete that request ({cleaned})."
+        # Empty-kwargs class: keep the named required-parameter list
+        # (with units). Do not squash it into a 180-char generic.
+        names_params = " needs " in cleaned.lower() and "(" in cleaned
+        if names_params:
+            sentence = cleaned if cleaned.endswith(".") else f"{cleaned}."
+        else:
+            if len(cleaned) > 180:
+                cleaned = cleaned[:177] + "..."
+            sentence = f"The tool could not complete that request ({cleaned})."
     else:
         sentence = "The tool could not complete that request."
     if request_id:

@@ -1076,6 +1076,79 @@ def _alias_calculate_evm_params(params: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+# Units for empty / incomplete construction_calc kwargs. The model often
+# calls with {} or a half-set; the error must name every required input
+# with its unit so the retry can bind (same class as empty-args
+# payment_certificate / B-calc FAILs).
+_PARAM_UNITS: Dict[str, str] = {
+    "bar_diameter_mm": "mm",
+    "total_length_m": "m",
+    "total_weight_kg": "kg",
+    "total_mass_kg": "kg",
+    "total_mass_t": "t",
+    "quantity": "qty",
+    "quantity_executed": "qty",
+    "quantity_kg": "kg",
+    "daily_production": "qty/day",
+    "productivity": "qty/h",
+    "productivity_rate": "qty/day",
+    "crew_cost_per_day": "currency/day",
+    "day_rate": "currency/day",
+    "gang_cost_per_day": "currency/day",
+    "man_hours": "h",
+    "manpower": "persons",
+    "working_hours": "h",
+    "remaining_manhours": "h",
+    "available_hours": "h",
+    "remaining_qty": "qty",
+    "remaining_days": "days",
+    "material_price_sar_t": "SAR/t",
+}
+
+_CALC_REQUIRED_HELP: Dict[str, str] = {
+    "rebar_weight": (
+        "rebar_weight needs bar_diameter_mm (mm) and either "
+        "total_length_m (m) or total_weight_kg (kg) with mode=weight_to_length."
+    ),
+    "productivity_manpower_duration": (
+        "productivity_manpower_duration needs paired inputs (no invented "
+        "rates): quantity_executed (qty) + man_hours (h); "
+        "quantity (qty) + productivity (qty/h); "
+        "quantity (qty) + daily_production (qty/day); "
+        "quantity (qty) + productivity_rate (qty/gang-day) + "
+        "crew_cost_per_day (currency/day); "
+        "manpower (persons) + working_hours (h); "
+        "remaining_manhours (h) + available_hours (h); "
+        "or remaining_qty (qty) + remaining_days (days)."
+    ),
+}
+
+
+def _param_with_unit(name: str) -> str:
+    unit = _PARAM_UNITS.get(name)
+    return f"{name} ({unit})" if unit else name
+
+
+def required_params_error(name: str, fn: Any) -> str:
+    """Error text that names every required parameter with its unit."""
+    canned = _CALC_REQUIRED_HELP.get(str(name or "").strip())
+    if canned:
+        return canned
+    try:
+        sig = _inspect.signature(fn)
+    except (TypeError, ValueError):
+        return f"{name} needs its documented inputs; none were usable."
+    required = [
+        k for k, p in sig.parameters.items()
+        if p.default is _inspect.Parameter.empty
+        and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+        and k != "self"
+    ]
+    if not required:
+        return f"{name} needs its documented inputs; none were usable."
+    return f"{name} needs: " + ", ".join(_param_with_unit(k) for k in required) + "."
+
+
 def _result_is_failure(result: Dict[str, Any]) -> bool:
     """Did a calculator report failure by RETURNING rather than raising?
 
@@ -1150,12 +1223,15 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     try:
         result = fn(**params)
     except TypeError as exc:
-        # Wrong / missing kwargs — surface the real signature, don't fabricate.
+        # Empty / incomplete kwargs — name every required input with units
+        # so the next call can bind. Keep the inspect signature for tests.
         sig = str(_inspect.signature(fn))
         return {
             "status": "error",
-            "error": f"Bad parameters for {name}: {exc}",
+            "calculation": name,
+            "error": required_params_error(name, fn),
             "signature": f"{name}{sig}",
+            "cause": str(exc),
         }
     except Exception as exc:  # noqa: BLE001 — never raise into the agent loop
         return {"status": "error", "error": f"{name} failed: {exc}"}
@@ -1172,11 +1248,19 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # tool loop reads as a working answer and narrates as a result.
     #
     if _result_is_failure(result):
-        return {
+        err = result["error"]
+        if name in _CALC_REQUIRED_HELP and "needs" in err.lower():
+            err = _CALC_REQUIRED_HELP[name]
+        out = {
             "status": "error",
             "calculation": name,
-            "error": result["error"],
+            "error": err,
         }
+        if isinstance(result.get("required"), list):
+            out["required"] = result["required"]
+        if isinstance(result.get("required_pairs"), list):
+            out["required_pairs"] = result["required_pairs"]
+        return out
 
     # Phase 2 F–W (#43–84) leftovers: stamp unit / unitless on the four
     # results the live probe scored as "number present, unit missing".

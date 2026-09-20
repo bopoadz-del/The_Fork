@@ -315,11 +315,15 @@ def productivity_manpower_duration(
     if not computed:
         return {
             "error": (
-                "productivity_manpower_duration needs paired inputs for at "
-                "least one formula (e.g. quantity_executed+man_hours, "
-                "quantity+productivity, manpower+working_hours, "
-                "remaining_manhours+available_hours, quantity+daily_production, "
-                "or remaining_qty+remaining_days). No invented rates."
+                "productivity_manpower_duration needs paired inputs (no invented "
+                "rates): quantity_executed (qty) + man_hours (h); "
+                "quantity (qty) + productivity (qty/h); "
+                "quantity (qty) + daily_production (qty/day); "
+                "quantity (qty) + productivity_rate (qty/gang-day) + "
+                "crew_cost_per_day (currency/day); "
+                "manpower (persons) + working_hours (h); "
+                "remaining_manhours (h) + available_hours (h); "
+                "or remaining_qty (qty) + remaining_days (days)."
             ),
             "required_pairs": [
                 ["quantity_executed", "man_hours"],
@@ -328,6 +332,7 @@ def productivity_manpower_duration(
                 ["remaining_manhours", "available_hours"],
                 ["quantity", "daily_production"],
                 ["remaining_qty", "remaining_days"],
+                ["quantity", "productivity_rate", "crew_cost_per_day"],
             ],
         }
 

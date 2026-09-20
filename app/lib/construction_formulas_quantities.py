@@ -677,8 +677,9 @@ def rebar_weight(
         if mass_kg <= 0:
             return {
                 "error": (
-                    "rebar_weight weight_to_length needs total_weight_kg "
-                    "(or total_mass_kg / total_mass_t)."
+                    "rebar_weight needs bar_diameter_mm (mm) and either "
+                    "total_length_m (m) or total_weight_kg (kg) with "
+                    "mode=weight_to_length."
                 ),
                 "required": ["bar_diameter_mm", "total_weight_kg"],
             }
@@ -702,8 +703,9 @@ def rebar_weight(
     if length <= 0:
         return {
             "error": (
-                "rebar_weight needs total_length_m, or total_weight_kg "
-                "with mode=weight_to_length."
+                "rebar_weight needs bar_diameter_mm (mm) and either "
+                "total_length_m (m) or total_weight_kg (kg) with "
+                "mode=weight_to_length."
             ),
             "required": ["bar_diameter_mm", "total_length_m"],
         }
