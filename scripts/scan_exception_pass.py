@@ -58,9 +58,9 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20 train SO2: SO1 remaps + VO first-ask draft
-    # helpers (#646) inserted above these pre-existing handlers. Same
-    # sites — only the line numbers moved. No new silent returns.
+    # Re-indexed 2026-09-20 train SO2: SO1 remaps + VO first-ask (#646)
+    # + A2 formula-template recovery (#649). Same pre-existing handlers
+    # — only the line numbers moved. No new silent returns.
     "app/agents/runtime.py:2058": "baseline 2026-09-10",
     "app/agents/runtime.py:2064": "baseline 2026-09-10",
     "app/agents/runtime.py:2127": "baseline 2026-09-10",

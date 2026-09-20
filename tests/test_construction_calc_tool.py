@@ -74,6 +74,16 @@ def test_bad_params_return_the_real_signature():
     assert r["ok"] is False
     assert "signature" in r["result"]
     assert "quantity_kg" in r["result"]["signature"]  # the real required input
+    assert "quantity_kg (kg)" in r["result"]["error"]
+
+
+def test_empty_rebar_weight_names_length_or_mass_with_units():
+    r = _call(_agent(["construction"]), "rebar_weight", {})
+    assert r["ok"] is False
+    err = r["result"]["error"]
+    assert "bar_diameter_mm (mm)" in err
+    assert "total_length_m (m)" in err
+    assert "total_weight_kg (kg)" in err
 
 
 def test_calc_queries_force_construction_calc():

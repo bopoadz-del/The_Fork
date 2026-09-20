@@ -7,9 +7,12 @@ parameters; arithmetic shown in ``note``.
 """
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
+
+logger = logging.getLogger(__name__)
 
 _STEEL_DENSITY = 7850.0  # kg/m^3
 
@@ -597,25 +600,126 @@ def concrete_volume(
     }
 
 
+_WEIGHT_TO_LENGTH_MODES = {
+    "weight_to_length",
+    "weight2length",
+    "to_length",
+    "metres_run",
+    "meters_run",
+    "metre_run",
+    "meter_run",
+}
+
+
+def _rebar_mass_kg(
+    total_weight_kg: float,
+    total_mass_kg: float,
+    total_mass_t: float,
+) -> float:
+    for raw, scale in (
+        (total_weight_kg, 1.0),
+        (total_mass_kg, 1.0),
+        (total_mass_t, 1000.0),
+    ):
+        if raw in (None, "", 0, 0.0):
+            continue
+        try:
+            value = float(raw) * scale
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return 0.0
+
+
 def rebar_weight(
     bar_diameter_mm: float,
-    total_length_m: float,
+    total_length_m: float = 0.0,
     quantity: int = 1,
     density_kg_m3: float = _STEEL_DENSITY,
+    total_weight_kg: float = 0.0,
+    total_mass_kg: float = 0.0,
+    total_mass_t: float = 0.0,
+    mode: str = "",
 ) -> dict:
-    """Mass of reinforcement bars. Unit mass = (pi/4)*d^2 * density (kg/m),
-    reproducing the standard bar-mass table (d=16 -> 1.578 kg/m at 7850 kg/m3)."""
+    """Mass of reinforcement bars, or metres run from a given mass.
+
+    Unit mass = (pi/4)*d^2 * density (kg/m), reproducing the standard
+    bar-mass table (d=16 -> 1.578 kg/m at 7850 kg/m3).
+
+    Live A2-2: ``mode=weight_to_length`` + ``total_weight_kg`` (12 t of
+    Y16) returns metres run. ``total_length_m`` stays required for the
+    original length → mass path.
+    """
     d = float(bar_diameter_mm)
     area_m2 = math.pi / 4.0 * (d / 1000.0) ** 2
     unit_mass = area_m2 * density_kg_m3  # kg/m
-    total = unit_mass * float(total_length_m) * int(quantity)
+    qty = int(quantity) if quantity not in (None, "") else 1
+    if qty <= 0:
+        qty = 1
+    try:
+        length = float(total_length_m or 0.0)
+    except (TypeError, ValueError):
+        length = 0.0
+    mass_kg = _rebar_mass_kg(total_weight_kg, total_mass_kg, total_mass_t)
+    want_length = str(mode or "").strip().lower() in _WEIGHT_TO_LENGTH_MODES
+    if not want_length and mass_kg > 0 and length <= 0:
+        want_length = True
+
+    if want_length:
+        if unit_mass <= 0:
+            return {
+                "error": (
+                    "rebar_weight weight_to_length needs bar_diameter_mm > 0 "
+                    "to compute unit mass."
+                ),
+            }
+        if mass_kg <= 0:
+            return {
+                "error": (
+                    "rebar_weight needs bar_diameter_mm (mm) and either "
+                    "total_length_m (m) or total_weight_kg (kg) with "
+                    "mode=weight_to_length."
+                ),
+                "required": ["bar_diameter_mm", "total_weight_kg"],
+            }
+        metres = mass_kg / unit_mass / qty
+        return {
+            "unit_mass_kg_m": round(unit_mass, 4),
+            "total_mass_kg": round(mass_kg, 2),
+            "total_mass_t": round(mass_kg / 1000.0, 4),
+            "total_length_m": round(metres, 2),
+            "metres_run": round(metres, 2),
+            "quantity": qty,
+            "mode": "weight_to_length",
+            "standard": "BS 8666 / bar-mass relation",
+            "note": (
+                f"Unit mass = (pi/4)*({d}/1000)^2*{density_kg_m3:.0f} = "
+                f"{unit_mass:.4f} kg/m; {mass_kg:g} kg / {unit_mass:.4f} "
+                f"kg/m = {metres:.2f} m."
+            ),
+        }
+
+    if length <= 0:
+        return {
+            "error": (
+                "rebar_weight needs bar_diameter_mm (mm) and either "
+                "total_length_m (m) or total_weight_kg (kg) with "
+                "mode=weight_to_length."
+            ),
+            "required": ["bar_diameter_mm", "total_length_m"],
+        }
+
+    total = unit_mass * length * qty
     return {
         "unit_mass_kg_m": round(unit_mass, 4),
         "total_mass_kg": round(total, 2),
         "total_mass_t": round(total / 1000.0, 4),
+        "total_length_m": round(length, 4),
+        "quantity": qty,
         "standard": "BS 8666 / bar-mass relation",
         "note": (f"Unit mass = (pi/4)*({d}/1000)^2*{density_kg_m3:.0f} = "
-                 f"{unit_mass:.4f} kg/m; x {total_length_m} m x {quantity} = "
+                 f"{unit_mass:.4f} kg/m; x {length} m x {qty} = "
                  f"{total:.2f} kg."),
     }
 
@@ -767,6 +871,103 @@ def resource_line_cost(
                  f"plant = {plant_fraction_of_labour} x labour = {plant:.2f}; "
                  + (f"material = {q} x {material_rate_per_unit} = {material:.2f}."
                     if has_material else "material: NO SOURCED RATE (no rate supplied).")),
+    }
+
+
+# Live A2-2: "What is the weight of 12 tonnes of Y16 bars in metres run?"
+_METRES_RUN_ASK_RE = re.compile(
+    r"(?i)metres?\s+run|meters?\s+run|"
+    r"(?:tonnes?|tons?|kg).{0,40}(?:y|t|h)?\d{1,2}.{0,40}(?:metr|length|run)|"
+    r"(?:y|t|h)\d{1,2}.{0,40}(?:tonnes?|tons?|kg).{0,40}(?:metr|length|run)"
+)
+_Y_BAR_RE = re.compile(r"(?i)\b[YTH](\d{1,2})\b")
+_DIA_MM_RE = re.compile(r"(?i)(\d{1,2})\s*mm\b")
+_TONNES_RE = re.compile(r"(?i)(\d[\d,]*(?:\.\d+)?)\s*(?:tonnes?|tons?|t)\b")
+_KG_MASS_RE = re.compile(r"(?i)(\d[\d,]*(?:\.\d+)?)\s*kg\b")
+
+
+def looks_like_rebar_metres_run_ask(text: str) -> bool:
+    """True when the operator asked for metres run from a bar mass."""
+    return bool(_METRES_RUN_ASK_RE.search(text or ""))
+
+
+def parse_rebar_metres_run_ask(text: str) -> tuple[float, float] | None:
+    """Return (bar_diameter_mm, total_weight_kg) or None."""
+    raw = text or ""
+    dia = None
+    y = _Y_BAR_RE.search(raw)
+    if y:
+        dia = float(y.group(1))
+    else:
+        d = _DIA_MM_RE.search(raw)
+        if d:
+            dia = float(d.group(1))
+    if dia is None or dia <= 0:
+        return None
+    tonnes = _TONNES_RE.search(raw)
+    if tonnes:
+        return dia, float(tonnes.group(1).replace(",", "")) * 1000.0
+    kg = _KG_MASS_RE.search(raw)
+    if kg:
+        return dia, float(kg.group(1).replace(",", ""))
+    return None
+
+
+def format_rebar_metres_run_line(inner: dict) -> str:
+    """User-facing metres-run line. Rejects the 1 m unit-mass demo."""
+    if not isinstance(inner, dict):
+        return ""
+    metres = inner.get("metres_run", inner.get("total_length_m"))
+    unit = inner.get("unit_mass_kg_m")
+    mass = inner.get("total_mass_kg")
+    try:
+        metres_f = float(metres)
+    except (TypeError, ValueError):
+        logger.debug("metres_run is not numeric: %r", metres)
+        return ""
+    if metres_f <= 10:
+        return ""
+    bits = [f"{metres_f:,.2f} m"]
+    if unit not in (None, "") and mass not in (None, ""):
+        bits = [
+            f"Unit mass = {float(unit):.4f} kg/m; "
+            f"{float(mass):,.0f} kg / {float(unit):.4f} = {metres_f:,.2f} m"
+        ]
+    return bits[0] + "."
+
+
+def compose_rebar_metres_run_from_ask(text: str) -> dict | None:
+    """Run weight→length from the operator ask (live A2-2)."""
+    if not looks_like_rebar_metres_run_ask(text):
+        return None
+    parsed = parse_rebar_metres_run_ask(text)
+    if not parsed:
+        return None
+    dia, mass_kg = parsed
+    from app.lib import construction_formulas as _cf
+    env = _cf.run_calculation(
+        "rebar_weight",
+        {
+            "bar_diameter_mm": dia,
+            "total_weight_kg": mass_kg,
+            "mode": "weight_to_length",
+        },
+    )
+    if not isinstance(env, dict) or env.get("status") != "success":
+        return None
+    inner = env.get("result") if isinstance(env.get("result"), dict) else {}
+    line = format_rebar_metres_run_line(inner)
+    if not line:
+        return None
+    metres = inner.get("metres_run", inner.get("total_length_m"))
+    return {
+        "metres_run": metres,
+        "total_length_m": metres,
+        "unit_mass_kg_m": inner.get("unit_mass_kg_m"),
+        "total_mass_kg": inner.get("total_mass_kg"),
+        "line": line,
+        "envelope": env,
+        "result": inner,
     }
 
 
