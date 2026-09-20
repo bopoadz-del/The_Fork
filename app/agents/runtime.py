@@ -4698,21 +4698,72 @@ def _unwrap_construction_calc_inner(payload: dict[str, Any]) -> dict[str, Any] |
     return None
 
 
+def _format_generic_calc_envelope(payload: dict[str, Any]) -> str:
+    """User-facing lines from any successful ``construction_calc`` envelope.
+
+    Live empty-turn (Fleet Sync 2): plastering cost and Y16 metres-run both
+    ran the calculator, then the model hop died and the UI showed
+    ``_EMPTY_RESPONSE_FALLBACK``. The concrete-volume formatter only
+    unwraps ``volume_m3``, so those tool payloads were skipped. Prefer the
+    calculator's own ``note`` (it already states the maths). A failed
+    envelope is not an answer.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    if payload.get("status") == "error" or payload.get("error"):
+        return ""
+    result = payload.get("result")
+    if isinstance(result, dict) and result.get("error"):
+        return ""
+    if result is None and payload.get("calculation"):
+        result = {
+            k: v for k, v in payload.items()
+            if k not in {"status", "calculation", "note", "error"}
+        }
+    calc = str(payload.get("calculation") or "").strip()
+    if isinstance(result, dict):
+        note = result.get("note") or result.get("notes")
+        if isinstance(note, list):
+            note = "\n".join(str(x) for x in note if x)
+        if note:
+            note_s = str(note).strip()
+            if calc and calc not in note_s:
+                return f"{calc}: {note_s}" if "\n" not in note_s else f"{calc}\n{note_s}"
+            return note_s
+        lines: list[str] = []
+        if calc:
+            lines.append(f"Calculation: {calc}")
+        skip = {"note", "notes", "error", "standard"}
+        for key, val in result.items():
+            if key in skip:
+                continue
+            if isinstance(val, (int, float, str, bool)):
+                lines.append(f"{key}: {val}")
+        return "\n".join(lines).strip()
+    if result is not None and calc:
+        return f"{calc}: {result}"
+    return ""
+
+
 def _format_construction_calc(payload: dict[str, Any]) -> str:
-    """User-facing volume line from a successful ``construction_calc`` tool."""
+    """User-facing line from a successful ``construction_calc`` tool."""
     from app.lib.construction_formulas_quantities import format_concrete_volume_line
 
     inner = _unwrap_construction_calc_inner(payload)
-    if not inner:
-        return ""
-    calc = str(payload.get("calculation") or "")
-    if calc and calc != "concrete_volume":
-        return ""
-    if calc != "concrete_volume" and not inner.get("waste_factor") and inner.get("net_volume_m3") is None:
-        # Leftover L6 excavation (bank only) is not an E4 compose target.
-        if "bank_volume_m3" in inner and "volume_with_waste_m3" not in inner:
-            return ""
-    return format_concrete_volume_line(inner)
+    if inner:
+        calc = str(payload.get("calculation") or "")
+        if not calc or calc == "concrete_volume":
+            if not (
+                calc != "concrete_volume"
+                and not inner.get("waste_factor")
+                and inner.get("net_volume_m3") is None
+                and "bank_volume_m3" in inner
+                and "volume_with_waste_m3" not in inner
+            ):
+                line = format_concrete_volume_line(inner)
+                if line:
+                    return line
+    return _format_generic_calc_envelope(payload)
 
 
 def _construction_calc_from_messages(
@@ -5046,7 +5097,138 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
                 grounded.add(round(base[i] / base[j], 4))
             if base[i]:
                 grounded.add(round(base[j] / base[i], 4))
+    # Fleet Sync 2: pairwise misses a×b×c (14×2.4×2.4×0.6 = 48.384) and
+    # a per-footing split of that product. Only user-typed figures enter
+    # the extra products so a rate the user never gave stays ungrounded.
+    _cg_add_user_derived_figures(grounded, messages)
     return grounded
+
+
+def _cg_user_numbers(messages: list[dict[str, Any]] | None) -> list[float]:
+    """Unique numeric tokens from user turns, capped to keep the closure small."""
+    out: list[float] = []
+    seen: set[float] = set()
+    for msg in messages or []:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, str):
+            continue
+        for tok in _CG_NUM_RE.findall(content):
+            val = _cg_to_number(tok)
+            if val is None:
+                continue
+            key = round(val, 6)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(val)
+        for val in _cg_english_and_percent_values(content):
+            key = round(val, 6)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(val)
+        if len(out) >= 12:
+            break
+    return out[:12]
+
+
+def _cg_add_user_derived_figures(
+    grounded: set,
+    messages: list[dict[str, Any]] | None,
+) -> None:
+    """Ground a×b×c / a×b×c×d and one extra user-num multiply/divide pass."""
+    user_nums = _cg_user_numbers(messages)
+    if len(user_nums) < 2:
+        return
+    extra: set = set()
+    n = len(user_nums)
+    for i in range(n):
+        for j in range(i, n):
+            for k in range(j, n):
+                extra.add(round(user_nums[i] * user_nums[j] * user_nums[k], 4))
+    if 3 <= n <= 8:
+        for i in range(n):
+            for j in range(i, n):
+                for k in range(j, n):
+                    for m in range(k, n):
+                        extra.add(
+                            round(
+                                user_nums[i] * user_nums[j]
+                                * user_nums[k] * user_nums[m],
+                                4,
+                            )
+                        )
+    grounded.update(extra)
+    # Per-footing / qty split: (a×b×c) / count × rate. Two passes so the
+    # intermediate (volume/count) can then multiply the user's rate.
+    for _ in range(2):
+        more: set = set()
+        for g in grounded:
+            for u in user_nums:
+                more.add(round(g * u, 4))
+                if u:
+                    more.add(round(g / u, 4))
+        grounded.update(more)
+
+
+_CG_PERCENT_TOKEN_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:%|percent|per\s+cent)\b",
+    re.IGNORECASE,
+)
+_CG_UPLIFT_CUE_RE = re.compile(
+    r"(?i)\b(?:waste|contingen|allowance|including\s+\d|"
+    r"plus\s+\d+\s*%|\d+(?:\.\d+)?\s*%\s*"
+    r"(?:waste|contingen|allowance))\b",
+)
+
+
+def _cg_percent_factors(
+    messages: list[dict[str, Any]] | None,
+    answer_text: str,
+) -> list[float]:
+    """p as a fraction from user text, plus 5%/10% when the answer states them."""
+    blobs = [answer_text or ""]
+    for msg in messages or []:
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            content = msg.get("content")
+            if isinstance(content, str):
+                blobs.append(content)
+    factors: list[float] = []
+    seen: set[float] = set()
+
+    def _add(frac: float) -> None:
+        key = round(frac, 6)
+        if key in seen or frac <= 0 or frac > 1:
+            return
+        seen.add(key)
+        factors.append(frac)
+
+    for blob in blobs:
+        for match in _CG_PERCENT_TOKEN_RE.finditer(blob):
+            _add(float(match.group(1)) / 100.0)
+    if _CG_UPLIFT_CUE_RE.search(answer_text or ""):
+        _add(0.05)
+        _add(0.10)
+    return factors
+
+
+def _cg_add_percent_uplifts(
+    grounded: set,
+    messages: list[dict[str, Any]] | None,
+    answer_text: str,
+) -> None:
+    """Ground a×(1+p%) and a×p% for percents the user typed or the answer named."""
+    factors = _cg_percent_factors(messages, answer_text)
+    if not factors:
+        return
+    extra: set = set()
+    for g in list(grounded):
+        for frac in factors:
+            extra.add(round(g * frac, 4))
+            extra.add(round(g * (1.0 + frac), 4))
+    grounded.update(extra)
 
 
 def _cg_is_grounded(value: float, grounded: set) -> bool:
@@ -5079,6 +5261,7 @@ def _cost_grounding_gate(
             return text
         rag_context = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         grounded = _cg_grounded_numbers(rag_context, messages)
+        _cg_add_percent_uplifts(grounded, messages, text)
         if all(_cg_is_grounded(v, grounded) for _, v in figs):
             return text
         _LOG.warning(
@@ -7387,7 +7570,21 @@ class _SynthStreamError(Exception):
     be served (bad config, over daily cap, non-200, transport error). The
     streaming chat loop catches it and — if nothing was streamed yet — falls
     back to the non-streaming ``_call_llm`` path, so streaming is never a
-    one-way door away from the working behaviour."""
+    one-way door away from the working behaviour. A mid-stream drop must
+    be marked incomplete; the partial text is not a finished answer."""
+
+
+_STREAM_CUTOFF_NOTICE = "The answer was cut off — please ask again."
+
+
+def _mark_stream_cutoff(text: str) -> str:
+    """Append the cut-off notice once so a partial stream is not saved whole."""
+    t = (text or "").rstrip()
+    if _STREAM_CUTOFF_NOTICE in t:
+        return t or _STREAM_CUTOFF_NOTICE
+    if not t:
+        return _STREAM_CUTOFF_NOTICE
+    return f"{t}\n\n{_STREAM_CUTOFF_NOTICE}"
 
 
 _TPM_CHAR_BUDGET = 16000  # ~4k tokens; the default prompt-compaction budget
@@ -10330,10 +10527,12 @@ class Agent:
             # "tool iterations stay non-streaming". Stream its provider deltas as
             # token events. On any pre-first-token failure we fall through to the
             # unchanged non-streaming path below (streaming is never a one-way
-            # door). A mid-stream drop finishes with whatever streamed.
+            # door). A mid-stream drop keeps the partial text and marks it
+            # cut off so it is not persisted as a finished answer.
             if force_synthesis and _synth_stream_enabled:
                 streamed_any = False
                 fell_back = False
+                stream_cut_off = False
                 tool_leak = False
                 acc: list[str] = []
                 pending = ""
@@ -10369,6 +10568,7 @@ class Agent:
                 except _SynthStreamError as _se:
                     if streamed_any:
                         _LOG.warning("chat_stream: synthesis stream dropped mid-way (%s)", _se)
+                        stream_cut_off = True
                     else:
                         _LOG.info("chat_stream: synthesis stream unavailable (%s) — non-streaming fallback", _se)
                         fell_back = True
@@ -10397,6 +10597,8 @@ class Agent:
                             raw, messages=messages, tool_results=stream_tool_results,
                         ))
                     )
+                    if stream_cut_off:
+                        final_text = _mark_stream_cutoff(final_text)
                     # #454 taught the NON-streamed branch that a first-person
                     # promise to search is not an answer. This branch never
                     # learned it: it retried only on an EMPTY stream, and a
@@ -10459,6 +10661,11 @@ class Agent:
                         seg = _strip_answer_routing_preamble(seg)
                         if seg and not _looks_like_internal_tool_json(seg):
                             yield {"type": "token", "content": seg}
+                    if stream_cut_off and not tool_leak and not promise_hold:
+                        yield {
+                            "type": "token",
+                            "content": f"\n\n{_STREAM_CUTOFF_NOTICE}",
+                        }
                     # Recover-from-tools lives in _postprocess_answer. Do not
                     # run it before the empty-stream check — a successful
                     # commissioning/WIR/IPC tool (or predispatch draft) would

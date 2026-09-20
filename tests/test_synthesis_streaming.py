@@ -139,6 +139,37 @@ def test_streamed_synthesis_emits_progressive_tokens(deepseek_streaming):
     assert "NON-STREAMED" not in text
 
 
+# ── mid-stream drop is marked cut-off, not a finished answer ─────────────────
+
+def test_midstream_synth_error_is_marked_cut_off(deepseek_streaming):
+    """Fleet Sync 2: streamed_any=True + _SynthStreamError used to persist
+    the partial as a complete answer. Mark it so the user retries."""
+    from app.agents.runtime import _STREAM_CUTOFF_NOTICE
+
+    call_llm = _tool_then_final()
+
+    async def _drop_after_tokens(self, messages, api_key, **kwargs):
+        yield (
+            "The checklist covers isolation, earthing, and labelling "
+            "of every outgoing circuit.\n"
+        )
+        yield "Next, verify the panel board schedule against the drawing.\n"
+        raise _SynthStreamError("provider dropped mid-stream")
+        yield ""  # pragma: no cover
+
+    with patch.object(Agent, "_call_llm", call_llm), \
+         patch.object(Agent, "_run_tool_call", _tool_ok), \
+         patch.object(Agent, "_stream_synthesis", _drop_after_tokens):
+        events = _run_turn(_pa_agent())
+
+    text = _tokens(events)
+    assert "isolation" in text
+    assert _STREAM_CUTOFF_NOTICE in text
+    end = next(e for e in events if e.get("type") == "end")
+    assert _STREAM_CUTOFF_NOTICE in (end.get("content") or "")
+    assert call_llm.state["n"] == 1, "mid-stream drop must not look like pre-token fallback"
+
+
 # ── pre-first-token fallback ──────────────────────────────────────────────────
 
 def test_pretoken_stream_error_falls_back_to_non_streaming(deepseek_streaming):

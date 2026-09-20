@@ -67,8 +67,10 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:2069": "baseline 2026-09-10",
     "app/agents/runtime.py:2737": "baseline 2026-09-10",
     "app/agents/runtime.py:3736": "baseline 2026-09-10",
-    "app/agents/runtime.py:4862": "baseline 2026-09-10",
-    "app/agents/runtime.py:5243": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20: empty-turn / user-derived cost / cut-off
+    # helpers. Same pre-existing handlers — only the line numbers moved.
+    "app/agents/runtime.py:4913": "baseline 2026-09-10",
+    "app/agents/runtime.py:5426": "baseline 2026-09-10",
     "app/agents/runtime.py:643": "baseline 2026-09-10",
     "app/agents/runtime.py:874": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
