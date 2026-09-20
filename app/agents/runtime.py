@@ -806,6 +806,34 @@ _RFI_DRAFT_PHRASES = (
     "issue an rfi",
     "issue a rfi",
 )
+_DRAWING_QTO_PHRASES = (
+    "drawing_qto",
+    "quantity takeoff",
+    "quantity take-off",
+    "quantity take off",
+    "extract quantities",
+    "measure the floor area",
+    "floor plan drawing",
+    "infrastructure drawings",
+)
+
+
+def _message_wants_drawing_qto(text: str) -> bool:
+    """True for a drawing / QTO takeoff deliverable, not a bare L×W×D calc.
+
+    Live tip 50c37f: probe asks naming ``drawing_qto`` / quantity takeoff
+    with synthetic footing/slab dims elected ``named_calculator`` because
+    ``_looks_like_self_contained_calculation`` saw L×W×D + Compute, then
+    formula predispatch ran construction_calc ×3. #658 ranked drawing_qto
+    in intent_map; this detector is the named_calculator / predispatch
+    steal-guard.
+    """
+    low = (text or "").lower()
+    if not low or _HISTOGRAM_QA_RE.search(low):
+        return False
+    return any(p in low for p in _DRAWING_QTO_PHRASES)
+
+
 _HISTOGRAM_QA_RE = re.compile(
     r"\b(what is|what's|whats|explain|define)\b", re.IGNORECASE,
 )
@@ -3667,6 +3695,11 @@ def _message_wants_named_calculator(text: str) -> bool:
     # intent_map "plumbing flow" must not steal it onto named_calculator.
     if _message_is_schedule_or_programme_deliverable(raw):
         return False
+    # Live tip 50c37f: drawing_qto / quantity-takeoff asks carry L×W×D
+    # dims ("Compute concrete volumes") and were stolen onto
+    # named_calculator → construction_calc. Keep them on drawing_qto.
+    if _message_wants_drawing_qto(raw):
+        return False
     if _looks_like_self_contained_calculation(raw):
         return True
     low = raw.lower()
@@ -3877,6 +3910,9 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     wants_rfi = _message_wants_rfi_draft(text)
     if "rfi_generator" in available and wants_rfi:
         return "rfi_generator"
+    wants_drawing_qto = _message_wants_drawing_qto(text)
+    if "drawing_qto" in available and wants_drawing_qto:
+        return "drawing_qto"
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             if (
@@ -3885,6 +3921,7 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
                     _message_is_schedule_or_programme_deliverable(text)
                     or wants_procurement
                     or wants_rfi
+                    or wants_drawing_qto
                 )
             ):
                 continue
@@ -3892,7 +3929,7 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     # A procurement-list or RFI-draft ask must not fall through to
     # construction_calc when the toolkit omitted the action — that is
     # the live miss.
-    if wants_procurement or wants_rfi:
+    if wants_procurement or wants_rfi or wants_drawing_qto:
         return None
     # Keyword phrases reach ~a dozen of the 76 registered calculators. Catch
     # the rest by SHAPE: a question that supplies its own dimensions and asks
@@ -13951,6 +13988,8 @@ async def _predispatch_formula_calc(
         if not detect:
             return None
         if _message_wants_rfi_draft(detect):
+            return None
+        if _message_wants_drawing_qto(detect):
             return None
         if _message_is_schedule_or_programme_deliverable(detect):
             return None
