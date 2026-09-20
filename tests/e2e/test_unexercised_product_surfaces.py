@@ -289,19 +289,26 @@ def test_a_mounted_debug_endpoint_still_refuses_a_non_admin(monkeypatch):
 
 
 def test_the_unversioned_debug_path_never_leaks_the_environment(client, session):
-    """``/debug/env`` is unmatched, so the SPA catch-all answers it with the
-    frontend shell -- a 200 that is NOT the debug payload.
+    """``/debug/env`` is a reserved prefix, not an SPA client route.
 
-    Asserted because the status code alone is misleading here: 200 on an
-    admin-only path looks like a hole, and the fence that matters is that
-    the body carries no environment data whatever the code.
+    Production does not mount the debug router. The catch-all used to
+    answer 200 HTML (no payload). That is still not a leak, but the
+    production answer must be a real 404 on both ``/debug/env`` and
+    ``/v1/debug/env``. When the router IS mounted (ENV=testing), a
+    plain user gets 403. Neither body may carry env fields.
     """
+    from app.routers import debug as debug_mod
+
     r = client.get("/debug/env", headers=session["headers"])
     body = r.text
     assert "data_dir" not in body
     assert "DATA_DIR" not in body
-    if r.status_code == 200:
-        assert body.lstrip().lower().startswith("<!doctype html"), body[:120]
+    assert "<!doctype html" not in body.lstrip().lower(), body[:120]
+    if debug_mod.is_dev_environment():
+        assert r.status_code == 403, r.text[:200]
+        assert "Admin access required" in r.text
+    else:
+        assert r.status_code == 404, r.text[:200]
 
 
 def test_right_panel_preview_redline_photo_and_attach(client, session):
