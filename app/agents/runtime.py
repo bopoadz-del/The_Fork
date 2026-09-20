@@ -4391,6 +4391,8 @@ def _text_needs_tool_recovery(text: str) -> bool:
         return True
     if _looks_like_tool_error_json(t):
         return True
+    if _looks_like_formula_template(t):
+        return True
     return False
 
 
@@ -6486,6 +6488,9 @@ def _postprocess_answer(
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
+    # Empty / incomplete construction_calc: a formula-name note or a
+    # 1 m rebar demo is not a complete answer. Graft the computed ask.
+    text = _graft_complete_calc_answer(text, messages)
     # Leftover F1: refuse + DD-2022 CoC cite is FAIL. If generate_wbs
     # already produced a BOQ-derived tree, that draft is the answer.
     text = _graft_boq_scope_wbs_if_wrong_contract(text, messages)
@@ -13927,9 +13932,15 @@ def _format_tool_error_plain(
         )
     elif err:
         cleaned = re.sub(r"[{}\[\]]", "", err).strip().rstrip(".")
-        if len(cleaned) > 180:
-            cleaned = cleaned[:177] + "..."
-        sentence = f"The tool could not complete that request ({cleaned})."
+        # Empty-kwargs class: keep the named required-parameter list
+        # (with units). Do not squash it into a 180-char generic.
+        names_params = " needs " in cleaned.lower() and "(" in cleaned
+        if names_params:
+            sentence = cleaned if cleaned.endswith(".") else f"{cleaned}."
+        else:
+            if len(cleaned) > 180:
+                cleaned = cleaned[:177] + "..."
+            sentence = f"The tool could not complete that request ({cleaned})."
     else:
         sentence = "The tool could not complete that request."
     if request_id:
@@ -13968,6 +13979,201 @@ def _is_calc_tool_error(
     return False
 
 
+_COVERAGE_FOOTER_RE = re.compile(
+    r"^\d+\s+of\s+\d+\s+project documents indexed\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_FORMULA_NAME_EQ_RE = re.compile(
+    r"[A-Za-z][A-Za-z0-9 /()_-]{1,40}\s*=\s*[A-Za-z]",
+)
+
+
+def _strip_coverage_footer(text: str) -> str:
+    return _COVERAGE_FOOTER_RE.sub("", text or "").strip()
+
+
+def _looks_like_formula_template(text: str) -> bool:
+    """True when the text is a PE-sheet formula name with no computed figures.
+
+    Live A2-1 shipped ``Duration = Quantity / Daily Production`` (+ corpus
+    footer). Digits in the footer must not hide the empty formula.
+    """
+    body = _strip_coverage_footer(text)
+    if not body:
+        return False
+    if re.search(r"\d", body):
+        return False
+    return bool("=" in body and _FORMULA_NAME_EQ_RE.search(body))
+
+
+def _looks_like_trivial_rebar_demo(result: dict[str, Any], note: str = "") -> bool:
+    """1 m × 1 bar unit-mass demo — not metres run for tonnes of bar."""
+    blob = " ".join(
+        str(x) for x in (
+            note,
+            result.get("note"),
+            result.get("summary"),
+        ) if x
+    )
+    if re.search(r"x\s*1(?:\.0+)?\s*m\s*x\s*1\b", blob, re.IGNORECASE):
+        return True
+    try:
+        length = result.get("total_length_m", result.get("metres_run"))
+        qty = result.get("quantity", 1)
+        mass = result.get("total_mass_kg")
+        if length is None:
+            return False
+        length_f = float(length)
+        qty_f = float(qty) if qty not in (None, "") else 1.0
+        mass_f = float(mass) if mass not in (None, "") else None
+    except (TypeError, ValueError):
+        _LOG.debug("rebar demo fields not numeric: %r", result)
+        return False
+    if length_f > 1.0001 or qty_f > 1.0001:
+        return False
+    if mass_f is not None and mass_f >= 20:
+        return False
+    return True
+
+
+def _compose_calc_result_fields(result: dict[str, Any], payload: dict[str, Any]) -> str:
+    """Numeric line from result fields — never a formula-name-only note."""
+    calc = str(payload.get("calculation") or result.get("calculation") or "")
+    if calc == "productivity_manpower_duration" or result.get("duration") is not None:
+        from app.lib.construction_formulas_planning import format_productivity_cost_line
+        line = format_productivity_cost_line(result)
+        if line:
+            return line
+    metres = result.get("metres_run")
+    if metres is None and calc == "rebar_weight":
+        metres = result.get("total_length_m")
+    if metres is not None:
+        try:
+            if float(metres) > 10:
+                from app.lib.construction_formulas_quantities import (
+                    format_rebar_metres_run_line,
+                )
+                line = format_rebar_metres_run_line(result)
+                if line:
+                    return line
+        except (TypeError, ValueError):
+            _LOG.debug("metres_run field not numeric: %r", metres)
+    calc_name = payload.get("calculation") or result.get("calculation")
+    value = result.get("value")
+    if value is not None and calc_name:
+        return f"{calc_name}: {value}"
+    for key in (
+        "total_cost", "cost", "labour_cost",
+        "duration", "duration_days", "crew_days",
+        "metres_run", "total_length_m", "total_bar_length_m",
+        "total_mass_kg", "total_mass_t", "unit_mass_kg_m",
+        "volume_m3",
+    ):
+        if result.get(key) is not None:
+            return f"{key.replace('_', ' ')}: {result[key]}"
+    return ""
+
+
+def _last_successful_calc_payload(
+    messages: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    last: dict[str, Any] | None = None
+    for m in messages or []:
+        if m.get("role") != "tool":
+            continue
+        raw = m.get("content") or ""
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        inner = payload
+        if payload.get("truncated") and payload.get("preview"):
+            try:
+                inner = json.loads(payload["preview"])
+            except (TypeError, json.JSONDecodeError):
+                inner = payload
+        if not isinstance(inner, dict) or _tool_error_payload(inner):
+            continue
+        if inner.get("status") == "error":
+            continue
+        result = inner.get("result") if isinstance(inner.get("result"), dict) else inner
+        if not isinstance(result, dict):
+            continue
+        if inner.get("calculation") or result.get("duration") is not None or result.get(
+            "unit_mass_kg_m"
+        ) is not None:
+            last = inner
+    return last
+
+
+def _graft_complete_calc_answer(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Replace formula-only / 1 m-demo calc answers with the computed ask.
+
+    Live A2-1: duration note without SAR cost. Live A2-2: Y16 1 m demo
+    instead of metres run for 12 t. Numbers come from the operator ask
+    and/or the last successful construction_calc payload.
+    """
+    user = _latest_operator_ask(messages)
+    if not user:
+        return text
+    try:
+        from app.lib.construction_formulas_planning import (
+            compose_productivity_cost_from_ask,
+            format_productivity_cost_line,
+            looks_like_productivity_cost_ask,
+        )
+        from app.lib.construction_formulas_quantities import (
+            compose_rebar_metres_run_from_ask,
+            format_rebar_metres_run_line,
+            looks_like_rebar_metres_run_ask,
+        )
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        return text
+
+    payload = _last_successful_calc_payload(messages)
+    result = (
+        payload.get("result")
+        if isinstance(payload, dict) and isinstance(payload.get("result"), dict)
+        else (payload if isinstance(payload, dict) else {})
+    )
+
+    if looks_like_productivity_cost_ask(user):
+        composed = compose_productivity_cost_from_ask(user)
+        if composed and composed.get("line"):
+            body = _strip_coverage_footer(text)
+            user_money = {v for _frag, v in _cg_money_values(user)}
+            answer_money = [v for _frag, v in _cg_money_values(body)]
+            already = any(
+                v >= 1000 and v not in user_money for v in answer_money
+            )
+            if already and not _looks_like_formula_template(text):
+                return text
+            if result.get("total_cost") is not None and result.get("duration") is not None:
+                line = format_productivity_cost_line(result, composed.get("currency") or "SAR")
+                if line and re.search(r"\b(?:SAR|AED|USD|GBP|EUR)\b", line, re.I):
+                    return line
+            return composed["line"]
+
+    if looks_like_rebar_metres_run_ask(user):
+        composed = compose_rebar_metres_run_from_ask(user)
+        if composed and composed.get("line"):
+            body = _strip_coverage_footer(text)
+            if re.search(r"(?<![\d.])(?:[5-9]\d{3}|\d{5,})(?:\.\d+)?\s*m\b", body or ""):
+                return text
+            if result and not _looks_like_trivial_rebar_demo(result, body):
+                line = format_rebar_metres_run_line(result)
+                if line:
+                    return line
+            return composed["line"]
+
+    return text
+
+
 def _format_any_calc_result(payload: dict[str, Any]) -> str:
     """User-facing line from a successful non-volume construction_calc."""
     if not isinstance(payload, dict):
@@ -13979,19 +14185,17 @@ def _format_any_calc_result(payload: dict[str, Any]) -> str:
         return ""
     for key in ("note", "summary", "message"):
         val = result.get(key)
-        if isinstance(val, str) and val.strip() and "unknown calculation" not in val.lower():
+        if (
+            isinstance(val, str)
+            and val.strip()
+            and "unknown calculation" not in val.lower()
+            and not _looks_like_formula_template(val)
+            and not _looks_like_trivial_rebar_demo(result, val)
+        ):
             return val.strip()
-    calc = payload.get("calculation") or result.get("calculation")
-    value = result.get("value")
-    if value is not None and calc:
-        return f"{calc}: {value}"
-    for key in (
-        "total_mass_kg", "total_mass_t", "unit_mass_kg_m",
-        "total_bar_length_m", "duration_days", "total_cost", "cost",
-        "volume_m3",
-    ):
-        if result.get(key) is not None:
-            return f"{key.replace('_', ' ')}: {result[key]}"
+    composed = _compose_calc_result_fields(result, payload)
+    if composed:
+        return composed
     return ""
 
 

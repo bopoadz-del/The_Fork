@@ -40,6 +40,17 @@ def test_rebar_weight_16mm():
     assert r["total_mass_kg"] == pytest.approx(947.0, abs=0.5)
 
 
+def test_rebar_weight_to_length_12_tonnes_y16():
+    """Live A2-2: 12 t of Y16 → metres run, not a 1 m demo."""
+    r = CALCULATORS["rebar_weight"](
+        bar_diameter_mm=16, total_weight_kg=12000, mode="weight_to_length",
+    )
+    assert r.get("error") is None
+    metres = r.get("metres_run") or r["total_length_m"]
+    assert metres == pytest.approx(12000 / r["unit_mass_kg_m"], abs=1.0)
+    assert metres > 1000
+
+
 def test_rebar_by_area_one_way():
     # d=12 -> unit mass 0.888 kg/m; 1000/200 = 5 bars/m; 5*20*1 = 100 m; *0.888 = 88.8 kg.
     r = CALCULATORS["rebar_by_area"](area_m2=20, spacing_mm=200, bar_diameter_mm=12)
