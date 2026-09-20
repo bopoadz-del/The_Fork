@@ -260,29 +260,6 @@ _ACTION_FILE_PARAMS: Dict[str, List[tuple]] = {
 
 
 
-def _message_has_synthetic_look_ahead_programme(user_message: Optional[str]) -> bool:
-    """True when the ask already carries an embedded activity list / durations.
-
-    Live exit: FIXTURE projects with multiple uploaded .xer copies caused
-    look_ahead to return ask-which instead of using the synthetic programme
-    in the operator message. Prefer the message programme in that case.
-    """
-    low = (user_message or "").lower()
-    if not low:
-        return False
-    if "synthetic" in low and ("activit" in low or "programme" in low or "program" in low):
-        return True
-    if "do not" in low and ("upload" in low or "xer" in low or "primavera" in low):
-        return True
-    # duration-bearing activity list markers
-    if "look_ahead" in low or "look-ahead" in low or "lookahead" in low:
-        if any(tok in low for tok in (" wd)", " (wd)", "days)", "d)", "duration")) and (
-            "a1 " in low or "activit" in low or "mobilisation" in low or "mobilization" in low
-        ):
-            return True
-    return False
-
-
 def _resolve_predefined_file_params(
     action: str,
     project_id: Optional[str],
@@ -1075,3 +1052,27 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
             "X-Accel-Buffering": "no",
         },
     )
+
+def _message_has_synthetic_look_ahead_programme(user_message: Optional[str]) -> bool:
+    """True when the ask already carries an embedded activity list / durations.
+
+    Live exit: FIXTURE projects with multiple uploaded .xer copies caused
+    look_ahead to return ask-which instead of using the synthetic programme
+    in the operator message. Prefer the message programme in that case.
+    """
+    low = (user_message or "").lower()
+    if not low:
+        return False
+    if "synthetic" in low and ("activit" in low or "programme" in low or "program" in low):
+        return True
+    if "do not" in low and ("upload" in low or "xer" in low or "primavera" in low):
+        return True
+    # duration-bearing activity list markers
+    if "look_ahead" in low or "look-ahead" in low or "lookahead" in low:
+        if any(tok in low for tok in (" wd)", " (wd)", "days)", "d)", "duration")) and (
+            "a1 " in low or "activit" in low or "mobilisation" in low or "mobilization" in low
+        ):
+            return True
+    return False
+
+
