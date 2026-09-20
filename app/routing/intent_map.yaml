@@ -33,6 +33,40 @@ rows:
       - parse the primavera xer for programme milestones
       - extract baseline programme milestones from the p6 file
 
+  # Procurement list is a construction-container deliverable, not a
+  # calculator. Must sit above construction_calc so "material list" /
+  # tool-shaped asks cannot fall through to construction_calc.
+  - tool: procurement_list_generator
+    phrases:
+      - procurement_list_generator
+      - procurement list
+      - material list
+      - purchase list
+      - buy list
+      - vendor list
+      - materials list
+      - what materials
+      - need to buy
+    phrasings:
+      - generate a procurement list for the MEP package
+      - what materials do we need to buy for the substructure works?
+
+  # RFI draft is a construction-container deliverable, not a
+  # calculator. Must sit above construction_calc so "rebar detail"
+  # / tool-shaped asks cannot fall through to construction_calc.
+  - tool: rfi_generator
+    phrases:
+      - rfi_generator
+      - request for information
+      - follow-on rfi
+      - draft an rfi
+      - draft a rfi
+      - raise an rfi
+      - create a request for information
+    phrasings:
+      - draft an RFI asking the engineer to clarify the rebar detail at the transfer beam
+      - create a request for information document
+
   - tool: construction_calc
     phrases:
       - dewatering

@@ -13,6 +13,46 @@ from .helpers import _safe_float, _safe_iso_date
 logger = logging.getLogger(__name__)
 
 
+_LOOKAHEAD_DAYS_RE = re.compile(
+    r"\b(\d+)\s*[-]?\s*days?\b",
+    re.IGNORECASE,
+)
+_LOOKAHEAD_WEEKS_RE = re.compile(
+    r"\b(\d+|two|three|four)\s*[-]?\s*weeks?\b",
+    re.IGNORECASE,
+)
+_LOOKAHEAD_WEEK_WORDS = {"two": 2, "three": 3, "four": 4}
+
+
+def _look_ahead_window_from_text(text: str) -> Tuple[Optional[int], Optional[int]]:
+    """Parse an N-day / N-week window from a look-ahead ask.
+
+    Returns ``(days, weeks)`` with at most one set. Unset when the ask
+    does not name a window (container then defaults to 21 days).
+    """
+    raw = text or ""
+    days_m = _LOOKAHEAD_DAYS_RE.search(raw)
+    if days_m:
+        try:
+            days = int(days_m.group(1))
+        except (TypeError, ValueError):
+            days = 0
+        if days >= 1:
+            return days, None
+    weeks_m = _LOOKAHEAD_WEEKS_RE.search(raw)
+    if weeks_m:
+        token = weeks_m.group(1).lower()
+        weeks = _LOOKAHEAD_WEEK_WORDS.get(token)
+        if weeks is None:
+            try:
+                weeks = int(token)
+            except (TypeError, ValueError):
+                weeks = 0
+        if weeks >= 1:
+            return None, weeks
+    return None, None
+
+
 def _delay_claim_facts_from_text(text: str) -> Optional[Dict[str, Any]]:
     """Pull a delay-claim notice from operator-stated days / rate / clause."""
     t = text or ""
@@ -1013,8 +1053,22 @@ class ConstructionScheduleMixin:
         )
 
         # Window: weeks (default 3 → 21 calendar days) or explicit days (21–28).
+        # NL turns ("14-day look-ahead") arrive with days unset — parse the ask.
         window_days = p.get("days") if p.get("days") is not None else data.get("days")
         weeks = p.get("weeks") if p.get("weeks") is not None else data.get("weeks")
+        if window_days is None and weeks is None:
+            ask = " ".join(
+                str(x) for x in (
+                    p.get("user_message"), data.get("user_message"),
+                    p.get("message"), data.get("message"),
+                    p.get("brief"), data.get("brief"),
+                ) if x
+            )
+            parsed_days, parsed_weeks = _look_ahead_window_from_text(ask)
+            if parsed_days is not None:
+                window_days = parsed_days
+            elif parsed_weeks is not None:
+                weeks = parsed_weeks
         if window_days is not None:
             try:
                 window_days = int(window_days)
@@ -2328,6 +2382,8 @@ class ConstructionScheduleMixin:
                                 "duration_days": zoned_dur,
                                 "predecessors": list(zone_tails[z]),
                                 "resources": list(res),
+                                "wbs": sub_code,
+                                "wbs_code": sub_code,
                                 "wbs_phase": phase_key,
                             })
                             new_zone_tails.append([aid])
@@ -2346,6 +2402,8 @@ class ConstructionScheduleMixin:
                             "duration_days": int(dur),
                             "predecessors": list(serial_tail),
                             "resources": list(res),
+                            "wbs": sub_code,
+                            "wbs_code": sub_code,
                             "wbs_phase": phase_key,
                         })
                         serial_tail = [aid]
@@ -2496,6 +2554,8 @@ class ConstructionScheduleMixin:
                 "duration_days": days,
                 "predecessors": [],
                 "resources": ["procurement"],
+                "wbs": pid,
+                "wbs_code": pid,
                 "wbs_phase": "Procurement / Long-Lead",
                 "long_lead": True,
                 "linked_to_install": matched,
@@ -2566,6 +2626,18 @@ class ConstructionScheduleMixin:
             or data.get("message")
             or ""
         )
+        from app.core.action_router import message_wants_look_ahead
+        if message_wants_look_ahead(user_message) or message_wants_look_ahead(brief):
+            return {
+                "status": "error",
+                "action": "generate_wbs",
+                "error": (
+                    "This ask is a look-ahead (rolling / N-day window from a "
+                    "programme), not a WBS generate. Call look_ahead with a "
+                    "Primavera P6 .xer, or report that no schedule file is "
+                    "available — do not build a template WBS."
+                ),
+            }
         # Leftover F1: a demolition / site-clearance + BOQ WBS ask must use
         # retrieved measured rows, not the building template. Election is on
         # the ask — handing generate_wbs a silent ``boq`` key on an office
@@ -2649,6 +2721,8 @@ class ConstructionScheduleMixin:
         enriched, summary, cpm_error = self._attach_cpm_to_activities(
             activities, start_date
         )
+        from app.core.conversation_wbs import stamp_hierarchical_wbs_codes
+        enriched = stamp_hierarchical_wbs_codes(enriched, wbs_tree)
 
         operator_ms = _operator_milestones_from_text(brief)
         if boq_derived:
