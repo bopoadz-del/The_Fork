@@ -58,19 +58,18 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/formulas.py:21": "baseline 2026-09-10",
     "app/agents/formulas.py:30": "baseline 2026-09-10",
     "app/agents/formulas.py:48": "baseline 2026-09-10",
-    # Re-indexed 2026-09-20 #670: merge main (53b8b29) then this branch's
-    # leftover RFI-draft phrases in runtime.py. Same handlers — only the
-    # line numbers moved from main's consistent pairs. No new silent returns.
+    # Re-indexed 2026-09-20 #686: inline BOQ ask1 predispatch. Same
+    # handlers — only the line numbers moved. No new silent returns.
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:971": "baseline 2026-09-10",
-    "app/agents/runtime.py:2152": "baseline 2026-09-10",
-    "app/agents/runtime.py:2158": "baseline 2026-09-10",
-    "app/agents/runtime.py:2221": "baseline 2026-09-10",
-    "app/agents/runtime.py:2227": "baseline 2026-09-10",
-    "app/agents/runtime.py:2911": "baseline 2026-09-10",
-    "app/agents/runtime.py:3931": "baseline 2026-09-10",
-    "app/agents/runtime.py:5265": "baseline 2026-09-10",
-    "app/agents/runtime.py:5676": "baseline 2026-09-10",
+    "app/agents/runtime.py:2172": "baseline 2026-09-10",
+    "app/agents/runtime.py:2178": "baseline 2026-09-10",
+    "app/agents/runtime.py:2241": "baseline 2026-09-10",
+    "app/agents/runtime.py:2247": "baseline 2026-09-10",
+    "app/agents/runtime.py:2931": "baseline 2026-09-10",
+    "app/agents/runtime.py:3955": "baseline 2026-09-10",
+    "app/agents/runtime.py:5311": "baseline 2026-09-10",
+    "app/agents/runtime.py:5722": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",

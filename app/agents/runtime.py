@@ -1546,6 +1546,7 @@ def _message_wants_inline_boq(text: str) -> bool:
         from app.core.site_vocab import message_has_inline_boq_lines
         return bool(message_has_inline_boq_lines(text or ""))
     except Exception:  # noqa: BLE001
+        _LOG.debug("inline boq detect skipped", exc_info=True)
         return False
 
 
