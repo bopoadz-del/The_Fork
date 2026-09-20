@@ -62,16 +62,18 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # + A2 formula-template recovery (#649) + Set3 empty-turn / A3-1
     # priced-takeoff grafts (#651). Same pre-existing handlers — only
     # the line numbers moved. No new silent returns.
-    # Re-indexed 2026-09-20 #661: `_message_wants_primavera_parse` (+10
-    # fn, +1 call site). Same handlers — only line numbers moved.
-    "app/agents/runtime.py:2088": "baseline 2026-09-10",
-    "app/agents/runtime.py:2094": "baseline 2026-09-10",
-    "app/agents/runtime.py:2157": "baseline 2026-09-10",
-    "app/agents/runtime.py:2163": "baseline 2026-09-10",
-    "app/agents/runtime.py:2833": "baseline 2026-09-10",
-    "app/agents/runtime.py:3840": "baseline 2026-09-10",
-    "app/agents/runtime.py:5119": "baseline 2026-09-10",
-    "app/agents/runtime.py:5528": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20 #657: cash_flow_forecast underscore force
+    # inserted two lines in `_forced_specific_tool`. Same handlers at
+    # `_cg_to_number` / `_aca_claim_amount` — only the line numbers
+    # moved (+2). Handler text is byte-identical. No new silent returns.
+    "app/agents/runtime.py:2078": "baseline 2026-09-10",
+    "app/agents/runtime.py:2084": "baseline 2026-09-10",
+    "app/agents/runtime.py:2147": "baseline 2026-09-10",
+    "app/agents/runtime.py:2153": "baseline 2026-09-10",
+    "app/agents/runtime.py:2822": "baseline 2026-09-10",
+    "app/agents/runtime.py:3829": "baseline 2026-09-10",
+    "app/agents/runtime.py:5110": "baseline 2026-09-10",
+    "app/agents/runtime.py:5519": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:942": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
@@ -133,7 +135,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/main.py:475": "baseline 2026-09-10",
     # Re-indexed 2026-09-18: #607 imported with_hat_signals at the top of
     # chat.py (one line). Same handler — only the line number moved.
-    "app/routers/chat.py:365": "baseline 2026-09-10",
+    "app/routers/chat.py:371": "baseline 2026-09-10; renumbered Agent D look_ahead synthetic helper",
     "app/routers/chat_watchdog.py:98": "baseline 2026-09-10",
     "app/routers/mcp.py:65": "baseline 2026-09-10",
     "app/worker/ingest_queue.py:33": "baseline 2026-09-10",
