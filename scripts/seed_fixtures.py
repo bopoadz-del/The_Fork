@@ -23,6 +23,12 @@ Configuration:
 
 The Fresh-Upload-Eval fixture is self-contained: it is created from the 12
 CASES texts in scripts/rag_fresh_upload_eval.py and does not need FIXTURES_DIR.
+
+``--synthetic`` generates stand-ins via scripts/synthetic_fixtures.py so
+``FIXTURE — BOQ`` (and the other dir-based fixtures that have builders)
+can be created or restored with no client data. Target: FORK_BASE_URL
+(or alias FORK_BASE) plus --base; auth is FORK_TOKEN / FORK_API_KEY /
+FORK_EMAIL+FORK_PASSWORD (values are never printed).
 """
 from __future__ import annotations
 
@@ -38,7 +44,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork-jn3t.onrender.com")
+# FORK_BASE_URL is the canonical target env; FORK_BASE is accepted as an alias
+# (same token env: FORK_TOKEN / FORK_API_KEY / FORK_EMAIL+FORK_PASSWORD).
+DEFAULT_BASE = (
+    os.getenv("FORK_BASE_URL")
+    or os.getenv("FORK_BASE")
+    or "https://the-fork-jn3t.onrender.com"
+)
 FIXTURES_DIR = Path(os.getenv("FIXTURES_DIR", ROOT / "data" / "fixtures"))
 
 # Canonical fixture names shared with harnesses.
@@ -101,6 +113,18 @@ FIXTURES: Dict[str, Dict[str, Any]] = {
         ],
     },
 }
+
+
+class FixtureSeedError(RuntimeError):
+    """Named fixture could not be created or restored."""
+
+
+def fixture_key_for_name(name: str) -> Optional[str]:
+    """Map a canonical fixture display name to the FIXTURES key, or None."""
+    for key, spec in FIXTURES.items():
+        if spec["name"] == name:
+            return key
+    return None
 
 
 def _auth_header(base: str) -> dict:
@@ -317,6 +341,81 @@ def _seed_from_dir(
     }
 
 
+def seed_one(
+    client: httpx.Client,
+    key: str,
+    fixtures_dir: Path,
+    *,
+    synthetic: bool = True,
+) -> Dict[str, Any]:
+    """Create/restore one fixture. Raises FixtureSeedError on block or zero-chunk.
+
+    ``synthetic=True`` (the golden-set path) generates stand-in files so
+    ``FIXTURE — BOQ`` can be rebuilt from ``synthetic_boq.xlsx`` with no
+    client workbook.
+    """
+    if key not in FIXTURES:
+        raise FixtureSeedError(f"unknown fixture key {key!r}")
+    spec = FIXTURES[key]
+    if spec["source"] == "cases":
+        result = _seed_fresh_upload_eval(client, spec)
+    else:
+        result = _seed_from_dir(client, spec, fixtures_dir, synthetic=synthetic)
+    if result is None:
+        raise FixtureSeedError(
+            f"seed blocked for {spec['name']!r}: required files missing"
+            + (
+                " even after --synthetic"
+                if synthetic
+                else " (re-run with --synthetic to generate stand-ins where available)"
+            )
+        )
+    if result.get("zero_chunk_docs"):
+        raise FixtureSeedError(
+            f"seed of {spec['name']!r} left zero-chunk docs: "
+            f"{result['zero_chunk_docs']}"
+        )
+    return result
+
+
+def ensure_named_fixture(
+    name: str,
+    *,
+    base: str,
+    headers: dict,
+    fixtures_dir: Optional[Path] = None,
+    synthetic: bool = True,
+    client: Optional[httpx.Client] = None,
+) -> Dict[str, Any]:
+    """Look up a fixture by canonical name and create/restore it if needed.
+
+    Always fail loud: unknown names, blocked files, and zero-chunk docs
+    raise FixtureSeedError. Never returns a display name as project_id.
+    """
+    key = fixture_key_for_name(name)
+    if key is None:
+        raise FixtureSeedError(
+            f"{name!r} is not a self-seedable fixture "
+            "(master_corpus is not seeded by this path)"
+        )
+    owns_client = client is None
+    if client is None:
+        client = httpx.Client(base_url=base, headers=headers, timeout=120)
+    try:
+        result = seed_one(
+            client, key, Path(fixtures_dir or FIXTURES_DIR), synthetic=synthetic
+        )
+    finally:
+        if owns_client:
+            client.close()
+    pid = result.get("project_id")
+    if not pid or pid == name:
+        raise FixtureSeedError(
+            f"seed of {name!r} returned no live project_id"
+        )
+    return result
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="idempotent fixture project seeder")
     ap.add_argument("--base", default=DEFAULT_BASE)
@@ -346,11 +445,14 @@ def main() -> int:
         if args.dry_run:
             print(f"  would seed {spec['name']}")
             continue
-        if spec["source"] == "cases":
-            result = _seed_fresh_upload_eval(client, spec)
-        else:
-            result = _seed_from_dir(client, spec, fixtures_dir,
-                                    synthetic=args.synthetic)
+        try:
+            result = seed_one(
+                client, key, fixtures_dir, synthetic=args.synthetic
+            )
+        except FixtureSeedError as exc:
+            print(f"[fail] {exc}", file=sys.stderr)
+            results.append(None)
+            continue
         results.append(result)
 
     print("\n" + "=" * 76)
@@ -371,7 +473,7 @@ def main() -> int:
             print(f"  ZERO_CHUNK docs: {', '.join(result['zero_chunk_docs'])}")
     print("=" * 76)
 
-    failed = any(r is not None and r["zero_chunk_docs"] for r in results)
+    failed = any(r is None or r.get("zero_chunk_docs") for r in results)
     return 1 if failed else 0
 
 
