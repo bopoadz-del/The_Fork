@@ -62,21 +62,24 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # + A2 formula-template recovery (#649) + Set3 empty-turn / A3-1
     # priced-takeoff grafts (#651). Same pre-existing handlers — only
     # the line numbers moved. No new silent returns.
-    "app/agents/runtime.py:2078": "baseline 2026-09-10",
-    "app/agents/runtime.py:2084": "baseline 2026-09-10",
-    "app/agents/runtime.py:2147": "baseline 2026-09-10",
-    "app/agents/runtime.py:2153": "baseline 2026-09-10",
-    "app/agents/runtime.py:2822": "baseline 2026-09-10",
-    "app/agents/runtime.py:3829": "baseline 2026-09-10",
-    "app/agents/runtime.py:5108": "baseline 2026-09-10",
-    "app/agents/runtime.py:5517": "baseline 2026-09-10",
+    # Re-indexed 2026-09-20 #660: inline BOQ CSV (+2 steal map, +~8
+    # named_calculator guard, +26 boq_processor process). Same handlers
+    # — only line numbers moved. No new silent returns.
+    "app/agents/runtime.py:2080": "baseline 2026-09-10",
+    "app/agents/runtime.py:2086": "baseline 2026-09-10",
+    "app/agents/runtime.py:2149": "baseline 2026-09-10",
+    "app/agents/runtime.py:2155": "baseline 2026-09-10",
+    "app/agents/runtime.py:2824": "baseline 2026-09-10",
+    "app/agents/runtime.py:3839": "baseline 2026-09-10",
+    "app/agents/runtime.py:5118": "baseline 2026-09-10",
+    "app/agents/runtime.py:5527": "baseline 2026-09-10",
     "app/agents/runtime.py:647": "baseline 2026-09-10",
     "app/agents/runtime.py:942": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
-    "app/blocks/boq_processor.py:562": "baseline 2026-09-10",
-    "app/blocks/boq_processor.py:570": "baseline 2026-09-10",
+    "app/blocks/boq_processor.py:588": "baseline 2026-09-10",
+    "app/blocks/boq_processor.py:596": "baseline 2026-09-10",
     "app/blocks/image.py:100": "baseline 2026-09-10",
     "app/blocks/image.py:114": "baseline 2026-09-10",
     "app/blocks/image.py:189": "baseline 2026-09-10",
