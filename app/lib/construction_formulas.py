@@ -947,7 +947,7 @@ logger = logging.getLogger(__name__)
 # Public functions in this module that are DISPATCH infrastructure, not
 # calculators — excluded from the registry regardless of definition order.
 # bind_calculation_params / describe_calculation_params are the shared
-# dispatcher helpers (this PR + Agent C / #636). Do not register them.
+# dispatcher helpers (#639 + Agent C / #636 / #652). Do not register them.
 _NON_CALCULATORS = {
     "available_calculations",
     "run_calculation",
@@ -1124,6 +1124,8 @@ _BIND_UNIT_SUFFIXES: Tuple[Tuple[str, str], ...] = (
     ("_kg", "kg"),
     ("_percent", "%"),
     ("_pct", "%"),
+    ("_days", "d"),
+    ("_day", "d"),
     ("_deg", "deg"),
     ("_m", "m"),
     ("_s", "s"),
@@ -1133,7 +1135,8 @@ _BIND_UNIT_SUFFIXES: Tuple[Tuple[str, str], ...] = (
 # Incoming name (normalized) → candidate signature names. Only a candidate
 # that is actually on *this* calculator is used, and only when unique.
 # Includes the #636 PMI / PE aliases so calculate_evm binds without a
-# special-case table of its own (Agent C shares this path).
+# special-case table of its own (Agent C shares this path), plus #639
+# excavation/claim/bolt aliases and #652 standing-exit aliases.
 _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "pv": ("pv", "bcws"),
     "planned_value": ("pv", "bcws"),
@@ -1177,9 +1180,59 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "l": ("span_m", "length_m"),
     "p": ("central_point_load_kn", "axial_load_kn", "point_load_kn"),
     "rate": ("rate_percent",),
+    "delay_rate": ("rate_percent",),
     "aca": ("contract_amount",),
     "accepted_contract_amount": ("contract_amount",),
     "contract_value": ("contract_amount",),
+    "hw": ("water_depth",),
+    "h_w": ("water_depth",),
+    "water_table": ("water_depth",),
+    "water_head": ("water_depth",),
+    "raft": ("raft_thickness",),
+    "traft": ("raft_thickness",),
+    "floors": ("floor_count",),
+    "n_floors": ("floor_count",),
+    "nfloors": ("floor_count",),
+    "t": ("time_days",),
+    "time": ("time_days",),
+    "days": ("time_days",),
+    "age": ("time_days",),
+    "age_days": ("time_days",),
+    "esh_ult": ("ultimate_shrinkage_microstrain",),
+    "ultimate_shrinkage": ("ultimate_shrinkage_microstrain",),
+}
+
+# Signature defaults that must NOT silently succeed (live wrong_number /
+# tool_error). Any one name in a group satisfies the group.
+_REQUIRED_GROUPS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
+    "calculate_evm": (
+        ("pv", "bcws"),
+        ("ev", "bcwp"),
+        ("ac", "acwp"),
+    ),
+    "delay_damages_daily": (
+        ("rate_percent",),
+        ("contract_amount",),
+    ),
+}
+
+_PARAM_UNIT_OVERRIDE: Dict[str, str] = {
+    "pv": "currency",
+    "ev": "currency",
+    "ac": "currency",
+    "bcws": "currency",
+    "bcwp": "currency",
+    "acwp": "currency",
+    "bac": "currency",
+    "rate_percent": "%",
+    "contract_amount": "currency",
+    "water_depth": "m",
+    "raft_thickness": "m",
+    "floor_count": "floors",
+    "floor_thickness": "m",
+    "time_days": "d",
+    "time_constant_days": "d",
+    "ultimate_shrinkage_microstrain": "µε",
 }
 
 
@@ -1207,6 +1260,8 @@ def _param_stem(name: str) -> str:
 
 
 def _unit_from_name(name: str) -> str:
+    if name in _PARAM_UNIT_OVERRIDE:
+        return _PARAM_UNIT_OVERRIDE[name]
     n = _snake_key(name)
     for suf, unit in _BIND_UNIT_SUFFIXES:
         if n.endswith(suf):
@@ -1227,7 +1282,7 @@ def _is_junk_key(key: Any) -> bool:
 def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
     """Merge nested ``params`` / ``input`` into top-level calculator kwargs.
 
-    Live Phase-2 / #636 / DIR7: the model often puts calculator kwargs
+    Live Phase-2 / #636 / DIR7 / #652: the model often puts calculator kwargs
     next to ``calculation`` *or* nests them under ``params`` or ``input``.
     Envelope keys (text, formula, input, project_id, …) are never copied
     through as calculator kwargs. ``text`` / ``formula`` are the E4
@@ -1259,16 +1314,23 @@ def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def describe_calculation_params(fn: Any) -> List[Dict[str, Any]]:
-    """Signature-derived expected params with units (name suffix / annotation)."""
+def describe_calculation_params(
+    fn: Any,
+    name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Signature-derived expected params with units (name suffix / override)."""
     sig = _inspect.signature(fn)
+    required_names: set[str] = set()
+    if name:
+        for group in _REQUIRED_GROUPS.get(str(name).strip().lower(), ()):
+            required_names.update(group)
     rows: List[Dict[str, Any]] = []
     for key, param in sig.parameters.items():
         if param.kind not in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY):
             continue
         if key.startswith("_"):
             continue
-        required = param.default is param.empty
+        required = param.default is param.empty or key in required_names
         unit = _unit_from_name(key)
         row: Dict[str, Any] = {
             "name": key,
@@ -1276,7 +1338,7 @@ def describe_calculation_params(fn: Any) -> List[Dict[str, Any]]:
             "unit": unit,
             "annotation": _ann_label(param.annotation),
         }
-        if not required:
+        if param.default is not param.empty:
             row["default"] = param.default
         rows.append(row)
     return rows
@@ -1294,7 +1356,7 @@ def _unique_semantic_dest(incoming: str, accepted: Dict[str, str]) -> Optional[s
 
 
 def _unique_stem_dest(incoming: str, accepted: Dict[str, str]) -> Optional[str]:
-    """Bind volume → volume_m3 / diameter → column_diameter_mm when unique."""
+    """Bind volume → volume_m3 / diameter → column_diameter_mm / water_depth_m → water_depth when unique."""
     stem = _param_stem(incoming)
     if len(stem) < 3:
         return None
@@ -1318,6 +1380,7 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     Shared with Agent C (#636 flattened the tool path + EVM aliases). This
     generalises that bind: case-insensitive keys, unit-suffix stems, and a
     small synonym table. Canonical names already present win.
+    Shared with Agent C / #636 / #639 / #652.
     """
     raw = _flatten_calc_kwargs(params or {})
     sig = _inspect.signature(fn)
@@ -1352,9 +1415,15 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     return bound
 
 
-def _missing_required(fn: Any, bound: Dict[str, Any]) -> List[str]:
+def _missing_required(fn: Any, bound: Dict[str, Any], name: Optional[str] = None) -> List[str]:
     missing: List[str] = []
-    for row in describe_calculation_params(fn):
+    groups = _REQUIRED_GROUPS.get(str(name or "").strip().lower())
+    if groups:
+        for group in groups:
+            if not any(k in bound and bound[k] not in (None, "") for k in group):
+                missing.append(group[0])
+        return missing
+    for row in describe_calculation_params(fn, name=name):
         if row["required"] and row["name"] not in bound:
             missing.append(row["name"])
     return missing
@@ -1377,7 +1446,7 @@ def _bind_error_envelope(
     missing: List[str],
     extra: str = "",
 ) -> Dict[str, Any]:
-    expected = describe_calculation_params(fn)
+    expected = describe_calculation_params(fn, name=name)
     by_name = {row["name"]: row for row in expected}
     missing_labels = [
         _format_param_label(by_name[m]) if m in by_name else m for m in missing
@@ -1414,8 +1483,10 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         return {"status": "error", "error": "params must be an object of keyword arguments."}
     if not isinstance(params, dict):
         params = {}
-    # Shared with Agent C / #636: nested ``params`` + top-level siblings
-    # (volume / BCWS / excavation_bank_m3) must reach the calculator.
+    # Shared with Agent C / #636 / #639 / #652: nested ``params`` / ``input``
+    # + top-level siblings (volume / BCWS / excavation_bank_m3 / water_depth_m)
+    # must reach the calculator. Flatten before E4 so a nested concrete ask
+    # still pins.
     params = _flatten_calc_kwargs(params)
     # Live UI pack E4: a concrete/raft ask (or leftover-L6 excavation name
     # plus "documented waste factor" in ``text``) must apply the project's
@@ -1458,15 +1529,16 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     if str(name or "").strip().lower() == "calculate_evm":
         params = _alias_calculate_evm_params(params)
     params = bind_calculation_params(fn, params)
-    missing = _missing_required(fn, params)
+    missing = _missing_required(fn, params, name=str(name))
     if missing:
         return _bind_error_envelope(str(name), fn, missing)
     try:
         result = fn(**params)
     except TypeError as exc:
         # Never a bare TypeError string alone — name the expected params.
-        still_missing = _missing_required(fn, params) or [
-            row["name"] for row in describe_calculation_params(fn) if row["required"]
+        still_missing = _missing_required(fn, params, name=str(name)) or [
+            row["name"] for row in describe_calculation_params(fn, name=str(name))
+            if row["required"]
         ]
         return _bind_error_envelope(str(name), fn, still_missing, extra=str(exc))
     except Exception as exc:  # noqa: BLE001 — never raise into the agent loop
