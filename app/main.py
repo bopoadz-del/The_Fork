@@ -187,6 +187,8 @@ async def lifespan(app: FastAPI):
     """Initialize all blocks + load runtime agents at startup."""
     _validate_startup_env()
     _warn_when_the_llm_has_no_fallback()
+    from app.core import rss_watchdog
+    rss_watchdog.start()
     from app.blocks.learning_engine import assert_learning_engine_hard_off
     assert_learning_engine_hard_off()
     await init_blocks()
