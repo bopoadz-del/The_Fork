@@ -15050,6 +15050,16 @@ def _cg_strip_unit_noise(text: str) -> str:
     return _CG_UNIT_NOISE_RE.sub(" ", text or "")
 
 
+# Each step of the user-arithmetic closure multiplies the set it is given, so
+# the whole is O(n^2 x counts x money x percents) in the user's figures. A
+# normal ask (a handful of figures) builds ~16k entries. Live 21 Sep 2026 a
+# figure-heavy user text drove it past 2 GiB and Render OOM-killed the web
+# instance. A step that would exceed this many entries is skipped and logged:
+# fewer grounded numbers only makes the gate stricter, never looser.
+_CG_USER_CLOSURE_MAX = 250_000
+_CG_USER_PAIR_ENTRIES = 5  # a*b, a+b, |a-b|, a/b, b/a per pair
+
+
 def _cg_user_arithmetic_closure(user_text: str, seeded: set) -> set:
     """a×b×c, qty×rate after a quotient, and a×(1+p%) from user figures.
 
@@ -15081,8 +15091,15 @@ def _cg_user_arithmetic_closure(user_text: str, seeded: set) -> set:
             prod *= p
         extra.add(round(prod, 4))
     # Pairwise of the user's own figures (qty/productivity, qty×rate).
-    for i, a in enumerate(originals):
-        for b in originals[i:]:
+    pairwise = originals
+    if _CG_USER_PAIR_ENTRIES * len(originals) ** 2 // 2 > _CG_USER_CLOSURE_MAX:
+        _LOG.warning(
+            "cost gate: user-arithmetic pairwise pass skipped (%d figures)",
+            len(originals),
+        )
+        pairwise = []
+    for i, a in enumerate(pairwise):
+        for b in pairwise[i:]:
             extra.add(round(a * b, 4))
             extra.add(round(a + b, 4))
             extra.add(round(abs(a - b), 4))
@@ -15113,7 +15130,18 @@ def _cg_user_arithmetic_closure(user_text: str, seeded: set) -> set:
         )
     ]
 
+    def _over_budget(step: str, size: int) -> bool:
+        if size <= _CG_USER_CLOSURE_MAX:
+            return False
+        _LOG.warning(
+            "cost gate: user-arithmetic closure step %s skipped (%d entries > %d)",
+            step, size, _CG_USER_CLOSURE_MAX,
+        )
+        return True
+
     def _times(values: set, factors: list[float], *, min_qty: float = 0.0) -> set:
+        if _over_budget("times", len(values) * len(factors)):
+            return values
         out = set(values)
         for a in list(values):
             if a < min_qty:
@@ -15125,6 +15153,8 @@ def _cg_user_arithmetic_closure(user_text: str, seeded: set) -> set:
         return out
 
     def _apply_pct(values: set) -> set:
+        if _over_budget("percent", len(values) * len(pct_factors)):
+            return values
         out = set(values)
         for a in list(values):
             for f in pct_factors:
