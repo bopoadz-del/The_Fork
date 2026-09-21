@@ -118,7 +118,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/lib/boq_pricing.py:128": "baseline 2026-09-10",
     "app/lib/pm_computations.py:340": "baseline 2026-09-10",
     "app/lib/wbs_duration_overrides.py:147": "baseline 2026-09-10",
-    "app/main.py:475": "baseline 2026-09-10",
+    "app/main.py:477": "baseline 2026-09-10",
     "app/routers/chat.py:371": "baseline 2026-09-10; renumbered Agent D look_ahead synthetic helper",
     "app/routers/chat_watchdog.py:98": "baseline 2026-09-10",
     "app/routers/mcp.py:65": "baseline 2026-09-10",
