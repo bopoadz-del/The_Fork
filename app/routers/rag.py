@@ -9,6 +9,7 @@ would be silly. The route is here for visibility, not for plumbing.
 
 from __future__ import annotations
 
+import asyncio
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -102,7 +103,11 @@ async def rag_search(
         )
 
     try:
-        chunks = _r.retrieve(req.query, search_project_id, k=req.k, intent=req.intent)
+        # Off the event loop: a synchronous retrieve here stalled the single
+        # worker past Render's 5 s health check (live 21 Sep 2026, 18:32).
+        chunks = await asyncio.to_thread(
+            _r.retrieve, req.query, search_project_id, k=req.k, intent=req.intent,
+        )
     except ValueError as exc:
         # Caller-side error (e.g. empty project_id) — surface as 400
         raise HTTPException(status_code=400, detail=str(exc))

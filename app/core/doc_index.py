@@ -3192,6 +3192,25 @@ async def search_project_documents(
 ) -> list[dict[str, Any]]:
     """Search indexed documents for ``query``, returning up to ``top_k`` results.
 
+    Retrieval is synchronous work -- query embedding, BM25 + vector over
+    Postgres, optional cross-encoder rerank. Run inline in this coroutine it
+    froze the single worker's event loop for the whole search: live
+    21 Sep 2026 a search stalled /livez 4-6 s during chat turns, and one past
+    5 s made Render restart the instance (health check timed out). It runs in
+    a thread, like the chat pre-retrieval already does.
+    """
+    return await asyncio.to_thread(
+        _search_project_documents_sync, project_id, query, top_k,
+    )
+
+
+def _search_project_documents_sync(
+    project_id: str,
+    query: str,
+    top_k: int = 5,
+) -> list[dict[str, Any]]:
+    """Search indexed documents for ``query``, returning up to ``top_k`` results.
+
     Each result is a dict: ``{document_id, filename, snippet, score}``.
 
     PR #94: routes through the production hybrid retriever
