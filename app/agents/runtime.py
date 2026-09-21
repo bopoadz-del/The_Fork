@@ -13,6 +13,7 @@ chat block as a fallback; see ``app/blocks/chat.py``.
 from __future__ import annotations
 
 import asyncio
+import bisect
 import inspect
 import json
 import logging
@@ -5454,6 +5455,18 @@ def _cg_english_and_percent_values(text: str) -> list[float]:
     return out
 
 
+#: Above this many base numbers the pairwise closure is checked lazily instead
+#: of being built (120 numbers -> ~36k entries, a few MB; 3,750 -> 2 GB).
+_CG_EAGER_CLOSURE_MAX = 120
+
+
+class _GroundedNumbers(set):
+    """The grounded set, plus -- when the base was too large to close eagerly --
+    the sorted base for ``_cg_pair_grounds``. Still a ``set`` to every caller."""
+
+    lazy_base: tuple = ()
+
+
 def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> set:
     """Numbers a cost claim may be grounded against:
 
@@ -5511,16 +5524,27 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
     # not products. Bounded to pairwise combinations of the (small) grounded
     # set; the 0.5% tolerance in _cg_is_grounded keeps this from grounding an
     # unrelated fabricated rate.
+    #
+    # MEMORY. Materialising that closure is quadratic, and a retrieved BOQ
+    # table carries thousands of numbers: 3,750 numbers -> 24 million set
+    # entries, 2 GB and 414 s with the event loop blocked. Live 2026-09-20/21
+    # it OOM-killed the 2 GB web instance ten times -- one costed answer each.
+    # The closure is only materialised while it is small; above that the same
+    # rule is CHECKED per figure against a sorted list (_cg_pair_grounds).
     base = list(grounded)
-    for i in range(len(base)):
-        for j in range(i, len(base)):
-            grounded.add(round(base[i] + base[j], 4))
-            grounded.add(round(abs(base[i] - base[j]), 4))
-            grounded.add(round(base[i] * base[j], 4))
-            if base[j]:
-                grounded.add(round(base[i] / base[j], 4))
-            if base[i]:
-                grounded.add(round(base[j] / base[i], 4))
+    grounded = _GroundedNumbers(grounded)
+    if len(base) <= _CG_EAGER_CLOSURE_MAX:
+        for i in range(len(base)):
+            for j in range(i, len(base)):
+                grounded.add(round(base[i] + base[j], 4))
+                grounded.add(round(abs(base[i] - base[j]), 4))
+                grounded.add(round(base[i] * base[j], 4))
+                if base[j]:
+                    grounded.add(round(base[i] / base[j], 4))
+                if base[i]:
+                    grounded.add(round(base[j] / base[i], 4))
+    else:
+        grounded.lazy_base = tuple(sorted(base))
     # User-supplied arithmetic beyond one pairwise hop: a×b×c, qty×rate
     # after a quotient (3400/42 × 1950), and a×(1+p%) for waste /
     # contingency the operator stated. Seeded from USER figures only —
@@ -5548,9 +5572,37 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
     return grounded
 
 
+def _cg_pair_grounds(value: float, base: tuple, tol: float) -> bool:
+    """True when ``value`` is a+b, |a-b|, a*b or a/b of two numbers in ``base``
+    (sorted ascending), within ``tol``. n log n and no allocation -- the same
+    rule the eager closure applies, without building it."""
+    lo_v, hi_v = value - tol, value + tol
+
+    def _has(lo: float, hi: float) -> bool:
+        if lo > hi:
+            lo, hi = hi, lo
+        i = bisect.bisect_left(base, lo)
+        return i < len(base) and base[i] <= hi
+
+    for a in base:
+        if _has(lo_v - a, hi_v - a):            # a + b = value
+            return True
+        if _has(a - hi_v, a - lo_v):            # a - b = value  (covers |a-b|)
+            return True
+        if a:
+            if _has(lo_v / a, hi_v / a):        # a * b = value
+                return True
+            if _has(lo_v * a, hi_v * a):        # b / a = value
+                return True
+    return False
+
+
 def _cg_is_grounded(value: float, grounded: set) -> bool:
     tol = max(0.5, abs(value) * 0.005)
-    return any(abs(value - g) <= tol for g in grounded)
+    if any(abs(value - g) <= tol for g in grounded):
+        return True
+    lazy = getattr(grounded, "lazy_base", ())
+    return bool(lazy) and _cg_pair_grounds(value, lazy, tol)
 
 
 def _cost_grounding_gate(
