@@ -1,7 +1,9 @@
 """BOQ Processor Block - Parse Excel/CSV/PDF Bills of Quantities into structured line items"""
 
+import asyncio
 import logging
 import os
+import time
 from typing import Any, Dict, List, Tuple
 from app.core.universal_base import UniversalBlock
 from app.lib.boq_units import reconcile_unit
@@ -34,6 +36,39 @@ def _boq_pdf_max_mb(filename: str = "") -> float:
     except ValueError:
         return max_mb
     return env_max if env_max > max_mb else max_mb
+
+
+# A chat turn cannot afford to table-parse a whole contract volume. Measured on
+# the live priced bill (370 pages): ~3 s per page even with pages released, so
+# ~19 minutes -- and 43 MB per page retained without release, which OOM-killed
+# the 2 GB web instance 75 s in (21 Sep 2026). Past these budgets the block
+# refuses and points at what does work: the indexed text, a specific item, or
+# the .xlsx.
+_DEFAULT_BOQ_PDF_MAX_PAGES = 60
+_DEFAULT_BOQ_PDF_PARSE_SECONDS = 90.0
+
+
+def _env_number(name: str, default: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _boq_pdf_max_pages() -> int:
+    return int(_env_number("BOQ_PDF_MAX_PAGES", _DEFAULT_BOQ_PDF_MAX_PAGES))
+
+
+def _boq_pdf_parse_seconds() -> float:
+    return _env_number("BOQ_PDF_PARSE_SECONDS", _DEFAULT_BOQ_PDF_PARSE_SECONDS)
+
+
+class _ParseBudgetExceeded(Exception):
+    pass
 
 
 def _resolve_via_project(project_id: str, raw: str) -> str:
@@ -208,7 +243,18 @@ class BOQProcessorBlock(UniversalBlock):
         except Exception as e:
             return {"status": "error", "error": f"Parse error: {e}"}
 
+    # Every parser is synchronous, CPU-bound work. The web service runs ONE
+    # uvicorn worker, so parsing on the event loop freezes health checks and
+    # every other user for the whole parse (Render then kills the instance as
+    # unhealthy). The async wrappers hand the work to a thread.
+
     async def _parse_csv(self, file_path: str, params: Dict) -> Dict:
+        return await asyncio.to_thread(self._parse_csv_sync, file_path, params)
+
+    async def _parse_excel(self, file_path: str, params: Dict) -> Dict:
+        return await asyncio.to_thread(self._parse_excel_sync, file_path, params)
+
+    def _parse_csv_sync(self, file_path: str, params: Dict) -> Dict:
         import pandas as pd
         df = pd.read_csv(file_path)
         return self._process_dataframe(df, params)
@@ -234,7 +280,7 @@ class BOQProcessorBlock(UniversalBlock):
                 return i
         return 0
 
-    async def _parse_excel(self, file_path: str, params: Dict) -> Dict:
+    def _parse_excel_sync(self, file_path: str, params: Dict) -> Dict:
         import pandas as pd
         sheet = params.get("sheet_name", 0)
         # Engine by format, not one-size: openpyxl reads only zip-based .xlsx,
@@ -298,8 +344,54 @@ class BOQProcessorBlock(UniversalBlock):
                 "max_mb": max_mb,
             }
 
+        return await asyncio.to_thread(self._parse_pdf_sync, file_path, params)
+
+    def _parse_pdf_sync(self, file_path: str, params: Dict) -> Dict:
+        import pdfplumber
+
+        max_pages = _boq_pdf_max_pages()
+        budget_s = _boq_pdf_parse_seconds()
+        deadline = time.monotonic() + budget_s
+        with pdfplumber.open(file_path) as pdf:
+            page_count = len(pdf.pages)
+        if page_count > max_pages:
+            return {
+                "status": "error",
+                "error": (
+                    f"This BOQ PDF has {page_count} pages -- too large to "
+                    f"table-parse inside a chat turn (limit {max_pages} pages). "
+                    f"Its contents are already indexed: ask about a specific "
+                    f"item (e.g. by its item number) and the answer comes from "
+                    f"the indexed bill, or upload the .xlsx version of this BOQ "
+                    f"to compute full totals."
+                ),
+                "boq_pdf_too_many_pages": True,
+                "page_count": page_count,
+                "max_pages": max_pages,
+            }
+        try:
+            return self._parse_pdf_pages(file_path, params, deadline)
+        except _ParseBudgetExceeded as exc:
+            return {
+                "status": "error",
+                "error": (
+                    f"Parsing this BOQ PDF ran past its {budget_s:.0f} s budget "
+                    f"({exc}) and was stopped; no totals are returned because "
+                    f"they would be incomplete. Ask about a specific item (its "
+                    f"contents are indexed) or upload the .xlsx version."
+                ),
+                "boq_pdf_parse_timeout": True,
+                "page_count": page_count,
+                "budget_seconds": budget_s,
+            }
+
+    def _parse_pdf_pages(self, file_path: str, params: Dict, deadline: float) -> Dict:
         import pdfplumber
         import pandas as pd
+
+        def check_budget(page_index: int) -> None:
+            if time.monotonic() > deadline:
+                raise _ParseBudgetExceeded(f"stopped at page {page_index}")
 
         # Group tables by a canonical "shape" key built from normalized headers
         # so continuation pages merge naturally.
@@ -314,6 +406,7 @@ class BOQProcessorBlock(UniversalBlock):
 
         with pdfplumber.open(file_path) as pdf:
             for page_index, page in enumerate(pdf.pages, 1):
+                check_budget(page_index)
                 try:
                     tables = page.extract_tables() or []
                 except Exception as exc:
@@ -329,6 +422,10 @@ class BOQProcessorBlock(UniversalBlock):
                         "error": str(exc),
                     })
                     continue
+                finally:
+                    # Release the page's parsed layout now: pdfplumber keeps it
+                    # otherwise (43 MB/page on the live bill -> 1 MB/page).
+                    page.close()
                 for tbl in tables:
                     if not tbl or len(tbl) < 2:
                         continue
@@ -367,6 +464,7 @@ class BOQProcessorBlock(UniversalBlock):
             page_texts: List[Dict[str, Any]] = []
             with pdfplumber.open(file_path) as pdf:
                 for i, page in enumerate(pdf.pages, 1):
+                    check_budget(i)
                     try:
                         t = (page.extract_text() or "").strip()
                     except Exception as exc:
@@ -382,6 +480,8 @@ class BOQProcessorBlock(UniversalBlock):
                             "error": str(exc),
                         })
                         t = ""
+                    finally:
+                        page.close()
                     if t:
                         page_texts.append({"page": i, "text": t})
             if page_texts:
