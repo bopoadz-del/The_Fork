@@ -69,7 +69,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:2966": "baseline 2026-09-10",
     "app/agents/runtime.py:3990": "baseline 2026-09-10",
     "app/agents/runtime.py:5346": "baseline 2026-09-10",
-    "app/agents/runtime.py:5832": "baseline 2026-09-10",
+    "app/agents/runtime.py:5891": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",

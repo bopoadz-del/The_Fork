@@ -5466,6 +5466,10 @@ def _cg_english_and_percent_values(text: str) -> list[float]:
 #: Above this many base numbers the pairwise closure is checked lazily instead
 #: of being built (120 numbers -> ~36k entries, a few MB; 3,750 -> 2 GB).
 _CG_EAGER_CLOSURE_MAX = 120
+# Operator-typed multipliers kept for the per-figure pair check. A real ask
+# carries a handful (a percentage, a rate); the cap keeps the per-figure walk
+# constant whatever a pasted message contains.
+_CG_OPERATOR_FACTOR_MAX = 24
 
 
 class _GroundedNumbers(set):
@@ -5473,6 +5477,11 @@ class _GroundedNumbers(set):
     the sorted base for ``_cg_pair_grounds``. Still a ``set`` to every caller."""
 
     lazy_base: tuple = ()
+    # Sorted context figures, and the multipliers the OPERATOR typed (a
+    # percentage, a rate). Checked as a pair in _cg_is_grounded: see
+    # _CG_OPERATOR_FACTOR_MAX.
+    base_sorted: tuple = ()
+    operator_factors: tuple = ()
 
 
 def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> set:
@@ -5541,6 +5550,7 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
     # rule is CHECKED per figure against a sorted list (_cg_pair_grounds).
     base = list(grounded)
     grounded = _GroundedNumbers(grounded)
+    grounded.base_sorted = tuple(sorted(base))
     if len(base) <= _CG_EAGER_CLOSURE_MAX:
         for i in range(len(base)):
             for j in range(i, len(base)):
@@ -5590,7 +5600,37 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
             user_seed.add(v)
     if user_seed:
         grounded |= _cg_user_arithmetic_closure(" ".join(user_blob), user_seed)
+    grounded.operator_factors = _cg_operator_factors(" ".join(user_blob))
     return grounded
+
+
+def _cg_operator_factors(operator_text: str) -> tuple:
+    """Multipliers the operator typed: a percentage, a rate, a count.
+
+    "8.5% of the Accepted Contract Amount" and "price that volume at SAR 390
+    per m3" are the two most common QS asks, and both multiply a figure the
+    operator never typed (it is in the contract, or a tool computed it) by one
+    the operator did. The eager/lazy pairwise closure cannot reach either: it
+    runs over the CONTEXT figures before the operator's are merged in, so live
+    SET4 M3 refused a correct 8.5%-of-ACA answer and T6 dropped the pricing
+    step. These factors are paired against the context base per checked figure
+    in _cg_is_grounded -- no closure is materialised.
+    """
+    factors: list[float] = []
+    for m in _CG_PERCENT_RE.finditer(operator_text or ""):
+        p = _cg_to_number(m.group(1))
+        if p is None or p <= 0 or p > 100:
+            continue
+        factors.append(round(p / 100.0, 6))
+        factors.append(round(1.0 + p / 100.0, 6))
+    # A typed RATE needs nothing here: it is already one of the context
+    # figures, so quantity x rate is the ordinary pairwise rule (eager, or
+    # _cg_pair_grounds on a large base). Only the percentage is missing --
+    # 0.085 exists solely inside the user closure, which is merged after the
+    # pairwise pass.
+    #
+    # Deterministic, deduplicated and capped: this list is walked per figure.
+    return tuple(sorted({f for f in factors if f})[:_CG_OPERATOR_FACTOR_MAX])
 
 
 def _cg_is_platform_bubble(content: str) -> bool:
@@ -5634,7 +5674,26 @@ def _cg_is_grounded(value: float, grounded: set) -> bool:
     if any(abs(value - g) <= tol for g in grounded):
         return True
     lazy = getattr(grounded, "lazy_base", ())
-    return bool(lazy) and _cg_pair_grounds(value, lazy, tol)
+    if lazy and _cg_pair_grounds(value, lazy, tol):
+        return True
+    return _cg_operator_factor_grounds(value, grounded, tol)
+
+
+def _cg_operator_factor_grounds(value: float, grounded: set, tol: float) -> bool:
+    """True when ``value`` is a context figure times something the operator
+    typed (8.5% of the contract amount; a tool's volume at the operator's
+    SAR 390/m3). Binary search per factor -- no allocation."""
+    base = getattr(grounded, "base_sorted", ())
+    factors = getattr(grounded, "operator_factors", ())
+    if not base or not factors:
+        return False
+    for f in factors:
+        target = value / f
+        window = tol / abs(f)
+        i = bisect.bisect_left(base, target - window)
+        if i < len(base) and base[i] <= target + window:
+            return True
+    return False
 
 
 def _cost_grounding_gate(
