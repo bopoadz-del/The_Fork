@@ -44,23 +44,26 @@ def _grounded(messages):
 
 # ── platform bubbles are not operator figures ──────────────────────────────
 
-def test_a_replayed_tool_result_does_not_get_the_operators_extra_hops():
-    # One hop over context numbers is the ordinary pairwise rule and stays:
-    # tool output is legitimate grounding. The USER closure's extra hops
-    # (x count, x percent, x money) must not apply to figures the operator
-    # never typed -- here 400 x 137, then the operator's +10%.
+def test_a_replayed_tool_result_grounds_only_what_it_contains():
+    # Tool output is legitimate grounding, and the operator may ask for a
+    # percentage of it (SET4 T6) -- what must NOT happen is a rate nobody
+    # supplied riding along on the replayed figures.
     messages = [{"role": "user", "content": "Add 10% to that."},
                 {"role": "user", "content": _tool_bubble()}]
     grounded = _grounded(messages)
     assert rt._cg_is_grounded(INVENTED_TOTAL, grounded), "pairwise over context stands"
-    assert not rt._cg_is_grounded(INVENTED_TOTAL * 1.10, grounded), (
-        "54,800 x 1.10 chains the operator's percent onto tool-only figures")
+    assert rt._cg_is_grounded(INVENTED_TOTAL * 1.10, grounded), "the operator asked for +10%"
+    assert not rt._cg_is_grounded(QTY * 512.0, grounded), "512 is nobody's rate"
 
 
-def test_a_predispatch_bubble_does_not_ground_its_own_arithmetic():
+def test_a_predispatch_bubble_does_not_supply_operator_multipliers():
+    # The platform's bubble states a rate of 137. A later answer priced at a
+    # rate the OPERATOR never typed must still fail the gate.
     messages = [{"role": "user", "content": "And with 10% more?"},
                 {"role": "user", "content": _predispatch_bubble()}]
-    assert not rt._cg_is_grounded(INVENTED_TOTAL * 1.10, _grounded(messages))
+    grounded = _grounded(messages)
+    assert RATE not in grounded.operator_factors
+    assert not rt._cg_is_grounded(QTY * 512.0, grounded)
 
 
 def test_platform_bubbles_are_recognised_by_both_prefixes():
