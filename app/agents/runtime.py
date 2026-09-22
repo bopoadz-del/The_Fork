@@ -1186,11 +1186,19 @@ def _messages_user_and_history(messages: list) -> tuple[str, list]:
         prior.append(m)
         if role == "user":
             content = str(m.get("content") or "")
-            if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
+            if content.lstrip().startswith(_PREDISPATCH_PREFIX):
                 continue
             user_msg = _unwrap_rag_folded_operator_text(content)
     history = prior[:-1] if prior else []
     return user_msg, history
+
+
+# The two shapes of user-role bubble the PLATFORM writes. Readers that must
+# tell operator text from replayed tool output (the cost gate's user seed,
+# _operator_user_text) match on these, so a change to either writer below
+# cannot silently turn platform figures back into "what the user typed".
+_PREDISPATCH_PREFIX = "PLATFORM PRE-DISPATCH:"
+_TOOL_RESULT_PREFIX = "Tool result ("
 
 
 def _operator_user_text(messages: list) -> str:
@@ -1204,7 +1212,7 @@ def _operator_user_text(messages: list) -> str:
         if m.get("role") != "user":
             continue
         content = str(m.get("content") or "")
-        if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
+        if content.lstrip().startswith(_PREDISPATCH_PREFIX):
             continue
         content = _unwrap_rag_folded_operator_text(content)
         if content.strip():
@@ -4368,7 +4376,7 @@ def _latest_user_text(messages: list[dict[str, Any]] | None) -> str:
         if m.get("role") != "user":
             continue
         content = str(m.get("content") or "")
-        if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
+        if content.lstrip().startswith(_PREDISPATCH_PREFIX):
             continue
         return content
     return ""
@@ -5547,8 +5555,16 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
         grounded.lazy_base = tuple(sorted(base))
     # User-supplied arithmetic beyond one pairwise hop: a×b×c, qty×rate
     # after a quotient (3400/42 × 1950), and a×(1+p%) for waste /
-    # contingency the operator stated. Seeded from USER figures only —
-    # a rate the user never typed still fails the gate.
+    # contingency the operator stated. Seeded from what the OPERATOR
+    # TYPED only — a rate the user never typed still fails the gate.
+    #
+    # The runtime replays tool output back into the conversation as
+    # user-role bubbles ("PLATFORM PRE-DISPATCH: …", "Tool result (…): …")
+    # and folds retrieved chunks into the last user turn. Seeding from
+    # every user-role message therefore treated a whole priced BOQ — every
+    # quantity, rate and amount the block returned — as figures the
+    # operator had typed, which both grounded numbers the gate is meant to
+    # refuse and drove the closure past 2 GiB (live 21 Sep 2026, #692).
     user_seed: set = set()
     user_blob: list[str] = []
     for msg in messages or []:
@@ -5556,6 +5572,11 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
             continue
         content = msg.get("content")
         if not isinstance(content, str) or not content.strip():
+            continue
+        if _cg_is_platform_bubble(content):
+            continue
+        content = _unwrap_rag_folded_operator_text(content)
+        if not content.strip():
             continue
         user_blob.append(content)
         cleaned = _cg_strip_unit_noise(content)
@@ -5570,6 +5591,17 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
     if user_seed:
         grounded |= _cg_user_arithmetic_closure(" ".join(user_blob), user_seed)
     return grounded
+
+
+def _cg_is_platform_bubble(content: str) -> bool:
+    """True for a user-role message the PLATFORM wrote, not the operator.
+
+    ``_inject_predispatch`` and ``_repair_tool_call_pairing`` replay tool
+    output as user bubbles; their figures are the platform's, not the
+    operator's, and must never seed the user-arithmetic closure.
+    """
+    head = content.lstrip()
+    return head.startswith(_PREDISPATCH_PREFIX) or head.startswith(_TOOL_RESULT_PREFIX)
 
 
 def _cg_pair_grounds(value: float, base: tuple, tol: float) -> bool:
@@ -8716,7 +8748,7 @@ def _repair_tool_call_pairing(
                 out.append({
                     "role": "user",
                     "content": (
-                        f"Tool result ({m.get('name') or 'unknown'}): "
+                        f"{_TOOL_RESULT_PREFIX}{m.get('name') or 'unknown'}): "
                         f"{m.get('content') or ''}"
                     ),
                 })
@@ -8787,7 +8819,7 @@ def _repair_tool_call_pairing(
                 out.append({
                     "role": "user",
                     "content": (
-                        f"Tool result ({d.get('name') or 'unknown'}): "
+                        f"{_TOOL_RESULT_PREFIX}{d.get('name') or 'unknown'}): "
                         f"{d.get('content') or ''}"
                     ),
                 })
