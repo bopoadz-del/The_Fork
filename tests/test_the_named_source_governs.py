@@ -2,7 +2,7 @@
 
 Live SET4.1 on 3403cb5, asked five times each:
 
-    "PER THE PROJECT SPECIFICATION for DD-2023-118, to what degree must
+    "PER THE PROJECT SPECIFICATION for SYN-2024-001, to what degree must
      structural backfill under foundations be compacted?"     -> 1/5
 
 The answer came from an *MTS & Risk Assessment for Site Office Mobilization*
@@ -19,16 +19,16 @@ import pytest
 from app.core.rag import retriever as r
 from app.core.rag.vector_store import Chunk
 
-SPEC_ASK = ("Per the project specification for DD-2023-118, to what degree must "
+SPEC_ASK = ("Per the project specification for SYN-2024-001, to what degree must "
             "structural backfill under foundations be compacted?")
 HSE_ASK = ("Per the project HSE lighting requirements, what minimum illumination "
            "is required for concrete placement at night?")
 PLAIN_ASK = "What is the Defects Notification Period under this contract?"
 
-SPEC_DOC = "IP-INF-054 Particular Specification - Earthworks Rev 02.pdf"
+SPEC_DOC = "SYN-SPEC-001 Particular Specification - Earthworks Rev 02.pdf"
 MOBILIZATION_DOC = "MTS & Risk Assessment for Site Office Mobilization Rev-00.pdf"
-HSE_DOC = "DG2-PLN-HS-000005 HSE Plan Rev 00.pdf"
-NEUTRAL_DOC = "Contract Data DD-2023-118.pdf"
+HSE_DOC = "SYN-PLN-HS-001 HSE Plan Rev 00.pdf"
+NEUTRAL_DOC = "Contract Data SYN-2024-001.pdf"
 
 
 # ── which class the question names ─────────────────────────────────────────
