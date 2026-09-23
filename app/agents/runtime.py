@@ -46,6 +46,7 @@ from app.core.conversation_wbs import (
 from app.core.clash_intent import message_wants_clash
 from app.core.contract_lookup_intent import message_is_contract_data_lookup
 from app.core.rag.inject import rag_inject
+from app.lib.boq_ref_codes import strip_ref_codes
 from app.core.rag.retriever import project_is_rag_ready
 from app.dependencies import _create_block_instance, block_instances
 
@@ -5498,6 +5499,12 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
     grounded: set = set()
 
     def _add_numbers(text: str, all_numbers: bool) -> None:
+        # A BOQ item reference is a label, not a figure: "D529.2" is the
+        # identifier of a bill item, not the number 529.2. Retrieved rows are
+        # full of them, and grounding a cost claim against a label is how a
+        # fabricated figure can trace to nothing real. Blanked before any
+        # number is read; the row's actual quantity, rate and amount stay.
+        text = strip_ref_codes(text)
         # Bare numbers (only in rate-semantic / authoritative text)...
         if all_numbers:
             for tok in _CG_NUM_RE.findall(text):
@@ -5528,7 +5535,7 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
         content = msg.get("content")
         if role in ("tool", "user") and isinstance(content, str):
             _add_numbers(content, all_numbers=True)
-            for v in _cg_english_and_percent_values(content):
+            for v in _cg_english_and_percent_values(strip_ref_codes(content)):
                 grounded.add(v)
     # Simple arithmetic derivations of grounded figures also ground: a
     # variance/overrun answer legitimately computes the SUM or DIFFERENCE of
@@ -15138,7 +15145,9 @@ def _format_any_calc_result(payload: dict[str, Any]) -> str:
 
 
 def _cg_strip_unit_noise(text: str) -> str:
-    return _CG_UNIT_NOISE_RE.sub(" ", text or "")
+    # Item references go first, for the same reason unit digits do: neither is
+    # a quantity the operator typed. See app/lib/boq_ref_codes.
+    return _CG_UNIT_NOISE_RE.sub(" ", strip_ref_codes(text))
 
 
 # Each step of the user-arithmetic closure multiplies the set it is given, so

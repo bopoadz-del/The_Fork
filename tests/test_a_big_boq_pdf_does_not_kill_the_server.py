@@ -165,4 +165,7 @@ def test_the_event_loop_keeps_running_while_a_pdf_is_parsed(blank_pdf, monkeypat
         return max(gaps)
 
     worst = asyncio.run(scenario())
-    assert worst < 0.2, f"event loop frozen for {worst:.2f}s while a PDF was parsed"
+    # The parse itself is 4 x 0.25 s, so blocking shows as a gap near that
+    # whole second; scheduler noise on a loaded machine reached exactly 0.20 s
+    # (virgin-mode run, 23 Sep). The bound sits between the two, not on the noise.
+    assert worst < 0.4, f"event loop frozen for {worst:.2f}s while a PDF was parsed"

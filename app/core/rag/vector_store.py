@@ -193,6 +193,12 @@ class Chunk:
     # runtime reads it to disclose a Master-Corpus fallback in the answer +
     # sources panel. compare=False so it never affects Chunk equality in tests.
     layer: str = field(default="own", compare=False)
+    # BOQ item references found in ``text``, set by ``retrieve_with_filter``.
+    # These are LABELS ("D529.2" is an item number, not 529.2): retrieve,
+    # display and cite them, never reason about them as figures. Not
+    # serialized and compare=False, like ``layer`` -- it is a tag on the same
+    # text, not new content.
+    ref_codes: tuple = field(default=(), compare=False, repr=False)
     # Layered RAG (docs/rag-deployment-plan.md). ``knowledge_layer`` is the
     # PERSISTED L1/L2A/L2B/L3 layer (see app.core.rag.layers.LAYERS), hydrated
     # by ``search`` from the stored column. It is deliberately a SEPARATE field
