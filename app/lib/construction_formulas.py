@@ -1677,8 +1677,42 @@ def coerce_calc_params(raw: Any) -> Dict[str, Any]:
     return {}
 
 
+# Length units the binder converts between when the caller's key and the
+# calculator's parameter name carry the same stem but different units. No
+# calculator takes a _cm parameter, so cm is not listed: an unmapped unit
+# fails the bind with "missing required span_mm (mm)", which is the right
+# outcome -- a named error the caller can act on.
+_LENGTH_IN_MM = {"mm": 1.0, "m": 1000.0}
+
+
+def _length_unit_factor(incoming: str, dest: str) -> Optional[float]:
+    """Factor to convert ``incoming``'s unit to ``dest``'s, or None.
+
+    Only when the two keys are the SAME quantity in different units --
+    ``span_m`` onto ``span_mm`` -- so nothing is converted across quantities.
+    """
+    if "_" not in incoming or "_" not in dest:
+        return None
+    inc_stem, inc_unit = incoming.rsplit("_", 1)
+    dest_stem, dest_unit = dest.rsplit("_", 1)
+    if inc_stem != dest_stem or inc_unit == dest_unit:
+        return None
+    if inc_unit not in _LENGTH_IN_MM or dest_unit not in _LENGTH_IN_MM:
+        return None
+    return _LENGTH_IN_MM[inc_unit] / _LENGTH_IN_MM[dest_unit]
+
+
 def _scale_bound_value(incoming: str, dest: str, val: Any) -> Any:
-    """quantity_t / tonnes → quantity_kg. Never invents a mass that was absent."""
+    """quantity_t / tonnes → quantity_kg, and span_m → span_mm. Never invents a
+    value that was absent.
+
+    The length case is live SET4 T20: the model called slab_thickness_min with
+    ``span_m: 4.8`` against a ``span_mm`` parameter. The value bound unchanged,
+    so 4.8 metres was read as 4.8 millimetres and the calculator returned
+    ``min_thickness_mm: 0.2`` with status success. The answer then reported
+    "200 mm" -- 0.2 read back as metres -- while its own working said
+    "L/20 = 4800/20". A silently wrong unit is worse than a rejected call.
+    """
     inc = _snake_key(incoming)
     if dest == "quantity_kg" and (
         inc in _TONNE_INCOMING or inc.endswith("_t")
@@ -1688,6 +1722,15 @@ def _scale_bound_value(incoming: str, dest: str, val: Any) -> Any:
         except (TypeError, ValueError):
             logger.debug("quantity_t token %r is not numeric", val)
             return val
+    factor = _length_unit_factor(inc, _snake_key(dest))
+    if factor is not None:
+        try:
+            scaled = float(val) * factor
+        except (TypeError, ValueError):
+            logger.debug("length token %r is not numeric", val)
+            return val
+        logger.info("bind: converted %s=%s to %s=%s", inc, val, dest, scaled)
+        return scaled
     return val
 
 

@@ -1350,6 +1350,93 @@ def filename_match_bonus(
     return bonus
 
 
+# ── governing-source preference ──────────────────────────────────────────
+#
+# Live SET4.1, 24 Sep 2026. Asked "PER THE PROJECT SPECIFICATION for
+# DD-2023-118, to what degree must structural backfill under foundations be
+# compacted?", the answer came from an MTS & Risk Assessment for Site Office
+# Mobilization (95% MDD) instead of the specification (98%, modified Proctor).
+# Same for the HSE lighting levels. The question named the governing document
+# class and ranking ignored it: every document was equally eligible.
+#
+# The classes below are the ones a construction question actually names. Each
+# is a filename/path test, because the class is what the document IS, and the
+# corpus keeps that in its name and folder. A chunk from the named class is
+# lifted; one from a class the question did NOT name is demoted only when the
+# question named a class at all -- so ordinary questions rank byte-identically.
+_SOURCE_CLASSES: dict[str, tuple] = {
+    "specification": (
+        re.compile(r"(?i)\b(?:per|as\s+per|according\s+to|under)\s+the\s+"
+                   r"(?:project\s+)?spec(?:ification)?s?\b"),
+        re.compile(r"(?i)(?:^|[\s_\-/])(?:spec|specification|particular\s+spec)"),
+    ),
+    "hse": (
+        # "HSE lighting requirements" / "HSE plan": the qualifier between the
+        # class and the noun is what the question is about, so allow it.
+        re.compile(r"(?i)\b(?:per|as\s+per|according\s+to|under)\s+the\s+"
+                   r"(?:project\s+)?(?:hse|health\s+and\s+safety|safety)"
+                   r"(?:\s+\w+){0,2}\s+(?:plan|requirements?|procedure)\b"),
+        re.compile(r"(?i)(?:^|[\s_\-/])(?:hse|hs|safety|health)"),
+    ),
+    "lifting": (
+        re.compile(r"(?i)\b(?:per|as\s+per|according\s+to|under)\s+the\s+"
+                   r"(?:project\s+)?lifting\s+plan\b"),
+        re.compile(r"(?i)lifting"),
+    ),
+}
+# Documents that answer a different scope than a project-wide question: a
+# mobilization / site-office method statement states its own lesser values.
+_OFF_SCOPE_NAME_RE = re.compile(
+    r"(?i)(?:mobilization|mobilisation|site\s*office|temporary\s+facilit)",
+)
+_SOURCE_CLASS_BONUS = 1.2
+_OFF_SCOPE_PENALTY = 0.8
+
+
+def source_class_named_by(query: str) -> str:
+    """The governing document class the question names, or ""."""
+    for name, (ask_rx, _name_rx) in _SOURCE_CLASSES.items():
+        if ask_rx.search(query or ""):
+            return name
+    return ""
+
+
+def filename_is_source_class(filename: str, class_name: str) -> bool:
+    """True when this document's name/path says it IS that class."""
+    spec = _SOURCE_CLASSES.get(class_name)
+    return bool(spec and spec[1].search(filename or ""))
+
+
+def source_class_adjustment(filename: str, class_name: str) -> float:
+    """Lift for the named class, demotion for an off-scope document, else 0."""
+    if not class_name:
+        return 0.0
+    if filename_is_source_class(filename, class_name):
+        return _SOURCE_CLASS_BONUS
+    if _OFF_SCOPE_NAME_RE.search(filename or ""):
+        return -_OFF_SCOPE_PENALTY
+    return 0.0
+
+
+def _apply_source_class_preference(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    name_by_id: Dict[str, str],
+) -> None:
+    """In-place: rank by the governing source the question named."""
+    class_name = source_class_named_by(query)
+    if not class_name:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
+        add = source_class_adjustment(name, class_name)
+        if add == 0.0:
+            continue
+        adjusted = score + add
+        chunk.score = round(adjusted, 6)
+        scored[i] = (adjusted, chunk)
+
+
 def _apply_filename_overlap_boost(
     query: str,
     scored: List[Tuple[float, Chunk]],
@@ -8556,6 +8643,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         if chunk.doc_id not in name_by_id:
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     _apply_filename_overlap_boost(query, scored_lex, name_by_id)
+    _apply_source_class_preference(query, scored_lex, name_by_id)
     _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
     _apply_spec_identity_text_boost(query, scored_lex)
     _apply_contract_data_filename_boost(query, scored_lex, name_by_id)
@@ -9243,6 +9331,7 @@ def retrieve_with_filter(
             scored[i] = (demoted, chunk)
 
     _apply_filename_overlap_boost(query, scored, name_by_id)
+    _apply_source_class_preference(query, scored, name_by_id)
     _apply_spec_title_filename_boost(query, scored, name_by_id)
     _apply_spec_identity_text_boost(query, scored)
     _apply_contract_data_filename_boost(query, scored, name_by_id)
