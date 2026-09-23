@@ -1204,6 +1204,29 @@ def extract_rescue_terms(query: str) -> List[str]:
     return [term for _cap, _len, term in ranked[:_TERM_RESCUE_MAX_TERMS]]
 
 
+# Morphology. The rescue matches each term as a SUBSTRING of the chunk text,
+# so a query word and the document's word must share a prefix. They routinely
+# do not: live 23 Sep, "To what degree must structural backfill be compacted?"
+# never retrieved the chunk reading "Compaction of the backfill to minimum 98%
+# of maximum dry density of the modified proctor test" -- compacted / compaction
+# differ after "compact". Stemming the QUERY term (never the chunk) to its
+# shared prefix closes that: both reduce to "compact". One suffix at most, and
+# never below _STEM_MIN_CHARS, so a stem stays specific enough to co-occur
+# meaningfully ("work" never becomes "wor").
+_STEM_SUFFIXES = ("ations", "ation", "ements", "ement", "ings", "ing", "ions",
+                  "ion", "ally", "ies", "ed", "es", "s")
+_STEM_MIN_CHARS = 5
+
+
+def stem_rescue_term(term: str) -> str:
+    """``term`` reduced to the prefix it shares with its own word family."""
+    word = (term or "").lower()
+    for suffix in _STEM_SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= _STEM_MIN_CHARS:
+            return word[: -len(suffix)]
+    return word
+
+
 def build_rescue_phrases(terms: List[str]) -> List[str]:
     """Pairwise co-occurrence phrases for :meth:`VectorStore.identifier_search`.
 
@@ -1214,7 +1237,12 @@ def build_rescue_phrases(terms: List[str]) -> List[str]:
     """
     import itertools
 
-    return [" ".join(pair) for pair in itertools.combinations(terms, 2)]
+    stems: List[str] = []
+    for term in terms:
+        stem = stem_rescue_term(term)
+        if stem not in stems:
+            stems.append(stem)
+    return [" ".join(pair) for pair in itertools.combinations(stems, 2)]
 
 
 # ── letter / named-party filename rescue (live D1) ──────────────────────────
