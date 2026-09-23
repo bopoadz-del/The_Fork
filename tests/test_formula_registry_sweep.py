@@ -188,5 +188,12 @@ def test_simple_cost_and_productivity():
 
 
 def test_wind_pressure_uses_the_asce_si_constant():
+    # The constant is the point of this test. The factors are NOT defaulted any
+    # more: Kd used to default to 0.85, so an operator asking for the basic
+    # velocity pressure got a 15%-low figure with a site assumption they never
+    # made printed in the working (live SET4 T14, 23 Sep 2026). Supplying Kd
+    # explicitly still works and is asserted below.
     r = run("wind_pressure", wind_speed_m_s=40)
-    assert r["velocity_pressure_pa"] == pytest.approx(0.613 * 0.85 * 40**2, abs=0.1)
+    assert r["velocity_pressure_pa"] == pytest.approx(0.613 * 40**2, abs=0.1)
+    r_kd = run("wind_pressure", wind_speed_m_s=40, kd=0.85)
+    assert r_kd["velocity_pressure_pa"] == pytest.approx(0.613 * 0.85 * 40**2, abs=0.1)
