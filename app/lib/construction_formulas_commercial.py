@@ -178,39 +178,11 @@ def delay_damages_rate_is_coc_lookalike(rate: float, ctx: str = "") -> bool:
     return True
 
 
-def ask_is_about_a_milestone_or_section(query: str) -> bool:
-    """True when the operator asked about ONE Milestone or Section.
-
-    The contract carries two daily delay-damages rates: 0.1% of the Contract
-    Price for the whole of the Works, and 0.015% for each Milestone. Which one
-    answers the question is decided by the question, and until now the rate
-    parser never saw it -- so a Milestone ask was scored by whole-of-Works
-    preferences and the Milestone row lost (live SET4 M3).
-    """
-    return bool(_MILESTONE_OR_SECTION_ASK_RE.search(query or ""))
-
-
-def delay_damages_rate_preference_score(
-    rate: float, ctx: str = "", ask: str = "",
-) -> int:
-    """Higher wins. Whole-of-Works prefers Contract Data 0.1% over 0.015%;
-    a Milestone/Section ask prefers the row that names one."""
+def delay_damages_rate_preference_score(rate: float, ctx: str = "") -> int:
+    """Higher wins for whole-of-Works E1. Contract Data 0.1% beats 0.015%."""
     ctx = ctx or ""
     if _DD_CAP_KEY_RE.search(ctx):
         return -1
-    if ask_is_about_a_milestone_or_section(ask):
-        # The 0.015% row is the ANSWER here, not a lookalike to be avoided.
-        # The candidate context window spans neighbouring rows, so a bonus
-        # for "the ctx mentions a Milestone" cannot separate two adjacent
-        # rates -- demoting the whole-of-Works rate is what selects here. A
-        # row-scoped window would allow finer preference; logged, not built.
-        score = 1
-        if _CONTRACT_DATA_CTX_RE.search(ctx):
-            score += 2
-        if abs(float(rate) - _PREFERRED_WHOLE_WORKS_RATE) <= 1e-9:
-            # The whole-of-Works rate answers a different question.
-            score -= 3
-        return score
     if delay_damages_rate_is_coc_lookalike(rate, ctx):
         return 0
     score = 1
@@ -287,15 +259,15 @@ def _collapse_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def _iter_delay_rate_candidates(text: str, ask: str = "") -> list[tuple[float, int]]:
-    """``(rate_percent, preference)`` daily rates in ``text``, scored for ``ask``."""
+def _iter_delay_rate_candidates(text: str) -> list[tuple[float, int]]:
+    """``(rate_percent, preference)`` whole-of-Works daily rates in ``text``."""
     t = text or ""
     if not t:
         return []
     out: list[tuple[float, int]] = []
 
     def _add(pct: float, ctx: str) -> None:
-        score = delay_damages_rate_preference_score(pct, ctx, ask)
+        score = delay_damages_rate_preference_score(pct, ctx)
         if score < 0:
             return
         out.append((pct, score))
@@ -329,7 +301,7 @@ def _iter_delay_rate_candidates(text: str, ask: str = "") -> list[tuple[float, i
     return out
 
 
-def parse_delay_damages_rate_percent(text: str, ask: str = "") -> float | None:
+def parse_delay_damages_rate_percent(text: str) -> float | None:
     """Daily Delay Damages *rate* as a percentage, or None.
 
     A cap row (``Maximum amount of delay damages: 10%…``) and a General
@@ -338,7 +310,7 @@ def parse_delay_damages_rate_percent(text: str, ask: str = "") -> float | None:
     Contract Price, the Contract Data particular wins — first-match
     used to emit SAR 263,175.67/day. Does not invent a percentage.
     """
-    cands = _iter_delay_rate_candidates(text, ask)
+    cands = _iter_delay_rate_candidates(text)
     if not cands:
         return None
     preferred = [(pct, score) for pct, score in cands if score >= 2]
@@ -521,7 +493,7 @@ def compose_delay_damages_daily_from_excerpts(
         return None
     if not query_asks_delay_damages_daily_amount(query):
         return None
-    rate = parse_delay_damages_rate_percent(excerpts, query)
+    rate = parse_delay_damages_rate_percent(excerpts)
     aca = parse_accepted_contract_amount(excerpts)
     if rate is None or aca is None:
         return None
@@ -583,13 +555,6 @@ _DAYS_LATE_RE = re.compile(
     r"(?i)(\d+)\s*(?:calendar\s+|working\s+)?days?\s+"
     r"(?:late|of\s+delay|delay(?:ed)?|behind|overdue)",
 )
-# A Milestone or Section ask takes the per-Milestone rate, not the
-# whole-of-Works one. "Sections" in the plural contract sense counts.
-_MILESTONE_OR_SECTION_ASK_RE = re.compile(
-    r"(?i)\b(?:milestone|section)s?\b",
-)
-
-
 _MILESTONE_LIST_RE = re.compile(
     r"(?i)milestones?\s+(\d+(?:\s*(?:,|and|&)\s*\d+)+)",
 )
