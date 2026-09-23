@@ -9790,7 +9790,8 @@ class Agent:
                     "name": "look_ahead",
                     "description": (
                         "Build a 3–4 week look-ahead from a Primavera P6 "
-                        ".xer. CALL THIS when the user asks for a look-ahead "
+                        ".xer, OR from activities listed in the message "
+                        "(pass them as `activities`). CALL THIS when the user asks for a look-ahead "
                         "/ lookahead programme. Returns activities overlapping "
                         "the window with ES/EF, remaining duration, total "
                         "float, critical flag, WBS, and name. Never invent "
@@ -9818,6 +9819,23 @@ class Agent:
                             "as_of": {
                                 "type": "string",
                                 "description": "As-of / data date YYYY-MM-DD (optional).",
+                            },
+                            "activities": {
+                                "type": "array",
+                                "description": (
+                                    "Activities the USER listed in the message. "
+                                    "Pass them when the message contains the "
+                                    "activities and no .xer is named — then no "
+                                    "schedule file is needed. Never invent rows."
+                                ),
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "start": {"type": "string", "description": "YYYY-MM-DD"},
+                                        "finish": {"type": "string", "description": "YYYY-MM-DD"},
+                                    },
+                                },
                             },
                         },
                         "required": [],
@@ -13324,19 +13342,19 @@ class Agent:
                 resolved, _picked = _resolve_histogram_schedule_file(
                     project_id, user_message or "",
                 )
-            if not resolved:
+            if not resolved and not args.get("activities"):
                 return {
                     "name": name, "ok": False,
                     "result": {
                         "status": "error",
                         "error": (
-                            "No schedule file resolved — name the .xer "
-                            "or upload one."
+                            "No schedule file resolved — name the .xer, "
+                            "upload one, or list the activities."
                         ),
                     },
                 }
             la_params = {"schedule_file": resolved}
-            for key in ("weeks", "days", "as_of", "data_date"):
+            for key in ("weeks", "days", "as_of", "data_date", "activities"):
                 if args.get(key) is not None:
                     la_params[key] = args.get(key)
             try:
