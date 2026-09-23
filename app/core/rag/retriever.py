@@ -24,6 +24,7 @@ from app.core.rag.vector_store import (
     normalize_cesmm_item_codes,
 )
 from app.core.rag import layers
+from app.lib.boq_ref_codes import find_ref_codes
 from app.core.rag import revision as _revision
 from app.core.rag import reranker as _reranker
 
@@ -9364,6 +9365,11 @@ def retrieve_with_filter(
             c.layer = "master_corpus"
         else:
             c.layer = "general_knowledge"
+        # A BOQ item reference is an identifier, not a figure. Label it here,
+        # in the retrieval path, so a consumer reading this chunk can tell the
+        # two apart without re-deriving the taxonomy (app/lib/boq_ref_codes).
+        # Display and citation are unaffected: the text is untouched.
+        c.ref_codes = tuple(find_ref_codes(c.text))
 
     if revision_suppressed:
         logger.debug(
