@@ -180,6 +180,61 @@ def _draft_delay_claim_notice(
     }
 
 
+
+def _inline_look_ahead_activities(data: Dict, p: Dict) -> List[Dict[str, Any]]:
+    """Activities given in the request, normalised for ``select_look_ahead``.
+
+    Accepts ``activities`` as a list of dicts using any of the field spellings
+    the callers use (name/activity/title, start/from, finish/end/to). Anything
+    without both dates is dropped rather than guessed at.
+    """
+    raw = data.get("activities") or p.get("activities") or []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = (
+            item.get("name") or item.get("activity") or item.get("title")
+            or item.get("description") or ""
+        )
+        start = item.get("start") or item.get("early_start") or item.get("es") or item.get("from")
+        finish = (
+            item.get("finish") or item.get("early_finish") or item.get("ef")
+            or item.get("end") or item.get("to")
+        )
+        if not name or not start or not finish:
+            continue
+        row = {"name": str(name), "start": start, "finish": finish}
+        for key in ("id", "code", "wbs", "wbs_id", "remaining_duration", "total_float", "critical"):
+            if item.get(key) is not None:
+                row[key] = item[key]
+        out.append(row)
+    return out
+
+
+def _look_ahead_as_of(data: Dict, p: Dict):
+    """The as-of date the caller gave, or None for "today"."""
+    raw = (
+        p.get("as_of") or data.get("as_of")
+        or p.get("data_date") or data.get("data_date")
+    )
+    if not raw:
+        return None
+    try:
+        from app.lib.pm_computations import _coerce_date
+        return _coerce_date(raw)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "look_ahead: unreadable as_of/data_date %r — using today", raw,
+            exc_info=True,
+        )
+        return None
+
+
 class ConstructionScheduleMixin:
     async def parse_primavera_schedule(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
@@ -1097,13 +1152,44 @@ class ConstructionScheduleMixin:
                 "error": "window must be at least 1 day",
             }
 
-        if not schedule_file:
+        # Activities supplied in the request are a valid source. Live SET4.1
+        # D3 listed five activities and said not to ask for a programme file;
+        # the tool errored for a missing .xer anyway, so the answer became
+        # "supply a .xer" instead of the look-ahead the operator had already
+        # given the data for. A file still wins when one is named, and an
+        # empty request still errors -- nothing is ever invented here.
+        inline_activities = _inline_look_ahead_activities(data, p)
+        if not schedule_file and not inline_activities:
             return {
                 "status": "error",
                 "action": "look_ahead",
                 "error": (
-                    "No schedule file provided — pass schedule_file pointing "
-                    "to a Primavera P6 .xer"
+                    "No schedule provided — pass schedule_file pointing to a "
+                    "Primavera P6 .xer, or activities with start and finish "
+                    "dates"
+                ),
+            }
+        if not schedule_file:
+            from app.lib.pm_computations import select_look_ahead as _select
+            window = _select(
+                inline_activities, as_of=_look_ahead_as_of(data, p),
+                window_days=window_days,
+            )
+            return {
+                "status": "success",
+                "action": "look_ahead",
+                "as_of": window["as_of"],
+                "window_days": window["window_days"],
+                "window_end": window["window_end"],
+                "activity_count": window["count"],
+                "activities": window["activities"],
+                "total_activities_in_schedule": len(inline_activities),
+                "source": "activities_supplied_in_request",
+                "note": (
+                    f"Look-ahead: activities overlapping {window['as_of']} … "
+                    f"{window['window_end']} ({window_days} calendar days) from "
+                    "the activities supplied in the request. Empty overlap is a "
+                    "valid result — no fabricated activities."
                 ),
             }
         if not os.path.exists(str(schedule_file)):
