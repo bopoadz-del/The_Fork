@@ -28,7 +28,11 @@ def wind_pressure(
     code: str = _ACI,
     kz: float = 1.0,
     kzt: float = 1.0,
-    kd: float = 0.85,
+    # Unity, not 0.85. A directionality factor the caller never supplied is an
+    # invented site assumption: live SET4 T14 asked for the BASIC velocity
+    # pressure at 40 m/s and got 833.7 Pa instead of 980.8, 15% low, with
+    # "Kd = 0.85" printed in the working as though it had been given.
+    kd: float = 1.0,
     air_density_kg_m3: float = 1.25,
 ) -> dict:
     """Wind velocity pressure (Pa).
