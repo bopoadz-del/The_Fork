@@ -39,7 +39,10 @@ def test_cantilever_deflects_more_than_simply_supported():
 
 def test_modulus_of_elasticity_monotonic_in_strength():
     # Stronger concrete is stiffer — Ec must be strictly increasing in fck.
-    values = [f.modulus_of_elasticity_concrete(fck) for fck in (20, 25, 32, 40, 50)]
+    # The calculator returns {value, unit, ...} so the unit travels with the
+    # number (live T12: a bare float in kg/cm2 was converted by guesswork).
+    values = [f.modulus_of_elasticity_concrete(fck)["value"]
+              for fck in (20, 25, 32, 40, 50)]
     assert values == sorted(values)
     assert len(set(values)) == len(values)
 
