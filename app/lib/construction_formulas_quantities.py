@@ -45,6 +45,35 @@ _LWT_CHAIN_RE = re.compile(
 )
 
 
+# A waste percentage the operator stated out loud. The number has to BELONG to
+# the waste -- a contract full of percentages (retention 5%, advance recovery
+# 15%, compaction 95%) must not donate one -- so both spellings bind the figure
+# and the word together, within a few characters.
+_WASTE_PCT_RE = re.compile(
+    r"(?:(\d{1,2}(?:\.\d+)?)\s*(?:%|per\s?cent(?:age)?)\s*(?:\w+\s+){0,2}?waste"
+    r"|waste(?:\s+factor)?\s*(?:of|at|=|:)?\s*(\d{1,2}(?:\.\d+)?)\s*(?:%|per\s?cent(?:age)?))",
+    re.IGNORECASE,
+)
+# Above this a "percentage" is a parse artefact, not an instruction.
+_WASTE_PCT_MAX = 50.0
+
+
+def waste_factor_from_text(text: str) -> float | None:
+    """The waste fraction the ask names (0.07 for "add 7% waste"), or None."""
+    match = _WASTE_PCT_RE.search(text or "")
+    if not match:
+        return None
+    raw = match.group(1) or match.group(2)
+    try:
+        pct = float(raw)
+    except (TypeError, ValueError):
+        logger.debug("waste percentage is not numeric: %r", raw)
+        return None
+    if pct <= 0.0 or pct > _WASTE_PCT_MAX:
+        return None
+    return pct / 100.0
+
+
 def documented_waste_enabled() -> bool:
     """ON by default. ``APPLY_DOCUMENTED_WASTE=0/false/no/off`` is the kill-switch."""
     raw = (os.getenv("APPLY_DOCUMENTED_WASTE", "1") or "1").strip().lower()
@@ -203,7 +232,14 @@ def resolve_concrete_volume_calc(
 
     if documented_waste_enabled():
         requested = out.get("waste_factor")
-        if requested in (None, "", 0, 0.0) or _DOCUMENTED_WASTE_ASK_RE.search(blob):
+        stated = waste_factor_from_text(blob)
+        if stated is not None:
+            # The operator named a figure. It wins over the documented
+            # default AND over the documented-waste phrase -- live E6 was
+            # answered on 5% after being asked for 7%, with nothing in the
+            # answer saying which rate had been used.
+            out["waste_factor"] = stated
+        elif requested in (None, "", 0, 0.0) or _DOCUMENTED_WASTE_ASK_RE.search(blob):
             out["waste_factor"] = DOCUMENTED_CONCRETE_WASTE_FACTOR
     else:
         out["waste_factor"] = 0.0
