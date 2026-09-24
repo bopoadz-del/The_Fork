@@ -88,7 +88,9 @@ def test_library_surface_is_broad():
 import dataclasses  # noqa: E402
 
 _SMOKE_INPUTS = {
+    "beam_deflection_cantilever_point_load": dict(p_kn=10, span_m=5, ec_mpa=30000, i_mm4=1e9),
     "beam_deflection_cantilever_udl": dict(w_kn_m=10, span_m=5, ec_mpa=30000, i_mm4=1e9),
+    "beam_deflection_ss_point_load_midspan": dict(p_kn=10, span_m=5, ec_mpa=30000, i_mm4=1e9),
     "beam_deflection_ss_udl": dict(w_kn_m=10, span_m=5, ec_mpa=30000, i_mm4=1e9),
     "composite_column_design": dict(axial_load_kn=5000, column_diameter_mm=800),
     "concrete_maturity_strength": dict(temperature_history_c=[20, 22, 25],

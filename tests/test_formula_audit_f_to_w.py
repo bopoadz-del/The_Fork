@@ -1,6 +1,7 @@
-"""Phase 1 + Phase 2 formula audit for calculators #43–84.
+"""Phase 1 + Phase 2 formula audit for calculators #45–86.
 
-Scope: ``sorted(available_calculations())[42:]``. Every case is hand-derived
+Scope: ``sorted(available_calculations())[44:]`` — the boundary moved from
+42 when the two point-load deflection calculators were added for SET5 E3. Every case is hand-derived
 independently of the implementation; ``pytest.approx`` tolerances are justified
 in the docstring (rounding in the calculator, or a physical constant).
 
@@ -88,8 +89,8 @@ def _err(name: str, **params):
 # ── registry contract ───────────────────────────────────────────────────────
 
 def test_audit_slice_matches_live_registry():
-    """sorted(available_calculations())[42:] must stay the owned F–W set."""
-    assert available_calculations()[42:] == _AUDIT_SLICE
+    """sorted(available_calculations())[44:] must stay the owned F–W set."""
+    assert available_calculations()[44:] == _AUDIT_SLICE
 
 
 def test_audit_file_has_two_cases_per_calculator():
