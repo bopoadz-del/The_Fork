@@ -7430,6 +7430,54 @@ def _graft_named_standard_attribution(
         return text
 
 
+def _graft_stated_total_follow_up(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Replace a one-element follow-up with the stated total.
+
+    Live E6: "add 7% waste to that total and price it at SAR 420/m³"
+    after 24 pile caps came back as 8.025 m³ (one cap × 1.07) and about
+    SAR 3,370. The count is in the previous operator turn. A reply that
+    already states 192.60 m³ and SAR 80,892 is left as written.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            answer_states_stated_total,
+            compose_stated_total_follow_up,
+            format_stated_total_follow_up_line,
+        )
+    except Exception:
+        _LOG.exception("stated-total follow-up import failed")
+        return text
+    users: list[str] = []
+    for msg in messages or []:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = str(msg.get("content") or "")
+        head = content.lstrip()
+        if head.startswith(_PREDISPATCH_PREFIX) or head.startswith(_TOOL_RESULT_PREFIX):
+            continue
+        content = _unwrap_rag_folded_operator_text(content).strip()
+        if content:
+            users.append(content)
+    if len(users) < 2:
+        return text
+    try:
+        composed = compose_stated_total_follow_up(users[-1], "\n".join(users[:-1]))
+    except Exception:
+        _LOG.exception("stated-total follow-up compose failed")
+        return text
+    if not composed:
+        return text
+    if answer_states_stated_total(text or "", composed):
+        return text
+    line = format_stated_total_follow_up_line(composed)
+    if not line:
+        return text
+    return line
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -7467,6 +7515,9 @@ def _postprocess_answer(
     # Cost-gate A3-1: calc succeeded, force_synthesis emitted 0 tokens.
     # Volume-only recover is not a priced take-off — compose from the ask.
     text = _graft_composed_user_priced_takeoff(text, messages)
+    # E6: "add waste to that total and price it" continues from the prior
+    # count (24 caps / 180 m³), not from one element the tool just recomputed.
+    text = _graft_stated_total_follow_up(text, messages)
     # Live ~27d6940: user-supplied M#=Nd + common start is arithmetic.
     text = _graft_hypothetical_milestone_arithmetic(text, messages)
     # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
@@ -13709,7 +13760,7 @@ class Agent:
             # text/formula/message — inject the current user turn so
             # bind sees As1500 / span 8m / W=10000 kN. D7: never invent.
             args = _inject_user_ask_into_construction_calc_args(
-                args, user_message,
+                args, user_message, history=history,
             )
             if not calc_name:
                 calc_name = _formula_calculator_name_from_message(
@@ -14451,6 +14502,7 @@ def _calc_args_have_ask_blob(args: dict | None) -> bool:
 def _inject_user_ask_into_construction_calc_args(
     args: dict | None,
     user_message: str | None,
+    history: list | None = None,
 ) -> dict:
     """Copy the current user turn into empty construction_calc kwargs.
 
@@ -14459,9 +14511,26 @@ def _inject_user_ask_into_construction_calc_args(
     text/formula/message — without the ask, bind never sees the labeled
     numbers. D7: never invent a figure that is not in the ask. Existing
     text/formula/message win so a later retry with real params is kept.
+
+    A follow-up ("add 7% waste to that total and price it") has no
+    geometry. The count lives on the previous operator turn. Carry that
+    text as ``prior_text`` so concrete_volume multiplies by it instead
+    of pricing one element. Explicit dims on this call are not replaced.
     """
     out = dict(args or {})
     ask = str(user_message or "").strip()
+    if ask:
+        try:
+            from app.lib.construction_formulas_quantities import (
+                follow_up_refers_to_stated_total,
+                prior_operator_text,
+            )
+            if follow_up_refers_to_stated_total(ask):
+                prior = prior_operator_text(history)
+                if prior:
+                    out.setdefault("prior_text", prior)
+        except Exception:
+            _LOG.exception("stated-total follow-up context skipped")
     if not ask or _calc_args_have_ask_blob(out):
         return out
     out["text"] = ask
