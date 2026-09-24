@@ -7543,6 +7543,12 @@ def _postprocess_answer(
     # electing the ENGINEER APPOINTMENT heading. Strip leftover steering
     # so JACOBS (or any other particular) is what the user sees.
     text = _strip_answer_routing_preamble(text)
+    # SET5 S1/S2/S4: the Hard rule already asked for figure + document in
+    # the first line. Live answers still opened on a narrative, a bare
+    # figure, or "properly compacted". This guard writes the line the
+    # operator scores, from the excerpts already on the turn.
+    from app.agents.first_line_hard_rule import apply_first_line_hard_rule
+    text = apply_first_line_hard_rule(text, rag_sys_msg, messages)
     # Last: the answer's own working must agree with its own result. Checked
     # after every graft, so a grafted figure is checked too.
     text = _annotate_derivation_mismatches(text)
