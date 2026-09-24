@@ -158,6 +158,66 @@ async def test_the_kill_switch_restores_single_query(two_sided_corpus, monkeypat
     assert "modified proctor" not in _text(results).lower()
 
 
+async def test_the_verbatim_score_wins_when_it_is_higher(monkeypatch):
+    """Same chunk_id from both searches keeps the higher score."""
+    shared = _Chunk("c1", "spec2", "cable duct trench soft ground", 0.40)
+    better = _Chunk("c1", "spec2", "cable duct trench soft ground", 0.91)
+    clause = _Chunk("c9", "spec4", CLAUSE, 0.55)
+
+    def fake_retrieve(query, project_id, k=5, **_kw):
+        if query == OPERATOR_ASK:
+            return [better, clause], 0
+        return [shared], 0
+
+    import app.core.rag.retriever as retr
+    monkeypatch.setattr(retr, "retrieve_with_filter", fake_retrieve)
+    monkeypatch.setattr(retr, "_doc_name_for_id", lambda d: f"{d}.pdf")
+    monkeypatch.setattr(doc_index, "_load_index", lambda _pid: {"documents": []})
+
+    results = await doc_index.search_project_documents(
+        "p1", MODEL_QUERY, top_k=5, also_query=OPERATOR_ASK)
+    spec2 = next(r for r in results if r["document_id"] == "spec2")
+    assert spec2["score"] == pytest.approx(0.91)
+    assert "modified proctor" in _text(results).lower()
+
+
+async def test_both_retrievals_stay_inside_the_one_thread_hop(two_sided_corpus, monkeypatch):
+    """Primary and also_query run inside the existing to_thread call.
+
+    A second hop would put retrieval back on the event loop or freeze it
+    twice. One hop, both queries, and neither query on the loop thread.
+    """
+    import asyncio
+    import threading
+
+    hops = []
+    retrieve_threads = []
+    loop_thread = threading.get_ident()
+    real_to_thread = asyncio.to_thread
+
+    async def counting(fn, /, *args, **kwargs):
+        hops.append(threading.get_ident())
+        return await real_to_thread(fn, *args, **kwargs)
+
+    monkeypatch.setattr(doc_index.asyncio, "to_thread", counting)
+
+    import app.core.rag.retriever as retr
+    current = retr.retrieve_with_filter
+
+    def marking(query, project_id, k=5, **kw):
+        retrieve_threads.append(threading.get_ident())
+        return current(query, project_id, k=k, **kw)
+
+    monkeypatch.setattr(retr, "retrieve_with_filter", marking)
+
+    await doc_index.search_project_documents(
+        "p1", MODEL_QUERY, top_k=5, also_query=OPERATOR_ASK)
+    assert hops == [loop_thread]
+    assert len(retrieve_threads) == 2
+    assert retrieve_threads[0] == retrieve_threads[1]
+    assert retrieve_threads[0] != loop_thread
+
+
 async def test_a_failing_second_search_does_not_lose_the_first(monkeypatch):
     def fake_retrieve(query, project_id, k=5, **_kw):
         if query == OPERATOR_ASK:
