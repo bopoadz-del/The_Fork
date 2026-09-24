@@ -7299,6 +7299,113 @@ def _compose_user_priced_takeoff_instead_of_retry(
     return grafted
 
 
+
+# ── derivation: the working and the result must agree ────────────────────
+#
+# Two live defects of the same shape, found 23-24 Sep 2026 and fixed one at a
+# time:
+#
+#   T20  "L/20 = 4800/20 = 200 mm"      -- 4800/20 is 240
+#   T12  "Ec = 4700 x 5.9161 = 28,062"  -- that product is 27,806
+#
+# Both answers stated the right rule, the right inputs and a wrong number, and
+# every visible part of them was correct. A reader checking the working is
+# reassured by it. This checks the arithmetic the answer shows: a mismatch is
+# annotated, never silently rewritten -- correcting the figure would hide that
+# the answer and its own working disagree, which is the fact worth surfacing.
+#
+# Kill-switch: DERIVATION_CHECK=0.
+_DERIVATION_NUM = r"\d[\d,]*(?:\.\d+)?"
+_DERIVATION_RE = re.compile(
+    rf"(?<![\w.])(?P<expr>{_DERIVATION_NUM}(?:\s*(?P<op>[x×*/÷])\s*{_DERIVATION_NUM})+)"
+    rf"\s*=\s*(?P<result>{_DERIVATION_NUM})(?![\d.])",
+)
+_DERIVATION_MAX_NOTES = 3
+
+
+def _derivation_enabled() -> bool:
+    return (os.getenv("DERIVATION_CHECK", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _derivation_number(token: str) -> float | None:
+    try:
+        return float(token.replace(",", "").strip())
+    except (TypeError, ValueError):
+        # The token came from a numeric pattern, so this is a surprise worth
+        # seeing rather than a routine miss.
+        _LOG.debug("derivation: unparsed numeric token %r", token, exc_info=True)
+        return None
+
+
+def derivation_mismatches(text: str) -> list[tuple[str, float, float]]:
+    """``(expression, stated result, computed result)`` for each disagreement.
+
+    Only chains of ONE operator are checked (4700 x 5.9161, 3.2 x 3.2 x 0.75 x
+    18, 4800 / 20), because a mixed chain needs precedence rules the answer
+    itself may not have followed. Tolerance is the gate's: 0.5% or 0.01,
+    whichever is larger, so a rounded result (145.152 shown as 145.15) agrees.
+    """
+    out: list[tuple[str, float, float]] = []
+    for m in _DERIVATION_RE.finditer(text or ""):
+        expr, op = m.group("expr"), m.group("op")
+        parts = [
+            _derivation_number(tok)
+            for tok in re.split(r"\s*[x×*/÷]\s*", expr)
+        ]
+        if any(p is None for p in parts) or len(parts) < 2:
+            continue
+        # A mixed chain ("2 x 3 / 4") is skipped: the operators differ.
+        ops = re.findall(r"[x×*/÷]", expr)
+        if len(set("/" if o in "/÷" else "*" for o in ops)) != 1:
+            continue
+        computed = parts[0]
+        for value in parts[1:]:
+            if op in "/÷":
+                if value == 0:
+                    computed = None
+                    break
+                computed /= value
+            else:
+                computed *= value
+        if computed is None:
+            continue
+        stated = _derivation_number(m.group("result"))
+        if stated is None:
+            continue
+        tolerance = max(abs(computed) * 0.005, 0.01)
+        if abs(stated - computed) > tolerance:
+            out.append((expr.strip(), stated, computed))
+    return out
+
+
+def _annotate_derivation_mismatches(text: str) -> str:
+    """Append a note naming each disagreement. Never edits the figures."""
+    if not _derivation_enabled() or not text:
+        return text
+    try:
+        mismatches = derivation_mismatches(text)
+    except Exception:  # noqa: BLE001 — a check must never break a turn
+        _LOG.warning("derivation check failed; answer passed through", exc_info=True)
+        return text
+    if not mismatches:
+        return text
+    lines = []
+    for expr, stated, computed in mismatches[:_DERIVATION_MAX_NOTES]:
+        _LOG.warning(
+            "derivation mismatch: %s stated %s, computes to %s", expr, stated, computed,
+        )
+        lines.append(f"- `{expr}` is **{computed:,.4g}**, not {stated:,.10g}.")
+    more = len(mismatches) - len(lines)
+    if more > 0:
+        lines.append(f"- …and {more} more.")
+    return (
+        f"{text}\n\n**Check this answer's own arithmetic before using it — the "
+        f"working and the result disagree:**\n" + "\n".join(lines)
+    )
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -7436,6 +7543,9 @@ def _postprocess_answer(
     # electing the ENGINEER APPOINTMENT heading. Strip leftover steering
     # so JACOBS (or any other particular) is what the user sees.
     text = _strip_answer_routing_preamble(text)
+    # Last: the answer's own working must agree with its own result. Checked
+    # after every graft, so a grafted figure is checked too.
+    text = _annotate_derivation_mismatches(text)
     # 0-token force_synthesis must never persist an empty bubble.
     return _nonblank_after_empty_synthesis(text, messages)
 
