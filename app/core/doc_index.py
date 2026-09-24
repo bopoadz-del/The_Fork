@@ -3204,6 +3204,25 @@ def _positive_int_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+_QUERY_NOISE_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _same_search(a: str, b: str) -> bool:
+    """True when two query strings would ask the corpus the same thing.
+
+    Case, punctuation and spacing are not a different search, and paying for
+    a second retrieval to discover that is waste on every turn.
+    """
+    return _QUERY_NOISE_RE.sub(" ", (a or "").lower()).strip() == \
+        _QUERY_NOISE_RE.sub(" ", (b or "").lower()).strip()
+
+
+def _also_verbatim_enabled() -> bool:
+    """ON by default. ``SEARCH_ALSO_VERBATIM=0/false/no/off`` is the kill-switch."""
+    raw = (os.getenv("SEARCH_ALSO_VERBATIM", "1") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
 def _search_chunks_per_doc() -> int:
     return _positive_int_env("SEARCH_CHUNKS_PER_DOC", _SEARCH_CHUNKS_PER_DOC_DEFAULT)
 
@@ -3228,6 +3247,7 @@ async def search_project_documents(
     project_id: str,
     query: str,
     top_k: int = 5,
+    also_query: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search indexed documents for ``query``, returning up to ``top_k`` results.
 
@@ -3239,7 +3259,7 @@ async def search_project_documents(
     a thread, like the chat pre-retrieval already does.
     """
     return await asyncio.to_thread(
-        _search_project_documents_sync, project_id, query, top_k,
+        _search_project_documents_sync, project_id, query, top_k, also_query,
     )
 
 
@@ -3247,6 +3267,7 @@ def _search_project_documents_sync(
     project_id: str,
     query: str,
     top_k: int = 5,
+    also_query: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search indexed documents for ``query``, returning up to ``top_k`` results.
 
@@ -3286,9 +3307,9 @@ def _search_project_documents_sync(
     if _reranker.enabled():
         over_fetch = max(over_fetch, _reranker.candidate_depth(top_k))
 
-    def _query() -> list[Any]:
+    def _query(q: str = "") -> list[Any]:
         try:
-            chunks, _noise = retrieve_with_filter(query, project_id, k=over_fetch)
+            chunks, _noise = retrieve_with_filter(q or query, project_id, k=over_fetch)
             return chunks
         except Exception:
             logger.warning(
@@ -3298,6 +3319,28 @@ def _search_project_documents_sync(
             return []
 
     chunks = _query()
+
+    # Search the operator's OWN words too, and merge. Retrieval is
+    # deterministic given a query string -- but this query string was written
+    # by the model at temperature 1, so one operator question became a
+    # different search on every run, and live P1a reached a clause the corpus
+    # demonstrably holds 1 time in 6 (2 in 6 once the pipe was widened). The
+    # pre-injection path already retrieves on the operator's message; this
+    # gives the tool path the same guarantee.
+    #
+    # A merge, not a replacement: the model asked for what it asked for and
+    # may have had a reason. And deliberately NOT a retry-when-empty -- the
+    # failing runs were never empty, they were confidently wrong, so
+    # emptiness cannot be the trigger.
+    if (also_query or "").strip() and _also_verbatim_enabled()             and not _same_search(also_query, query):
+        extra = _query(also_query)
+        if extra:
+            by_id = {c.chunk_id: c for c in chunks}
+            for c in extra:
+                prev = by_id.get(c.chunk_id)
+                if prev is None or float(c.score or 0.0) > float(prev.score or 0.0):
+                    by_id[c.chunk_id] = c
+            chunks = list(by_id.values())
     # Lazy bootstrap: pre-PR-94 callers relied on the legacy code path
     # to build the project index on first search. Preserve that contract
     # for newly-uploaded projects (or anything pre-RAG-migration) by
