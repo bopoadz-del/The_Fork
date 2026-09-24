@@ -254,9 +254,44 @@ def concrete_mix_slip_form(**_kwargs: Any) -> Dict[str, Any]:
     return mix
 
 
-def modulus_of_elasticity_concrete(fck_n_mm2: float) -> float:
-    """Ec = 15000 x sqrt(f'c) in kg/cm2. f'c = fck x 10."""
-    return round(15000 * math.sqrt(fck_n_mm2 * 10), 0)
+def modulus_of_elasticity_concrete(
+    fck_n_mm2: float, code: str = "metric_technical",
+) -> dict:
+    """Concrete modulus of elasticity, with its unit stated.
+
+    Two forms, because they are different numbers and a reader cannot tell
+    them apart from a bare float:
+
+    * ``metric_technical`` (default, unchanged): Ec = 15000 sqrt(f'c) with
+      f'c in kg/cm2 -- for C35 that is 280,624 kg/cm2.
+    * ``aci``: ACI 318-19 Eq. 19.2.2.1b SI form, Ec = 4700 sqrt(f'c) in MPa
+      -- for C35, 27,806 MPa.
+
+    Live T12: this returned the bare float 280624.0. The answer stated the ACI
+    formula and its substitution correctly, then printed "28,062 MPa" -- the
+    kg/cm2 figure divided by 10 instead of converted (x0.0980665 = 27,520),
+    and neither number is the 27,806 the ACI form gives. The value now carries
+    its unit, and the MPa conversion is done here rather than guessed.
+    """
+    # Not _norm_code: that helper defaults every unknown string to ACI,
+    # which would silently change this function's default form.
+    fck = float(fck_n_mm2)
+    if (code or "").strip().lower().replace("-", "_") in (
+        "aci", "aci318", "aci_318", "aci_318_19", "aci_si",
+    ):
+        ec_mpa = round(4700 * math.sqrt(fck), 0)
+        return {
+            "value": ec_mpa,
+            "unit": "MPa",
+            "standard": "ACI 318-19 Eq. 19.2.2.1b (SI): 4700*sqrt(f'c)",
+        }
+    ec_kg_cm2 = round(15000 * math.sqrt(fck * 10), 0)
+    return {
+        "value": ec_kg_cm2,
+        "unit": "kg/cm2",
+        "value_mpa": round(ec_kg_cm2 * 0.0980665, 0),
+        "standard": "15000*sqrt(f'c) with f'c in kg/cm2 (metric-technical form)",
+    }
 
 
 def beam_deflection_ss_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
