@@ -3185,6 +3185,45 @@ def _purge_spurious_master_corpus_row() -> None:
 
 # ── search ────────────────────────────────────────────────────────────────────
 
+# How much of a document a single search may show. Both are read at call time
+# so they can be tuned without a code change, and both have a kill-switch
+# value that restores the pre-SET5 behaviour exactly (1 chunk, 50 words).
+_SEARCH_CHUNKS_PER_DOC_DEFAULT = 3
+_SEARCH_SNIPPET_WORDS_DEFAULT = 120
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.debug("%s is not an integer: %r — using %d", name, raw, default)
+        return default
+    return value if value > 0 else default
+
+
+def _search_chunks_per_doc() -> int:
+    return _positive_int_env("SEARCH_CHUNKS_PER_DOC", _SEARCH_CHUNKS_PER_DOC_DEFAULT)
+
+
+def _search_snippet_words() -> int:
+    return _positive_int_env("SEARCH_SNIPPET_WORDS", _SEARCH_SNIPPET_WORDS_DEFAULT)
+
+
+def _join_chunk_texts(kept: list[Any]) -> str:
+    """The kept chunks as one snippet body, each bounded, in score order."""
+    width = _search_snippet_words()
+    parts = []
+    for chunk in kept:
+        words = (chunk.text or "").split()
+        if not words:
+            continue
+        parts.append(" ".join(words[:width]))
+    return " ... ".join(parts)
+
+
 async def search_project_documents(
     project_id: str,
     query: str,
@@ -3283,26 +3322,40 @@ def _search_project_documents_sync(
     if not chunks:
         return []
 
-    best: dict[str, dict[str, Any]] = {}
+    # Keep the best FEW chunks per document, not just one. Live SET5 P1a was
+    # 1/6: five runs said "I don't have that" about a clause the sixth quoted
+    # in full, because the specification is nine PDFs of hundreds of chunks
+    # each and this collapse let each file contribute exactly one. The
+    # retriever already fetched ``over_fetch`` candidates and fifteen of the
+    # twenty were being discarded here, so keeping more costs no extra
+    # retrieval work -- over_fetch is deliberately left alone.
+    #
+    # Result rows are still one per document, still ranked by that document's
+    # best chunk: the diversity this collapse was written for is unchanged.
+    per_doc = _search_chunks_per_doc()
+    grouped: dict[str, list[Any]] = {}
     for c in chunks:
-        score = float(c.score or 0.0)
-        prev = best.get(c.doc_id)
-        if prev is None or score > prev["score"]:
-            best[c.doc_id] = {
-                "document_id": c.doc_id,
-                "filename": _doc_name_for_id(c.doc_id),
-                "chunk": c.text,
-                "score": score,
-                # Where this hit actually came from: "own" | "general_knowledge"
-                # | "master_corpus". `Chunk.layer` is withheld from the LLM path
-                # by design (the chat runtime reads it to phrase its own
-                # disclosure). This is a DIRECT API consumer, not model context
-                # — and without it a caller cannot tell an own-document hit from
-                # a STEP 0b Master-Corpus fallback hit. Verified live
-                # 2026-08-02: a project owning ZERO documents returned five
-                # Master-Corpus documents here with nothing marking them.
-                "origin": getattr(c, "layer", "own") or "own",
-            }
+        grouped.setdefault(c.doc_id, []).append(c)
+
+    best: dict[str, dict[str, Any]] = {}
+    for doc_id, doc_chunks in grouped.items():
+        doc_chunks.sort(key=lambda c: float(c.score or 0.0), reverse=True)
+        kept = doc_chunks[:per_doc]
+        best[doc_id] = {
+            "document_id": doc_id,
+            "filename": _doc_name_for_id(doc_id),
+            "chunk": _join_chunk_texts(kept),
+            "score": float(kept[0].score or 0.0),
+            # Where this hit actually came from: "own" | "general_knowledge"
+            # | "master_corpus". `Chunk.layer` is withheld from the LLM path
+            # by design (the chat runtime reads it to phrase its own
+            # disclosure). This is a DIRECT API consumer, not model context
+            # — and without it a caller cannot tell an own-document hit from
+            # a STEP 0b Master-Corpus fallback hit. Verified live
+            # 2026-08-02: a project owning ZERO documents returned five
+            # Master-Corpus documents here with nothing marking them.
+            "origin": getattr(kept[0], "layer", "own") or "own",
+        }
 
     ranked = sorted(best.values(), key=lambda x: x["score"], reverse=True)[:top_k]
 
@@ -3318,7 +3371,10 @@ def _search_project_documents_sync(
 
     results: list[dict[str, Any]] = []
     for item in ranked:
-        snippet = " ".join(item["chunk"].split()[:50])
+        # Already bounded per kept chunk by _join_chunk_texts. Re-cutting to
+        # 50 words here is what truncated a clause out of the one chunk that
+        # did survive the collapse (live P1a).
+        snippet = item["chunk"]
         result_row = {
             "document_id": item["document_id"],
             "filename": item["filename"],
