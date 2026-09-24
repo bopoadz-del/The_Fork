@@ -119,7 +119,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/lib/pm_computations.py:340": "baseline 2026-09-10",
     "app/lib/wbs_duration_overrides.py:147": "baseline 2026-09-10",
     "app/main.py:477": "baseline 2026-09-10",
-    "app/routers/chat.py:371": "baseline 2026-09-10; renumbered Agent D look_ahead synthetic helper",
+    "app/routers/chat.py:399": "baseline 2026-09-10; renumbered Agent D look_ahead synthetic helper, then again by _message_vetoes_predefined (SET5 A3)",
     "app/routers/chat_watchdog.py:98": "baseline 2026-09-10",
     "app/routers/mcp.py:65": "baseline 2026-09-10",
     "app/worker/ingest_queue.py:33": "baseline 2026-09-10",
