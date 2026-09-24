@@ -1,4 +1,4 @@
-"""Phase 1 formula audit — calculators A–F (#1–42 of available_calculations()).
+"""Phase 1 formula audit — calculators A–F (#1–44 of available_calculations()).
 
 Each test derives the expected figure by hand from the cited source, then
 compares ``run_calculation(name, params)["result"]``. A wrong formula that
@@ -16,10 +16,13 @@ import pytest
 
 from app.lib.construction_formulas import available_calculations, run_calculation
 
-# Alphabetical #1–42 of available_calculations() at audit time.
+# Alphabetical #1–44 of available_calculations() at audit time. The two
+# point-load deflection calculators joined the slice with SET5 E3.
 _AUDIT_A_TO_F = [
     "backfill_volume",
+    "beam_deflection_cantilever_point_load",
     "beam_deflection_cantilever_udl",
+    "beam_deflection_ss_point_load_midspan",
     "beam_deflection_ss_udl",
     "beam_moment_fixed_udl",
     "beam_moment_point_load",
@@ -77,9 +80,9 @@ def _err(name: str, params: dict) -> dict:
     return env
 
 
-def test_audit_covers_first_42_names():
+def test_audit_covers_the_leading_names():
     names = available_calculations()
-    assert names[:42] == _AUDIT_A_TO_F
+    assert names[:len(_AUDIT_A_TO_F)] == _AUDIT_A_TO_F
 
 
 # ── 1 backfill_volume ──────────────────────────────────────────────────────
@@ -120,6 +123,48 @@ def test_audit_beam_deflection_cantilever_udl():
 
     _err("beam_deflection_cantilever_udl",
          {"w_kn_m": 10, "span_m": 5, "ec_mpa": 0, "i_mm4": 1e9})
+
+
+def test_audit_beam_deflection_cantilever_point_load():
+    """Cantilever, load at the tip: δ = PL³ / (3EI). Same units, P in kN → N.
+    Hand: P=10 kN = 10,000 N, L=5000 mm, E=30000 MPa, I=1e9 mm⁴
+          10000 × 5000³ / (3 × 30000 × 1e9) = 1.25e15 / 9e13 = 13.889 mm.
+    SI check: 10 kN × 5³ / (3 × 30e9 × 1e-3) = 0.01389 m = 13.89 mm.
+
+    Against the UDL sibling on the same numbers: 26.04 mm. Substituting a
+    point load into wL⁴/8EI is what produced SET5 E3's 16.0 mm for a case
+    whose answer is 10.67 mm.
+    """
+    r = _ok("beam_deflection_cantilever_point_load",
+            {"p_kn": 10, "span_m": 5, "ec_mpa": 30000, "i_mm4": 1e9})
+    assert r["value"] == pytest.approx(13.89, abs=0.02)
+
+    zero = _ok("beam_deflection_cantilever_point_load",
+               {"p_kn": 0, "span_m": 5, "ec_mpa": 30000, "i_mm4": 1e9})
+    assert zero["value"] == pytest.approx(0.0, abs=1e-9)
+
+    _err("beam_deflection_cantilever_point_load",
+         {"p_kn": 10, "span_m": 5, "ec_mpa": 30000, "i_mm4": 0})
+
+
+def test_audit_beam_deflection_ss_point_load_midspan():
+    """Simply supported, load at midspan: δ = PL³ / (48EI).
+    Hand: 10000 × 5000³ / (48 × 30000 × 1e9) = 1.25e15 / 1.44e15 = 0.868 mm.
+    Ratio cantilever/SS for the same P and L = 48/3 = 16; 13.889/0.868 = 16.0.
+
+    A second moment given in m⁴ is refused rather than used: 1e-3 mm⁴ is no
+    section, and taking it at face value overstates δ by 1e12.
+    """
+    r = _ok("beam_deflection_ss_point_load_midspan",
+            {"p_kn": 10, "span_m": 5, "ec_mpa": 30000, "i_mm4": 1e9})
+    assert r["value"] == pytest.approx(0.87, abs=0.01)
+
+    cantilever = _ok("beam_deflection_cantilever_point_load",
+                     {"p_kn": 10, "span_m": 5, "ec_mpa": 30000, "i_mm4": 1e9})
+    assert cantilever["value"] / r["value"] == pytest.approx(16.0, abs=0.05)
+
+    _err("beam_deflection_ss_point_load_midspan",
+         {"p_kn": 10, "span_m": 5, "ec_mpa": 30000, "i_mm4": 1e-3})
 
 
 def test_audit_beam_deflection_ss_udl():
