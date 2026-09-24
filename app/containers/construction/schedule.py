@@ -181,6 +181,86 @@ def _draft_delay_claim_notice(
 
 
 
+
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+# "Blinding 15 Sep to 25 Sep 2026" / "Rebar fixing 2026-09-28 - 2026-10-02".
+_ACTIVITY_LINE_RE = re.compile(
+    r"(?P<name>[A-Za-z][A-Za-z0-9 /&'\-]{1,60}?)\s+"
+    r"(?P<d1>\d{1,2}\s+[A-Za-z]{3,9}(?:\s+\d{4})?|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})"
+    r"\s*(?:to|until|through|—|–|-)\s*"
+    r"(?P<d2>\d{1,2}\s+[A-Za-z]{3,9}(?:\s+\d{4})?|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})",
+    re.IGNORECASE,
+)
+
+
+def _spoken_date(token: str, year_hint: int | None = None) -> str | None:
+    """"15 Sep 2026" -> "2026-09-15". Returns None rather than guessing.
+
+    ``_coerce_date`` reads ISO and dd/mm/yyyy only; an operator writing a
+    programme in a chat message writes "15 Sep 2026", and a year is often
+    stated once at the end of the pair.
+    """
+    token = (token or "").strip()
+    if not token:
+        return None
+    m = re.match(r"^(\d{1,2})\s+([A-Za-z]{3,9})(?:\s+(\d{4}))?$", token)
+    if not m:
+        return None
+    day, month_word, year = m.group(1), m.group(2).lower()[:4], m.group(3)
+    month = _MONTHS.get(month_word) or _MONTHS.get(month_word[:3])
+    if not month:
+        return None
+    if year is None:
+        if year_hint is None:
+            return None
+        year = str(year_hint)
+    return f"{int(year):04d}-{month:02d}-{int(day):02d}"
+
+
+def _activities_from_text(text: str) -> List[Dict[str, Any]]:
+    """Activities the operator typed in the message, or [].
+
+    Only rows carrying a name AND two dates are returned -- a half-written row
+    is dropped, never completed by guesswork. Live SET4.1 D3 listed five
+    activities in the message and the look-ahead demanded a .xer, because no
+    path looked here.
+    """
+    blob = text or ""
+    if not blob:
+        return []
+    out: List[Dict[str, Any]] = []
+    for segment in re.split(r"[;\n]+", blob):
+        m = _ACTIVITY_LINE_RE.search(segment)
+        if not m:
+            continue
+        name = " ".join(m.group("name").split()).strip(" -:,")
+        # A trailing year on the second date fixes the first one's year.
+        year_hint = None
+        tail = re.search(r"(\d{4})\s*$", m.group("d2").strip())
+        if tail:
+            year_hint = int(tail.group(1))
+        start = _spoken_date(m.group("d1"), year_hint) or _coerce_date_safe(m.group("d1"))
+        finish = _spoken_date(m.group("d2"), year_hint) or _coerce_date_safe(m.group("d2"))
+        if not name or not start or not finish:
+            continue
+        out.append({"name": name, "start": start, "finish": finish})
+    return out
+
+
+def _coerce_date_safe(token: str) -> str | None:
+    """ISO / dd-mm-yyyy through the shared coercer, as a string or None."""
+    try:
+        from app.lib.pm_computations import _coerce_date
+        value = _coerce_date(token)
+    except Exception:  # noqa: BLE001
+        logger.debug("look_ahead: unparsed date token %r", token, exc_info=True)
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else (str(value) if value else None)
+
+
 def _inline_look_ahead_activities(data: Dict, p: Dict) -> List[Dict[str, Any]]:
     """Activities given in the request, normalised for ``select_look_ahead``.
 
@@ -189,6 +269,20 @@ def _inline_look_ahead_activities(data: Dict, p: Dict) -> List[Dict[str, Any]]:
     without both dates is dropped rather than guessed at.
     """
     raw = data.get("activities") or p.get("activities") or []
+    if not raw:
+        # No list passed: the operator may have typed the programme instead.
+        # Every dispatch path (tool call, container action, pre-dispatch)
+        # carries the message somewhere, so read it here rather than in each.
+        text = " ".join(
+            str(x) for x in (
+                p.get("user_message"), data.get("user_message"),
+                p.get("message"), data.get("message"),
+                p.get("brief"), data.get("brief"),
+            ) if x
+        )
+        parsed = _activities_from_text(text)
+        if parsed:
+            return parsed
     if isinstance(raw, dict):
         raw = [raw]
     if not isinstance(raw, (list, tuple)):
