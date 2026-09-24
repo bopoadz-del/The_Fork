@@ -238,6 +238,22 @@ def _predefined_enabled() -> bool:
     return (os.getenv("ORCHESTRATOR_PREDEFINED") or "").lower() in ("1", "true", "yes", "on")
 
 
+def _warm_predefined_vetoes() -> None:
+    """Import the veto modules now, so no chat turn pays for them.
+
+    Called at import time. Best-effort: a failure here costs a slow first
+    turn, never a broken router, and the lazy imports inside the predicate
+    remain correct either way.
+    """
+    try:
+        import app.core.answer_report_intent  # noqa: F401
+        import app.core.contract_lookup_intent  # noqa: F401
+        import app.core.conversation_wbs  # noqa: F401
+        import app.core.predefined_reasoning  # noqa: F401
+    except Exception:  # noqa: BLE001 — a cold import must not break startup
+        logger.debug("predefined veto warm-up skipped", exc_info=True)
+
+
 def _message_vetoes_predefined(prompt: str) -> bool:
     """Message-only reasons this turn must NOT be handed to a predefined workflow.
 
@@ -258,12 +274,21 @@ def _message_vetoes_predefined(prompt: str) -> bool:
     from app.core.contract_lookup_intent import message_is_contract_data_lookup
     from app.core.conversation_wbs import message_wants_wbs_export
     from app.core.predefined_reasoning import is_bare_duration_question
+    # These four imports are warmed at startup by _warm_predefined_vetoes():
+    # predefined_reasoning pulls in PlanExecutor and the schema layer, and
+    # paying that cost HERE means paying it inside the SSE stream on the
+    # first chat of a cold worker. tests/test_retrieval_does_not_freeze_the
+    # _server.py measures exactly that and caught it at 0.92 s -- the same
+    # single-worker event-loop stall class as the three server-killers.
     return bool(
         message_is_contract_data_lookup(prompt)
         or message_wants_answer_report(prompt)
         or message_wants_wbs_export(prompt)
         or is_bare_duration_question(prompt)
     )
+
+
+_warm_predefined_vetoes()
 
 
 def _predefined_workflows() -> set:
