@@ -238,6 +238,59 @@ def _predefined_enabled() -> bool:
     return (os.getenv("ORCHESTRATOR_PREDEFINED") or "").lower() in ("1", "true", "yes", "on")
 
 
+def _warm_predefined_vetoes() -> None:
+    """Import the veto modules now, so no chat turn pays for them.
+
+    Called at import time. Best-effort: a failure here costs a slow first
+    turn, never a broken router, and the lazy imports inside the predicate
+    remain correct either way.
+    """
+    try:
+        import app.core.answer_report_intent  # noqa: F401
+        import app.core.contract_lookup_intent  # noqa: F401
+        import app.core.conversation_wbs  # noqa: F401
+        import app.core.predefined_reasoning  # noqa: F401
+    except Exception:  # noqa: BLE001 — a cold import must not break startup
+        logger.debug("predefined veto warm-up skipped", exc_info=True)
+
+
+def _message_vetoes_predefined(prompt: str) -> bool:
+    """Message-only reasons this turn must NOT be handed to a predefined workflow.
+
+    These read the message and nothing else: the corpus is one-to-all and
+    none of them may branch on which project asked.
+
+    The fourth entry is live SET5 A3. "How long will the foundations take?"
+    was answered "Schedule built: 204 activities over 688 working days ...
+    about 11,832 man-days" -- a whole programme invented for a scope nobody
+    named -- six runs out of six. ``lookup_question_hijack`` already refuses
+    that shape, but it guards the agents router and the agent-swap decision,
+    not this one, so the same class arrived on a third path. The runtime's own
+    note on the second occurrence reads: "It never guarded THIS decision,
+    which is the one that changes agents -- so the same class kept happening
+    one layer down."
+    """
+    from app.core.answer_report_intent import message_wants_answer_report
+    from app.core.contract_lookup_intent import message_is_contract_data_lookup
+    from app.core.conversation_wbs import message_wants_wbs_export
+    from app.core.predefined_reasoning import is_bare_duration_question
+    # These four imports are warmed at startup by _warm_predefined_vetoes():
+    # predefined_reasoning pulls in PlanExecutor and the schema layer, and
+    # paying that cost HERE means paying it inside the SSE stream on the
+    # first chat of a cold worker. tests/test_retrieval_does_not_freeze_the
+    # _server.py measures exactly that and caught it at 0.92 s -- the same
+    # single-worker event-loop stall class as the three server-killers.
+    return bool(
+        message_is_contract_data_lookup(prompt)
+        or message_wants_answer_report(prompt)
+        or message_wants_wbs_export(prompt)
+        or is_bare_duration_question(prompt)
+    )
+
+
+_warm_predefined_vetoes()
+
+
 def _predefined_workflows() -> set:
     # Bespoke plan-builder workflows PLUS every construction-container action:
     # the reasoner picks any of ~55 container actions and run_workflow dispatches
@@ -966,18 +1019,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
         # 1) Predefined reasoning for a known workflow (flagged; dynamic UNDERSTAND).
         if _predefined_enabled():
             try:
-                from app.core.contract_lookup_intent import (
-                    message_is_contract_data_lookup,
-                )
-                from app.core.answer_report_intent import (
-                    message_wants_answer_report,
-                )
-                from app.core.conversation_wbs import message_wants_wbs_export
-                if message_is_contract_data_lookup(prompt):
-                    intent = {"action": None}
-                elif message_wants_answer_report(prompt):
-                    intent = {"action": None}
-                elif message_wants_wbs_export(prompt):
+                if _message_vetoes_predefined(prompt):
                     intent = {"action": None}
                 else:
                     intent = await understand_intent(
