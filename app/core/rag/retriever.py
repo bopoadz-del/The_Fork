@@ -3570,7 +3570,12 @@ _CD_SCHEDULE_CONTEXT_RE = re.compile(
 # carrying the amount shares no wording with the question, so it lost every
 # top-5 slot to rows that do.
 _CD_MONEY_ARITHMETIC_ASK_RE = re.compile(
-    r"(?i)\b(?:calculate|compute|work\s+out|how\s+much)\b",
+    # "What are the delay damages in SAR per calendar day" is the same ask as
+    # "calculate the delay damages in SAR". The caller also requires
+    # _CD_MONEY_UNIT_ASK_RE, so a plain lookup with no currency and no
+    # amount-per token still does not qualify.
+    r"(?i)\b(?:calculate|compute|work\s+out|how\s+much|"
+    r"what\s+(?:is|are|would|will))\b",
 )
 _CD_MONEY_UNIT_ASK_RE = re.compile(
     r"(?i)\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b|"
