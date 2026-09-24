@@ -238,8 +238,14 @@ def test_search_tool_present_only_with_project_id():
 async def test_search_tool_calls_doc_index(monkeypatch):
     sentinel = [{"document_id": "d1", "filename": "spec.pdf",
                  "snippet": "found it", "score": 0.9}]
+    captured = {}
+    operator = "Per the project specification, what compaction is required?"
 
-    async def fake_search(project_id, query, top_k=5):
+    async def fake_search(project_id, query, top_k=5, also_query=None):
+        captured["project_id"] = project_id
+        captured["query"] = query
+        captured["top_k"] = top_k
+        captured["also_query"] = also_query
         return sentinel
 
     import app.core.doc_index as di
@@ -253,9 +259,16 @@ async def test_search_tool_calls_doc_index(monkeypatch):
             "arguments": '{"query": "anything"}',
         },
     }
-    result = await agent._run_tool_call(tool_call, project_id="proj-x")
+    result = await agent._run_tool_call(
+        tool_call, project_id="proj-x", user_message=operator,
+    )
     assert result["ok"] is True
     assert result["result"]["results"] == sentinel
+    # The model's query stays primary. The operator's own words ride along
+    # as also_query so P1a is not a different search on every run.
+    assert captured["project_id"] == "proj-x"
+    assert captured["query"] == "anything"
+    assert captured["also_query"] == operator
 
 
 @pytest.mark.asyncio
