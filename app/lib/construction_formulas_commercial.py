@@ -1044,7 +1044,7 @@ _PRICED_TAKEOFF_VERB_RE = re.compile(
 )
 _USER_UNIT_RATE_RE = re.compile(
     r"(?i)\b(SAR|USD|AED|QAR|EUR|GBP)\s*([\d,]+(?:\.\d+)?)\s*"
-    r"(?:per|/)\s*m(?:³|3)\b",
+    r"(?:per|/)\s*(?:(?:cubic\s+)?m(?:³|3)|cubic\s+m(?:etre|eter)s?)\b",
 )
 _FOOTING_COUNT_RE = re.compile(
     r"(?i)(\d+)\s+(?:pad\s+)?footings?\b",
@@ -1149,6 +1149,106 @@ def compose_user_priced_takeoff_from_ask(text: str) -> dict | None:
         "base_cost": base_cost,
         "total_cost": total_cost,
     }
+
+
+def _stated_total_figure_present(text: str, value: float) -> bool:
+    compact = (text or "").replace(",", "").replace(" ", "")
+    shown = {f"{value:.2f}", f"{value:.3f}".rstrip("0").rstrip(".")}
+    trimmed = f"{value:.2f}".rstrip("0").rstrip(".")
+    if trimmed:
+        shown.add(trimmed)
+    if abs(value - round(value)) < 1e-6:
+        shown.add(str(int(round(value))))
+    return any(token and token in compact for token in shown)
+
+
+def compose_stated_total_follow_up(current: str, prior: str) -> dict | None:
+    """Price a "that total" follow-up from the earlier element's count.
+
+    The current ask has the waste and the rate. The count and the
+    per-element size are in ``prior`` ("24 pile caps, each 2.5 m by …").
+    One cap (7.5 m³) is the miss. No rate in the follow-up → None.
+    Kill-switch ``COMPOSE_USER_PRICED_TAKEOFF=0`` returns None.
+    The waste is the percentage this ask states. Silence is 0 here —
+    the documented 5% default is not applied on top of a stated total.
+    """
+    if not compose_user_priced_takeoff_enabled():
+        return None
+    from app.lib.construction_formulas_quantities import (
+        element_count_from_text,
+        follow_up_refers_to_stated_total,
+        unit_dims_metres,
+        waste_factor_from_text,
+    )
+    if not follow_up_refers_to_stated_total(current):
+        return None
+    rate = _parse_user_unit_rate(current)
+    dims = unit_dims_metres(prior)
+    count = element_count_from_text(prior)
+    if rate is None or dims is None or not count or count <= 1:
+        return None
+    length, width, depth = dims
+    unit_rate, currency = rate
+    if unit_rate <= 0 or min(length, width, depth) <= 0:
+        return None
+    stated = waste_factor_from_text(current)
+    waste_pct = 0.0 if stated is None else stated * 100.0
+    net = count * length * width * depth
+    with_waste = round(net * (1.0 + waste_pct / 100.0), 2)
+    total_cost = round(with_waste * unit_rate, 2)
+    return {
+        "count": count,
+        "length": length,
+        "width": width,
+        "depth": depth,
+        "net_volume_m3": net,
+        "volume_with_waste_m3": with_waste,
+        "waste_percent": waste_pct,
+        "unit_rate": unit_rate,
+        "currency": currency,
+        "total_cost": total_cost,
+    }
+
+
+def answer_states_stated_total(text: str, composed: dict) -> bool:
+    """True when ``text`` already states the with-waste volume and the price."""
+    return (
+        _stated_total_figure_present(text, float(composed["volume_with_waste_m3"]))
+        and _stated_total_figure_present(text, float(composed["total_cost"]))
+    )
+
+
+def format_stated_total_follow_up_line(composed: dict) -> str:
+    """User-facing line for a follow-up that continues from the stated total."""
+    cur = composed.get("currency") or "SAR"
+    count = int(composed["count"])
+    length = float(composed["length"])
+    width = float(composed["width"])
+    depth = float(composed["depth"])
+    net = float(composed["net_volume_m3"])
+    with_waste = float(composed["volume_with_waste_m3"])
+    waste_pct = float(composed.get("waste_percent") or 0.0)
+    rate = float(composed["unit_rate"])
+    total = float(composed["total_cost"])
+    net_s = str(int(round(net))) if abs(net - round(net)) < 1e-6 else f"{net:.2f}"
+    waste_s = f"{with_waste:.2f}"
+    factor = 1.0 + waste_pct / 100.0
+    parts = [
+        (
+            f"Continuing from the stated total "
+            f"({count} × {length:g} × {width:g} × {depth:g} = {net_s} m³ net)."
+        ),
+    ]
+    if waste_pct:
+        parts.append(
+            f"With {waste_pct:g}% waste: {net_s} × {factor:g} = {waste_s} m³."
+        )
+    else:
+        parts.append(f"Volume: {waste_s} m³.")
+    parts.append(
+        f"At {cur} {rate:g}/m³: {waste_s} × {rate:g} = {cur} {total:,.2f}."
+    )
+    return " ".join(parts)
 
 
 def format_user_priced_takeoff_line(composed: dict) -> str:

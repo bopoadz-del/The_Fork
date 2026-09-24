@@ -182,6 +182,97 @@ def parse_lwt_metres(text: str) -> tuple[float, float, float] | None:
     return tuple(float(g.replace(",", "")) for g in match.groups())  # type: ignore[return-value]
 
 
+# "24 pile caps" / "18 pad footings". The count belongs to the element, not
+# to a nearby percentage or a unit rate. A bare "2.5 m" must not match.
+_ELEMENT_COUNT_RE = re.compile(
+    r"(?i)(?<!\d)(?<!\d\.)(\d+)\s+"
+    r"(?:(?:pad|strip|isolated)\s+)?"
+    r"(?:pile[\s-]?caps?|footings?|pads?|bases?|columns?|piers?)\b",
+)
+# "2.5 m by 2.5 m by 1.2 m" — the live pile-cap seed. The x-chain above
+# does not see "by".
+_BY_CHAIN_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)\s*m\s+by\s+"
+    r"(\d[\d,]*(?:\.\d+)?)\s*m\s+by\s+"
+    r"(\d[\d,]*(?:\.\d+)?)\s*m\b",
+)
+_THAT_TOTAL_RE = re.compile(r"(?i)\b(?:that|this|the)\s+total\b")
+_FOLLOW_UP_ADJUST_RE = re.compile(r"(?i)\b(?:waste|price|priced|pricing)\b")
+_PLATFORM_BUBBLE_PREFIXES = ("PLATFORM PRE-DISPATCH:", "Tool result (")
+
+
+def element_count_from_text(text: str) -> int | None:
+    """How many elements the ask names (24 pile caps), or None."""
+    match = _ELEMENT_COUNT_RE.search(text or "")
+    if not match:
+        return None
+    count = int(match.group(1))
+    return count if count > 0 else None
+
+
+def unit_dims_metres(text: str) -> tuple[float, float, float] | None:
+    """Per-element L×W×D. ``m by m by m`` or an ``x`` chain. None if absent."""
+    match = _BY_CHAIN_RE.search(text or "")
+    if match:
+        return tuple(float(g.replace(",", "")) for g in match.groups())  # type: ignore[return-value]
+    return parse_lwt_metres(text)
+
+
+def follow_up_refers_to_stated_total(text: str) -> bool:
+    """True when this ask adjusts a total named in an earlier turn.
+
+    "Add 7% waste to that total and price it…" carries the rate and the
+    waste, not the 24 caps. An ask that restates the geometry is not a
+    continuation — its own dimensions are the operands.
+    """
+    raw = text or ""
+    if not _THAT_TOTAL_RE.search(raw):
+        return False
+    if not _FOLLOW_UP_ADJUST_RE.search(raw):
+        return False
+    if unit_dims_metres(raw):
+        return False
+    return True
+
+
+def prior_operator_text(history: list | None) -> str:
+    """Operator turns in ``history``, oldest first. Platform bubbles skipped."""
+    parts: list[str] = []
+    for msg in history or []:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = str(msg.get("content") or "").strip()
+        if not content or content.lstrip().startswith(_PLATFORM_BUBBLE_PREFIXES):
+            continue
+        parts.append(content)
+    return "\n".join(parts)
+
+
+def _quantity_is_one_or_missing(value: object) -> bool:
+    if value in (None, "", 0, 0.0):
+        return True
+    try:
+        return abs(float(value) - 1.0) <= 1e-9  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        logger.debug("quantity token %r is not numeric", value)
+        return False
+
+
+def _dims_match_each(params: dict, each: tuple[float, float, float]) -> bool:
+    """True when the bound L×W×T are the per-element size, not a rolled total."""
+    got: list[float] = []
+    for key in ("length_m", "width_m", "thickness_m"):
+        raw = params.get(key)
+        if raw in (None, ""):
+            return False
+        try:
+            got.append(float(raw))
+        except (TypeError, ValueError):
+            logger.debug("element dimension %r is not numeric", raw)
+            return False
+    return all(abs(a - b) <= 1e-6 for a, b in zip(got, each))
+
+
 def resolve_concrete_volume_calc(
     calc: str | None,
     params: dict | None = None,
@@ -199,6 +290,7 @@ def resolve_concrete_volume_calc(
             text,
             calc,
             out.get("text"),
+            out.get("prior_text"),
             out.get("formula"),
             out.get("name"),
             out.get("calculation"),
@@ -243,6 +335,22 @@ def resolve_concrete_volume_calc(
             out["waste_factor"] = DOCUMENTED_CONCRETE_WASTE_FACTOR
     else:
         out["waste_factor"] = 0.0
+
+    # A follow-up that says "that total" often re-calls this calculator with
+    # the per-element size (2.5 × 2.5 × 1.2) and no count. ``quantity`` used
+    # to be dropped on bind — concrete_volume did not accept it — so 24 caps
+    # came back as one. The stated count wins only when those dims are the
+    # "each" size; a length that is already the rolled total is left alone.
+    stated_n = element_count_from_text(blob)
+    each = unit_dims_metres(blob)
+    if (
+        stated_n
+        and stated_n > 1
+        and each
+        and _dims_match_each(out, each)
+        and _quantity_is_one_or_missing(out.get("quantity"))
+    ):
+        out["quantity"] = stated_n
 
     return "concrete_volume", out
 
@@ -593,6 +701,20 @@ def resolve_fw_calc(
     return calc, out
 
 
+def _concrete_quantity(quantity: float) -> float | None:
+    """Element count. None when the value is not a positive number."""
+    if quantity in (None, ""):
+        return 1.0
+    try:
+        qty = float(quantity)
+    except (TypeError, ValueError):
+        logger.debug("concrete quantity %r is not numeric", quantity)
+        return None
+    if qty <= 0:
+        return None
+    return qty
+
+
 def concrete_volume(
     length_m: float = 0.0,
     width_m: float = 0.0,
@@ -604,12 +726,15 @@ def concrete_volume(
     bottom_width_m: float = 0.0,
     depth_m: float = 0.0,
     waste_factor: float = 0.05,
+    quantity: float = 1,
 ) -> dict:
     """Concrete volume for a rectangular slab/element, a cylinder (column/pile),
     or a trapezoidal section (channel/footing), plus a waste allowance.
 
     rectangular: L*W*T. cylinder: pi*(D/2)^2*H.
     trapezoidal: ((top+bottom)/2 * depth) * length.
+    ``quantity`` is how many such elements (24 pile caps). It used to be
+    dropped on bind, so a follow-up priced one cap.
 
     Headline ``volume_m3`` is the with-waste figure (E4 expects 945, not net
     900). ``APPLY_DOCUMENTED_WASTE=0`` zeros the factor and restores net.
@@ -618,6 +743,9 @@ def concrete_volume(
            float(diameter_m), float(height_m), float(top_width_m),
            float(bottom_width_m), float(depth_m)) < 0:
         return {"error": "concrete_volume dimensions must be >= 0."}
+    qty = _concrete_quantity(quantity)
+    if qty is None:
+        return {"error": "concrete_volume quantity must be > 0."}
     if not documented_waste_enabled():
         waste_factor = 0.0
     else:
@@ -626,21 +754,25 @@ def concrete_volume(
         return {"error": "waste_factor must be >= 0."}
     s = (shape or "rectangular").strip().lower()
     if s == "cylinder":
-        net = math.pi * (diameter_m / 2.0) ** 2 * height_m
+        unit = math.pi * (diameter_m / 2.0) ** 2 * height_m
         expr = f"pi*({diameter_m}/2)^2*{height_m}"
     elif s == "trapezoidal":
         area = (top_width_m + bottom_width_m) / 2.0 * depth_m
-        net = area * length_m
+        unit = area * length_m
         expr = f"(({top_width_m}+{bottom_width_m})/2*{depth_m})*{length_m}"
     else:
         s = "rectangular"
-        net = length_m * width_m * thickness_m
+        unit = length_m * width_m * thickness_m
         expr = f"{length_m}*{width_m}*{thickness_m}"
+    if qty != 1:
+        expr = f"{qty:g}*({expr})"
+    net = unit * qty
     with_waste = net * (1.0 + waste_factor)
     headline = round(with_waste, 3)
     net_r = round(net, 3)
     return {
         "shape": s,
+        "quantity": qty,
         "volume_m3": headline,
         "net_volume_m3": net_r,
         "volume_with_waste_m3": headline,
