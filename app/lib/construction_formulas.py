@@ -294,12 +294,32 @@ def modulus_of_elasticity_concrete(
     }
 
 
+# A beam's second moment of area is quoted in m4 in a question and consumed in
+# mm4 by every formula below -- 1e12 apart. Taking the stated number at face
+# value returns a deflection in kilometres and prints it as millimetres, so an
+# implausibly small value is refused rather than used. The smallest real
+# section is orders above 1 mm4 (a 10 mm square bar is 833).
+_I_MM4_FLOOR = 1.0
+
+
+def _second_moment_mm4(i_mm4: float) -> float:
+    """Check the second moment of area is in mm4, refusing a unit mix-up."""
+    if i_mm4 <= 0:
+        raise ValueError("i_mm4 must be > 0")
+    if i_mm4 < _I_MM4_FLOOR:
+        raise ValueError(
+            f"i_mm4={i_mm4:g} is too small to be mm4 -- a value this size is "
+            "in m4; multiply it by 1e12 (1 m4 = 1e12 mm4) and call again")
+    return float(i_mm4)
+
+
 def beam_deflection_ss_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
     """Simply supported, UDL: delta = 5wL^4 / (384EI). Returns mm."""
     if span_m < 0 or w_kn_m < 0:
         raise ValueError("span_m and w_kn_m must be >= 0")
-    if ec_mpa <= 0 or i_mm4 <= 0:
-        raise ValueError("ec_mpa and i_mm4 must be > 0")
+    if ec_mpa <= 0:
+        raise ValueError("ec_mpa must be > 0")
+    i_mm4 = _second_moment_mm4(i_mm4)
     w_n_mm = w_kn_m  # kN/m = N/mm
     l_mm = span_m * 1e3
     return round((5 * w_n_mm * l_mm**4) / (384 * ec_mpa * i_mm4), 2)
@@ -309,23 +329,81 @@ def beam_deflection_cantilever_udl(w_kn_m: float, span_m: float, ec_mpa: float, 
     """Cantilever, UDL: delta = wL^4 / (8EI). Returns mm."""
     if span_m < 0 or w_kn_m < 0:
         raise ValueError("span_m and w_kn_m must be >= 0")
-    if ec_mpa <= 0 or i_mm4 <= 0:
-        raise ValueError("ec_mpa and i_mm4 must be > 0")
+    if ec_mpa <= 0:
+        raise ValueError("ec_mpa must be > 0")
+    i_mm4 = _second_moment_mm4(i_mm4)
     w_n_mm = w_kn_m
     l_mm = span_m * 1e3
     return round((w_n_mm * l_mm**4) / (8 * ec_mpa * i_mm4), 2)
 
 
-def modulus_of_rupture(fck_n_mm2: float) -> Dict[str, float]:
-    """Tensile strength: fr = 2.4*sqrt(f'c), split cylinder ACI = 1.78*sqrt(f'c)."""
-    fck_kg = fck_n_mm2 * 10
+def beam_deflection_cantilever_point_load(p_kn: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
+    """Cantilever, point load at the tip: delta = PL^3 / (3EI). Returns mm.
+
+    Distinct from ``beam_deflection_cantilever_udl``: substituting a point
+    load into wL^4/8EI overstates a 4 m / 30 kN tip deflection by half.
+    """
+    if span_m < 0 or p_kn < 0:
+        raise ValueError("span_m and p_kn must be >= 0")
+    if ec_mpa <= 0:
+        raise ValueError("ec_mpa must be > 0")
+    i_mm4 = _second_moment_mm4(i_mm4)
+    p_n = p_kn * 1e3
+    l_mm = span_m * 1e3
+    return round((p_n * l_mm**3) / (3 * ec_mpa * i_mm4), 2)
+
+
+def beam_deflection_ss_point_load_midspan(p_kn: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
+    """Simply supported, point load at midspan: delta = PL^3 / (48EI). Returns mm."""
+    if span_m < 0 or p_kn < 0:
+        raise ValueError("span_m and p_kn must be >= 0")
+    if ec_mpa <= 0:
+        raise ValueError("ec_mpa must be > 0")
+    i_mm4 = _second_moment_mm4(i_mm4)
+    p_n = p_kn * 1e3
+    l_mm = span_m * 1e3
+    return round((p_n * l_mm**3) / (48 * ec_mpa * i_mm4), 2)
+
+
+def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict[str, float]:
+    """Tensile strength. Two forms, and the caller's code decides which.
+
+    * ``metric_technical`` (default, unchanged): fr = 2.4 sqrt(f'c) with f'c
+      in kg/cm2, plus the split-cylinder figure -- for C30 that is 4.157 MPa.
+    * ``aci``: ACI 318-19 Eq. 19.2.3.1, fr = 0.62 sqrt(f'c) in MPa (normal
+      weight, lambda = 1.0) -- for C30, 3.40 MPa.
+
+    Live E12, asked as a follow-up naming ACI 318-19 for f'c = 30: this
+    returned 4.157 and the operator was shown 4.16 MPa. The sibling
+    ``modulus_of_elasticity_concrete`` had already been given this parameter;
+    this one was left behind, so an ACI question got the metric-technical
+    answer with no sign that the code had been ignored.
+    """
+    # Not _norm_code: it defaults every unknown string to ACI, which would
+    # silently change this function's default form.
+    fck = float(fck_n_mm2)
+    if (code or "").strip().lower().replace("-", "_") in (
+        "aci", "aci318", "aci_318", "aci_318_19", "aci_si",
+    ):
+        fr_mpa = round(0.62 * math.sqrt(fck), 3)
+        return {
+            "fck_n_mm2": fck_n_mm2,
+            "value": fr_mpa,
+            "unit": "MPa",
+            "modulus_of_rupture_n_mm2": fr_mpa,
+            "standard": "ACI 318-19 Eq. 19.2.3.1: 0.62*sqrt(f'c) MPa, normal weight",
+        }
+    fck_kg = fck * 10
     fr = 2.4 * math.sqrt(fck_kg) / 10
     ft_aci = 1.78 * math.sqrt(fck_kg) / 10
     return {
         "fck_n_mm2": fck_n_mm2,
+        "value": round(fr, 3),
+        "unit": "MPa",
         "modulus_of_rupture_n_mm2": round(fr, 3),
         "split_cylinder_aci_n_mm2": round(ft_aci, 3),
         "tensile_pct_of_compressive": round(ft_aci / fck_n_mm2 * 100, 1),
+        "standard": "2.4*sqrt(f'c) with f'c in kg/cm2 (metric-technical form)",
     }
 
 
