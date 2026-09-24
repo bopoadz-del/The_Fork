@@ -140,6 +140,37 @@ def is_definition_question(message: str) -> bool:
     return not is_deliverable_request(msg)
 
 
+# "How long will X take?" with no figures in it. Live SET5 A3: six words
+# routed to generate_wbs and came back "Schedule built: 204 activities over
+# 688 working days" -- a whole programme invented for a scope nobody named.
+# A duration ask that carries its own quantities and rates is a calculation
+# (E18, T11) and is deliberately NOT matched here.
+_BARE_DURATION_RE = re.compile(
+    r"\bhow\s+long\b.{0,60}?\b(?:take|takes|last|complete|finish)\b"
+    r"|\bhow\s+(?:many|much)\s+(?:working\s+|calendar\s+)?"
+    r"(?:days?|weeks?|months?|time)\b.{0,60}?\b(?:take|takes|need|require)\b"
+    r"|\bwhat\s+is\s+the\s+duration\s+of\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_ANY_FIGURE_RE = re.compile(r"\d")
+
+
+def is_bare_duration_question(message: str) -> bool:
+    """True for "how long will the foundations take?" -- a scope question.
+
+    Bare means it states no quantity and no rate: there is nothing to compute
+    with, so any duration produced is a duration for a scope the operator
+    never specified. A figure anywhere in the message takes it off this path
+    and back to the ordinary calculation route.
+    """
+    msg = (message or "").strip()
+    if not msg or not _BARE_DURATION_RE.search(msg):
+        return False
+    if _ANY_FIGURE_RE.search(msg):
+        return False
+    return not is_deliverable_request(msg)
+
+
 def lookup_question_hijack(message: str, confidence: float) -> bool:
     """True when a LOW-confidence route is about to intercept a lookup QUESTION.
 
@@ -171,6 +202,12 @@ def lookup_question_hijack(message: str, confidence: float) -> bool:
     # shape a confident route is evidence the user wants the tool. For a
     # definition it is only evidence they named it -- see _DEFINITIONAL_RE.
     if is_definition_question(message):
+        return True
+    # Also before the cut-off, and for the same reason: a confident route is
+    # evidence the user wants the tool for every shape EXCEPT one that has
+    # nothing for the tool to work from. Live A3 was routed at high
+    # confidence and answered with an invented 204-activity programme.
+    if is_bare_duration_question(message):
         return True
     if confidence >= 0.5:
         return False
