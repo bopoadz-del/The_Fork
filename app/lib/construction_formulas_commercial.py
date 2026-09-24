@@ -178,11 +178,36 @@ def delay_damages_rate_is_coc_lookalike(rate: float, ctx: str = "") -> bool:
     return True
 
 
-def delay_damages_rate_preference_score(rate: float, ctx: str = "") -> int:
-    """Higher wins for whole-of-Works E1. Contract Data 0.1% beats 0.015%."""
+_MILESTONE_OR_SECTION_ASK_RE = re.compile(r"(?i)\b(?:milestone|section)s?\b")
+
+
+def ask_is_about_a_milestone_or_section(query: str) -> bool:
+    """True when the operator asked about ONE Milestone or Section.
+
+    The contract carries two daily rates -- 0.1% of the Contract Price for the
+    whole of the Works, 0.015% per Milestone -- and which one answers the
+    question is decided by the question. The parser never saw it, so a
+    Milestone ask was scored by whole-of-Works preferences and the Milestone
+    row lost (live SET4 M3).
+    """
+    return bool(_MILESTONE_OR_SECTION_ASK_RE.search(query or ""))
+
+
+def delay_damages_rate_preference_score(
+    rate: float, ctx: str = "", ask: str = "",
+) -> int:
+    """Higher wins. Whole-of-Works prefers Contract Data 0.1% over 0.015%;
+    a Milestone/Section ask demotes the whole-of-Works row instead."""
     ctx = ctx or ""
     if _DD_CAP_KEY_RE.search(ctx):
         return -1
+    if ask_is_about_a_milestone_or_section(ask):
+        score = 1
+        if _CONTRACT_DATA_CTX_RE.search(ctx):
+            score += 2
+        if abs(float(rate) - _PREFERRED_WHOLE_WORKS_RATE) <= 1e-9:
+            score -= 3       # answers a different question
+        return score
     if delay_damages_rate_is_coc_lookalike(rate, ctx):
         return 0
     score = 1
@@ -259,7 +284,24 @@ def _collapse_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def _iter_delay_rate_candidates(text: str) -> list[tuple[float, int]]:
+
+# A candidate's context must be its OWN row. The fixed 96/48-character window
+# spans neighbours: in a Contract Data block the Milestone rate sits between
+# the whole-of-Works rate and the "Maximum Amount of Delay Damages" cap, so
+# the cap guard disqualified the very row a Milestone ask needs.
+_ROW_SEP_RE = re.compile(r"[|;]|(?<=\.)\s")
+
+
+def _row_around(blob: str, start: int, end: int) -> str:
+    """The row containing ``blob[start:end]``, clipped at row separators."""
+    left = max((m.end() for m in _ROW_SEP_RE.finditer(blob, 0, start)),
+               default=max(0, start - 96))
+    right_match = _ROW_SEP_RE.search(blob, end)
+    right = right_match.start() if right_match else min(len(blob), end + 48)
+    return blob[left:right]
+
+
+def _iter_delay_rate_candidates(text: str, ask: str = "") -> list[tuple[float, int]]:
     """``(rate_percent, preference)`` whole-of-Works daily rates in ``text``."""
     t = text or ""
     if not t:
@@ -267,7 +309,7 @@ def _iter_delay_rate_candidates(text: str) -> list[tuple[float, int]]:
     out: list[tuple[float, int]] = []
 
     def _add(pct: float, ctx: str) -> None:
-        score = delay_damages_rate_preference_score(pct, ctx)
+        score = delay_damages_rate_preference_score(pct, ctx, ask)
         if score < 0:
             return
         out.append((pct, score))
@@ -289,19 +331,25 @@ def _iter_delay_rate_candidates(text: str) -> list[tuple[float, int]]:
     blob = _collapse_ws(t)
     if _POINTER_RE.search(blob) and not _DD_RATE_PCT_RE.search(blob):
         return out
+    # A Milestone ask reads each candidate's OWN row: in a Contract Data block
+    # the Milestone rate sits between the whole-of-Works rate and the cap row,
+    # and the wide window let the cap guard disqualify it. The whole-of-Works
+    # path keeps the window it was tuned with (leftover E1).
+    row_scoped = ask_is_about_a_milestone_or_section(ask)
     for m in _DD_RATE_PCT_RE.finditer(blob):
-        ctx = blob[max(0, m.start() - 96):m.end() + 48]
+        ctx = (_row_around(blob, m.start(), m.end()) if row_scoped
+               else blob[max(0, m.start() - 96):m.end() + 48])
         _add(float(m.group(1)), ctx)
     for m in _DD_RATE_NEAR_LABEL_RE.finditer(blob):
         window = blob[max(0, m.start() - 48):m.end()]
         if _DD_CAP_KEY_RE.search(window):
             continue
-        ctx = blob[max(0, m.start() - 96):m.end() + 48]
+        ctx = _row_around(blob, m.start(), m.end())
         _add(float(m.group(1)), ctx)
     return out
 
 
-def parse_delay_damages_rate_percent(text: str) -> float | None:
+def parse_delay_damages_rate_percent(text: str, ask: str = "") -> float | None:
     """Daily Delay Damages *rate* as a percentage, or None.
 
     A cap row (``Maximum amount of delay damages: 10%…``) and a General
@@ -310,7 +358,7 @@ def parse_delay_damages_rate_percent(text: str) -> float | None:
     Contract Price, the Contract Data particular wins — first-match
     used to emit SAR 263,175.67/day. Does not invent a percentage.
     """
-    cands = _iter_delay_rate_candidates(text)
+    cands = _iter_delay_rate_candidates(text, ask)
     if not cands:
         return None
     preferred = [(pct, score) for pct, score in cands if score >= 2]
@@ -480,6 +528,68 @@ def format_delay_damages_daily_line(composed: dict) -> str:
     )
 
 
+
+# Excerpts arrive as "[doc_id=<id> chunk=<n> ...] <text>" blocks. A rate and a
+# base figure that sit in DIFFERENT documents are two contracts' numbers, and
+# multiplying across them is how #701 produced 0.015% x SAR 144,042,486.50 --
+# an amount belonging to another project entirely.
+# "DD-2023-118", "IP-INF-054": a contract/document reference shape.
+_CONTRACT_ID_RE = re.compile(r"\b([A-Z]{2,4}-\d{3,4}-\d{2,4})\b")
+_DOC_MARKER_RE = re.compile(r"\[doc_id=([^\s\]]+)[^\]]*\]")
+
+
+def _excerpt_segments(text: str) -> list[tuple[str, str]]:
+    """``[(doc_id, segment_text), ...]``; one ("", text) when unmarked."""
+    blob = text or ""
+    marks = list(_DOC_MARKER_RE.finditer(blob))
+    if not marks:
+        return [("", blob)]
+    out: list[tuple[str, str]] = []
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(blob)
+        out.append((m.group(1), blob[m.start():end]))
+    return out
+
+
+def rate_and_base_from_one_document(
+    text: str, ask: str = "",
+) -> tuple[float, tuple[float, str], str] | None:
+    """``(rate_percent, (amount, currency), doc_id)`` from ONE document.
+
+    Documents are tried in the order they were retrieved, so the
+    best-ranked document that carries BOTH a rate and a base wins. Returns
+    None when no single document carries both -- the honest outcome, because
+    a rate from one contract and an amount from another compose a figure that
+    belongs to neither.
+    """
+    segments = _excerpt_segments(text)
+    rate = parse_delay_damages_rate_percent(text, ask)
+    if rate is None:
+        return None
+    # A per-document pairing was tried first and removed: parsing one segment
+    # at a time loses the preference ordering inside
+    # parse_accepted_contract_amount (a filled particular beats a scanned
+    # window), and it picked a partial figure over the real Contract Data row
+    # on the live A2 fixture. The bundle is parsed as a whole; what makes that
+    # safe is the contract check below.
+    # Cross-document pairing is allowed only while ONE contract is in view.
+    # Two contract identifiers in the bundle means the bases belong to
+    # different contracts, and picking one is how #701 answered a Milestone
+    # rate against another project's Accepted Contract Amount.
+    contracts = set()
+    for _doc, seg in segments:
+        contracts.update(m.group(1).upper() for m in _CONTRACT_ID_RE.finditer(seg))
+    if len(contracts) > 1:
+        return None
+    # parse_accepted_contract_amount already requires a labelled Accepted
+    # Contract Amount and applies the excl-VAT / toy-example preferences, so
+    # the whole bundle is the right input once the contract check has passed.
+    base = parse_accepted_contract_amount(text)
+    if base is None:
+        return None
+    return rate, base, segments[0][0]
+
+
 def compose_delay_damages_daily_from_excerpts(
     query: str,
     excerpts: str,
@@ -493,10 +603,10 @@ def compose_delay_damages_daily_from_excerpts(
         return None
     if not query_asks_delay_damages_daily_amount(query):
         return None
-    rate = parse_delay_damages_rate_percent(excerpts)
-    aca = parse_accepted_contract_amount(excerpts)
-    if rate is None or aca is None:
+    found = rate_and_base_from_one_document(excerpts, query)
+    if found is None:
         return None
+    rate, aca, _doc_id = found
     amount, currency = aca
     return delay_damages_daily(
         rate_percent=rate,
