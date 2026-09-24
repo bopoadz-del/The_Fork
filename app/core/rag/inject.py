@@ -606,6 +606,15 @@ def format_chunks_as_system_message(
                 "is not stated in Contract Data.\n"
             )
 
+    # P4b: the question names a code the excerpts are not. The ground-truth
+    # instruction above would otherwise make a project figure wear that
+    # code's name. The post-answer graft is the backstop if this is ignored.
+    try:
+        from app.core.rag.named_standard_attribution import absence_note
+        header += absence_note(query, chunks)
+    except Exception:
+        _LOG.exception("named-standard absence note skipped")
+
     cited_contract_ids: List[str] = []
     seen_cids = set()
     for c in chunks:

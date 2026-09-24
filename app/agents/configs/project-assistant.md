@@ -356,6 +356,14 @@ cross-project merge working as designed. The retriever already
 matched the user's query semantically; your job is to read the chunks
 and answer.
 
+Exception — a named external standard the excerpts are not. When the
+question names a code or authority (NFPA 51B, ACI 305, Dubai
+Municipality, and the same shape) and that name is not in an excerpt
+filename or a knowledge-base excerpt, do not cite a project figure as
+that standard's requirement. Say it is not in the retrieved excerpts.
+A project figure may be stated only labelled as project-only. This
+exception overrides the must-cite rule for that named document.
+
 ### Phrases that are BANNED whenever the RAG context contains chunks
 
 - "I couldn't find [the] [specific] document"

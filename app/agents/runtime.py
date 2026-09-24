@@ -2743,7 +2743,7 @@ _ROUTING_PREAMBLE_LINE_RE = re.compile(
     r"ACCEPTED CONTRACT AMOUNT INCLUDING VAT|"
     r"DELAY DAMAGES PER CALENDAR DAY|DELAY DAMAGES OVER A PERIOD|HYPOTHETICAL MILESTONE ARITHMETIC|"
     r"PARENT COMPANY GUARANTEE|"
-    r"COMMENCEMENT DATE|APPOINTMENT|IDENTITY)"
+    r"COMMENCEMENT DATE|APPOINTMENT|IDENTITY|NAMED STANDARD ABSENT)"
     r"\s*[—\-].*$"
 )
 _GRAFT_APPOINTMENT_LEAK_RE = re.compile(
@@ -7406,6 +7406,30 @@ def _annotate_derivation_mismatches(text: str) -> str:
     )
 
 
+def _graft_named_standard_attribution(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """P4b: do not let a project figure wear a named code the turn did not read.
+
+    The operator asked what NFPA 51B requires. Retrieval returned the
+    project's hot-work permit. The model then called 30 minutes NFPA's.
+    Same shape for Dubai Municipality lighting and ACI 305 fresh-concrete
+    temperature. Kill switch: NAMED_STANDARD_ATTRIBUTION_GATE=0.
+    """
+    try:
+        from app.core.rag.named_standard_attribution import relabel_answer
+        user = _latest_operator_ask(messages)
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        return relabel_answer(user, text or "", rag)
+    except Exception:
+        _LOG.exception(
+            "named-standard attribution graft failed; passing answer through",
+        )
+        return text
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -7504,6 +7528,10 @@ def _postprocess_answer(
     text = _citation_provenance_gate(text, rag_sys_msg, messages)
     text = _standards_advisory(text)
     text = _ensure_ingestion_handoff(text, messages, agent_name)
+    # P4b: project 30 minutes must not be stated as NFPA's (same shape for
+    # a named authority or code the excerpts are not). Runs before the
+    # scrub so a filename quoted here is still cleaned.
+    text = _graft_named_standard_attribution(text, rag_sys_msg, messages)
     # Confidentiality stopgap: scrub known project/client names from the final
     # answer so one client's project identity can't leak via general-knowledge
     # retrieval. Runs LAST so it catches names in any appended note too.
