@@ -1245,6 +1245,155 @@ def build_rescue_phrases(terms: List[str]) -> List[str]:
     return [" ".join(pair) for pair in itertools.combinations(stems, 2)]
 
 
+# ── foundation-backfill degree (live P1a) ───────────────────────────────────
+#
+# Live SET5 P1a. "Per the project specification, to what degree must
+# structural backfill under foundations be compacted, and by which test?"
+# The specification states 98% of maximum dry density, Modified Proctor,
+# near-optimum moisture. Retrieval returned duct backfilling (50 mm sand,
+# BS 1377 Part 9) and the MOT embankment test instead.
+#
+# Term rescue did not correct it. The rescue stands down once ANY pair of
+# query stems co-occurs in the top-k, and "compact" + "backfill" co-occur
+# in the duct chunk. The degree clause, outside that pool, is never fetched.
+# On 7c0b255 the tool path also searches the operator's words, so that
+# distractor list is merged into every run and crowds out a model query
+# that had reached the clause.
+#
+# This rescue asks a narrower question: does the top-k already state a
+# backfill compaction degree (a percent of MDD, or Modified Proctor /
+# ASTM D1557)? Generic "properly compacted" does not count. When it does
+# not, chunks that do state the degree are fetched and lifted. Nothing is
+# invented when the corpus has no such chunk. A degree clause already in
+# the top-k is left alone, score included.
+#
+# Below IDENTIFIER_BONUS_MAX so an exact reference code still outranks it.
+# Kill-switch: RAG_FOUNDATION_BACKFILL_RESCUE=0.
+_FOUNDATION_BACKFILL_ASK_RE = re.compile(
+    r"(?i)\bstructural\s+backfill\b"
+    r"|\bbackfill\b(?:\s+\w+){0,5}\s+(?:under|beneath)\s+foundations?\b",
+)
+_FOUNDATION_BACKFILL_TOPIC_RE = re.compile(
+    r"(?i)\b(?:compact\w*|degree|proctor|density|mdd|test)\b",
+)
+_BACKFILL_WORD_RE = re.compile(r"(?i)\bbackfill")
+_BACKFILL_DEGREE_RE = re.compile(
+    r"(?i)(?:"
+    r"\b\d+(?:\.\d+)?\s*(?:%|percent\b)"
+    r"(?:\s+of)?(?:\s+the)?\s+(?:maximum\s+dry\s+density|\bmdd\b)"
+    r"|modified\s+proctor"
+    r"|astm\s*d\s*1557"
+    r")",
+)
+_STRUCTURAL_BACKFILL_RE = re.compile(
+    r"(?i)\bstructural\s+backfill\b"
+    r"|\bbackfill\s+(?:under|beneath)\s+foundations?\b"
+    r"|\bfoundation\s+backfill\b",
+)
+# AND-matched by identifier_search. Kept specific so a concrete clause that
+# merely says "maximum dry density" is not the whole candidate list.
+_FOUNDATION_BACKFILL_PHRASES = (
+    "structural backfill",
+    "foundation backfill",
+    "backfill modified proctor",
+    "backfill maximum dry density",
+    "backfill mdd",
+)
+_FOUNDATION_BACKFILL_DEGREE_BONUS = 1.15
+_FOUNDATION_BACKFILL_STRUCTURAL_EXTRA = 0.25
+
+
+def foundation_backfill_rescue_enabled() -> bool:
+    """ON by default. ``RAG_FOUNDATION_BACKFILL_RESCUE=0`` restores the miss."""
+    return (os.getenv("RAG_FOUNDATION_BACKFILL_RESCUE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_foundation_backfill_degree(query: str) -> bool:
+    """True when the question asks how structural / foundation backfill is compacted."""
+    text = query or ""
+    return bool(
+        _FOUNDATION_BACKFILL_ASK_RE.search(text)
+        and _FOUNDATION_BACKFILL_TOPIC_RE.search(text)
+    )
+
+
+def chunk_states_backfill_compaction_degree(text: str) -> bool:
+    """True when ``text`` states a backfill compaction degree or Proctor test.
+
+    Duct sand cover, "properly compacted", and BS 1377 / MOT method lines
+    do not. They name neither a percent of maximum dry density nor
+    Modified Proctor.
+    """
+    body = text or ""
+    return bool(_BACKFILL_WORD_RE.search(body) and _BACKFILL_DEGREE_RE.search(body))
+
+
+def foundation_backfill_degree_bonus(text: str) -> float:
+    """Lift for a chunk that states the degree. 0 when it does not.
+
+    A chunk that also says the backfill is structural or under foundations
+    ranks above a generic backfill-density sentence.
+    """
+    if not chunk_states_backfill_compaction_degree(text):
+        return 0.0
+    bonus = _FOUNDATION_BACKFILL_DEGREE_BONUS
+    if _STRUCTURAL_BACKFILL_RE.search(text or ""):
+        bonus += _FOUNDATION_BACKFILL_STRUCTURAL_EXTRA
+    return bonus
+
+
+def _rescue_foundation_backfill_degree(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    k: int,
+) -> None:
+    """Pull the backfill degree clause into ``fused`` when the top-k lacks it.
+
+    Project corpus only: a general-knowledge note must not supply a figure
+    the project's specification does not. Failures leave the semantic pool
+    standing.
+    """
+    if not foundation_backfill_rescue_enabled():
+        return
+    if not query_asks_foundation_backfill_degree(query):
+        return
+    ranked = sorted(
+        fused.values(), key=lambda entry: -((entry[1] or 0.0) + (entry[2] or 0.0)),
+    )
+    if any(
+        chunk_states_backfill_compaction_degree(chunk.text or "")
+        for chunk, _sem, _bonus in ranked[: max(k, 1)]
+    ):
+        return
+
+    def _lift(chunk_id: str, chunk, sem: float, bonus: float) -> None:
+        add = foundation_backfill_degree_bonus(chunk.text or "")
+        if add <= 0.0:
+            return
+        fused[chunk_id] = (chunk, sem, max(bonus, add))
+
+    for chunk_id, (chunk, sem, bonus) in list(fused.items()):
+        _lift(chunk_id, chunk, sem, bonus)
+
+    try:
+        hits = store.identifier_search(
+            project_id, list(_FOUNDATION_BACKFILL_PHRASES), k=max(k * 8, 40),
+        )
+    except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
+        logger.warning("foundation-backfill degree rescue failed: %s", exc)
+        return
+    for chunk in hits or []:
+        prev = fused.get(chunk.chunk_id)
+        if prev is None:
+            _lift(chunk.chunk_id, chunk, 0.0, 0.0)
+        else:
+            _lift(chunk.chunk_id, prev[0], prev[1], prev[2])
+
+
 # ── letter / named-party filename rescue (live D1) ──────────────────────────
 #
 # Live Master Corpus D1 (SHA 567147a): "who signed the UBCC Concrete
@@ -9130,6 +9279,12 @@ def retrieve_with_filter(
                         "semantic retrieval missed entirely",
                         recovered, rescue_terms,
                     )
+
+    # P1a: duct backfill co-occurring with "compacted" makes term rescue
+    # declare the top-k grounded, so the 98% MDD / Modified Proctor clause
+    # stays outside it. This fetch runs only when that degree is not already
+    # in the top-k, and only for this question.
+    _rescue_foundation_backfill_degree(query, project_id, fused, store, k)
 
     # Letter / named-party filename rescue (D1). Runs EVEN WHEN term rescue
     # already found place-name overlap in Volume 5 — that in-pool hit is
