@@ -1586,6 +1586,237 @@ def _apply_source_class_preference(
         scored[i] = (adjusted, chunk)
 
 
+# ── numeric-requirement recall ───────────────────────────────────────────
+#
+# A question that says "per the project specification" lifts every file
+# whose name says specification (+_SOURCE_CLASS_BONUS). That is right when
+# the specification itself states the figure, and wrong when it only
+# mentions the topic: the chunk that states the number often lives in a
+# geotech / "Other Documents" volume and uses the quantity's own words
+# (nominal cover, sub-grade, maximum dry density) rather than the words
+# in the question (minimum concrete cover, road pavement, compaction).
+# Two consequences, both generic:
+#
+#   * BM25 never sees that chunk. The hybrid leg only keeps the top 50
+#     lexical hits, and a neighbour that repeats the question's words
+#     fills those slots. FTS5 does not stem, so "compaction" does not
+#     match "compacted".
+#   * Even inside the pool, the filename lift is larger than a typical
+#     cosine, so a qualitative specification chunk outranks the chunk
+#     that actually states a number with the asked unit.
+#
+# The supplementary query adds the quantity's vocabulary, not a figure.
+# The score lift applies only to a chunk that states a number in that
+# unit, so a specification chunk that states its own number still leads
+# (it keeps the filename lift on top of this one) and a qualitative
+# mention does not move. Kill-switch: RETRIEVAL_NUMERIC_REQUIREMENT_BOOST=0.
+_NUMERIC_REQUIREMENT_BONUS = 2.5
+_COVER_ASK_RE = re.compile(
+    r"(?i)\b(?:concrete\s+cover|cover\s+to\s+reinforcement|nominal\s+cover|"
+    r"minimum\s+(?:concrete\s+)?cover)\b"
+)
+_COMPACTION_ASK_RE = re.compile(
+    r"(?i)\b(?:compact\w*|sub-?grades?|cbr|dry\s+density)\b"
+)
+_COVER_WORD_RE = re.compile(r"(?i)\bcovers?\b")
+_MM_FIGURE_RE = re.compile(r"(?i)\b\d+(?:\.\d+)?\s*mm\b")
+_MDD_RE = re.compile(r"(?i)\b(?:maximum\s+dry\s+density|mdd)\b")
+_PERCENT_FIGURE_RE = re.compile(
+    r"(?i)(?:\d+(?:\.\d+)?\s*%|\b(?:twenty|thirty|forty|fifty|sixty|"
+    r"seventy|eighty|ninety|hundred)"
+    r"(?:[-\s]+(?:one|two|three|four|five|six|seven|eight|nine))?"
+    r"\s+percent\b)"
+)
+_QUANTITY_NEAR = 96
+
+
+def numeric_requirement_boost_enabled() -> bool:
+    """ON by default. ``RETRIEVAL_NUMERIC_REQUIREMENT_BOOST=0`` restores
+    the pre-fix candidate pool and scores exactly."""
+    return (os.getenv("RETRIEVAL_NUMERIC_REQUIREMENT_BOOST", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def asked_quantity_kinds(query: str) -> frozenset:
+    """Which measurable quantities ``query`` is asking for.
+
+    Empty for an ordinary question, so this path does not run and ranking
+    stays byte-identical. "cover letter" is not a cover-to-reinforcement
+    ask; a pavement width is not a compaction ask.
+    """
+    text = query or ""
+    kinds = set()
+    if _COVER_ASK_RE.search(text):
+        kinds.add("length_mm")
+    if _COMPACTION_ASK_RE.search(text):
+        kinds.add("compaction")
+    return frozenset(kinds)
+
+
+def numeric_requirement_expansion(query: str) -> str:
+    """Vocabulary to append so the quantity's own wording can enter BM25.
+
+    Terms are the family the question is about. They are not a figure and
+    not a document name. Empty when the question asks for neither.
+    """
+    kinds = asked_quantity_kinds(query)
+    parts: List[str] = []
+    if "length_mm" in kinds:
+        parts.append("nominal cover millimetre millimeter blinding")
+    if "compaction" in kinds:
+        parts.append(
+            "compacted sub-grade subgrade embankment maximum dry density CBR percent"
+        )
+    return " ".join(parts)
+
+
+def _spans_within(text: str, left: re.Pattern, right: re.Pattern, window: int) -> bool:
+    a = [m.start() for m in left.finditer(text or "")]
+    b = [m.start() for m in right.finditer(text or "")]
+    return any(abs(x - y) <= window for x in a for y in b)
+
+
+def chunk_states_cover_length(text: str) -> bool:
+    """True when the chunk states a cover and a length in millimetres."""
+    blob = text or ""
+    return bool(_COVER_WORD_RE.search(blob) and _MM_FIGURE_RE.search(blob))
+
+
+def chunk_states_compaction_figure(text: str) -> bool:
+    """True when the chunk states a dry-density percent or a CBR number."""
+    blob = text or ""
+    if _spans_within(blob, _PERCENT_FIGURE_RE, _MDD_RE, _QUANTITY_NEAR):
+        return True
+    low = blob.lower()
+    for match in re.finditer(r"\bcbr\b", low):
+        window = low[max(0, match.start() - 40): match.end() + 48]
+        if re.search(r"\d", window):
+            return True
+    return False
+
+
+def chunk_states_asked_quantity(text: str, kinds: frozenset) -> bool:
+    """True when ``text`` states a number for one of ``kinds``."""
+    if "length_mm" in kinds and chunk_states_cover_length(text):
+        return True
+    if "compaction" in kinds and chunk_states_compaction_figure(text):
+        return True
+    return False
+
+
+# A compaction question names what is being compacted. Chunks about a
+# different element state a real figure for a different question — foundation
+# backfill and a road sub-grade are not interchangeable. Synonyms sit in the
+# same group so the chunk can use the document's word (sub-grade) when the
+# question used another (pavement). No group named → any compaction figure.
+_COMPACTION_SUBJECT_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("pavement", "road", "carriageway", "sub-grade", "subgrade", "embankment"),
+    ("backfill", "foundation"),
+)
+
+
+def _term_in(blob: str, term: str) -> bool:
+    if term in ("sub-grade", "subgrade"):
+        return "sub-grade" in blob or "subgrade" in blob
+    return re.search(rf"\b{re.escape(term)}s?\b", blob) is not None
+
+
+def compaction_subject_agrees(query: str, text: str) -> bool:
+    """True when ``text`` is about the element ``query`` is compacting.
+
+    True when the question names no element. When it does, the chunk has to
+    name that same element or a synonym of it.
+    """
+    q = (query or "").lower()
+    blob = (text or "").lower()
+    named = [
+        group for group in _COMPACTION_SUBJECT_GROUPS
+        if any(_term_in(q, term) for term in group)
+    ]
+    if not named:
+        return True
+    return any(any(_term_in(blob, term) for term in group) for group in named)
+
+
+def chunk_matches_quantity_question(query: str, text: str, kinds: frozenset) -> bool:
+    """Figure present, and — for compaction — about the asked element."""
+    if not chunk_states_asked_quantity(text, kinds):
+        return False
+    if "compaction" in kinds and not compaction_subject_agrees(query, text):
+        return False
+    return True
+
+
+def _fetch_numeric_requirement_chunks(
+    query: str,
+    project_id: str,
+    store,
+    k: int,
+    seen_ids: Set[str],
+) -> List[Chunk]:
+    """Chunks the primary query's lexical leg did not keep.
+
+    Only chunks that state the asked quantity are returned, with score 0
+    so a BM25 rank is never treated as a cosine. The later lift is what
+    ranks them. Failures return [] — the primary pool stands.
+    """
+    if not numeric_requirement_boost_enabled():
+        return []
+    expansion = numeric_requirement_expansion(query)
+    kinds = asked_quantity_kinds(query)
+    if not expansion or not kinds:
+        return []
+    try:
+        hits = store.bm25_search(
+            project_id, f"{(query or '').strip()} {expansion}", k,
+        )
+    except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+        logger.warning(
+            "numeric-requirement retrieval for %s failed: %s; "
+            "primary results stand",
+            project_id, exc,
+        )
+        return []
+    admitted: List[Chunk] = []
+    for chunk in hits:
+        if chunk.chunk_id in seen_ids:
+            continue
+        if not chunk_matches_quantity_question(query, chunk.text or "", kinds):
+            continue
+        chunk.score = 0.0
+        admitted.append(chunk)
+        seen_ids.add(chunk.chunk_id)
+    return admitted
+
+
+def _apply_numeric_requirement_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    *,
+    higher_is_better: bool = True,
+) -> None:
+    """In-place: lift a chunk that states a number for the asked quantity.
+
+    ``higher_is_better`` is false on the lexical-only path, where a better
+    BM25 rank is a more negative score and the final sort negates it.
+    No-op unless the question asks for one of these quantities, and a
+    no-op when the kill-switch is off — scores are then untouched.
+    """
+    if not numeric_requirement_boost_enabled():
+        return
+    kinds = asked_quantity_kinds(query)
+    if not kinds:
+        return
+    bonus = _NUMERIC_REQUIREMENT_BONUS if higher_is_better else -_NUMERIC_REQUIREMENT_BONUS
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_matches_quantity_question(query, chunk.text or "", kinds):
+            continue
+        adjusted = score + bonus
+        chunk.score = round(adjusted, 6)
+        scored[i] = (adjusted, chunk)
+
+
 def _apply_filename_overlap_boost(
     query: str,
     scored: List[Tuple[float, Chunk]],
@@ -8720,6 +8951,13 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
             if delta:
                 chunk.score = round((chunk.score or 0.0) + delta, 6)
 
+    seen_lex = {c.chunk_id for c in candidates}
+    candidates.extend(
+        _fetch_numeric_requirement_chunks(
+            query, project_id, store, over_fetch, seen_lex,
+        )
+    )
+
     fused_lex: Dict[str, Tuple] = {
         c.chunk_id: (c, c.score or 0.0, 0.0) for c in candidates
     }
@@ -8798,6 +9036,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     _apply_filename_overlap_boost(query, scored_lex, name_by_id)
     _apply_source_class_preference(query, scored_lex, name_by_id)
+    _apply_numeric_requirement_boost(query, scored_lex, higher_is_better=False)
     _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
     _apply_spec_identity_text_boost(query, scored_lex)
     _apply_contract_data_filename_boost(query, scored_lex, name_by_id)
@@ -9011,6 +9250,13 @@ def retrieve_with_filter(
                     "primary results stand",
                     project_id, exc,
                 )
+
+    seen_active = {c.chunk_id for c in raw_active}
+    numeric_extra = _fetch_numeric_requirement_chunks(
+        query, project_id, store, over_fetch, seen_active,
+    )
+    if numeric_extra:
+        raw_active = list(raw_active) + numeric_extra
 
     # STEP 0b — empty/thin detection for the labeled Master-Corpus fallback.
     # "Thin" reuses RAG_CONFIDENCE_THRESHOLD (the same bar rag_inject applies):
@@ -9492,6 +9738,7 @@ def retrieve_with_filter(
 
     _apply_filename_overlap_boost(query, scored, name_by_id)
     _apply_source_class_preference(query, scored, name_by_id)
+    _apply_numeric_requirement_boost(query, scored)
     _apply_spec_title_filename_boost(query, scored, name_by_id)
     _apply_spec_identity_text_boost(query, scored)
     _apply_contract_data_filename_boost(query, scored, name_by_id)
