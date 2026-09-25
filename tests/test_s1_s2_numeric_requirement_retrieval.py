@@ -193,6 +193,50 @@ def test_s2_subgrade_compaction_figure_is_in_the_retrieved_set(corpus):
     text = hit.text or ""
     assert "95%" in text
     assert "CBR" in text
+    # Foundation-backfill's own percent is a different element. It must not
+    # take the slot the sub-grade sentence just earned.
+    if SPEC_EARTH in ids:
+        spec = next(c for c in chunks if c.doc_id == SPEC_EARTH)
+        assert (hit.score or 0) > (spec.score or 0), _fmt(chunks)
+
+
+def test_kill_switch_restores_specification_only_retrieval(corpus, monkeypatch):
+    """Flag off is the old path: the figure-bearing chunks stay out."""
+    monkeypatch.setenv("RETRIEVAL_NUMERIC_REQUIREMENT_BOOST", "0")
+    cover, _ = corpus.retrieve_with_filter(S1_ASK, PID, k=5)
+    compact, _ = corpus.retrieve_with_filter(S2_ASK, PID, k=5)
+    assert VOL5_COVER not in [c.doc_id for c in cover], _fmt(cover)
+    assert VOL5_COMPACT not in [c.doc_id for c in compact], _fmt(compact)
+    assert cover, "flag off must still return the specification chunks"
+    assert compact
+
+
+def test_an_ordinary_question_is_not_a_quantity_ask():
+    from app.core.rag.retriever import asked_quantity_kinds
+
+    assert asked_quantity_kinds(
+        "What is the Defects Notification Period under this contract?"
+    ) == frozenset()
+    assert asked_quantity_kinds("Who signed the cover letter?") == frozenset()
+    assert "length_mm" in asked_quantity_kinds(S1_ASK)
+    assert "compaction" in asked_quantity_kinds(S2_ASK)
+    assert "compaction" in asked_quantity_kinds(BACKFILL_ASK)
+
+
+def test_a_qualitative_clause_is_not_a_stated_figure():
+    from app.core.rag.retriever import chunk_states_asked_quantity
+
+    assert chunk_states_asked_quantity(SPEC_COVER_REJECT, frozenset({"length_mm"})) is False
+    assert chunk_states_asked_quantity(COVER_TEXT, frozenset({"length_mm"})) is True
+    assert chunk_states_asked_quantity(SPEC_COMPACT, frozenset({"compaction"})) is False
+    assert chunk_states_asked_quantity(COMPACT_TEXT, frozenset({"compaction"})) is True
+    assert chunk_states_asked_quantity(SPEC_98_TEXT, frozenset({"compaction"})) is True
+    from app.core.rag.retriever import compaction_subject_agrees
+
+    assert compaction_subject_agrees(S2_ASK, COMPACT_TEXT) is True
+    assert compaction_subject_agrees(S2_ASK, SPEC_98_TEXT) is False
+    assert compaction_subject_agrees(BACKFILL_ASK, SPEC_98_TEXT) is True
+    assert compaction_subject_agrees(BACKFILL_ASK, COMPACT_TEXT) is False
 
 
 def test_foundation_backfill_still_retrieves_the_specification_figure(corpus):
@@ -203,7 +247,10 @@ def test_foundation_backfill_still_retrieves_the_specification_figure(corpus):
     assert SPEC_EARTH in ids, (
         "foundation backfill specification chunk dropped:\n" + _fmt(chunks)
     )
+    spec = next(c for c in chunks if c.doc_id == SPEC_EARTH)
     if MOBILIZATION in ids:
-        spec = next(c for c in chunks if c.doc_id == SPEC_EARTH)
         mob = next(c for c in chunks if c.doc_id == MOBILIZATION)
-        assert (spec.score or 0) > (mob.score or 0)
+        assert (spec.score or 0) > (mob.score or 0), _fmt(chunks)
+    if VOL5_COMPACT in ids:
+        other = next(c for c in chunks if c.doc_id == VOL5_COMPACT)
+        assert (spec.score or 0) > (other.score or 0), _fmt(chunks)
