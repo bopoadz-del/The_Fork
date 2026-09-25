@@ -69,7 +69,9 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/agents/runtime.py:2967": "baseline 2026-09-10",
     "app/agents/runtime.py:3991": "baseline 2026-09-10",
     "app/agents/runtime.py:5347": "baseline 2026-09-10",
-    "app/agents/runtime.py:5898": "baseline 2026-09-10",
+    # Re-indexed 2026-09-25: standards-note relevance helper inserted above
+    # _aca_claim_amount. Same ValueError return — only the line moved.
+    "app/agents/runtime.py:5925": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
