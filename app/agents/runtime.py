@@ -2743,7 +2743,7 @@ _ROUTING_PREAMBLE_LINE_RE = re.compile(
     r"ACCEPTED CONTRACT AMOUNT INCLUDING VAT|"
     r"DELAY DAMAGES PER CALENDAR DAY|DELAY DAMAGES OVER A PERIOD|HYPOTHETICAL MILESTONE ARITHMETIC|"
     r"PARENT COMPANY GUARANTEE|"
-    r"COMMENCEMENT DATE|APPOINTMENT|IDENTITY)"
+    r"COMMENCEMENT DATE|APPOINTMENT|IDENTITY|NAMED STANDARD ABSENT)"
     r"\s*[—\-].*$"
 )
 _GRAFT_APPOINTMENT_LEAK_RE = re.compile(
@@ -7406,6 +7406,78 @@ def _annotate_derivation_mismatches(text: str) -> str:
     )
 
 
+def _graft_named_standard_attribution(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """P4b: do not let a project figure wear a named code the turn did not read.
+
+    The operator asked what NFPA 51B requires. Retrieval returned the
+    project's hot-work permit. The model then called 30 minutes NFPA's.
+    Same shape for Dubai Municipality lighting and ACI 305 fresh-concrete
+    temperature. Kill switch: NAMED_STANDARD_ATTRIBUTION_GATE=0.
+    """
+    try:
+        from app.core.rag.named_standard_attribution import relabel_answer
+        user = _latest_operator_ask(messages)
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        return relabel_answer(user, text or "", rag)
+    except Exception:
+        _LOG.exception(
+            "named-standard attribution graft failed; passing answer through",
+        )
+        return text
+
+
+def _graft_stated_total_follow_up(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Replace a one-element follow-up with the stated total.
+
+    Live E6: "add 7% waste to that total and price it at SAR 420/m³"
+    after 24 pile caps came back as 8.025 m³ (one cap × 1.07) and about
+    SAR 3,370. The count is in the previous operator turn. A reply that
+    already states 192.60 m³ and SAR 80,892 is left as written.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            answer_states_stated_total,
+            compose_stated_total_follow_up,
+            format_stated_total_follow_up_line,
+        )
+    except Exception:
+        _LOG.exception("stated-total follow-up import failed")
+        return text
+    users: list[str] = []
+    for msg in messages or []:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = str(msg.get("content") or "")
+        head = content.lstrip()
+        if head.startswith(_PREDISPATCH_PREFIX) or head.startswith(_TOOL_RESULT_PREFIX):
+            continue
+        content = _unwrap_rag_folded_operator_text(content).strip()
+        if content:
+            users.append(content)
+    if len(users) < 2:
+        return text
+    try:
+        composed = compose_stated_total_follow_up(users[-1], "\n".join(users[:-1]))
+    except Exception:
+        _LOG.exception("stated-total follow-up compose failed")
+        return text
+    if not composed:
+        return text
+    if answer_states_stated_total(text or "", composed):
+        return text
+    line = format_stated_total_follow_up_line(composed)
+    if not line:
+        return text
+    return line
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -7443,6 +7515,9 @@ def _postprocess_answer(
     # Cost-gate A3-1: calc succeeded, force_synthesis emitted 0 tokens.
     # Volume-only recover is not a priced take-off — compose from the ask.
     text = _graft_composed_user_priced_takeoff(text, messages)
+    # E6: "add waste to that total and price it" continues from the prior
+    # count (24 caps / 180 m³), not from one element the tool just recomputed.
+    text = _graft_stated_total_follow_up(text, messages)
     # Live ~27d6940: user-supplied M#=Nd + common start is arithmetic.
     text = _graft_hypothetical_milestone_arithmetic(text, messages)
     # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
@@ -7504,6 +7579,10 @@ def _postprocess_answer(
     text = _citation_provenance_gate(text, rag_sys_msg, messages)
     text = _standards_advisory(text)
     text = _ensure_ingestion_handoff(text, messages, agent_name)
+    # P4b: project 30 minutes must not be stated as NFPA's (same shape for
+    # a named authority or code the excerpts are not). Runs before the
+    # scrub so a filename quoted here is still cleaned.
+    text = _graft_named_standard_attribution(text, rag_sys_msg, messages)
     # Confidentiality stopgap: scrub known project/client names from the final
     # answer so one client's project identity can't leak via general-knowledge
     # retrieval. Runs LAST so it catches names in any appended note too.
@@ -7543,6 +7622,12 @@ def _postprocess_answer(
     # electing the ENGINEER APPOINTMENT heading. Strip leftover steering
     # so JACOBS (or any other particular) is what the user sees.
     text = _strip_answer_routing_preamble(text)
+    # SET5 S1/S2/S4: the Hard rule already asked for figure + document in
+    # the first line. Live answers still opened on a narrative, a bare
+    # figure, or "properly compacted". This guard writes the line the
+    # operator scores, from the excerpts already on the turn.
+    from app.agents.first_line_hard_rule import apply_first_line_hard_rule
+    text = apply_first_line_hard_rule(text, rag_sys_msg, messages)
     # Last: the answer's own working must agree with its own result. Checked
     # after every graft, so a grafted figure is checked too.
     text = _annotate_derivation_mismatches(text)
@@ -13085,7 +13170,15 @@ class Agent:
                 top_k = int(top_k) if top_k not in (None, "") else 5
             except (TypeError, ValueError):
                 top_k = 5
-            results = await search_project_documents(project_id, query, top_k)
+            # The operator's own words go with it. `query` here was written
+            # by the model, and a model-written query makes retrieval as
+            # non-deterministic as the model: live P1a reached a clause the
+            # corpus holds 1 time in 6. search_project_documents merges the
+            # two result sets and skips the second search when they are the
+            # same question.
+            results = await search_project_documents(
+                project_id, query, top_k, also_query=user_message,
+            )
             return {
                 "name": "search_project_documents",
                 "ok": True,
@@ -13673,7 +13766,7 @@ class Agent:
             # text/formula/message — inject the current user turn so
             # bind sees As1500 / span 8m / W=10000 kN. D7: never invent.
             args = _inject_user_ask_into_construction_calc_args(
-                args, user_message,
+                args, user_message, history=history,
             )
             if not calc_name:
                 calc_name = _formula_calculator_name_from_message(
@@ -14415,6 +14508,7 @@ def _calc_args_have_ask_blob(args: dict | None) -> bool:
 def _inject_user_ask_into_construction_calc_args(
     args: dict | None,
     user_message: str | None,
+    history: list | None = None,
 ) -> dict:
     """Copy the current user turn into empty construction_calc kwargs.
 
@@ -14423,9 +14517,26 @@ def _inject_user_ask_into_construction_calc_args(
     text/formula/message — without the ask, bind never sees the labeled
     numbers. D7: never invent a figure that is not in the ask. Existing
     text/formula/message win so a later retry with real params is kept.
+
+    A follow-up ("add 7% waste to that total and price it") has no
+    geometry. The count lives on the previous operator turn. Carry that
+    text as ``prior_text`` so concrete_volume multiplies by it instead
+    of pricing one element. Explicit dims on this call are not replaced.
     """
     out = dict(args or {})
     ask = str(user_message or "").strip()
+    if ask:
+        try:
+            from app.lib.construction_formulas_quantities import (
+                follow_up_refers_to_stated_total,
+                prior_operator_text,
+            )
+            if follow_up_refers_to_stated_total(ask):
+                prior = prior_operator_text(history)
+                if prior:
+                    out.setdefault("prior_text", prior)
+        except Exception:
+            _LOG.exception("stated-total follow-up context skipped")
     if not ask or _calc_args_have_ask_blob(out):
         return out
     out["text"] = ask
