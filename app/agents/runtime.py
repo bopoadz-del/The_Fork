@@ -5832,9 +5832,36 @@ def _standards_advisory_enabled() -> bool:
     return os.getenv("STANDARDS_ADVISORY", "1") not in ("0", "false", "False", "")
 
 
-def _standards_advisory(text: str) -> str:
+# PRC-501 flags the word APPROVED on design documents. A lighting answer
+# that quotes "subject to the Engineer's approval" also contains "design"
+# and "document", and the answer-only scan appended this note to a
+# question that never asked about design-document wording.
+_DESIGN_STATUS_QUESTION_RE = re.compile(
+    r"(?i)\bPRC-\s*501\b"
+    r"|\bdesign\s+(?:review|document|drawing|package|submission|status)"
+    r"|\b(?:drawing|document)\s+status"
+    r"|\b(?:approved|approval|approve)\b"
+    r"|\bsign[- ]?off\b"
+)
+
+
+def _standards_note_relevant(question: str | None) -> bool:
+    """True when the PRC-501 note is about this question.
+
+    No question keeps the historical answer-only scan. A non-empty
+    question that is not about design-document status does not get the
+    note, even if the answer quotes an Engineer's approval.
+    """
+    if question is None or not str(question).strip():
+        return True
+    return bool(_DESIGN_STATUS_QUESTION_RE.search(question))
+
+
+def _standards_advisory(text: str, question: str | None = None) -> str:
     try:
         if not _standards_advisory_enabled() or not text or not text.strip():
+            return text
+        if not _standards_note_relevant(question):
             return text
         from app.core.construction_knowledge import enforce_critical_rules
         violations = enforce_critical_rules(text)
@@ -7577,7 +7604,7 @@ def _postprocess_answer(
     # template scheduler that has no BOQ input at all).
     from app.agents.citation_provenance import gate as _citation_provenance_gate
     text = _citation_provenance_gate(text, rag_sys_msg, messages)
-    text = _standards_advisory(text)
+    text = _standards_advisory(text, question=_latest_operator_ask(messages))
     text = _ensure_ingestion_handoff(text, messages, agent_name)
     # P4b: project 30 minutes must not be stated as NFPA's (same shape for
     # a named authority or code the excerpts are not). Runs before the
