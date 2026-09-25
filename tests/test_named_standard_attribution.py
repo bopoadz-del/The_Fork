@@ -249,6 +249,132 @@ def test_inject_warns_only_when_the_named_document_is_absent():
     assert "NAMED STANDARD ABSENT" not in project
 
 
+P6B_LIVE_ASK = (
+    "Per ACI 305 (hot weather concreting), what maximum fresh concrete "
+    "temperature is recommended?"
+)
+# Same file states the placing limit and three unrelated temperatures.
+# Live P6b on 7c0b255 listed 32/70/20/25 °C and dropped clause 3.1.23.1.
+CONC_CLAUSE_TEXT = (
+    "3.1.23 Hot weather concreting.\n"
+    "3.1.23.1 The temperature of fresh concrete at the time of placing "
+    "shall not exceed 32°C.\n"
+    "Mixing water shall not be heated above 70°C.\n"
+    "When the ambient temperature is below 20°C, cold-weather concreting "
+    "applies.\n"
+    "Do not place concrete when the shade temperature exceeds 25°C "
+    "without the Engineer's consent.\n"
+)
+CONC_SOURCE = "Vol 2 – Specification (4 of 9).pdf"
+P6B_BARE = (
+    "ACI 305 is not in the retrieved excerpts, so this answer cannot "
+    "state what ACI 305 requires.\n\n"
+    f'The project document "{CONC_SOURCE}" states 32°C. That figure is '
+    "project-only and is not ACI 305's requirement.\n\n"
+    f'The project document "{CONC_SOURCE}" states 70°C. That figure is '
+    "project-only and is not ACI 305's requirement."
+)
+P4B_HONEST_LIVE = (
+    "NFPA 51B (2019) is not in the retrieved excerpts — no excerpt is "
+    "that document — so I cannot state what it requires.\n\n"
+    "What the retrieved project documents do say, as a project "
+    "requirement only (not an NFPA 51B citation): a fire watch shall "
+    "remain for no less than 30 minutes after the hot work is finished."
+)
+P3B_LIVE_ASK = (
+    "Per Dubai Municipality requirements, what minimum lighting level "
+    "applies to general construction site areas?"
+)
+P3B_HONEST_LIVE = (
+    "I could not confirm a Dubai Municipality minimum lighting level in "
+    "the retrieved excerpts — the named Dubai Municipality document is "
+    "not among them, so I cannot state what it requires.\n\n"
+    "On the project's own table, general work areas are 323 lux "
+    "minimum. This is a project requirement only — it is not "
+    "attributable to Dubai Municipality.\n\n"
+    "The location, design and style of light fittings are subject to "
+    "the Engineer's approval."
+)
+
+
+def test_p6b_placing_limit_keeps_clause_and_drops_other_temperatures():
+    """32 °C is the placing limit at clause 3.1.23.1, still not ACI's."""
+    paragraph = " ".join(CONC_CLAUSE_TEXT.splitlines())
+    for text in (CONC_CLAUSE_TEXT, paragraph):
+        chunks = [_chunk("conc", "conc1", text, source_name=CONC_SOURCE)]
+        _assert_p6b_clause(_postprocess_answer(
+            P6B_BAD, _rag(chunks, P6B_LIVE_ASK), _msgs(P6B_LIVE_ASK),
+        ))
+
+
+def _assert_p6b_clause(out: str) -> None:
+    assert not _presents_number_as_standard(out, "ACI 305", "32"), out
+    assert re.search(r"not in the retrieved excerpts", out, re.IGNORECASE), out
+    assert re.search(r"project-only", out, re.IGNORECASE), out
+    assert "3.1.23.1" in out
+    assert re.search(r"32\s*°C", out), out
+    assert "fresh-concrete placing temperature limit" in out
+    assert CONC_SOURCE in out
+    assert not re.search(r"\b70\b", out), out
+    assert not re.search(r"\b20\b", out), out
+    assert not re.search(r"\b25\b", out), out
+    assert out.count("fresh-concrete placing temperature limit") == 1
+    assert "ACI 305 limits" not in out
+
+
+def test_p6b_already_labelled_temperatures_still_gain_the_clause():
+    """An honest bare list is not a reason to drop clause 3.1.23.1."""
+    chunks = [
+        _chunk("conc", "conc1", CONC_CLAUSE_TEXT, source_name=CONC_SOURCE),
+    ]
+    out = _postprocess_answer(
+        P6B_BARE, _rag(chunks, P6B_LIVE_ASK), _msgs(P6B_LIVE_ASK),
+    )
+    assert "3.1.23.1" in out
+    assert "fresh-concrete placing temperature limit" in out
+    assert not _presents_number_as_standard(out, "ACI 305", "32"), out
+    assert re.search(r"project-only", out, re.IGNORECASE), out
+    assert not re.search(r"\b70\b", out), out
+    assert not re.search(r"\b20\b", out), out
+    assert not re.search(r"\b25\b", out), out
+    assert out.count("fresh-concrete placing temperature limit") == 1
+
+
+def test_p4b_honest_fire_watch_stays_unattributed_to_nfpa():
+    chunks = [
+        _chunk(
+            "ptw", "ptw1", PTW_TEXT,
+            source_name="project-hot-work-permit.txt",
+        ),
+    ]
+    out = _postprocess_answer(
+        P4B_HONEST_LIVE, _rag(chunks, P4B_ASK), _msgs(P4B_ASK),
+    )
+    assert out == P4B_HONEST_LIVE
+    assert not _presents_number_as_standard(out, "NFPA 51B", "30"), out
+    assert re.search(r"\b30\b", out)
+
+
+def test_p3b_honest_lux_stays_unattributed_to_dubai_municipality():
+    chunks = [
+        _chunk(
+            "lux", "lux1",
+            "General work areas: minimum illumination 323 lux.",
+            source_name="project-lighting-spec.txt",
+        ),
+    ]
+    out = _postprocess_answer(
+        P3B_HONEST_LIVE, _rag(chunks, P3B_LIVE_ASK), _msgs(P3B_LIVE_ASK),
+    )
+    assert "323" in out
+    assert not _presents_number_as_standard(
+        out, "Dubai Municipality", "323",
+    ), out
+    assert re.search(r"project requirement", out, re.IGNORECASE), out
+    assert "Standards note" not in out
+    assert "PRC-501" not in out
+
+
 def test_kill_switch_leaves_the_misattribution():
     chunks = [
         _chunk(

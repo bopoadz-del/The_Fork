@@ -13,6 +13,11 @@ code. A project or master-corpus record that merely cites the code
 does not. Otherwise the answer says the code is not in the retrieved
 excerpts, and any project figure it keeps is labelled project-only.
 
+The relabel keeps the clause that states the figure the question
+asked for (fresh-concrete placing temperature at clause 3.1.23.1,
+for example). It does not replace that clause with every other
+temperature in the same file.
+
 Kill switch: ``NAMED_STANDARD_ATTRIBUTION_GATE=0``.
 """
 from __future__ import annotations
@@ -290,6 +295,16 @@ _ABSENCE_RE = re.compile(
     re.IGNORECASE,
 )
 _LABEL_RE = re.compile(r"project[-\s]?only|project requirement", re.IGNORECASE)
+# 3.1.23.1, not a 2-part decimal and not the quantity itself.
+_CLAUSE_NUM_RE = re.compile(r"(?<!\d)(\d+(?:\.\d+){2,})(?!\d)")
+_WORD_RE = re.compile(r"[A-Za-z]{4,}")
+_TOPIC_STOP = frozenset({
+    "what", "when", "where", "which", "that", "this", "with", "from",
+    "must", "have", "been", "after", "before", "under", "does",
+    "required", "requirement", "recommended", "applies", "apply",
+    "about", "there", "their", "your", "into", "only", "than",
+    "long", "much", "many",
+})
 
 
 def _absence_for(answer: str, standard: NamedStandard) -> bool:
@@ -331,25 +346,96 @@ def _whose(missing: list[NamedStandard]) -> str:
     return f"a requirement of {names}"
 
 
-def _honest_absence(
-    missing: list[NamedStandard],
+def _topic_terms(query: str, missing: list[NamedStandard]) -> set[str]:
+    cleaned = query or ""
+    for standard in missing:
+        cleaned = standard.pattern.sub(" ", cleaned)
+    return {
+        word.lower()
+        for word in _WORD_RE.findall(cleaned)
+        if word.lower() not in _TOPIC_STOP
+    }
+
+
+def _qty_span(text: str, qty: _Quantity) -> tuple[int, int] | None:
+    for match in _QTY_RE.finditer(text or ""):
+        key = (_num_key(match.group("num")), _family(match.group("unit")))
+        if key == (qty.num_key, qty.family):
+            return match.start(), match.end()
+    return None
+
+
+_SENTENCE_BOUND_RE = re.compile(r"[.!?]\s+|\n+")
+
+
+def _sentence_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    left = 0
+    for match in _SENTENCE_BOUND_RE.finditer(text, 0, start):
+        left = match.end()
+    match = _SENTENCE_BOUND_RE.search(text, end)
+    if not match:
+        return left, len(text)
+    if text[match.start()] in ".!?":
+        return left, match.start() + 1
+    return left, match.start()
+
+
+def _local_context(text: str, qty: _Quantity) -> str:
+    """The quantity's own sentence, plus a previous heading with no figure.
+
+    A character window around 70°C also covered the 32°C placing sentence
+    and the relabel then called 70°C the placing limit. Clause numbers
+    such as 3.1.23.1 are not sentence breaks.
+    """
+    raw = text or ""
+    span = _qty_span(raw, qty)
+    if span is None:
+        return ""
+    left, right = _sentence_bounds(raw, span[0], span[1])
+    own = raw[left:right].strip()
+    if left == 0:
+        return own
+    prev_left, prev_right = _sentence_bounds(raw, max(0, left - 1), max(0, left - 1))
+    prev = raw[prev_left:prev_right].strip()
+    if prev and not _quantities(prev):
+        return f"{prev}\n{own}"
+    return own
+
+
+def _clause_before(text: str, qty: _Quantity) -> str:
+    span = _qty_span(text, qty)
+    if span is None:
+        return ""
+    window = text[max(0, span[0] - 800): span[0]]
+    found = list(_CLAUSE_NUM_RE.finditer(window))
+    return found[-1].group(1) if found else ""
+
+
+def _window_score(window: str, terms: set[str]) -> int:
+    words = {word.lower() for word in _WORD_RE.findall(window or "")}
+    return len(words & terms)
+
+
+def _is_fresh_placing(window: str, qty: _Quantity) -> bool:
+    if qty.family != "c":
+        return False
+    low = (window or "").lower()
+    return "fresh" in low and "concrete" in low and "plac" in low
+
+
+def _pretty_qty(qty: _Quantity) -> str:
+    if qty.family == "c":
+        return f"{qty.num_key} °C"
+    if qty.family == "f":
+        return f"{qty.num_key} °F"
+    return qty.display
+
+
+def _candidate_quantities(
     excerpts: list[Excerpt],
     answer: str,
-) -> str:
-    if len(missing) == 1:
-        name = missing[0].display
-        absence = (
-            f"{name} is not in the retrieved excerpts, so this answer "
-            f"cannot state what {name} requires."
-        )
-    else:
-        listed = ", ".join(standard.display for standard in missing[:-1])
-        listed = f"{listed} and {missing[-1].display}"
-        absence = (
-            f"{listed} are not in the retrieved excerpts, so this answer "
-            f"cannot state what they require."
-        )
-    whose = _whose(missing)
+    missing: list[NamedStandard],
+) -> tuple[list[tuple[Excerpt, _Quantity]], list[tuple[Excerpt, _Quantity]]]:
     matched: list[tuple[Excerpt, _Quantity]] = []
     others: list[tuple[Excerpt, _Quantity]] = []
     seen: set[tuple[str, str]] = set()
@@ -365,15 +451,178 @@ def _honest_absence(
                 matched.append((excerpt, qty))
             else:
                 others.append((excerpt, qty))
-    chosen = matched if matched else others[:2]
-    notes: list[str] = []
-    for excerpt, qty in chosen[:4]:
-        label = excerpt.source_name or "a project document"
-        notes.append(
-            f'The project document "{label}" states {qty.display}. '
-            f"That figure is project-only and is not {whose}."
+    return matched, others
+
+
+def _select_quantities(
+    excerpts: list[Excerpt],
+    answer: str,
+    missing: list[NamedStandard],
+    query: str,
+) -> list[tuple[Excerpt, _Quantity]]:
+    """Quantities that answer the question, not every figure in the file.
+
+    A concrete-temperature chunk also states curing and water limits.
+    Listing each of them dropped the placing-temperature clause. When
+    one figure's neighbourhood matches the question, only that figure
+    is kept. With no topical match, the previous matched-or-two rule
+    still applies.
+    """
+    matched, others = _candidate_quantities(excerpts, answer, missing)
+    pool = matched + others
+    if not pool:
+        return []
+    terms = _topic_terms(query, missing)
+    scored: list[tuple[int, str, Excerpt, _Quantity]] = []
+    for excerpt, qty in pool:
+        window = _local_context(excerpt.text, qty).lower()
+        scored.append((_window_score(window, terms), window, excerpt, qty))
+    best = max(item[0] for item in scored)
+    if best <= 0:
+        return matched[:4] if matched else others[:2]
+    top = [item for item in scored if item[0] == best]
+    if "fresh" in terms and "concrete" in terms:
+        focused = [
+            item for item in top
+            if "fresh" in item[1] and "concrete" in item[1]
+        ]
+        if focused:
+            top = focused
+    if any("plac" in item[1] for item in top):
+        placed = [item for item in top if "plac" in item[1]]
+        if placed:
+            top = placed
+    return [(item[2], item[3]) for item in top[:2]]
+
+
+def _figure_note(
+    excerpt: Excerpt,
+    qty: _Quantity,
+    whose: str,
+) -> str:
+    label = excerpt.source_name or "a project document"
+    window = _local_context(excerpt.text, qty)
+    clause = _clause_before(excerpt.text, qty)
+    if clause and _is_fresh_placing(window, qty):
+        return (
+            f'The project document "{label}" states, at clause {clause}, '
+            f"that {_pretty_qty(qty)} is the fresh-concrete placing "
+            f"temperature limit. That figure is project-only and is not "
+            f"{whose}."
         )
-    return "\n\n".join([absence, *notes])
+    return (
+        f'The project document "{label}" states {qty.display}. '
+        f"That figure is project-only and is not {whose}."
+    )
+
+
+def _placing_clause_line(
+    excerpts: list[Excerpt],
+    missing: list[NamedStandard],
+    query: str,
+) -> str:
+    """Project-only placing-limit line when the excerpt states the clause.
+
+    Empty unless the question is about fresh concrete and a project
+    excerpt states a placing temperature under a numbered clause.
+    """
+    terms = _topic_terms(query, missing)
+    if "fresh" not in terms or "concrete" not in terms:
+        return ""
+    whose = _whose(missing)
+    best: tuple[int, str] | None = None
+    for excerpt in excerpts:
+        if any(_excerpt_backs(excerpt, standard) for standard in missing):
+            continue
+        for qty in _quantities(excerpt.text):
+            window = _local_context(excerpt.text, qty)
+            if not _is_fresh_placing(window, qty):
+                continue
+            clause = _clause_before(excerpt.text, qty)
+            if not clause:
+                continue
+            score = _window_score(window, terms)
+            line = _figure_note(excerpt, qty, whose)
+            if best is None or score > best[0]:
+                best = (score, line)
+    return best[1] if best else ""
+
+
+def _answer_has_clause(answer: str, clause: str) -> bool:
+    if not clause:
+        return False
+    return bool(re.search(
+        rf"(?<!\d){re.escape(clause)}(?!\d)",
+        answer or "",
+    ))
+
+
+# The old relabel listed every temperature as its own "states N°C" line
+# and dropped the clause those numbers came from.
+_BARE_TEMPERATURE_NOTE_RE = re.compile(
+    r'The project document "[^"]+" states \d+(?:\.\d+)?\s*°\s*[CFcf]\. '
+    r"That figure is project-only and is not .+?requirement\.",
+    re.IGNORECASE,
+)
+
+
+def _strip_bare_temperature_notes(answer: str) -> str:
+    cleaned = _BARE_TEMPERATURE_NOTE_RE.sub("", answer or "")
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _with_placing_clause(
+    answer: str,
+    missing: list[NamedStandard],
+    excerpts: list[Excerpt],
+    query: str,
+) -> str:
+    """State the placing-limit clause when the answer does not already.
+
+    Bare "states 70°C / 20°C / 25°C" lines are the unrelated figures the
+    old relabel appended. They come off once the clause line is known.
+    """
+    line = _placing_clause_line(excerpts, missing, query)
+    if not line:
+        return answer
+    clause_match = _CLAUSE_NUM_RE.search(line)
+    clause = clause_match.group(1) if clause_match else ""
+    base = _strip_bare_temperature_notes(answer or "")
+    if _answer_has_clause(base, clause):
+        return base
+    if not base:
+        return line
+    return f"{base}\n\n{line}"
+
+
+def _honest_absence(
+    missing: list[NamedStandard],
+    excerpts: list[Excerpt],
+    answer: str,
+    query: str = "",
+) -> str:
+    if len(missing) == 1:
+        name = missing[0].display
+        absence = (
+            f"{name} is not in the retrieved excerpts, so this answer "
+            f"cannot state what {name} requires."
+        )
+    else:
+        listed = ", ".join(standard.display for standard in missing[:-1])
+        listed = f"{listed} and {missing[-1].display}"
+        absence = (
+            f"{listed} are not in the retrieved excerpts, so this answer "
+            f"cannot state what they require."
+        )
+    whose = _whose(missing)
+    notes = [
+        _figure_note(excerpt, qty, whose)
+        for excerpt, qty in _select_quantities(excerpts, answer, missing, query)
+    ]
+    text = "\n\n".join([absence, *notes])
+    return _with_placing_clause(text, missing, excerpts, query)
 
 
 def absence_note(query: str, chunks) -> str:
@@ -411,5 +660,5 @@ def relabel_answer(query: str, answer: str, rag_content: str) -> str:
     if not missing:
         return answer
     if not _needs_relabel(answer or "", missing, excerpts):
-        return answer
-    return _honest_absence(missing, excerpts, answer or "")
+        return _with_placing_clause(answer or "", missing, excerpts, query or "")
+    return _honest_absence(missing, excerpts, answer or "", query or "")
