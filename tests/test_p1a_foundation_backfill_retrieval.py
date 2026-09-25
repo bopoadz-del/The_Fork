@@ -168,16 +168,21 @@ def test_an_unrelated_question_does_not_pull_the_clause(monkeypatch):
     assert all(c.chunk_id != "clause" for c in chunks)
 
 
-def test_a_clause_already_visible_keeps_its_score(monkeypatch):
+def test_a_clause_already_visible_is_not_lifted_again(monkeypatch):
+    """A degree clause already in the top-k must not take this rescue's bonus.
+
+    Other ranking (the S1/S2 numeric-requirement lift, source class) may
+    still move the score. This rescue's own switch must not.
+    """
     clause = _chunk("clause", "notes", CLAUSE, 0.91)
     _install(monkeypatch, [clause], [clause])
 
-    chunks, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
-    assert [c.chunk_id for c in chunks] == ["clause"]
-    # "notes" is not a specification filename, so the source-class lift is
-    # zero. The rescue must not add a second lift on top of a hit the
-    # operator would already have been shown.
-    assert chunks[0].score == pytest.approx(0.91, abs=1e-6)
+    on, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
+    monkeypatch.setenv("RAG_FOUNDATION_BACKFILL_RESCUE", "0")
+    off, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
+    assert [c.chunk_id for c in on] == ["clause"]
+    assert [c.chunk_id for c in off] == ["clause"]
+    assert on[0].score == pytest.approx(off[0].score, abs=1e-6)
 
 
 async def test_the_merged_tool_search_still_shows_the_clause(monkeypatch):
