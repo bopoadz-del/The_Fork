@@ -322,6 +322,93 @@ def _assert_p6b_clause(out: str) -> None:
     assert "ACI 305 limits" not in out
 
 
+# Verbatim spec clause 3.1.23.1. 32 °C is the fresh-concrete placing
+# limit. 70 °C is peak hydration. 20 °C (or 25 °C) is the core-to-surface
+# differential. They share one sentence, so a whole-sentence "placing"
+# label tags 70 °C as a placing limit.
+CLAUSE_31231 = (
+    "3.1.23.1 Temperature Control of Concrete Regardless of the ambient "
+    "temperature, the temperature of fresh concrete during placing shall "
+    "not exceed 32°C, the peak hydration temperature anywhere in the "
+    "concrete element shall not exceed 70°C and the temperature difference "
+    "between any point within the element and the nearest surface shall "
+    "not exceed 20°C (or 25°C where the thermal expansion coefficient of "
+    "the concrete is controlled to less than 10x10-6/°C)."
+)
+_P6B_SENT = re.compile(r"[^.\n]+")
+_P6B_NONPLACING = re.compile(r"\b(70|20|25)\s*°\s*C\b", re.IGNORECASE)
+_P6B_PLACING_WORD = re.compile(
+    r"fresh[- ]concrete|placing|placement|as placed|during placing",
+    re.IGNORECASE,
+)
+_P6B_ROLE_WORD = re.compile(
+    r"peak|hydration|core|differential|difference|nearest surface|thermal",
+    re.IGNORECASE,
+)
+
+
+def _p6b_false_placing_sentence(text: str) -> str:
+    """Owner checker: 70/20/25 °C called a placing limit, with no other role."""
+    for sentence in _P6B_SENT.findall(text or ""):
+        if (
+            _P6B_NONPLACING.search(sentence)
+            and _P6B_PLACING_WORD.search(sentence)
+            and not _P6B_ROLE_WORD.search(sentence)
+        ):
+            return sentence.strip()
+    return ""
+
+
+def test_p6b_verbatim_clause_does_not_label_70c_as_placing():
+    """32 °C is the placing limit. 70 °C in the same sentence is not."""
+    chunks = [
+        _chunk("conc", "conc1", CLAUSE_31231, source_name=CONC_SOURCE),
+    ]
+    out = _postprocess_answer(
+        P6B_BAD, _rag(chunks, P6B_LIVE_ASK), _msgs(P6B_LIVE_ASK),
+    )
+    false_placing = _p6b_false_placing_sentence(out)
+    assert not false_placing, (
+        f"presents a non-placing figure as the placing limit: {false_placing}"
+    )
+    assert "3.1.23.1" in out
+    assert re.search(r"32\s*°\s*C", out), out
+    assert "fresh-concrete placing temperature limit" in out
+    assert out.count("fresh-concrete placing temperature limit") == 1
+    assert re.search(r"project-only", out, re.IGNORECASE), out
+    assert re.search(r"not in the retrieved excerpts", out, re.IGNORECASE), out
+    for number in ("32", "70", "20", "25"):
+        assert not _presents_number_as_standard(out, "ACI 305", number), out
+
+
+def test_p6b_templated_70c_placing_line_is_removed():
+    """The live template that calls 70 °C a placing limit must not be kept."""
+    templated = (
+        "ACI 305 is not in the retrieved excerpts, so this answer cannot "
+        "state what ACI 305 requires.\n\n"
+        f'The project document "{CONC_SOURCE}" states, at clause 3.1.23.1, '
+        "that 32 °C is the fresh-concrete placing temperature limit. "
+        "That figure is project-only and is not ACI 305's requirement.\n\n"
+        f'The project document "{CONC_SOURCE}" states, at clause 3.1.23.1, '
+        "that 70 °C is the fresh-concrete placing temperature limit. "
+        "That figure is project-only and is not ACI 305's requirement."
+    )
+    chunks = [
+        _chunk("conc", "conc1", CLAUSE_31231, source_name=CONC_SOURCE),
+    ]
+    out = _postprocess_answer(
+        templated, _rag(chunks, P6B_LIVE_ASK), _msgs(P6B_LIVE_ASK),
+    )
+    false_placing = _p6b_false_placing_sentence(out)
+    assert not false_placing, (
+        f"presents a non-placing figure as the placing limit: {false_placing}"
+    )
+    assert re.search(r"32\s*°\s*C", out), out
+    assert "fresh-concrete placing temperature limit" in out
+    assert not _presents_number_as_standard(out, "ACI 305", "32"), out
+    assert not _presents_number_as_standard(out, "ACI 305", "70"), out
+
+
 def test_p6b_already_labelled_temperatures_still_gain_the_clause():
     """An honest bare list is not a reason to drop clause 3.1.23.1."""
     chunks = [
