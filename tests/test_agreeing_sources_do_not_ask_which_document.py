@@ -15,6 +15,9 @@ run with that question while both hits said 98%. S2 (compaction under
 road pavement) stated 100% and 95% and then asked which document
 governs. The S2 verdict is recorded on
 ``test_s2_optional_higher_degree_of_the_same_subgrade_does_not_ask_which_document``.
+S1 (minimum concrete cover) harvests unrelated millimetres from one
+specification file — a paint band, a tile, a panel — and asks which
+document's figure is meant.
 """
 from __future__ import annotations
 
@@ -29,6 +32,10 @@ P1A_ASK = (
 S2_ASK = (
     "Per the project specification, what compaction is required under "
     "road pavement?"
+)
+S1_ASK = (
+    "Per the project specification, what is the minimum concrete cover "
+    "to reinforcement for foundations?"
 )
 
 # Two package copies of one clause. Neither filename is a specification,
@@ -154,3 +161,77 @@ def test_s2_optional_higher_degree_of_the_same_subgrade_does_not_ask_which_docum
     assert "more than one" not in first.lower(), first
     assert _has_percent(first, "95"), first
     assert VOL5 in first, first
+
+
+# S1. One specification file. The millimetres are a paint band, a tile,
+# a raised-floor panel, and an access-cover size. None is concrete cover
+# to reinforcement. The word "cover" sits near each number, which is why
+# the harvester labels them concrete-cover figures.
+VOL2 = "SYN-SPEC-004 Vol 2 - Specification (4 of 9).pdf"
+PAINT_AND_TILE = (
+    "Bollards shall be painted in alternating bands of 200 mm. The cleanout "
+    "tile is 200 x 200 mm with a screwed and sealed cover."
+)
+RAISED_FLOOR = (
+    "Raised-floor panels are 600 x 600 mm. The manhole opening is separate, "
+    "and the panel cover sits on the frame."
+)
+ACCESS_COVER = (
+    "The access opening is fitted with a cover of minimum size 680 mm "
+    "with a handgrip."
+)
+COVER_75 = "SYN-SPEC-075 Particular Specification Concrete.pdf"
+COVER_50 = "SYN-SPEC-050 Particular Specification Concrete Rev B.pdf"
+FOUNDATION_75 = (
+    "Minimum concrete cover to reinforcement for foundations is 75 mm "
+    "where the foundation is cast against soil."
+)
+FOUNDATION_50 = (
+    "Minimum concrete cover to reinforcement for foundations is 50 mm "
+    "where the foundation is cast against blinding."
+)
+
+
+def test_unrelated_millimetres_in_one_specification_do_not_ask_which_document():
+    """S1. One file, and the millimetres are not concrete cover.
+
+    Live on d708b5d the question was minimum concrete cover to
+    reinforcement for foundations. Retrieval returned only Vol 2
+    Specification (4 of 9). The guard harvested 200 mm (bollard paint
+    bands; a 200 x 200 mm cleanout tile next to the word cover), 600 mm
+    (600 x 600 raised-floor panels; a manhole opening) and 680 mm (another
+    chunk of that same file) and asked which document's figure is meant.
+    There is one document. This asserts only that the first line does not
+    ask that question.
+    """
+    out = apply_first_line_hard_rule(
+        NARRATIVE,
+        _rag(
+            _chunk("v2a", VOL2, PAINT_AND_TILE, "0.860"),
+            _chunk("v2b", VOL2, RAISED_FLOOR, "0.840"),
+            _chunk("v2c", VOL2, ACCESS_COVER, "0.820"),
+        ),
+        _msgs(S1_ASK),
+    )
+    first = _first(out)
+    assert HEDGE not in first.lower(), first
+
+
+def test_conflicting_cover_figures_across_documents_may_ask_which_document():
+    """Guard. 75 mm and 50 mm are both concrete cover to reinforcement.
+
+    Different figures for that same item, in two different documents, may
+    still ask which document's figure is meant.
+    """
+    out = apply_first_line_hard_rule(
+        NARRATIVE,
+        _rag(
+            _chunk("c75", COVER_75, FOUNDATION_75, "0.860"),
+            _chunk("c50", COVER_50, FOUNDATION_50, "0.840"),
+        ),
+        _msgs(S1_ASK),
+    )
+    first = _first(out)
+    assert HEDGE in first.lower(), first
+    assert "75 mm" in first.lower() and "50 mm" in first.lower(), first
+    assert COVER_75 in first and COVER_50 in first, first
