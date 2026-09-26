@@ -1197,6 +1197,14 @@ def calculator_name_from_text(text: str) -> Optional[str]:
     raw = text or ""
     if not raw.strip():
         return None
+    try:
+        from app.lib.construction_formulas_structural_rc import (
+            looks_like_slab_thickness_min_ask,
+        )
+        if looks_like_slab_thickness_min_ask(raw):
+            return "slab_thickness_min"
+    except Exception:  # noqa: BLE001 — name lookup must not break dispatch
+        logger.exception("slab_thickness_min name check failed")
     underscored = raw.lower().replace("-", "_")
     spaced = raw.lower().replace("-", " ").replace("_", " ")
     full: List[str] = []
@@ -2130,6 +2138,25 @@ def _fill_lwd_from_text(text: str, out: Dict[str, Any], depth_key: str = "depth_
         out.setdefault(depth_key, _ask_float(match.group(3)))
 
 
+def _extract_slab_thickness_from_ask(text: str, out: Dict[str, Any]) -> None:
+    """Fill slab_thickness_min from 'spanning 4.8 m' / one-end continuous.
+
+    The binder's span label does not see 'spanning'. Holes only — an
+    explicit span_mm on the call wins.
+    """
+    try:
+        from app.lib.construction_formulas_structural_rc import (
+            slab_thickness_params_from_ask,
+        )
+    except Exception:  # noqa: BLE001 — extract must not break other calculators
+        logger.exception("slab thickness ask extract unavailable")
+        return
+    found = slab_thickness_params_from_ask(text or "")
+    for key, val in found.items():
+        if out.get(key) in (None, ""):
+            out[key] = val
+
+
 def _extract_beam_shear_from_ask(text: str, out: Dict[str, Any]) -> None:
     if not _ask_present(out, "udl_w_kn_m"):
         match = re.search(
@@ -2326,6 +2353,8 @@ def _extract_calc_kwargs_from_ask(
         _extract_rebar_cost_from_ask(blob, out)
     elif calc == "evaluate_tender":
         _extract_tender_from_ask(blob, out)
+    elif calc == "slab_thickness_min":
+        _extract_slab_thickness_from_ask(blob, out)
     elif calc == "diaphragm_wall_panel_volume":
         _fill_lwd_from_text(blob, out, "excavation_depth")
         if _ask_present(out, "length_m") and not _ask_present(out, "panel_length"):
