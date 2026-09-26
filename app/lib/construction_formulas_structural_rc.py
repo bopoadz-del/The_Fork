@@ -9,6 +9,7 @@ full member design (no detailing / serviceability limit states).
 from __future__ import annotations
 
 import math
+import re
 
 _ACI = "aci"
 _EC = "eurocode"
@@ -141,6 +142,139 @@ def slab_thickness_min(
         "standard": std,
         "note": note,
     }
+
+
+# Plain-engineer ACI slab asks ("minimum thickness of a one-way solid slab
+# spanning 4.8 m") do not contain the registry name slab_thickness_min, and
+# "thickness of a … slab" is not the intent-map phrase "slab thickness".
+_ONE_WAY_SLAB_RE = re.compile(
+    r"\bone[\s-]?way\b(?:\s+\w+){0,6}\s+slab\b",
+    re.IGNORECASE,
+)
+_SPAN_RE = re.compile(
+    r"\bspann(?:ing|ed)\s+(?P<num>\d+(?:\.\d+)?)\s*(?P<unit>mm|m)\b"
+    r"|\bspan(?:\s+of)?\s+(?P<num2>\d+(?:\.\d+)?)\s*(?P<unit2>mm|m)\b",
+    re.IGNORECASE,
+)
+_FY_RE = re.compile(
+    r"\bfy\s*=?\s*(?P<fy>\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_BOTH_ENDS_RE = re.compile(r"both[\s-]+ends?[\s-]+continuous", re.IGNORECASE)
+_ONE_END_RE = re.compile(r"one[\s-]+end[\s-]+continuous", re.IGNORECASE)
+_EC_ASK_RE = re.compile(r"\beurocode\b|\bEN\s*1992\b", re.IGNORECASE)
+_ACI_ASK_RE = re.compile(r"\bACI\b", re.IGNORECASE)
+
+
+def _span_mm_from_ask(text: str) -> float | None:
+    match = _SPAN_RE.search(text or "")
+    if match is None:
+        return None
+    raw = match.group("num") or match.group("num2")
+    unit = (match.group("unit") or match.group("unit2") or "m").lower()
+    value = float(raw)
+    if unit == "m":
+        return value * 1000.0
+    return value
+
+
+def _support_from_ask(text: str) -> str:
+    raw = text or ""
+    if _BOTH_ENDS_RE.search(raw):
+        return "both_ends_continuous"
+    if _ONE_END_RE.search(raw):
+        return "one_end_continuous"
+    if re.search(r"\bcantilever\b", raw, re.IGNORECASE):
+        return "cantilever"
+    return "simply_supported"
+
+
+def looks_like_slab_thickness_min_ask(text: str) -> bool:
+    """True when a registered slab_thickness_min call can answer the ask.
+
+    Requires a one-way slab, the word thickness, and a span the user
+    supplied. A document lookup that names neither a span nor a one-way
+    slab stays on retrieval.
+    """
+    raw = text or ""
+    if not raw.strip():
+        return False
+    if not _ONE_WAY_SLAB_RE.search(raw):
+        return False
+    if not re.search(r"\bthickness\b", raw, re.IGNORECASE):
+        return False
+    return _span_mm_from_ask(raw) is not None
+
+
+def slab_thickness_params_from_ask(text: str) -> dict:
+    """Span, support, fy, and code taken from the ask. Never invents a span."""
+    out: dict = {}
+    span = _span_mm_from_ask(text)
+    if span is None:
+        return out
+    out["span_mm"] = span
+    out["support_condition"] = _support_from_ask(text)
+    fy = _FY_RE.search(text or "")
+    if fy is not None:
+        out["fy_mpa"] = float(fy.group("fy"))
+    euro = bool(_EC_ASK_RE.search(text or ""))
+    aci = bool(_ACI_ASK_RE.search(text or ""))
+    if euro and not aci:
+        out["code"] = "eurocode"
+    elif aci:
+        out["code"] = "aci"
+    return out
+
+
+def _format_mm(value: float) -> str:
+    number = float(value)
+    if number == int(number):
+        return str(int(number))
+    return f"{number:.1f}"
+
+
+def format_slab_thickness_answer(result: dict) -> str:
+    """User-facing line. Provenance is the calculator's own standard field."""
+    if not isinstance(result, dict):
+        return ""
+    mm = result.get("min_thickness_mm")
+    standard = str(result.get("standard") or "").strip()
+    if mm is None or not standard:
+        return ""
+    note = str(result.get("note") or "").strip()
+    line = (
+        f"Minimum thickness is {_format_mm(float(mm))} mm. "
+        f"Calculator: slab_thickness_min. "
+        f"Standard: {standard}."
+    )
+    if note:
+        line = f"{line} {note}"
+    return line
+
+
+def answer_states_slab_thickness_result(ask: str, answer: str) -> bool:
+    """True when ``answer`` already states this ask's calculator result."""
+    if not looks_like_slab_thickness_min_ask(ask):
+        return False
+    params = slab_thickness_params_from_ask(ask)
+    if "span_mm" not in params:
+        return False
+    result = slab_thickness_min(
+        span_mm=params["span_mm"],
+        support_condition=params.get("support_condition", "simply_supported"),
+        code=params.get("code", _ACI),
+        fy_mpa=float(params.get("fy_mpa", 420.0)),
+    )
+    standard = str(result.get("standard") or "")
+    mm = result.get("min_thickness_mm")
+    if mm is None or not standard or standard not in (answer or ""):
+        return False
+    shown = _format_mm(float(mm))
+    return bool(re.search(
+        rf"\b{re.escape(shown)}\s*mm\b",
+        answer or "",
+        re.IGNORECASE,
+    ))
 
 
 def rebar_lap_length(
