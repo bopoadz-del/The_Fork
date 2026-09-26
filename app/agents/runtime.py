@@ -7341,12 +7341,21 @@ def _compose_user_priced_takeoff_instead_of_retry(
 # annotated, never silently rewritten -- correcting the figure would hide that
 # the answer and its own working disagree, which is the fact worth surfacing.
 #
+# A chained equality is one step at a time, each step against its own left
+# side. "0.4 + 420/700 = 0.4 + 0.600 = 1.000" is three sides; the quotient
+# is not compared with the neighbouring addend or with the total.
+#
 # Kill-switch: DERIVATION_CHECK=0.
 _DERIVATION_NUM = r"\d[\d,]*(?:\.\d+)?"
-_DERIVATION_RE = re.compile(
-    rf"(?<![\w.])(?P<expr>{_DERIVATION_NUM}(?:\s*(?P<op>[x×*/÷])\s*{_DERIVATION_NUM})+)"
-    rf"\s*=\s*(?P<result>{_DERIVATION_NUM})(?![\d.])",
+_DERIVATION_OP = r"[x×*/÷]"
+_DERIVATION_START_RE = re.compile(rf"(?<![\w.]){_DERIVATION_NUM}")
+_DERIVATION_TERM_RE = re.compile(
+    rf"{_DERIVATION_NUM}(?:\s*{_DERIVATION_OP}\s*{_DERIVATION_NUM})*"
 )
+_DERIVATION_PLUS_RE = re.compile(r"\s*\+\s*")
+_DERIVATION_EQ_RE = re.compile(r"\s*=(?!=)\s*")
+_DERIVATION_NUMBER_RE = re.compile(rf"{_DERIVATION_NUM}(?![\d.])")
+_DERIVATION_HAS_OP_RE = re.compile(rf"{_DERIVATION_OP}|\+")
 _DERIVATION_MAX_NOTES = 3
 
 
@@ -7366,44 +7375,162 @@ def _derivation_number(token: str) -> float | None:
         return None
 
 
+def _derivation_bound_to_previous(text: str, start: int) -> bool:
+    """True when ``start`` is inside a larger left side, not the start of one.
+
+    "0.4 + 420/700" must be read from the 0.4. Starting at the quotient would
+    compare 420/700 with whatever number follows the equals sign.
+    """
+    i = start - 1
+    while i >= 0 and text[i].isspace():
+        i -= 1
+    if i < 0:
+        return False
+    ch = text[i]
+    if ch in "+-×*/÷−–—":
+        return True
+    if ch in "xX":
+        prev = text[i - 1] if i else ""
+        return not (prev.isalnum() or prev == "_")
+    return False
+
+
+def _eval_single_operator_term(expr: str) -> float | None:
+    """Left-fold a term that uses only ``*`` or only ``/``.
+
+    A mixed term ("2 x 3 / 4") is refused: the two readings disagree, and
+    guessing precedence would accuse working the answer may have meant.
+    ``None`` means "do not check", including division by zero.
+    """
+    parts = [
+        _derivation_number(tok)
+        for tok in re.split(rf"\s*{_DERIVATION_OP}\s*", expr)
+    ]
+    if any(p is None for p in parts) or not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    ops = re.findall(_DERIVATION_OP, expr)
+    if len(ops) != len(parts) - 1:
+        return None
+    if len({"/" if op in "/÷" else "*" for op in ops}) != 1:
+        return None
+    computed = parts[0]
+    dividing = ops[0] in "/÷"
+    for value in parts[1:]:
+        if dividing:
+            if value == 0:
+                return None
+            computed /= value
+        else:
+            computed *= value
+    return computed
+
+
+def _read_term(text: str, pos: int) -> tuple[int, float | None] | None:
+    match = _DERIVATION_TERM_RE.match(text, pos)
+    if match is None:
+        return None
+    return match.end(), _eval_single_operator_term(match.group(0))
+
+
+def _read_side(
+    text: str, pos: int, *, allow_sum: bool,
+) -> tuple[tuple[str, float | None], int] | None:
+    """One side of an equality.
+
+    A sum (``0.4 + 420/700``) is one side. The right side of a product or
+    quotient stays a single number, so ``12 + 5 x 6`` after ``3 x 4 =`` is
+    not swallowed into that equation.
+    """
+    start = pos
+    if not allow_sum:
+        match = _DERIVATION_NUMBER_RE.match(text, pos)
+        if match is None:
+            return None
+        raw = match.group(0)
+        return (raw, _derivation_number(raw)), match.end()
+    term = _read_term(text, pos)
+    if term is None:
+        return None
+    pos, val = term
+    while True:
+        plus = _DERIVATION_PLUS_RE.match(text, pos)
+        if plus is None:
+            break
+        nxt = _read_term(text, plus.end())
+        if nxt is None:
+            break
+        pos, nxt_val = nxt
+        if val is None or nxt_val is None:
+            val = None
+        else:
+            val = val + nxt_val
+    return (text[start:pos], val), pos
+
+
+def _derivation_chain_mismatches(
+    text: str, start: int, out: list[tuple[str, float, float]],
+) -> int | None:
+    """Append disagreements for the chain that begins at ``start``.
+
+    Returns the index just after the chain, or ``None`` when ``start`` is
+    not the left side of a derivation (so the caller tries the next number).
+    """
+    parsed = _read_side(text, start, allow_sum=True)
+    if parsed is None:
+        return None
+    side, pos = parsed
+    if _DERIVATION_HAS_OP_RE.search(side[0]) is None:
+        # "700 = 0.4 + …" is not a derivation. Consuming it would hide the
+        # sum that actually follows the equals sign.
+        return None
+    sides = [side]
+    while True:
+        eq = _DERIVATION_EQ_RE.match(text, pos)
+        if eq is None:
+            break
+        allow_sum = "+" in sides[-1][0]
+        nxt = _read_side(text, eq.end(), allow_sum=allow_sum)
+        if nxt is None:
+            break
+        sides.append(nxt[0])
+        pos = nxt[1]
+    if len(sides) < 2:
+        return None
+    for (lexpr, lval), (_rexpr, rval) in zip(sides, sides[1:]):
+        if lval is None or rval is None:
+            continue
+        if _DERIVATION_HAS_OP_RE.search(lexpr) is None:
+            continue
+        tolerance = max(abs(lval) * 0.005, 0.01)
+        if abs(rval - lval) > tolerance:
+            out.append((lexpr.strip(), rval, lval))
+    return pos
+
+
 def derivation_mismatches(text: str) -> list[tuple[str, float, float]]:
     """``(expression, stated result, computed result)`` for each disagreement.
 
-    Only chains of ONE operator are checked (4700 x 5.9161, 3.2 x 3.2 x 0.75 x
-    18, 4800 / 20), because a mixed chain needs precedence rules the answer
-    itself may not have followed. Tolerance is the gate's: 0.5% or 0.01,
-    whichever is larger, so a rounded result (145.152 shown as 145.15) agrees.
+    Each side of a chained equality is checked against the side on its left.
+    A sum is one side (``0.4 + 420/700``), so a quotient inside it is not
+    paired with the next addend or with the total. A term is still a single
+    operator (``4700 x 5.9161``, ``4800 / 20``); a mixed ``2 x 3 / 4`` is
+    skipped. Tolerance is 0.5% or 0.01, whichever is larger, so a rounded
+    result (145.152 shown as 145.15) agrees.
     """
+    raw = text or ""
     out: list[tuple[str, float, float]] = []
-    for m in _DERIVATION_RE.finditer(text or ""):
-        expr, op = m.group("expr"), m.group("op")
-        parts = [
-            _derivation_number(tok)
-            for tok in re.split(r"\s*[x×*/÷]\s*", expr)
-        ]
-        if any(p is None for p in parts) or len(parts) < 2:
+    consumed = 0
+    for match in _DERIVATION_START_RE.finditer(raw):
+        if match.start() < consumed:
             continue
-        # A mixed chain ("2 x 3 / 4") is skipped: the operators differ.
-        ops = re.findall(r"[x×*/÷]", expr)
-        if len(set("/" if o in "/÷" else "*" for o in ops)) != 1:
+        if _derivation_bound_to_previous(raw, match.start()):
             continue
-        computed = parts[0]
-        for value in parts[1:]:
-            if op in "/÷":
-                if value == 0:
-                    computed = None
-                    break
-                computed /= value
-            else:
-                computed *= value
-        if computed is None:
+        end = _derivation_chain_mismatches(raw, match.start(), out)
+        if end is None:
             continue
-        stated = _derivation_number(m.group("result"))
-        if stated is None:
-            continue
-        tolerance = max(abs(computed) * 0.005, 0.01)
-        if abs(stated - computed) > tolerance:
-            out.append((expr.strip(), stated, computed))
+        consumed = end
     return out
 
 
