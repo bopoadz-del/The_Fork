@@ -625,10 +625,39 @@ def _honest_absence(
     return _with_placing_clause(text, missing, excerpts, query)
 
 
+def _slab_calculator_note(query: str) -> str:
+    """Steering when slab_thickness_min answers the ask.
+
+    The named-standard absence note would otherwise tell the model not
+    to state what ACI 318 requires, and the turn ends before the
+    calculator runs. A computed result's provenance is the calculator's
+    standard field.
+    """
+    try:
+        from app.lib.construction_formulas_structural_rc import (
+            looks_like_slab_thickness_min_ask,
+        )
+    except Exception:
+        _LOG.exception("slab thickness steering check failed")
+        return ""
+    if not looks_like_slab_thickness_min_ask(query or ""):
+        return ""
+    return (
+        "COMPUTED BY CALCULATOR — registered calculator "
+        "slab_thickness_min answers this question. Run construction_calc "
+        "and state its result. Cite the calculator standard field as "
+        "provenance. Do not refuse for corpus absence. Do not attribute "
+        "a project-document figure to the named code.\n"
+    )
+
+
 def absence_note(query: str, chunks) -> str:
     """Steering line for the RAG system message. Empty when it does not apply."""
     if not gate_enabled():
         return ""
+    computed = _slab_calculator_note(query)
+    if computed:
+        return computed
     standards = extract_named_standards(query or "")
     if not standards:
         return ""
@@ -659,6 +688,14 @@ def relabel_answer(query: str, answer: str, rag_content: str) -> str:
     missing = [standard for standard in standards if not standard_is_backed(standard, excerpts)]
     if not missing:
         return answer
+    try:
+        from app.lib.construction_formulas_structural_rc import (
+            answer_states_slab_thickness_result,
+        )
+        if answer_states_slab_thickness_result(query or "", answer or ""):
+            return answer
+    except Exception:
+        _LOG.exception("calculator provenance check failed")
     if not _needs_relabel(answer or "", missing, excerpts):
         return _with_placing_clause(answer or "", missing, excerpts, query or "")
     return _honest_absence(missing, excerpts, answer or "", query or "")
