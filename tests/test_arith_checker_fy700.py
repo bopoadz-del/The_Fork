@@ -39,6 +39,7 @@ def _annotated(text):
     "0.4 + 420/700 = 0.4 + 0.600 = 1.000",
     "0.4 + fy/700 = 0.4 + 420/700 = 1.00",
     "factor = 0.4 + 420/700 = 1.0",
+    "420/700 = 0.6",
     _SLAB_PARAGRAPH,
 ])
 def test_correct_fy_modification_is_not_accused(text):
