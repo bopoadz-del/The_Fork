@@ -120,3 +120,79 @@ async def test_both_retrievals_stay_inside_the_one_thread_hop(two_sided_corpus, 
     assert retrieve_threads == [retrieve_threads[0]]
     assert len(retrieve_threads) == 1
     assert retrieve_threads[0] != loop_thread
+
+
+def _split_name(left: str, right: str) -> str:
+    """Build a forbidden identifier without embedding it in this source."""
+    return left + right
+
+
+def test_search_signature_schema_and_sources_omit_co_search():
+    """The tool signature, the schema shown to the model, and non-test sources
+    do not carry the removed parameter or the removed flag."""
+    import json
+    import subprocess
+    from pathlib import Path
+
+    param = _split_name("also_", "query")
+    flag = _split_name("SEARCH_", "ALSO_VERBATIM")
+    helper = _split_name("_same_", "search")
+    reader = _split_name("_also_verbatim_", "enabled")
+
+    assert param not in inspect.signature(doc_index.search_project_documents).parameters
+    assert param not in inspect.signature(
+        doc_index._search_project_documents_sync).parameters
+
+    from app.agents.runtime import Agent
+    agent = Agent(
+        name="co-search-excision",
+        description="schema check",
+        system_prompt="schema check",
+        allowed_blocks=[],
+        can_delegate=False,
+    )
+    tools = agent.tool_definitions(project_id="p")
+    search = next(
+        t for t in tools if t["function"]["name"] == "search_project_documents")
+    props = search["function"]["parameters"]["properties"]
+    assert param not in props
+    assert flag not in json.dumps(search)
+
+    root = Path(__file__).resolve().parents[1]
+    listed = subprocess.check_output(["git", "ls-files", "-z"], cwd=root)
+    hits = []
+    for raw in listed.split(b"\0"):
+        if not raw or raw.startswith(b"tests/"):
+            continue
+        path = root / raw.decode()
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for needle in (param, flag, helper, reader):
+            if needle in text:
+                hits.append(f"{raw.decode()}: {needle}")
+    assert hits == []
+
+
+def test_the_single_query_regression_does_not_pass_a_second_argument():
+    param = _split_name("also_", "query")
+    src = inspect.getsource(test_search_also_verbatim_on_issues_exactly_one_query)
+    assert f"{param}=" not in src
+    assert f'["{param}"]' not in src
+    assert f"['{param}']" not in src
+
+
+def test_the_flag_is_named_only_inside_that_regression():
+    """The flag and the removed parameter appear only inside the one regression."""
+    from pathlib import Path
+
+    flag = _split_name("SEARCH_", "ALSO_VERBATIM")
+    param = _split_name("also_", "query")
+    text = Path(__file__).read_text(encoding="utf-8")
+    regression = inspect.getsource(test_search_also_verbatim_on_issues_exactly_one_query)
+    outside = text.replace(regression, "", 1)
+    assert flag not in outside
+    assert param not in outside
