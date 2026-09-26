@@ -1620,6 +1620,19 @@ _COMPACTION_ASK_RE = re.compile(
 )
 _COVER_WORD_RE = re.compile(r"(?i)\bcovers?\b")
 _MM_FIGURE_RE = re.compile(r"(?i)\b\d+(?:\.\d+)?\s*mm\b")
+# A cover *length* is a millimetre next to the cover phrase. "200 mm"
+# bollard bands and "600 mm" floor panels in the same chunk as the word
+# "cover" are not that length. Window covers "nominal cover should be 50mm".
+_COVER_PHRASE_RE = re.compile(
+    r"(?i)(?:nominal\s+cover|concrete\s+cover|"
+    r"cover\s+to\s+(?:the\s+)?reinforcement)"
+)
+_COVER_PHRASE_WINDOW = 64
+# Filename lift kept when a specification chunk actually states the asked
+# figure. Otherwise the +1.2 class bonus is capped so it cannot stack on
+# an unrelated millimetre and outrank the clause that states the length.
+_SOURCE_CLASS_BONUS_CAP = 0.25
+_COVER_LEXICAL_TERMS = "nominal cover cast against soil casted against blinding"
 _MDD_RE = re.compile(r"(?i)\b(?:maximum\s+dry\s+density|mdd)\b")
 _PERCENT_FIGURE_RE = re.compile(
     r"(?i)(?:\d+(?:\.\d+)?\s*%|\b(?:twenty|thirty|forty|fifty|sixty|"
@@ -1634,6 +1647,15 @@ def numeric_requirement_boost_enabled() -> bool:
     """ON by default. ``RETRIEVAL_NUMERIC_REQUIREMENT_BOOST=0`` restores
     the pre-fix candidate pool and scores exactly."""
     return (os.getenv("RETRIEVAL_NUMERIC_REQUIREMENT_BOOST", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def spec_boost_guard_enabled() -> bool:
+    """ON by default. ``RETRIEVAL_SPEC_BOOST_GUARD=0`` restores the
+    uncapped specification-filename lift, the loose cover detector, and
+    duplicate signed/unsigned slots."""
+    return (os.getenv("RETRIEVAL_SPEC_BOOST_GUARD", "1") or "").strip().lower() not in (
         "0", "false", "no", "off",
     )
 
@@ -1664,6 +1686,10 @@ def numeric_requirement_expansion(query: str) -> str:
     parts: List[str] = []
     if "length_mm" in kinds:
         parts.append("nominal cover millimetre millimeter blinding")
+        if spec_boost_guard_enabled():
+            # The clause says "nominal cover" and "casted against soil",
+            # not "minimum cover to reinforcement".
+            parts.append("cast against soil casted against blinding")
     if "compaction" in kinds:
         parts.append(
             "compacted sub-grade subgrade embankment maximum dry density CBR percent"
@@ -1677,9 +1703,30 @@ def _spans_within(text: str, left: re.Pattern, right: re.Pattern, window: int) -
     return any(abs(x - y) <= window for x in a for y in b)
 
 
-def chunk_states_cover_length(text: str) -> bool:
-    """True when the chunk states a cover and a length in millimetres."""
+def _mm_near_cover_phrase(text: str) -> bool:
+    """True when a millimetre figure sits next to a cover-length phrase."""
     blob = text or ""
+    phrases = [m.start() for m in _COVER_PHRASE_RE.finditer(blob)]
+    figures = [m.start() for m in _MM_FIGURE_RE.finditer(blob)]
+    return any(
+        abs(phrase - figure) <= _COVER_PHRASE_WINDOW
+        for phrase in phrases
+        for figure in figures
+    )
+
+
+def chunk_states_cover_length(text: str) -> bool:
+    """True when the chunk states a cover and a length in millimetres.
+
+    With ``RETRIEVAL_SPEC_BOOST_GUARD`` on (the default), the millimetre
+    has to sit next to "nominal cover", "concrete cover", or "cover to
+    reinforcement". A bollard dimension elsewhere in the chunk does not
+    count. ``RETRIEVAL_SPEC_BOOST_GUARD=0`` restores the any-cover-word
+    plus any-millimetre check.
+    """
+    blob = text or ""
+    if spec_boost_guard_enabled():
+        return _mm_near_cover_phrase(blob)
     return bool(_COVER_WORD_RE.search(blob) and _MM_FIGURE_RE.search(blob))
 
 
@@ -1746,6 +1793,83 @@ def chunk_matches_quantity_question(query: str, text: str, kinds: frozenset) -> 
     if "compaction" in kinds and not compaction_subject_agrees(query, text):
         return False
     return True
+
+
+def retrieval_lexical_query(query: str) -> str:
+    """BM25 text for pre-answer retrieval.
+
+    The vector leg keeps the operator's words. A cover ask additionally
+    carries the clause vocabulary ("nominal cover", "cast against soil")
+    so the lexical leg can meet the durability sentence. Empty extra
+    when the guard is off, so that path stays on the raw question.
+    """
+    base = (query or "").strip()
+    if not spec_boost_guard_enabled():
+        return base
+    if "length_mm" not in asked_quantity_kinds(query):
+        return base
+    return f"{base} {_COVER_LEXICAL_TERMS}".strip()
+
+
+def _loose_cover_and_millimetre(text: str) -> bool:
+    """The pre-guard detector: any cover-word and any millimetre."""
+    blob = text or ""
+    return bool(_COVER_WORD_RE.search(blob) and _MM_FIGURE_RE.search(blob))
+
+
+def _cap_specification_class_bonus(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    name_by_id: Dict[str, str],
+) -> None:
+    """In-place: stop the specification filename lift overwhelming content.
+
+    The full ``_SOURCE_CLASS_BONUS`` stays when the chunk states the asked
+    figure (a specification that gives 98% MDD still leads) or when the
+    question is not a cover-length ask. A cover ask whose chunk only
+    shares the word "cover" with an unrelated millimetre keeps a small
+    cap. ``RETRIEVAL_SPEC_BOOST_GUARD=0`` leaves scores untouched.
+    No-op for HSE / lifting lifts.
+    """
+    if not spec_boost_guard_enabled():
+        return
+    if source_class_named_by(query) != "specification":
+        return
+    if "length_mm" not in asked_quantity_kinds(query):
+        return
+    kinds = asked_quantity_kinds(query)
+    for i, (score, chunk) in enumerate(scored):
+        name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
+        add = source_class_adjustment(name, "specification")
+        if add <= _SOURCE_CLASS_BONUS_CAP:
+            continue
+        if chunk_matches_quantity_question(query, chunk.text or "", kinds):
+            continue
+        if not _loose_cover_and_millimetre(chunk.text or ""):
+            continue
+        excess = add - _SOURCE_CLASS_BONUS_CAP
+        adjusted = score - excess
+        chunk.score = round(adjusted, 6)
+        scored[i] = (adjusted, chunk)
+
+
+_SOURCE_HEADER_RE = re.compile(r"(?i)^\[source:[^\]]*\]\s*")
+_COPY_KEY_MIN_CHARS = 80
+
+
+def chunk_copy_key(text: str) -> str:
+    """Body key for signed/unsigned copies of one clause.
+
+    Empty when the body is too short to collapse. A leading
+    ``[source: …]`` path is not part of the clause — the two copies of
+    one volume differ there and match everywhere else. Whitespace is
+    collapsed so a line wrap does not look like a different sentence.
+    """
+    body = _SOURCE_HEADER_RE.sub("", (text or "").strip())
+    body = re.sub(r"\s+", " ", body).strip().lower()
+    if len(body) < _COPY_KEY_MIN_CHARS:
+        return ""
+    return body
 
 
 def _fetch_numeric_requirement_chunks(
@@ -8912,7 +9036,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     over_fetch = candidate_overfetch(k)
     candidates: List[Chunk] = []
     try:
-        candidates.extend(store.bm25_search(project_id, query, over_fetch))
+        candidates.extend(store.bm25_search(
+            project_id, retrieval_lexical_query(query), over_fetch,
+        ))
     except Exception as exc:  # noqa: BLE001
         logger.warning("lexical retrieval failed for %s: %s", project_id, exc)
         return [], 0
@@ -9036,6 +9162,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     _apply_filename_overlap_boost(query, scored_lex, name_by_id)
     _apply_source_class_preference(query, scored_lex, name_by_id)
+    _cap_specification_class_bonus(query, scored_lex, name_by_id)
     _apply_numeric_requirement_boost(query, scored_lex, higher_is_better=False)
     _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
     _apply_spec_identity_text_boost(query, scored_lex)
@@ -9055,6 +9182,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
 
     kept: List[Chunk] = []
     noise_filtered = 0
+    seen_copies: Set[str] = set()
 
     def _name(doc_id: str) -> str:
         return name_by_id.get(doc_id, "") or _doc_name_for_id(doc_id)
@@ -9074,6 +9202,11 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
             continue
         if not scope.allow(name, chunk.text or ""):
             continue
+        copy_key = chunk_copy_key(chunk.text or "") if spec_boost_guard_enabled() else ""
+        if copy_key and copy_key in seen_copies:
+            continue
+        if copy_key:
+            seen_copies.add(copy_key)
         chunk.source_name = name
         kept.append(chunk)
         if len(kept) >= k:
@@ -9189,7 +9322,8 @@ def retrieve_with_filter(
 
     # Active project (operator's own corpus — first so it wins ties).
     raw_active = _dual_search(
-        store, project_id, query_vec, query, alt_vec, alt_query, k=over_fetch,
+        store, project_id, query_vec, retrieval_lexical_query(query),
+        alt_vec, alt_query, k=over_fetch,
     )
 
     # Particulars-shaped questions: a third search whose wording matches the
@@ -9738,6 +9872,7 @@ def retrieve_with_filter(
 
     _apply_filename_overlap_boost(query, scored, name_by_id)
     _apply_source_class_preference(query, scored, name_by_id)
+    _cap_specification_class_bonus(query, scored, name_by_id)
     _apply_numeric_requirement_boost(query, scored)
     _apply_spec_title_filename_boost(query, scored, name_by_id)
     _apply_spec_identity_text_boost(query, scored)
@@ -9807,6 +9942,7 @@ def retrieve_with_filter(
     noise_dropped = 0
     revision_suppressed = 0
     gk_kept = 0
+    seen_copies: Set[str] = set()
     # `scored` is already in final rank order, so this election sees exactly
     # the ranking the user would have got — and prevents a wrong-contract
     # pointer at rank 1 from deleting the row that holds the answer.
@@ -9833,10 +9969,17 @@ def retrieve_with_filter(
         if dn and rank is not None and best_rev.get((dn, rank[0]), rank[1]) > rank[1]:
             revision_suppressed += 1
             continue
+        # Signed and unsigned copies of one clause share a body. Keep the
+        # higher-scored copy (this list is rank order) and free the slot.
+        copy_key = chunk_copy_key(c.text or "") if spec_boost_guard_enabled() else ""
+        if copy_key and copy_key in seen_copies:
+            continue
         if gk_cap is not None and c.project_id in gk_id_set:
             if gk_kept >= gk_cap:
                 continue
             gk_kept += 1
+        if copy_key:
+            seen_copies.add(copy_key)
         kept.append(c)
         if len(kept) == target:
             break
