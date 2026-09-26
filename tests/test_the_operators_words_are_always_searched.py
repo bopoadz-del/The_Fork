@@ -1,8 +1,6 @@
 """Document search runs the model's query once.
 
-``SEARCH_ALSO_VERBATIM`` and ``also_query`` used to issue a second retrieval
-on the operator's words and merge the hits. That co-search is gone: one
-query string, one ``retrieve_with_filter`` call, no merge.
+One query string, one ``retrieve_with_filter`` call, no second result set.
 """
 from __future__ import annotations
 
@@ -65,23 +63,20 @@ def _text(results):
     return " ".join(r["snippet"] for r in results)
 
 
-async def test_search_also_verbatim_on_issues_exactly_one_query(two_sided_corpus, monkeypatch):
+async def test_verbatim_co_search_flag_on_issues_exactly_one_query(two_sided_corpus, monkeypatch):
     """With the verbatim co-search flag on, the tool still issues one query.
 
-    ``SEARCH_ALSO_VERBATIM=1`` must not run a second verbatim / also_query
-    retrieval and must not merge those hits into the model's result set.
+    ``SEARCH_ALSO_VERBATIM=1`` must not run a second retrieval and must not
+    merge a second result set into the model's hits.
     """
     monkeypatch.setenv("SEARCH_ALSO_VERBATIM", "1")
-    kwargs = {}
-    if "also_query" in inspect.signature(doc_index.search_project_documents).parameters:
-        kwargs["also_query"] = OPERATOR_ASK
     results = await doc_index.search_project_documents(
-        "p1", MODEL_QUERY, top_k=5, **kwargs)
+        "p1", MODEL_QUERY, top_k=5)
     assert two_sided_corpus == [MODEL_QUERY]
     assert "modified proctor" not in _text(results).lower()
 
 
-async def test_no_also_query_is_the_old_path_exactly(two_sided_corpus):
+async def test_one_model_query_is_the_only_search(two_sided_corpus):
     await doc_index.search_project_documents("p1", MODEL_QUERY, top_k=5)
     assert two_sided_corpus == [MODEL_QUERY]
 
@@ -122,9 +117,9 @@ async def test_both_retrievals_stay_inside_the_one_thread_hop(two_sided_corpus, 
     assert retrieve_threads[0] != loop_thread
 
 
-def _split_name(left: str, right: str) -> str:
+def _split_name(*parts: str) -> str:
     """Build a forbidden identifier without embedding it in this source."""
-    return left + right
+    return "".join(parts)
 
 
 def test_search_signature_schema_and_sources_omit_co_search():
@@ -135,9 +130,9 @@ def test_search_signature_schema_and_sources_omit_co_search():
     from pathlib import Path
 
     param = _split_name("also_", "query")
-    flag = _split_name("SEARCH_", "ALSO_VERBATIM")
+    flag = _split_name("SEARCH_", "ALSO_", "VERBATIM")
     helper = _split_name("_same_", "search")
-    reader = _split_name("_also_verbatim_", "enabled")
+    reader = _split_name("_also_", "verbatim_", "enabled")
 
     assert param not in inspect.signature(doc_index.search_project_documents).parameters
     assert param not in inspect.signature(
@@ -179,7 +174,7 @@ def test_search_signature_schema_and_sources_omit_co_search():
 
 def test_the_single_query_regression_does_not_pass_a_second_argument():
     param = _split_name("also_", "query")
-    src = inspect.getsource(test_search_also_verbatim_on_issues_exactly_one_query)
+    src = inspect.getsource(test_verbatim_co_search_flag_on_issues_exactly_one_query)
     assert f"{param}=" not in src
     assert f'["{param}"]' not in src
     assert f"['{param}']" not in src
@@ -189,10 +184,10 @@ def test_the_flag_is_named_only_inside_that_regression():
     """The flag and the removed parameter appear only inside the one regression."""
     from pathlib import Path
 
-    flag = _split_name("SEARCH_", "ALSO_VERBATIM")
+    flag = _split_name("SEARCH_", "ALSO_", "VERBATIM")
     param = _split_name("also_", "query")
     text = Path(__file__).read_text(encoding="utf-8")
-    regression = inspect.getsource(test_search_also_verbatim_on_issues_exactly_one_query)
+    regression = inspect.getsource(test_verbatim_co_search_flag_on_issues_exactly_one_query)
     outside = text.replace(regression, "", 1)
     assert flag not in outside
     assert param not in outside
