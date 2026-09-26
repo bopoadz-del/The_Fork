@@ -15,8 +15,8 @@ excerpts, and any project figure it keeps is labelled project-only.
 
 The relabel keeps the clause that states the figure the question
 asked for (fresh-concrete placing temperature at clause 3.1.23.1,
-for example). It does not replace that clause with every other
-temperature in the same file.
+for example). A later limit in that same sentence keeps its own
+role: 70 °C is peak hydration, not another placing limit.
 
 Kill switch: ``NAMED_STANDARD_ATTRIBUTION_GATE=0``.
 """
@@ -365,48 +365,82 @@ def _qty_span(text: str, qty: _Quantity) -> tuple[int, int] | None:
     return None
 
 
-_SENTENCE_BOUND_RE = re.compile(r"[.!?]\s+|\n+")
+# ". " ends a sentence. "3.1.23.1" does not: the dot is followed by a digit.
+_SENTENCE_END_RE = re.compile(r"[.!?]\s+")
+_NONPLACING_TEMP_RE = re.compile(
+    r"\b(70|20|25)(?:\.\d+)?\s*°\s*[Cc]\b",
+)
+_PLACING_WORD_RE = re.compile(
+    r"fresh[- ]concrete|\bplac(?:e|ing|ed|ement)\b|during placing",
+    re.IGNORECASE,
+)
+_OTHER_ROLE_RE = re.compile(
+    r"peak|hydration|\bcore\b|differential|difference|nearest surface|thermal",
+    re.IGNORECASE,
+)
+_PLACING_CLAIM_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*°\s*C\b[^.]{0,80}fresh-concrete placing temperature limit",
+    re.IGNORECASE,
+)
+_ORPHAN_DISCLAIMER_RE = re.compile(
+    r"That figure is project-only\b",
+    re.IGNORECASE,
+)
 
 
-def _sentence_bounds(text: str, start: int, end: int) -> tuple[int, int]:
-    left = 0
-    for match in _SENTENCE_BOUND_RE.finditer(text, 0, start):
-        left = match.end()
-    match = _SENTENCE_BOUND_RE.search(text, end)
-    if not match:
-        return left, len(text)
-    if text[match.start()] in ".!?":
-        return left, match.start() + 1
-    return left, match.start()
+def _fragment_at(text: str, figure_start: int, figure_end: int) -> str:
+    """Words that govern this figure, not the next limit in the sentence.
 
-
-def _local_context(text: str, qty: _Quantity) -> str:
-    """The quantity's own sentence, plus a previous heading with no figure.
-
-    A character window around 70°C also covered the 32°C placing sentence
-    and the relabel then called 70°C the placing limit. Clause numbers
-    such as 3.1.23.1 are not sentence breaks.
+    Clause 3.1.23.1 states three limits in one sentence. The placing
+    words apply only up to 32°C. 70°C is governed by "peak hydration",
+    and 20°C / 25°C by the temperature difference. A newline is a PDF
+    wrap, so it does not start a new rule.
     """
+    prev_end = 0
+    for match in _QTY_RE.finditer(text, 0, figure_start):
+        prev_end = match.end()
+    start = prev_end
+    for match in _SENTENCE_END_RE.finditer(text, prev_end, figure_start):
+        start = match.end()
+    return text[start:figure_end].strip()
+
+
+def _role_span(text: str, qty: _Quantity) -> str:
+    """Prefer the occurrence whose own words are the placing limit."""
     raw = text or ""
-    span = _qty_span(raw, qty)
-    if span is None:
-        return ""
-    left, right = _sentence_bounds(raw, span[0], span[1])
-    own = raw[left:right].strip()
-    if left == 0:
-        return own
-    prev_left, prev_right = _sentence_bounds(raw, max(0, left - 1), max(0, left - 1))
-    prev = raw[prev_left:prev_right].strip()
-    if prev and not _quantities(prev):
-        return f"{prev}\n{own}"
-    return own
+    chosen = ""
+    for match in _QTY_RE.finditer(raw):
+        key = (_num_key(match.group("num")), _family(match.group("unit")))
+        if key != (qty.num_key, qty.family):
+            continue
+        fragment = _fragment_at(raw, match.start(), match.end())
+        if _is_fresh_placing(fragment, qty):
+            return fragment
+        if not chosen:
+            chosen = fragment
+    return chosen
+
+
+def _placing_figure_pos(text: str, qty: _Quantity) -> int | None:
+    raw = text or ""
+    first: int | None = None
+    for match in _QTY_RE.finditer(raw):
+        key = (_num_key(match.group("num")), _family(match.group("unit")))
+        if key != (qty.num_key, qty.family):
+            continue
+        if first is None:
+            first = match.start()
+        fragment = _fragment_at(raw, match.start(), match.end())
+        if _is_fresh_placing(fragment, qty):
+            return match.start()
+    return first
 
 
 def _clause_before(text: str, qty: _Quantity) -> str:
-    span = _qty_span(text, qty)
-    if span is None:
+    pos = _placing_figure_pos(text, qty)
+    if pos is None:
         return ""
-    window = text[max(0, span[0] - 800): span[0]]
+    window = text[max(0, pos - 800): pos]
     found = list(_CLAUSE_NUM_RE.finditer(window))
     return found[-1].group(1) if found else ""
 
@@ -475,13 +509,21 @@ def _select_quantities(
     terms = _topic_terms(query, missing)
     scored: list[tuple[int, str, Excerpt, _Quantity]] = []
     for excerpt, qty in pool:
-        window = _local_context(excerpt.text, qty).lower()
+        window = _role_span(excerpt.text, qty).lower()
         scored.append((_window_score(window, terms), window, excerpt, qty))
     best = max(item[0] for item in scored)
     if best <= 0:
         return matched[:4] if matched else others[:2]
     top = [item for item in scored if item[0] == best]
     if "fresh" in terms and "concrete" in terms:
+        placing = [
+            item for item in scored
+            if _is_fresh_placing(item[1], item[3])
+        ]
+        if placing:
+            best_placing = max(item[0] for item in placing)
+            placing = [item for item in placing if item[0] == best_placing]
+            return [(item[2], item[3]) for item in placing[:1]]
         focused = [
             item for item in top
             if "fresh" in item[1] and "concrete" in item[1]
@@ -501,7 +543,7 @@ def _figure_note(
     whose: str,
 ) -> str:
     label = excerpt.source_name or "a project document"
-    window = _local_context(excerpt.text, qty)
+    window = _role_span(excerpt.text, qty)
     clause = _clause_before(excerpt.text, qty)
     if clause and _is_fresh_placing(window, qty):
         return (
@@ -535,7 +577,7 @@ def _placing_clause_line(
         if any(_excerpt_backs(excerpt, standard) for standard in missing):
             continue
         for qty in _quantities(excerpt.text):
-            window = _local_context(excerpt.text, qty)
+            window = _role_span(excerpt.text, qty)
             if not _is_fresh_placing(window, qty):
                 continue
             clause = _clause_before(excerpt.text, qty)
@@ -573,6 +615,65 @@ def _strip_bare_temperature_notes(answer: str) -> str:
     return cleaned.strip()
 
 
+def _placing_num_keys(
+    excerpts: list[Excerpt],
+    missing: list[NamedStandard],
+) -> set[str]:
+    keys: set[str] = set()
+    for excerpt in excerpts:
+        if any(_excerpt_backs(excerpt, standard) for standard in missing):
+            continue
+        for qty in _quantities(excerpt.text):
+            if _is_fresh_placing(_role_span(excerpt.text, qty), qty):
+                keys.add(qty.num_key)
+    return keys
+
+
+def _calls_nonplacing_figure_a_placing_limit(sentence: str) -> bool:
+    """70/20/25 °C wearing the placing label, with no hydration or differential role."""
+    if not _NONPLACING_TEMP_RE.search(sentence or ""):
+        return False
+    if not _PLACING_WORD_RE.search(sentence or ""):
+        return False
+    return not _OTHER_ROLE_RE.search(sentence or "")
+
+
+def _strip_false_placing_claims(answer: str, placing_keys: set[str]) -> str:
+    """Drop a templated line that calls 70 °C the placing limit.
+
+    The excerpt decides which number is the placing limit. Other
+    temperatures in the same clause stay off that label.
+    """
+    if not answer or not placing_keys:
+        return answer
+    paragraphs = re.split(r"\n\s*\n", answer)
+    kept_paragraphs: list[str] = []
+    for paragraph in paragraphs:
+        sentences = _sentences(paragraph)
+        kept: list[str] = []
+        skip_disclaimer = False
+        for sentence in sentences:
+            if skip_disclaimer and _ORPHAN_DISCLAIMER_RE.match(sentence.strip()):
+                skip_disclaimer = False
+                continue
+            skip_disclaimer = False
+            claimed = [
+                _num_key(num)
+                for num in _PLACING_CLAIM_RE.findall(sentence)
+                if num
+            ]
+            false_claim = bool(claimed) and all(
+                num not in placing_keys for num in claimed
+            )
+            if false_claim or _calls_nonplacing_figure_a_placing_limit(sentence):
+                skip_disclaimer = True
+                continue
+            kept.append(sentence)
+        if kept:
+            kept_paragraphs.append(" ".join(kept))
+    return "\n\n".join(kept_paragraphs).strip()
+
+
 def _with_placing_clause(
     answer: str,
     missing: list[NamedStandard],
@@ -582,7 +683,8 @@ def _with_placing_clause(
     """State the placing-limit clause when the answer does not already.
 
     Bare "states 70°C / 20°C / 25°C" lines are the unrelated figures the
-    old relabel appended. They come off once the clause line is known.
+    old relabel appended. A line that calls 70 °C the placing limit is
+    the same mistake inside one clause sentence, and comes off too.
     """
     line = _placing_clause_line(excerpts, missing, query)
     if not line:
@@ -590,6 +692,7 @@ def _with_placing_clause(
     clause_match = _CLAUSE_NUM_RE.search(line)
     clause = clause_match.group(1) if clause_match else ""
     base = _strip_bare_temperature_notes(answer or "")
+    base = _strip_false_placing_claims(base, _placing_num_keys(excerpts, missing))
     if _answer_has_clause(base, clause):
         return base
     if not base:
