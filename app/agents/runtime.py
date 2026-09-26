@@ -7433,6 +7433,60 @@ def _annotate_derivation_mismatches(text: str) -> str:
     )
 
 
+_SLAB_GUARD_REFUSAL_RE = re.compile(
+    r"not in the retrieved excerpts|cannot state what|"
+    r"won'?t attribute|will not attribute|"
+    r"would you like me to run|no retrieved excerpt",
+    re.IGNORECASE,
+)
+
+
+def _graft_computed_slab_thickness(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Replace a corpus refusal with the slab_thickness_min result.
+
+    Live T20/U5/E13: the model cited the named-standard guard and never
+    called the calculator, including turns that named slab_thickness_min
+    and offered to run it. The figure is computed. Provenance is the
+    calculator's standard field.
+    """
+    user = _latest_operator_ask(messages)
+    if not user:
+        return text
+    try:
+        from app.lib.construction_formulas import run_calculation
+        from app.lib.construction_formulas_structural_rc import (
+            answer_states_slab_thickness_result,
+            format_slab_thickness_answer,
+            looks_like_slab_thickness_min_ask,
+        )
+    except Exception:
+        _LOG.exception("slab thickness graft import failed")
+        return text
+    if not looks_like_slab_thickness_min_ask(user):
+        return text
+    if (
+        answer_states_slab_thickness_result(user, text or "")
+        and not _SLAB_GUARD_REFUSAL_RE.search(text or "")
+    ):
+        return text
+    try:
+        env = run_calculation("slab_thickness_min", {"text": user})
+    except Exception:
+        _LOG.exception("slab thickness graft calculation failed")
+        return text
+    if not isinstance(env, dict) or env.get("status") == "error":
+        return text
+    line = format_slab_thickness_answer(
+        env.get("result") if isinstance(env.get("result"), dict) else {},
+    )
+    if not line:
+        return text
+    return line
+
+
 def _graft_named_standard_attribution(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -7609,6 +7663,10 @@ def _postprocess_answer(
     # P4b: project 30 minutes must not be stated as NFPA's (same shape for
     # a named authority or code the excerpts are not). Runs before the
     # scrub so a filename quoted here is still cleaned.
+    # Computed slab thickness is not a retrieved claim. Replace a guard
+    # refusal (or an offer to run slab_thickness_min that never calls it)
+    # before the attribution graft, which must leave the calculator line.
+    text = _graft_computed_slab_thickness(text, messages)
     text = _graft_named_standard_attribution(text, rag_sys_msg, messages)
     # Confidentiality stopgap: scrub known project/client names from the final
     # answer so one client's project identity can't leak via general-knowledge
@@ -14416,6 +14474,17 @@ def _message_is_formula_style_ask(text: str) -> bool:
         _LOG.debug("contract-data lookup check skipped", exc_info=True)
     if _looks_like_self_contained_calculation(raw):
         return True
+    # ACI one-way slab minimum thickness is slab_thickness_min. The
+    # question does not spell the registry name, and "thickness of a
+    # slab" is not the intent-map phrase "slab thickness".
+    try:
+        from app.lib.construction_formulas_structural_rc import (
+            looks_like_slab_thickness_min_ask,
+        )
+        if looks_like_slab_thickness_min_ask(raw):
+            return True
+    except Exception:  # noqa: BLE001 — routing must still classify
+        _LOG.exception("slab thickness formula check failed")
     # Underscore form (pe_unit_convert) or a 3+ token spaced name.
     # Two-token spaced names ("concrete volume") collide with BOQ lookups
     # and must stay on RAG — `_message_names_registered_calculator` is
