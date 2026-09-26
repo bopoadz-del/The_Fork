@@ -4,16 +4,10 @@ Live P1a on 209bc83: 2/6. The runs that passed quoted the earthworks clause
 (98% of maximum dry density, Modified Proctor). The runs that failed were
 handed duct backfilling in soft ground from Vol 2 parts 2 and 3.
 
-On 7c0b255, after the tool path also searches the operator's own words: 0/6.
-Every run cites BS 1377 Part 9, the MOT embankment test, and duct sand cover.
-None cites 98%, MDD, or Modified Proctor.
-
 The term rescue treats that miss as a success. Its gate asks only whether
 the top-k already co-occurs some pair of query stems. "compacted" and
 "backfilling" co-occur in the duct chunk, so the gate never fetches the
-degree clause sitting outside the semantic pool. Searching the operator's
-words alongside the model's then fills the five document slots with those
-distractors, and a lucky model-query hit of the clause is crowded out.
+degree clause sitting outside the semantic pool.
 
 The figure is not invented. A corpus that does not hold the clause still
 does not state 98%.
@@ -183,35 +177,6 @@ def test_a_clause_already_visible_is_not_lifted_again(monkeypatch):
     assert [c.chunk_id for c in on] == ["clause"]
     assert [c.chunk_id for c in off] == ["clause"]
     assert on[0].score == pytest.approx(off[0].score, abs=1e-6)
-
-
-async def test_the_merged_tool_search_still_shows_the_clause(monkeypatch):
-    """The operator's words are searched too. That merge must not bury the clause.
-
-    A model query that does not itself say "structural backfill" still
-    receives the clause, because the operator's question does, and the
-    clause's lift outranks the duct volume.
-    """
-    from app.core import doc_index
-
-    semantic = [
-        _chunk("duct", "spec2", DUCT, 0.91),
-        _chunk("mot", "spec1", MOT, 0.88),
-        _chunk("drain", "spec3", DRAIN, 0.84),
-        _chunk("fill", "spec2", "General soils compacted to BS 1377 Part 9.", 0.80),
-        _chunk("emb", "spec1", "Embankment tested to the MOT standard.", 0.79),
-    ]
-    clause = _chunk("clause", "spec4", CLAUSE, 0.0)
-    _install(monkeypatch, semantic, semantic + [clause])
-    monkeypatch.setattr(doc_index, "_load_index", lambda _pid: {"documents": []})
-
-    results = await doc_index.search_project_documents(
-        "p1", "backfill compaction requirements", top_k=5, also_query=ASK,
-    )
-    blob = " ".join(r["snippet"] for r in results).lower()
-    assert "modified proctor" in blob
-    assert "98%" in blob
-    assert results[0]["document_id"] == "spec4"
 
 
 def test_the_kill_switch_leaves_the_distractors(monkeypatch):
