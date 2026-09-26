@@ -11,9 +11,15 @@ hold no numeric figure. When they do, the first line names that figure and
 the file that states it. A question that names a source class prefers a
 numeric figure from a document of that class (the specification's own 98%
 over another file's 95%). A different file's figure is labelled as not the
-named source. "Which contract governs this project?" names the one contract
-in the excerpts, or asks which when more than one non-template contract is
-visible.
+named source. Copies of one figure, including signed and unsigned copies of
+one clause, collapse to one line that cites one copy. The line asks which
+document only when different figures for the same item come from different
+documents. An optional higher compaction degree in the same clause ("could
+be compacted to … under the approval of the engineer") is not a second
+figure. A millimetre counts as concrete cover only when it is tied to that
+quantity, not to a panel, tile, or paint band. "Which contract governs this
+project?" names the one contract in the excerpts, or asks which when more
+than one non-template contract is visible.
 
 Kill-switch: FIRST_LINE_HARD_RULE=0.
 """
@@ -38,7 +44,24 @@ _WHICH_CONTRACT_RE = re.compile(
 _TEMPLATE_RE = re.compile(r"(?i)\btemplate\b")
 _CONTRACT_WORD_RE = re.compile(r"(?i)\bcontracts?\b")
 _MM_RE = re.compile(r"(?i)\b(\d+(?:\.\d+)?)\s*mm\b")
-_COVER_WORD_RE = re.compile(r"(?i)\bcovers?\b")
+# Concrete cover to reinforcement, not a lid, a tile, or a paint band.
+# "clear cover" / "nominal cover" / "concrete cover" / "cover to reinforcement".
+_CONCRETE_COVER_NEAR_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:concrete|clear|nominal)\s+covers?\b"
+    r"|\bcovers?\s+to\s+(?:the\s+)?(?:reinforcement|rebar|bars?|steel)\b"
+    r")"
+)
+# "200 x 200 mm" and "600mm x 600mm" are a panel or tile size.
+_PLAN_SIZE_BEFORE_RE = re.compile(r"(?i)\d+(?:\.\d+)?\s*[x×]\s*$")
+_PLAN_SIZE_AFTER_RE = re.compile(r"(?i)^\s*[x×]\s*\d")
+# "could be compacted to 98% or even 100% of maximum dry density … under
+# the approval of the engineer" is permission to go higher, not a second
+# requirement. The specified degree stays in the clause ahead of this span.
+_OPTIONAL_HIGHER_COMPACTION_RE = re.compile(
+    r"(?i)\b(?:could|may|might|can)\s+be\s+compacted\s+to\b"
+    r".{0,240}?\bmaximum\s+dry\s+density\b"
+)
 # "95% of maximum dry density" and "ninety five percent (95%) of maximum dry density".
 _MDD_RES = (
     re.compile(
@@ -183,39 +206,30 @@ def _figure_hits(topic: str, class_name: str, records) -> list[_Hit]:
 
 
 def _select(hits: list[_Hit], answer: str) -> _Hit | list[_Hit]:
-    """One figure to state, or every remaining hit when the line must ask."""
+    """One figure to state, or the conflicting hits when the line must ask.
+
+    Same figure, any number of copies: one hit, so the line cites one copy.
+    Different figures ask which document only when they come from different
+    documents. One document that still holds two figures does not ask.
+    """
     class_hits = [hit for hit in hits if hit.is_class]
     pool = class_hits or hits
-    figures: list[str] = []
+    collapsed: list[_Hit] = []
+    seen_figures: set[str] = set()
     for hit in pool:
-        if hit.figure not in figures:
-            figures.append(hit.figure)
-    if len(figures) == 1:
-        sources: list[str] = []
-        for hit in pool:
-            if hit.source not in sources:
-                sources.append(hit.source)
-        if len(sources) == 1:
-            return pool[0]
-        return _one_per_source(pool)
-    stated = [figure for figure in figures if _figure_in(answer, figure)]
-    if len(stated) == 1:
-        for hit in pool:
-            if hit.figure == stated[0]:
-                return hit
-    return _one_per_source(pool)
-
-
-def _one_per_source(hits: list[_Hit]) -> list[_Hit]:
-    out: list[_Hit] = []
-    seen: set[tuple[str, str]] = set()
-    for hit in hits:
-        key = (hit.figure, hit.source)
-        if key in seen:
+        if hit.figure in seen_figures:
             continue
-        seen.add(key)
-        out.append(hit)
-    return out
+        seen_figures.add(hit.figure)
+        collapsed.append(hit)
+    if len(collapsed) == 1:
+        return collapsed[0]
+    stated = [hit for hit in collapsed if _figure_in(answer, hit.figure)]
+    if len(stated) == 1:
+        return stated[0]
+    sources = {hit.source for hit in collapsed}
+    if len(sources) < 2:
+        return collapsed[0]
+    return collapsed
 
 
 def _contract_labels(records) -> list[tuple[str, str]]:
@@ -238,12 +252,24 @@ def _contract_labels(records) -> list[tuple[str, str]]:
     return out
 
 
+def _plan_dimension(text: str, match: re.Match) -> bool:
+    """True when this millimetre is one side of an N x N size."""
+    before = text[max(0, match.start() - 24): match.start()]
+    after = text[match.end(): match.end() + 16]
+    return bool(
+        _PLAN_SIZE_BEFORE_RE.search(before) or _PLAN_SIZE_AFTER_RE.search(after)
+    )
+
+
 def _cover_numbers(text: str) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
-    for match in _MM_RE.finditer(text or ""):
-        window = text[max(0, match.start() - 100): min(len(text), match.end() + 100)]
-        if not _COVER_WORD_RE.search(window):
+    body = text or ""
+    for match in _MM_RE.finditer(body):
+        if _plan_dimension(body, match):
+            continue
+        window = body[max(0, match.start() - 100): min(len(body), match.end() + 100)]
+        if not _CONCRETE_COVER_NEAR_RE.search(window):
             continue
         number = _trim_num(match.group(1))
         if number in seen:
@@ -254,10 +280,13 @@ def _cover_numbers(text: str) -> list[str]:
 
 
 def _compaction_numbers(text: str) -> list[str]:
+    # Drop the optional-higher span before scanning, so 100% in "could be
+    # compacted to … 100% of maximum dry density" is not a second figure.
+    body = _OPTIONAL_HIGHER_COMPACTION_RE.sub(" ", text or "")
     found: list[str] = []
     seen: set[str] = set()
     for pattern in _MDD_RES:
-        for match in pattern.finditer(text or ""):
+        for match in pattern.finditer(body):
             number = _trim_num(match.group(1))
             if number in seen:
                 continue
