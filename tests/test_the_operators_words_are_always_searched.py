@@ -25,6 +25,8 @@ path the same guarantee.
 """
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from app.core import doc_index
@@ -216,6 +218,22 @@ async def test_both_retrievals_stay_inside_the_one_thread_hop(two_sided_corpus, 
     assert len(retrieve_threads) == 2
     assert retrieve_threads[0] == retrieve_threads[1]
     assert retrieve_threads[0] != loop_thread
+
+
+async def test_search_also_verbatim_on_issues_exactly_one_query(two_sided_corpus, monkeypatch):
+    """With the verbatim co-search flag on, the tool still issues one query.
+
+    ``SEARCH_ALSO_VERBATIM=1`` must not run a second verbatim / also_query
+    retrieval and must not merge those hits into the model's result set.
+    """
+    monkeypatch.setenv("SEARCH_ALSO_VERBATIM", "1")
+    kwargs = {}
+    if "also_query" in inspect.signature(doc_index.search_project_documents).parameters:
+        kwargs["also_query"] = OPERATOR_ASK
+    results = await doc_index.search_project_documents(
+        "p1", MODEL_QUERY, top_k=5, **kwargs)
+    assert two_sided_corpus == [MODEL_QUERY]
+    assert "modified proctor" not in _text(results).lower()
 
 
 async def test_a_failing_second_search_does_not_lose_the_first(monkeypatch):
