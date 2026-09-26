@@ -262,35 +262,53 @@ def test_s1_cover_clause_is_in_the_passed_topk(rank_corpus):
     assert not (UNSIGNED in top_ids and SIGNED in top_ids), (
         "signed and unsigned copies both occupy a passed slot:\n" + _fmt(top)
     )
+    # rag_inject is the pre-answer path: these chunks are the system
+    # message the model sees. Token cap must not drop the clause.
+    from app.core.rag.inject import rag_inject
+
+    msg, audit = rag_inject(
+        user_message=S1_ASK,
+        project_id=PID,
+        conversation_id="ws-FIXTURE-e-20260926-1",
+        user_id="fixture",
+        agent_name="project-assistant",
+    )
+    assert msg is not None, audit
+    injected = [c["doc_id"] for c in audit.get("chunks") or []]
+    assert UNSIGNED in injected or SIGNED in injected, (
+        "cover clause was ranked into top-5 but not passed to the model:\n"
+        + str(injected)
+    )
+    assert not (UNSIGNED in injected and SIGNED in injected), injected
+    assert "75mm" in msg["content"].replace(" ", "")
 
 
 def test_signed_and_unsigned_copies_collapse_to_one_slot(rank_corpus):
     """Same clause body, two copies. Only one passed slot.
 
     Exposure-class wording does not apply the specification filename
-    lift, so nothing else crowds the copies out. Before dedupe both
-    doc ids are in the top-5.
+    lift, so the copies are the hit. The body key ignores the leading
+    ``[source:]`` line, which is where the two copies differ.
     """
     ask = (
         "What nominal cover does exposure class XC1 give for foundations "
         "cast against soil and against blinding?"
     )
-    wide = _passed(rank_corpus, ask, k=20)
-    wide_ids = [c.doc_id for c in wide]
-    assert UNSIGNED in wide_ids and SIGNED in wide_ids, (
-        "both copies must be retrievable or this is not a duplicate-slot "
-        "failure:\n" + _fmt(wide)
-    )
     top = _passed(rank_corpus, ask, k=5)
     ids = [c.doc_id for c in top]
     present = [doc for doc in (UNSIGNED, SIGNED) if doc in ids]
-    assert present, (
-        "neither copy reached the passed top-5; not the duplicate-slot "
-        "failure:\n" + _fmt(top)
-    )
     assert len(present) == 1, (
-        "signed and unsigned copies occupy two passed slots:\n" + _fmt(top)
+        "signed and unsigned copies should occupy one passed slot:\n"
+        + _fmt(top)
     )
+    hit = next(c for c in top if c.doc_id == present[0])
+    assert "75mm" in (hit.text or "").replace(" ", "")
+    bodies = [
+        rank_corpus.chunk_copy_key(c.text or "")
+        for c in top
+        if rank_corpus.chunk_copy_key(c.text or "")
+    ]
+    assert len(bodies) == len(set(bodies))
 
 
 def test_p1a_backfill_clause_stays_in_passed_sources(keep_corpus):
@@ -314,6 +332,21 @@ def test_s2_subgrade_clause_stays_in_passed_sources(keep_corpus):
     assert "95%" in text
     assert "CBR" in text
     assert "15492" in text
+
+
+def test_kill_switch_restores_spec_lift_and_both_copies(rank_corpus, monkeypatch):
+    """``RETRIEVAL_SPEC_BOOST_GUARD=0`` is the pre-fix ranking."""
+    monkeypatch.setenv("RETRIEVAL_SPEC_BOOST_GUARD", "0")
+    top = _passed(rank_corpus, S1_ASK, k=5)
+    top_ids = [c.doc_id for c in top]
+    assert UNSIGNED not in top_ids and SIGNED not in top_ids, _fmt(top)
+    ask = (
+        "What nominal cover does exposure class XC1 give for foundations "
+        "cast against soil and against blinding?"
+    )
+    copies = _passed(rank_corpus, ask, k=5)
+    ids = [c.doc_id for c in copies]
+    assert UNSIGNED in ids and SIGNED in ids, _fmt(copies)
 
 
 def test_s4_governing_contract_ask_does_not_name_specification(rank_corpus):
