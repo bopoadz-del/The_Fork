@@ -12,7 +12,7 @@ That lift stacks on `_NUMERIC_REQUIREMENT_BONUS` (2.5). The cover detector (`chu
 
 Signed and unsigned copies of that same body each took a slot. Dedupe runs in the same top-k cut.
 
-`app/agents/first_line_hard_rule.py` was not edited. `SEARCH_ALSO_VERBATIM` / `also_query` is not used.
+`app/agents/first_line_hard_rule.py` was not edited. The verbatim co-search path is not used.
 
 ## Flag
 
