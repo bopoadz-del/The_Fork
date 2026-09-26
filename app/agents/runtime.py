@@ -13255,15 +13255,7 @@ class Agent:
                 top_k = int(top_k) if top_k not in (None, "") else 5
             except (TypeError, ValueError):
                 top_k = 5
-            # The operator's own words go with it. `query` here was written
-            # by the model, and a model-written query makes retrieval as
-            # non-deterministic as the model: live P1a reached a clause the
-            # corpus holds 1 time in 6. search_project_documents merges the
-            # two result sets and skips the second search when they are the
-            # same question.
-            results = await search_project_documents(
-                project_id, query, top_k, also_query=user_message,
-            )
+            results = await search_project_documents(project_id, query, top_k)
             return {
                 "name": "search_project_documents",
                 "ok": True,
