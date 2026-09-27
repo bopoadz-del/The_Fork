@@ -61,7 +61,7 @@ jobs:
           import os
           from urllib.parse import urlparse
           import httpx
-          base = (os.environ.get("FORK_BASE_URL") or "https://the-fork-jn3t.onrender.com").rstrip("/")
+          base = (os.environ.get("FORK_BASE_URL") or "https://theshovel.ai").rstrip("/")
           parsed = urlparse(base)
           print(f"base_scheme={parsed.scheme}")
           print(f"base_host={parsed.netloc}")

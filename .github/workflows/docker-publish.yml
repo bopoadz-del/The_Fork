@@ -142,12 +142,12 @@ jobs:
         # and fails the step if any container exits or goes unhealthy first.
         run: docker compose up -d --no-build --wait --wait-timeout 600
 
-      - name: Health endpoint returns 200
+      - name: Liveness endpoint returns 200
         run: |
           set -o pipefail
-          code=$(curl -s -o /tmp/health.json -w '%{http_code}' http://localhost:8000/health)
-          echo "GET /health -> $code"
-          cat /tmp/health.json
+          code=$(curl -s -o /tmp/livez.json -w '%{http_code}' http://localhost:8000/livez)
+          echo "GET /livez -> $code"
+          cat /tmp/livez.json
           test "$code" = "200"
 
       - name: No service bind-mounts the gitignored .env

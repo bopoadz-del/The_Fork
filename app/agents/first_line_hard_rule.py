@@ -13,11 +13,14 @@ numeric figure from a document of that class (the specification's own 98%
 over another file's 95%). A different file's figure is labelled as not the
 named source. Copies of one figure, including signed and unsigned copies of
 one clause, collapse to one line that cites one copy. The line asks which
-document only when different figures for the same item come from different
-documents. An optional higher compaction degree in the same clause ("could
-be compacted to … under the approval of the engineer") is not a second
-figure. A millimetre counts as concrete cover only when it is tied to that
-quantity, not to a panel, tile, or paint band. "Which contract governs this
+document only when different figures answer the same material and condition,
+or when no named condition separates them. Figures that each carry a
+different material or condition are stated together, each tied to that
+condition and to the document, clause, or drawing that contains it. An
+optional higher compaction degree in the same clause ("could be compacted
+to … under the approval of the engineer") is not a second figure. A
+millimetre counts as concrete cover only when it is tied to that quantity,
+not to a panel, tile, or paint band. "Which contract governs this
 project?" names the one contract in the excerpts, or asks which when more
 than one non-template contract is visible.
 
@@ -77,6 +80,38 @@ _MDD_RES = (
         r"(?i)maximum\s+dry\s+density[^\n]{0,40}?(\d+(?:\.\d+)?)\s*%"
     ),
 )
+# Most specific first. "structural backfill" must beat a bare "backfill",
+# and "structural fill" must not match inside "structural backfill".
+_COMPACTION_MATERIALS = (
+    ("structural backfill", re.compile(r"(?i)\bstructural\s+backfill\b")),
+    ("structural fill", re.compile(r"(?i)\bstructural\s+fill\b")),
+    ("general fill", re.compile(r"(?i)\bgeneral\s+fill\b")),
+    ("embankment fill", re.compile(r"(?i)\bembankment\s+fill\b")),
+    ("subgrade", re.compile(r"(?i)\bsub-?grade\b")),
+    ("backfill", re.compile(r"(?i)\bbackfill\b")),
+)
+_COMPACTION_LOCATIONS = (
+    ("under foundations", re.compile(r"(?i)\bunder\s+foundations?\b")),
+    ("under road pavement", re.compile(
+        r"(?i)\bunder\s+(?:the\s+)?road\s+pavement\b"
+    )),
+)
+# Most specific first. "the bottom of footings" stays its own condition
+# when the same note also says that footing is in contact with soil.
+# "cast against soil" and "in contact with soil" are one condition.
+_COVER_CONDITIONS = (
+    ("the bottom of footings", re.compile(r"(?i)\bbottom\s+of\s+footings?\b")),
+    ("concrete cast against or in contact with soil", re.compile(
+        r"(?i)\b(?:concrete\s+)?(?:"
+        r"cast\s+against(?:\s+or\s+in\s+contact\s+with)?"
+        r"|in\s+contact\s+with"
+        r")\s+soil\b"
+    )),
+    ("cast against blinding", re.compile(r"(?i)\bcast\s+against\s+blinding\b")),
+)
+_CLAUSE_RE = re.compile(
+    r"(?i)(?:§|\bsection\b|\bclause\b)\s*(\d+(?:\.\d+)*)"
+)
 
 
 @dataclass(frozen=True)
@@ -84,6 +119,15 @@ class _Hit:
     figure: str
     source: str
     is_class: bool
+    condition: str = ""
+    clause: str = ""
+
+
+@dataclass(frozen=True)
+class _Bound:
+    """Figures that answer different conditions. State each; do not ask."""
+
+    hits: tuple[_Hit, ...]
 
 
 def first_line_hard_rule_enabled() -> bool:
@@ -129,7 +173,11 @@ def _apply(text: str, rag_sys_msg: dict | None, messages: list | None) -> str:
     hits = _figure_hits(topic, class_name, _retrieval_records(rag_sys_msg, messages))
     if not hits:
         return text
-    chosen = _select(hits, text)
+    chosen = _select(hits, text, topic, ask)
+    if isinstance(chosen, _Bound):
+        if _states_bound(_first(text), chosen.hits):
+            return text
+        return _prepend(text, _bound_line(topic, chosen.hits, class_name))
     if isinstance(chosen, list):
         line = _ask_which_figure(topic, chosen)
         if _asks_which_figures(text, chosen):
@@ -189,40 +237,60 @@ def _figure_hits(topic: str, class_name: str, records) -> list[_Hit]:
         source = (record.source_name or "").strip()
         if not source:
             continue
+        raw = record.text or ""
+        body = raw if topic == "cover" else _compaction_body(raw)
         numbers = (
-            _cover_numbers(record.text or "")
-            if topic == "cover"
-            else _compaction_numbers(record.text or "")
+            _cover_numbers(body) if topic == "cover" else _mdd_numbers(body)
         )
         is_class = filename_is_source_class(source, class_name)
-        for number in numbers:
+        for number, start, end in numbers:
             figure = f"{number} mm" if topic == "cover" else f"{number}%"
             key = (figure, source)
             if key in seen:
                 continue
             seen.add(key)
-            hits.append(_Hit(figure=figure, source=source, is_class=is_class))
+            hits.append(_Hit(
+                figure=figure,
+                source=source,
+                is_class=is_class,
+                condition=_condition_near(topic, body, start, end),
+                clause=_clause_before(body, end),
+            ))
     return hits
 
 
-def _select(hits: list[_Hit], answer: str) -> _Hit | list[_Hit]:
-    """One figure to state, or the conflicting hits when the line must ask.
+def _select(
+    hits: list[_Hit], answer: str, topic: str, ask: str,
+) -> _Hit | list[_Hit] | _Bound:
+    """One figure to state, the bound set, or the conflicting hits to ask.
 
     Same figure, any number of copies: one hit, so the line cites one copy.
-    Different figures ask which document only when they come from different
-    documents. One document that still holds two figures does not ask.
+    Different figures ask which document only when they answer the same
+    material and condition, or when no named condition separates them, and
+    they come from different documents. One document that still holds two
+    figures for one condition does not ask. Figures that each name a
+    different condition are returned bound, not as a question.
     """
     class_hits = [hit for hit in hits if hit.is_class]
     pool = class_hits or hits
     collapsed: list[_Hit] = []
-    seen_figures: set[str] = set()
+    by_figure: dict[str, int] = {}
     for hit in pool:
-        if hit.figure in seen_figures:
+        idx = by_figure.get(hit.figure)
+        if idx is None:
+            by_figure[hit.figure] = len(collapsed)
+            collapsed.append(hit)
             continue
-        seen_figures.add(hit.figure)
-        collapsed.append(hit)
+        # A later copy that names a condition replaces a copy that names
+        # none. The first copy that already names one still wins, so two
+        # copies of one conditioned figure still cite one document.
+        if not collapsed[idx].condition and hit.condition:
+            collapsed[idx] = hit
     if len(collapsed) == 1:
         return collapsed[0]
+    if _conditions_distinguish(collapsed):
+        asked = _condition_near(topic, ask or "", 0, len(ask or ""))
+        return _Bound(tuple(_lead_first(collapsed, asked)))
     stated = [hit for hit in collapsed if _figure_in(answer, hit.figure)]
     if len(stated) == 1:
         return stated[0]
@@ -261,38 +329,144 @@ def _plan_dimension(text: str, match: re.Match) -> bool:
     )
 
 
-def _cover_numbers(text: str) -> list[str]:
-    found: list[str] = []
+def _cover_numbers(text: str) -> list[tuple[str, int, int]]:
+    found: list[tuple[str, int, int]] = []
     seen: set[str] = set()
     body = text or ""
     for match in _MM_RE.finditer(body):
         if _plan_dimension(body, match):
             continue
         window = body[max(0, match.start() - 100): min(len(body), match.end() + 100)]
-        if not _CONCRETE_COVER_NEAR_RE.search(window):
+        if (
+            not _CONCRETE_COVER_NEAR_RE.search(window)
+            and not _under_cover_heading(body, match)
+        ):
             continue
         number = _trim_num(match.group(1))
         if number in seen:
             continue
         seen.add(number)
-        found.append(number)
+        found.append((number, match.start(), match.end()))
     return found
 
 
-def _compaction_numbers(text: str) -> list[str]:
+def _compaction_body(text: str) -> str:
     # Drop the optional-higher span before scanning, so 100% in "could be
     # compacted to … 100% of maximum dry density" is not a second figure.
-    body = _OPTIONAL_HIGHER_COMPACTION_RE.sub(" ", text or "")
-    found: list[str] = []
+    return _OPTIONAL_HIGHER_COMPACTION_RE.sub(" ", text or "")
+
+
+def _mdd_numbers(body: str) -> list[tuple[str, int, int]]:
+    found: list[tuple[str, int, int]] = []
     seen: set[str] = set()
     for pattern in _MDD_RES:
-        for match in pattern.finditer(body):
+        for match in pattern.finditer(body or ""):
             number = _trim_num(match.group(1))
             if number in seen:
                 continue
             seen.add(number)
-            found.append(number)
+            found.append((number, match.start(), match.end()))
     return found
+
+
+def _under_cover_heading(text: str, match: re.Match) -> bool:
+    """True when this millimetre is a list item the cover heading governs.
+
+    The 100-character proximity window misses a drawing note whose figure
+    sits further down the same note. Retrieval already counts that span
+    (``_COVER_CLAUSE_WINDOW``, no sentence or numbered-note break). The
+    first line uses the same span so a retrieved footing cover is stated.
+    """
+    from app.core.rag.retriever import (
+        _CLAUSE_BREAK_RE,
+        _COVER_CLAUSE_PHRASE_RE,
+        _COVER_CLAUSE_WINDOW,
+    )
+
+    blob = text or ""
+    for phrase in _COVER_CLAUSE_PHRASE_RE.finditer(blob):
+        if phrase.end() > match.start():
+            continue
+        gap = match.start() - phrase.end()
+        if gap <= 0 or gap > _COVER_CLAUSE_WINDOW:
+            continue
+        between = blob[phrase.end():match.start()]
+        if not _CLAUSE_BREAK_RE.search(between):
+            return True
+    return False
+
+
+def _cover_figure_window(text: str, start: int, end: int) -> str:
+    """The sentence around this millimetre, cut at the neighbouring figures.
+
+    One drawing note can list two cover lengths with no full stop between
+    them. Each figure keeps the words that belong to it, so the footing
+    length does not lend its condition to the next length. A sentence
+    with one millimetre is the whole sentence, as before.
+    """
+    blob = text or ""
+    prev = blob.rfind(".", 0, start)
+    nxt = blob.find(".", end)
+    sent_begin = 0 if prev < 0 else prev + 1
+    sent_end = len(blob) if nxt < 0 else nxt + 1
+    begin = sent_begin
+    for earlier in _MM_RE.finditer(blob, sent_begin, start):
+        begin = earlier.end()
+    later = _MM_RE.search(blob, end, sent_end)
+    stop = later.start() if later else sent_end
+    return blob[begin:stop]
+
+
+def _clause_window(text: str, start: int, end: int) -> str:
+    """The sentence holding the figure, plus the sentence before it."""
+    prev = text.rfind(".", 0, start)
+    prev2 = text.rfind(".", 0, prev) if prev > 0 else -1
+    begin = 0 if prev2 < 0 else prev2 + 1
+    nxt = text.find(".", end)
+    stop = len(text) if nxt < 0 else nxt + 1
+    return text[begin:stop]
+
+
+def _condition_near(topic: str, text: str, start: int, end: int) -> str:
+    if topic == "cover":
+        window = _cover_figure_window(text or "", start, end)
+    else:
+        window = _clause_window(text or "", start, end)
+    patterns = _COVER_CONDITIONS if topic == "cover" else _COMPACTION_MATERIALS
+    label = ""
+    for name, rx in patterns:
+        if rx.search(window):
+            label = name
+            break
+    if topic == "compaction" and label:
+        for loc, rx in _COMPACTION_LOCATIONS:
+            if rx.search(window):
+                label = f"{label} {loc}"
+                break
+    return label
+
+
+def _clause_before(text: str, end: int) -> str:
+    found = list(_CLAUSE_RE.finditer((text or "")[:end]))
+    if not found:
+        return ""
+    return found[-1].group(1)
+
+
+def _conditions_distinguish(hits: list[_Hit]) -> bool:
+    """True when every figure carries its own non-empty condition."""
+    if len(hits) < 2:
+        return False
+    labels = [hit.condition for hit in hits]
+    if any(not label for label in labels):
+        return False
+    return len(set(labels)) == len(labels)
+
+
+def _lead_first(hits: list[_Hit], asked: str) -> list[_Hit]:
+    if not asked:
+        return list(hits)
+    return sorted(hits, key=lambda hit: 0 if hit.condition == asked else 1)
 
 
 def _trim_num(token: str) -> str:
@@ -343,6 +517,43 @@ def _state_line(topic: str, hit: _Hit, class_name: str) -> str:
     if not hit.is_class and class_name:
         line += f" That document is not the {class_name}."
     return line
+
+
+def _bound_line(
+    topic: str, hits: tuple[_Hit, ...] | list[_Hit], class_name: str,
+) -> str:
+    parts: list[str] = []
+    for hit in hits:
+        cond = f" for {hit.condition}" if hit.condition else ""
+        clause = f" (§{hit.clause})" if hit.clause else ""
+        if topic == "cover":
+            parts.append(
+                f"{hit.figure} is the concrete-cover figure{cond}{clause} "
+                f"in {hit.source}."
+            )
+        else:
+            parts.append(
+                f"{hit.figure} of maximum dry density is the compaction figure"
+                f"{cond}{clause} in {hit.source}."
+            )
+    line = " ".join(parts)
+    if class_name and hits and not any(hit.is_class for hit in hits):
+        line += f" These documents are not the {class_name}."
+    return line
+
+
+def _states_bound(first: str, hits: tuple[_Hit, ...] | list[_Hit]) -> bool:
+    low = (first or "").lower()
+    if "which document" in low:
+        return False
+    for hit in hits:
+        if not (_figure_in(first, hit.figure) and _source_in(first, hit.source)):
+            return False
+        if hit.condition and hit.condition.lower() not in low:
+            return False
+        if hit.clause and hit.clause not in (first or ""):
+            return False
+    return True
 
 
 def _ask_which_figure(topic: str, hits: list[_Hit]) -> str:
