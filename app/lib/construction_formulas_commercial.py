@@ -60,10 +60,15 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
         return {"error": "labor_hours must be > 0"}
     rate = o / h
     per_worker = (rate / crew_size) if crew_size else rate
+    rate_r = round(rate, 3)
+    per_r = round(per_worker, 4)
     return {
-        "rate_per_hour": round(rate, 3),
-        "rate_per_worker_hour": round(per_worker, 4),
+        "rate_per_hour": rate_r,
+        "rate_per_worker_hour": per_r,
         "crew_size": crew_size,
+        "unit": "/hr",
+        "value": rate_r,
+        "rate_per_worker_hour_unit": "/worker-hr",
         "standard": "arithmetic (productivity)",
         "note": (f"Rate = output/hours = {o}/{h} = {rate:.3f}/hr; "
                  f"per worker = /{crew_size} = {per_worker:.4f}/worker-hr."),
