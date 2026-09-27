@@ -182,13 +182,15 @@ _MILESTONE_OR_SECTION_ASK_RE = re.compile(r"(?i)\b(?:milestone|section)s?\b")
 
 
 def ask_is_about_a_milestone_or_section(query: str) -> bool:
-    """True when the operator asked about ONE Milestone or Section.
+    """True when the operator asked about one Milestone, or said Section.
 
-    The contract carries two daily rates -- 0.1% of the Contract Price for the
-    whole of the Works, 0.015% per Milestone -- and which one answers the
-    question is decided by the question. The parser never saw it, so a
-    Milestone ask was scored by whole-of-Works preferences and the Milestone
-    row lost (live SET4 M3).
+    Contract Data 8.8.1 states the 0.015% rate per calendar day per
+    Milestone. There is no separate per-Section rate. A question that
+    says Section selects this same row, and the answer states it as per
+    Milestone. The other daily rate is 0.1% of the Contract Price for
+    the whole of the Works. The parser never saw the question, so a
+    Milestone ask was scored by whole-of-Works preferences and the
+    Milestone row lost (live SET4 M3).
     """
     return bool(_MILESTONE_OR_SECTION_ASK_RE.search(query or ""))
 
@@ -196,8 +198,11 @@ def ask_is_about_a_milestone_or_section(query: str) -> bool:
 def delay_damages_rate_preference_score(
     rate: float, ctx: str = "", ask: str = "",
 ) -> int:
-    """Higher wins. Whole-of-Works prefers Contract Data 0.1% over 0.015%;
-    a Milestone/Section ask demotes the whole-of-Works row instead."""
+    """Higher wins. Whole-of-Works prefers Contract Data 0.1% over 0.015%.
+
+    A question that says Milestone or Section demotes the whole-of-Works
+    row. Both are answered with the 8.8.1 per-Milestone rate.
+    """
     ctx = ctx or ""
     if _DD_CAP_KEY_RE.search(ctx):
         return -1
@@ -516,16 +521,13 @@ def delay_damages_daily(
 
 
 def delay_damages_daily_basis(ask: str) -> str:
-    """Which delay-damages row the question named.
+    """``milestone`` or ``whole``.
 
-    ``section`` and ``milestone`` are different Contract Data rows from
-    the whole of the Works. A section question must not be worded as the
-    whole-Works rate.
+    Contract Data 8.8.1 is per calendar day per Milestone. A question
+    that says Section selects that same rate, and the sentence states
+    it as per Milestone. The whole of the Works stays its own row.
     """
-    q = ask or ""
-    if re.search(r"(?i)\bsections?\b", q):
-        return "section"
-    if re.search(r"(?i)\bmilestones?\b", q):
+    if ask_is_about_a_milestone_or_section(ask):
         return "milestone"
     return "whole"
 
@@ -542,8 +544,8 @@ def _contract_price_row_score(amount: float, row: str, wide: str) -> int:
     """Higher is the Contract Data Contract Price. 0 means do not use it.
 
     The rate sentence says "of the Contract Price", so a nearby SAR figure
-    matches the ACA label without being clause 1.1.1. That is how a Section
-    amount was multiplied by the Section rate.
+    matches the ACA label without being clause 1.1.1. That is how another
+    amount was multiplied by the per-Milestone rate.
     """
     row = row or ""
     wide = wide or ""
@@ -596,8 +598,8 @@ def _contract_price_beside_the_rate(
 
     A higher-ranked excerpt can carry another document's Accepted Contract
     Amount (live: SAR 144,042,486.50 on a kickoff / executed cover) ahead
-    of clause 1.1.1. First-match then multiplies the Section rate by that
-    figure. The price has to sit with the rate, and a 1.1.1 excluding-VAT
+    of clause 1.1.1. First-match then multiplies the per-Milestone rate
+    by that figure. The price has to sit with the rate, and a 1.1.1 excluding-VAT
     row beats a smaller amount that merely shares the label.
     """
     grouped: dict[str, list[str]] = {}
@@ -664,16 +666,8 @@ def format_delay_damages_daily_line(composed: dict) -> str:
     base = float(composed["contract_amount"])
     basis = (composed.get("basis") or "whole").strip()
     quote = (composed.get("clause_quote") or "").strip()
-    if basis == "section":
-        line = (
-            f"Delay damages per Section are "
-            f"{cur} {daily:,.2f} per calendar day "
-            f"({pct:g}% of the Contract Price {cur} {base:,.2f})."
-        )
-        if quote:
-            line = f"{line} The contract states: {quote}"
-        return line
-    if basis == "milestone":
+    # A question that says Section is the 8.8.1 per-Milestone rate.
+    if basis in ("milestone", "section"):
         line = (
             f"Delay damages per Milestone are "
             f"{cur} {daily:,.2f} per calendar day "
@@ -742,9 +736,10 @@ def rate_and_base_from_one_document(
         contracts.update(m.group(1).upper() for m in _CONTRACT_ID_RE.finditer(seg))
     if len(contracts) > 1:
         return None
-    # A Section / Milestone rate is "of the Contract Price". The first
-    # labelled amount in the bundle can be another document's figure
-    # (live M3: SAR 144,042,486.50). Whole-of-Works keeps first-match
+    # The 8.8.1 rate (a Milestone question, or one that says Section) is
+    # "of the Contract Price". The first labelled amount in the bundle
+    # can be another document's figure (live M3: SAR 144,042,486.50).
+    # Whole-of-Works keeps first-match
     # excl-VAT, which the E1 fixtures are tuned to.
     if ask_is_about_a_milestone_or_section(ask):
         base = _contract_price_beside_the_rate(text, rate, ask)
