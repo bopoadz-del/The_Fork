@@ -216,6 +216,14 @@ USER appuser
 # Persistent data for ingest
 VOLUME /app/data
 
+# Commit baked into the ECS image by .github/workflows/deploy-aws.yml
+# (--build-arg GIT_SHA). Render builds this Dockerfile without that arg, so
+# the value stays empty. GET /health reads RENDER_GIT_COMMIT before GIT_SHA
+# and ignores a blank value, so an omitted arg does not fail the build and
+# does not hide Render's commit.
+ARG GIT_SHA
+ENV GIT_SHA=$GIT_SHA
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
