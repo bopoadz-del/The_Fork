@@ -1861,20 +1861,19 @@ def _cap_specification_class_bonus(
 #
 # "Per the project specification, what is the minimum concrete cover for
 # foundations cast directly against soil?" The specification states no
-# figure. Its reinforcement clause says spacers give "the cover specified
-# herein, on the Drawings or as directed", and the drawings carry the
-# figures (bottom face of footing in contact with soil 100 mm; elements in
-# contact with soil 75 mm). Local rag_inject on b13aed07 injected neither:
+# figure. Its reinforcement clause sends the cover to the drawings and
+# states no cover millimetre. The drawings carry the figures (bottom of
+# footings in contact with soil 100 mm; other elements in contact with
+# soil 75 mm). Local rag_inject on b13aed07 injected neither:
 #
-#   * The deferral clause was never a candidate. It shares no millimetre
-#     with the question, so ``_fetch_numeric_requirement_chunks`` rejects it,
-#     and cosine for a tie-wire / spacer paragraph is low. When it did reach
-#     the pool its +1.2 class lift was capped, because an unrelated
-#     "1.29mm" tie-wire gauge sits in the same chunk.
-#   * The drawing note was pooled but never lifted. Its figure is a list
-#     item under a heading ("CLEAR CONCRETE COVER ... SHALL NOT BE LESS
-#     THAN THE FOLLOWING: ... BOTTOM FACE OF FOOTING ... : 100mm"), ~120
-#     characters from the phrase, past the 64-character proximity window.
+#   * The deferral clause was never a candidate. It shares no cover
+#     millimetre with the question, so ``_fetch_numeric_requirement_chunks``
+#     rejects it, and cosine for a spacer paragraph is low. When it did
+#     reach the pool its +1.2 class lift was capped, because an unrelated
+#     wire-gauge millimetre sits in the same chunk.
+#   * The drawing note was pooled but never lifted. Its 100 mm is a list
+#     item under the cover heading, about 120 characters after the cover
+#     phrase, past the 64-character proximity window.
 #
 # Every passed slot then went to non-specification chunks that state a
 # millimetre next to "cover" (+2.5), which is exactly what the model
@@ -1981,8 +1980,8 @@ def _cover_clause_states_length(text: str) -> bool:
 def chunk_defers_cover_to_drawings(text: str) -> bool:
     """True when one sentence names the cover and sends it to the drawings.
 
-    "Spacer units ... to give the cover specified herein, on the Drawings
-    or as directed." A manhole-cover sentence does not count: the cover
+    One sentence must name the concrete or reinforcement cover and point
+    at the drawings. A manhole-cover sentence does not count: the cover
     has to be the reinforcement / concrete cover.
     """
     for sentence in _SENTENCE_SPLIT_RE.split(text or ""):
