@@ -27,6 +27,10 @@ Flag `RETRIEVAL_SPEC_DEFERRAL`, default **on**. `=0` restores b13aed07 exactly (
 
 On the synthetic corpus the tests assert: S1 injects the deferral clause and the footing-cover drawing; `RETRIEVAL_SPEC_DEFERRAL=0` injects neither; S2 still injects the 95% MDD / CBR 25 clause and does not inject those two cover docs; S2's injected doc list is identical with the flag on and off.
 
+### G3 rephrasings (FW5)
+
+`test_g3_*`: three other S1 wordings (per / according to / under the spec, trailing or leading) go from both chunks absent at k=5 with `=0` to both injected with the default, fake and bge. A fourth, "What cover does the spec require for footings poured against earth?", first missed with the flag on: the spec was the grammatical subject, not "per the spec", and the ask said bare "cover". Repair (general, deferral path only): `query_names_specification` also accepts "the spec requires/says/states/specifies…" and "in/by/from the spec"; `query_asks_concrete_cover` accepts bare "cover" next to a concrete element word, excluding lids, hatches, cover letters and "cover" as a verb. The global class lift and `asked_quantity_kinds` are unchanged. For that wording the footing drawing is already injected without the flag, so only the clause goes from absent to ranked. Four S2 wordings: the injected list is identical with the flag on and off, and the 95% MDD clause stays in.
+
 ## Limits
 
 Fixture store only. Prod was not queried.

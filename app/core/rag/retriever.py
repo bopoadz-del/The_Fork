@@ -2012,13 +2012,56 @@ def cover_subject_agrees(groups: List[tuple], text: str) -> bool:
     return any(any(_term_in(blob, term) for term in group) for group in groups)
 
 
+# The specification can be named as the source without "per the": "what
+# cover does the spec require", "what does the specification say about".
+# Used only by this path, so the global +1.2 class lift is unchanged.
+_SPEC_AS_SUBJECT_RE = re.compile(
+    r"(?i)\b(?:the\s+|this\s+)?(?:project\s+)?spec(?:ification)?s?\s+"
+    r"(?:require|requires|required|say|says|state|states|specify|specifies|"
+    r"call\s+for|calls\s+for|give|gives|set|sets|demand|demands)\b"
+    r"|\b(?:in|by|from)\s+the\s+(?:project\s+)?spec(?:ification)?s?\b"
+)
+# "cover" alone is a cover ask when the question is about concrete work,
+# not a lid, hatch, letter or sheet.
+_BARE_COVER_RE = re.compile(r"(?i)\bcover\b")
+_COVER_CONCRETE_CONTEXT_RE = re.compile(
+    r"(?i)\b(?:foundations?|footings?|rafts?|pile\s+caps?|slabs?|walls?|"
+    r"columns?|beams?|reinforc\w*|rebar|bars?|concrete)\b"
+)
+_NOT_CONCRETE_COVER_RE = re.compile(
+    r"(?i)\b(?:cover\s+(?:letter|sheet|page|note|plate)s?|manholes?|hatch\w*|"
+    r"lids?|insurance|cover(?:ed|s)?\s+by)\b"
+    # "cover" as a verb: "does the spec cover curing", "specs cover".
+    r"|\b(?:does|do|did|will|would|can|should)\s+(?:the\s+|this\s+)?"
+    r"(?:project\s+)?\w+\s+cover\b"
+    r"|\bspec(?:ification)?s?\s+covers?\b"
+)
+
+
+def query_names_specification(query: str) -> bool:
+    """The question names the specification as its source."""
+    if source_class_named_by(query) == "specification":
+        return True
+    return bool(_SPEC_AS_SUBJECT_RE.search(query or ""))
+
+
+def query_asks_concrete_cover(query: str) -> bool:
+    """A cover-length ask, including a bare "cover" about concrete work."""
+    if "length_mm" in asked_quantity_kinds(query):
+        return True
+    text = query or ""
+    return bool(
+        _BARE_COVER_RE.search(text)
+        and _COVER_CONCRETE_CONTEXT_RE.search(text)
+        and not _NOT_CONCRETE_COVER_RE.search(text)
+    )
+
+
 def query_asks_spec_deferred_cover(query: str) -> bool:
     """Specification-scoped cover-length question."""
     if not spec_deferral_enabled() or not spec_boost_guard_enabled():
         return False
-    if source_class_named_by(query) != "specification":
-        return False
-    return "length_mm" in asked_quantity_kinds(query)
+    return query_names_specification(query) and query_asks_concrete_cover(query)
 
 
 def _rescue_spec_deferral_chunks(
@@ -2141,7 +2184,8 @@ def _apply_spec_deferral_boost(
         return
     if not numeric_requirement_boost_enabled():
         return
-    kinds = asked_quantity_kinds(query)
+    # A bare "cover" ask is a cover-length ask on this path.
+    kinds = asked_quantity_kinds(query) | frozenset({"length_mm"})
 
     def _nm(chunk) -> str:
         return name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
