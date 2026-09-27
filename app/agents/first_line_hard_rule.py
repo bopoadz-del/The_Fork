@@ -96,15 +96,17 @@ _COMPACTION_LOCATIONS = (
         r"(?i)\bunder\s+(?:the\s+)?road\s+pavement\b"
     )),
 )
+# Most specific first. "the bottom of footings" stays its own condition
+# when the same note also says that footing is in contact with soil.
 # "cast against soil" and "in contact with soil" are one condition.
 _COVER_CONDITIONS = (
+    ("the bottom of footings", re.compile(r"(?i)\bbottom\s+of\s+footings?\b")),
     ("concrete cast against or in contact with soil", re.compile(
         r"(?i)\b(?:concrete\s+)?(?:"
         r"cast\s+against(?:\s+or\s+in\s+contact\s+with)?"
         r"|in\s+contact\s+with"
         r")\s+soil\b"
     )),
-    ("the bottom of footings", re.compile(r"(?i)\bbottom\s+of\s+footings?\b")),
     ("cast against blinding", re.compile(r"(?i)\bcast\s+against\s+blinding\b")),
 )
 _CLAUSE_RE = re.compile(
@@ -272,12 +274,18 @@ def _select(
     class_hits = [hit for hit in hits if hit.is_class]
     pool = class_hits or hits
     collapsed: list[_Hit] = []
-    seen_figures: set[str] = set()
+    by_figure: dict[str, int] = {}
     for hit in pool:
-        if hit.figure in seen_figures:
+        idx = by_figure.get(hit.figure)
+        if idx is None:
+            by_figure[hit.figure] = len(collapsed)
+            collapsed.append(hit)
             continue
-        seen_figures.add(hit.figure)
-        collapsed.append(hit)
+        # A later copy that names a condition replaces a copy that names
+        # none. The first copy that already names one still wins, so two
+        # copies of one conditioned figure still cite one document.
+        if not collapsed[idx].condition and hit.condition:
+            collapsed[idx] = hit
     if len(collapsed) == 1:
         return collapsed[0]
     if _conditions_distinguish(collapsed):
@@ -329,7 +337,10 @@ def _cover_numbers(text: str) -> list[tuple[str, int, int]]:
         if _plan_dimension(body, match):
             continue
         window = body[max(0, match.start() - 100): min(len(body), match.end() + 100)]
-        if not _CONCRETE_COVER_NEAR_RE.search(window):
+        if (
+            not _CONCRETE_COVER_NEAR_RE.search(window)
+            and not _under_cover_heading(body, match)
+        ):
             continue
         number = _trim_num(match.group(1))
         if number in seen:
@@ -358,6 +369,54 @@ def _mdd_numbers(body: str) -> list[tuple[str, int, int]]:
     return found
 
 
+def _under_cover_heading(text: str, match: re.Match) -> bool:
+    """True when this millimetre is a list item the cover heading governs.
+
+    The 100-character proximity window misses a drawing note whose figure
+    sits further down the same note. Retrieval already counts that span
+    (``_COVER_CLAUSE_WINDOW``, no sentence or numbered-note break). The
+    first line uses the same span so a retrieved footing cover is stated.
+    """
+    from app.core.rag.retriever import (
+        _CLAUSE_BREAK_RE,
+        _COVER_CLAUSE_PHRASE_RE,
+        _COVER_CLAUSE_WINDOW,
+    )
+
+    blob = text or ""
+    for phrase in _COVER_CLAUSE_PHRASE_RE.finditer(blob):
+        if phrase.end() > match.start():
+            continue
+        gap = match.start() - phrase.end()
+        if gap <= 0 or gap > _COVER_CLAUSE_WINDOW:
+            continue
+        between = blob[phrase.end():match.start()]
+        if not _CLAUSE_BREAK_RE.search(between):
+            return True
+    return False
+
+
+def _cover_figure_window(text: str, start: int, end: int) -> str:
+    """The sentence around this millimetre, cut at the neighbouring figures.
+
+    One drawing note can list two cover lengths with no full stop between
+    them. Each figure keeps the words that belong to it, so the footing
+    length does not lend its condition to the next length. A sentence
+    with one millimetre is the whole sentence, as before.
+    """
+    blob = text or ""
+    prev = blob.rfind(".", 0, start)
+    nxt = blob.find(".", end)
+    sent_begin = 0 if prev < 0 else prev + 1
+    sent_end = len(blob) if nxt < 0 else nxt + 1
+    begin = sent_begin
+    for earlier in _MM_RE.finditer(blob, sent_begin, start):
+        begin = earlier.end()
+    later = _MM_RE.search(blob, end, sent_end)
+    stop = later.start() if later else sent_end
+    return blob[begin:stop]
+
+
 def _clause_window(text: str, start: int, end: int) -> str:
     """The sentence holding the figure, plus the sentence before it."""
     prev = text.rfind(".", 0, start)
@@ -369,7 +428,10 @@ def _clause_window(text: str, start: int, end: int) -> str:
 
 
 def _condition_near(topic: str, text: str, start: int, end: int) -> str:
-    window = _clause_window(text or "", start, end)
+    if topic == "cover":
+        window = _cover_figure_window(text or "", start, end)
+    else:
+        window = _clause_window(text or "", start, end)
     patterns = _COVER_CONDITIONS if topic == "cover" else _COMPACTION_MATERIALS
     label = ""
     for name, rx in patterns:
