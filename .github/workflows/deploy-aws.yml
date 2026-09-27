@@ -49,7 +49,7 @@ jobs:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           IMAGE="$REGISTRY/$ECR_REPOSITORY"
-          # ECS sets none of the env vars GET /health reads for build_sha
+          # ECS sets none of the env vars the liveness route reads for build_sha
           # (RENDER_GIT_COMMIT, GIT_SHA, SOURCE_VERSION). Bake the commit.
           docker build \
             --build-arg GIT_SHA=${{ github.sha }} \
