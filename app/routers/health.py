@@ -83,7 +83,11 @@ def livez():
     handler free of I/O — every dependency added here becomes a wake-up
     on a timer.
     """
-    return {"status": "alive", "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "alive",
+        "build_sha": _deployed_build_sha(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.get("/v1/upload-limits")
