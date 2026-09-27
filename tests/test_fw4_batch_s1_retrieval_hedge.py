@@ -1,10 +1,11 @@
 """S1 through retrieval and the first-line hedge together.
 
 Agent E pools the specification clause that defers cover, and the drawing
-that states it. Agent D states each figure with its own condition and the
-drawing that contains it. On the synthetic S1 fixture the joined path
-must still produce both lengths: 75 mm in contact with soil, and 100 mm
-at the bottom of footings. Neither figure is credited to the specification.
+that states it. The rebuilt hedge verifies the model's first line. It
+does not invent both cover figures from a narrative that commits to
+neither, and it does not ask which document when the subjects differ.
+A body that commits to 75 mm is annotated with that drawing, not the
+specification.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "fw4_spec_deferral_chunks.json"
 SPEC_DOC = "FIXTURE-e-20260927-spec-vol-a"
 FOOT_DOC = "FIXTURE-e-20260927-dwg-footing-cover"
 SPEC_NAME = "FIXTURE-e-20260927 Specification Volume A.pdf"
-FOOT_NAME = "FIXTURE-e-20260927 DWG footing cover note.pdf"
+SOIL_NAME = "FIXTURE-e-20260927 DWG soil contact note A.pdf"
 S1_ASK = (
     "Per the project specification, what is the minimum concrete cover for "
     "foundations cast directly against soil?"
@@ -60,24 +61,14 @@ def _corpus(tmp_path, monkeypatch):
     return emb, vs, names
 
 
-def _sentences(text: str) -> list[str]:
-    return [part.strip() for part in re.split(r"(?<=\.)\s+", text) if part.strip()]
-
-
-def _mm_sentence(text: str, number: str) -> str:
-    rx = re.compile(rf"(?i)\b{re.escape(number)}\s*mm\b")
-    for sentence in _sentences(text):
-        if rx.search(sentence):
-            return sentence
-    return ""
-
-
 def test_s1_fixture_states_both_cover_figures_from_drawings(tmp_path, monkeypatch):
-    """75 mm soil contact and 100 mm at the bottom of footings.
+    """Retrieval still pools the deferring spec and the footing drawing.
 
-    Each figure names its condition and a drawing. The specification
-    clause that defers cover is retrieved and is not the source of either
-    figure.
+    An uncommitted narrative is left alone: different cover subjects do
+    not produce "which document's figure is meant?". A body that commits
+    to 75 mm is annotated with that figure and a drawing, and the
+    specification volume is not the credited source. 100 mm stays off
+    the first line.
     """
     from app.core.rag.inject import rag_inject
 
@@ -101,21 +92,22 @@ def _assert_s1(rag_inject):
     injected = [c["doc_id"] for c in audit.get("chunks") or []]
     assert SPEC_DOC in injected, injected
     assert FOOT_DOC in injected, injected
-    out = apply_first_line_hard_rule(
-        NARRATIVE,
-        msg,
-        [{"role": "user", "content": S1_ASK}],
+    msgs = [{"role": "user", "content": S1_ASK}]
+    untouched = apply_first_line_hard_rule(NARRATIVE, msg, msgs)
+    assert untouched == NARRATIVE, untouched
+    assert "which document" not in untouched.lower(), untouched
+
+    committed = (
+        "I will answer from the retrieved context.\n\n"
+        "Nominal concrete cover is 75 mm for concrete cast against soil "
+        f"in {SOIL_NAME}.\n"
+        "The bottom of footings is 100 mm.\n"
     )
+    out = apply_first_line_hard_rule(committed, msg, msgs)
     assert "which document" not in out.lower(), out
-    soil = _mm_sentence(out, "75")
-    assert soil, out
-    assert "contact with soil" in soil.lower(), soil
-    assert "DWG" in soil and "soil contact" in soil.lower(), soil
-    assert SPEC_NAME not in soil, soil
-    foot = _mm_sentence(out, "100")
-    assert foot, out
-    assert "bottom of footing" in foot.lower(), foot
-    assert FOOT_NAME in foot, foot
-    assert SPEC_NAME not in foot, foot
-    assert SPEC_NAME not in out, out
-    assert "3.1.25.8" not in out, out
+    first = next((ln.strip() for ln in out.splitlines() if ln.strip()), "")
+    assert re.search(r"(?i)\b75\s*mm\b", first), first
+    assert not re.search(r"(?i)\b100\s*mm\b", first), first
+    assert "DWG" in first, first
+    assert SPEC_NAME not in first, first
+    assert "3.1.25.8" not in first, first
