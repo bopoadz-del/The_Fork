@@ -663,6 +663,55 @@ def elected_delay_damages_clause(text: str, ask: str) -> str:
     return best_row
 
 
+def drop_whole_of_works_delay_claims(text: str) -> str:
+    """Drop sentences that call delay damages the whole of the Works.
+
+    A decimal point inside ``SAR 1,200.00`` is not the end of the
+    sentence. The lead is one claim, and the claim goes.
+    """
+    raw = text or ""
+    if not raw or not _WHOLE_WORKS_RE.search(raw):
+        return raw
+    parts = re.split(r"(?<=[.!])\s+|\n+", raw)
+    kept = [part.strip() for part in parts if part.strip() and not _WHOLE_WORKS_RE.search(part)]
+    return " ".join(kept).strip()
+
+
+def _milestone_quote_without_whole_of_works(quote: str, percent: float) -> str:
+    """The elected-rate fragment, without the neighbouring whole-of-Works label.
+
+    A 96-character row window reaches back into that label when the two
+    particulars are not separated. Quoting it would call a Milestone
+    answer the whole of the Works.
+    """
+    raw = (quote or "").strip()
+    if not raw or not _WHOLE_WORKS_RE.search(raw):
+        return raw
+    token = f"{float(percent):g}"
+    pct_re = re.compile(rf"(?<![\d.]){re.escape(token)}\s*%")
+    for match in pct_re.finditer(raw):
+        cuts = [
+            raw.rfind(sep, 0, match.start())
+            for sep in (". ", "; ", " and ")
+        ]
+        hits = [idx for idx in cuts if idx >= 0]
+        # " and " is 5 characters; ". " and "; " are 2.
+        if hits:
+            boundary = max(hits)
+            start = boundary + (5 if raw[boundary:boundary + 5].lower() == " and " else 2)
+        else:
+            start = 0
+        end = len(raw)
+        for sep in (". ", "; "):
+            idx = raw.find(sep, match.end())
+            if idx >= 0:
+                end = min(end, idx)
+        frag = raw[start:end].strip(" ,;.")
+        if frag and not _WHOLE_WORKS_RE.search(frag):
+            return frag
+    return ""
+
+
 def format_delay_damages_daily_line(composed: dict) -> str:
     """User-facing one-liner for the composed daily figure."""
     cur = composed.get("currency") or "SAR"
@@ -672,14 +721,19 @@ def format_delay_damages_daily_line(composed: dict) -> str:
     basis = (composed.get("basis") or "whole").strip()
     quote = (composed.get("clause_quote") or "").strip()
     # A question that says Section is the 8.8.1 per-Milestone rate.
+    # compose_delay_damages_daily_from_excerpts always sets basis from
+    # the ask before this runs, so a section or Milestone ask does not
+    # arrive here with basis missing. The missing-basis line below is
+    # the whole-of-Works sentence.
     if basis in ("milestone", "section"):
         line = (
             f"Delay damages per Milestone are "
             f"{cur} {daily:,.2f} per calendar day "
             f"({pct:g}% of the Contract Price {cur} {base:,.2f})."
         )
-        if quote:
-            line = f"{line} The contract states: {quote}"
+        safe_quote = _milestone_quote_without_whole_of_works(quote, pct)
+        if safe_quote:
+            line = f"{line} The contract states: {safe_quote}"
         return line
     return (
         f"Delay damages for the whole of the Works are "
@@ -1240,8 +1294,23 @@ def compose_delay_damages_over_period_from_excerpts(
     if not query_asks_delay_damages_over_a_period(query):
         return None
     days = parse_delay_period_days(query)
-    aca = parse_accepted_contract_amount(excerpts)
-    if days is None or aca is None:
+    if days is None:
+        return None
+    # A section or Milestone day-count uses the Contract Price that sits
+    # with the elected rate. Another document's Accepted Contract Amount
+    # is a different figure. When the rate's own document has no price,
+    # keep the bundle parse so a rate chunk and a price chunk of one
+    # contract still compose.
+    if ask_is_about_a_milestone_or_section(query):
+        rate_hint = parse_delay_damages_rate_percent(excerpts, query)
+        owned = (
+            _contract_price_beside_the_rate(excerpts, rate_hint, query)
+            if rate_hint is not None else None
+        )
+        aca = owned if owned is not None else parse_accepted_contract_amount(excerpts)
+    else:
+        aca = parse_accepted_contract_amount(excerpts)
+    if aca is None:
         return None
     amount, currency = aca
     milestones = parse_asked_milestones(query)
@@ -1256,7 +1325,7 @@ def compose_delay_damages_over_period_from_excerpts(
                 return None
             rates.append(rate)
     else:
-        rate = parse_delay_damages_rate_percent(excerpts)
+        rate = parse_delay_damages_rate_percent(excerpts, query)
         if rate is None:
             return None
         rates = [rate]
