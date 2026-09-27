@@ -5,7 +5,6 @@ stack into the ingest log, and the snapshot must still return.
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from app.core import ingest_lifecycle as lifecycle
@@ -23,50 +22,56 @@ def _proc(tmp: Path) -> Path:
     return proc
 
 
-def _warnings(caplog):
-    return [
-        record for record in caplog.records
-        if record.name == "app.core.ingest_lifecycle"
-        and record.levelno >= logging.INFO
-    ]
+def _spy(monkeypatch):
+    """Capture warning() calls. caplog is empty once another test replaces root handlers."""
+    calls: list[dict] = []
+
+    def _capture(msg, *args, **kwargs):
+        try:
+            text = msg % args if args else str(msg)
+        except (TypeError, ValueError):
+            text = str(msg)
+        calls.append({"text": text, "exc_info": kwargs.get("exc_info")})
+
+    monkeypatch.setattr(lifecycle.logger, "warning", _capture)
+    return calls
 
 
-def test_a_missing_cgroup_path_logs_once_without_a_traceback(tmp_path, caplog):
+def test_a_missing_cgroup_path_logs_once_without_a_traceback(tmp_path, monkeypatch):
     """Several missing-path shapes. v2 and v1 files still read when present."""
     problems: list[str] = []
+    calls = _spy(monkeypatch)
 
     def _check(label: str, root: Path, *, expect_warning: bool, expect_current):
-        caplog.clear()
+        calls.clear()
         try:
-            with caplog.at_level(logging.INFO, logger="app.core.ingest_lifecycle"):
-                snap = lifecycle.read_memory_snapshot(
-                    proc_root=_proc(root), cgroup_root=root / "cgroup",
-                )
+            snap = lifecycle.read_memory_snapshot(
+                proc_root=_proc(root), cgroup_root=root / "cgroup",
+            )
         except Exception as exc:  # noqa: BLE001 — the assertion is "no raise"
             problems.append(f"{label}: raised {type(exc).__name__}: {exc}")
             return
-        notes = _warnings(caplog)
-        text = caplog.text
-        if "Traceback" in text:
+        notes = list(calls)
+        if any("Traceback" in note["text"] for note in notes):
             problems.append(f"{label}: traceback in log ({len(notes)} records)")
         if expect_warning:
             if len(notes) != 1:
                 problems.append(
                     f"{label}: expected 1 log record, got {len(notes)}: "
-                    + " | ".join(r.getMessage() for r in notes)
+                    + " | ".join(note["text"] for note in notes)
                 )
-            elif notes[0].exc_info is not None:
+            elif notes[0]["exc_info"] not in (None, False):
                 problems.append(f"{label}: log record carries exc_info")
-            elif "isn't available" not in notes[0].getMessage():
+            elif "isn't available" not in notes[0]["text"]:
                 problems.append(
                     f"{label}: message does not say the path isn't available: "
-                    f"{notes[0].getMessage()!r}"
+                    f"{notes[0]['text']!r}"
                 )
         else:
-            unavailable = [r for r in notes if "isn't available" in r.getMessage()]
+            unavailable = [note for note in notes if "isn't available" in note["text"]]
             if unavailable:
                 problems.append(f"{label}: warned that a present path isn't available")
-            if any(r.exc_info for r in notes):
+            if any(note["exc_info"] not in (None, False) for note in notes):
                 problems.append(f"{label}: traceback on a present path")
         if snap.cgroup_current_mb != expect_current and not (
             expect_current is not None
@@ -107,14 +112,13 @@ def test_a_missing_cgroup_path_logs_once_without_a_traceback(tmp_path, caplog):
     ucg.mkdir(parents=True)
     (ucg / "memory.current").write_text("1048576", encoding="utf-8")
     (ucg / "memory.max").write_text("max", encoding="utf-8")
-    caplog.clear()
-    with caplog.at_level(logging.INFO, logger="app.core.ingest_lifecycle"):
-        snap = lifecycle.read_memory_snapshot(
-            proc_root=_proc(unlimited), cgroup_root=ucg,
-        )
+    calls.clear()
+    snap = lifecycle.read_memory_snapshot(
+        proc_root=_proc(unlimited), cgroup_root=ucg,
+    )
     if snap.cgroup_limit_mb is not None:
         problems.append(f"limit-max: limit parsed as {snap.cgroup_limit_mb}")
-    if "Traceback" in caplog.text:
+    if any("Traceback" in note["text"] for note in calls):
         problems.append("limit-max: traceback")
 
     assert not problems, "\n".join(problems)
