@@ -236,3 +236,114 @@ def test_deferral_path_needs_a_specification_cover_ask(monkeypatch):
     )
     monkeypatch.setenv("RETRIEVAL_SPEC_DEFERRAL", "0")
     assert not ret.query_asks_spec_deferred_cover(S1_ASK)
+
+
+# ── G3: shape invariance over rephrasings (FW5) ────────────────────────────
+#
+# Other wordings of S1 and S2, none reusing the S1 text. Each S1 phrasing
+# asks about the specification and runs the real rag_inject path twice:
+# with RETRIEVAL_SPEC_DEFERRAL=0, where neither chunk is injected at k=5,
+# and with the default, where both are.
+
+S1_PHRASINGS = [
+    pytest.param(
+        "Minimum cover to reinforcement in foundations in contact with "
+        "ground, per the specification?",
+        id="s1b-per-spec-trailing",
+    ),
+    pytest.param(
+        "According to the project spec, how much concrete cover is needed "
+        "where foundations are cast on soil?",
+        id="s1c-according-to-spec",
+    ),
+    pytest.param(
+        "Under the project specification, what concrete cover applies to "
+        "foundations placed directly on the ground?",
+        id="s1d-under-spec",
+    ),
+]
+
+# The specification is the subject ("does the spec require") and the ask
+# is a bare "cover". The footing drawing is already injected for this one
+# without the flag (its wording is close to the drawing note), so only the
+# spec clause can go from absent to ranked.
+S1_SPEC_SUBJECT = (
+    "What cover does the spec require for footings poured against earth?"
+)
+
+S2_PHRASINGS = [
+    pytest.param(
+        "According to the project specification, what degree of compaction "
+        "is needed beneath the road pavement?",
+        id="s2a-according-to-spec",
+    ),
+    pytest.param(
+        "What does the spec say about compacting the subgrade under roads?",
+        id="s2b-spec-say",
+    ),
+    pytest.param(
+        "Per the specification, how well must the ground under the road "
+        "pavement be compacted?",
+        id="s2c-per-spec",
+    ),
+    pytest.param(
+        "Under the project spec, to what density should soil below the road "
+        "pavement be compacted?",
+        id="s2d-under-spec",
+    ),
+]
+MDD_DOC = "FIXTURE-e-20260927-spec-earthworks"
+
+
+def _inject_off_on(ask, monkeypatch):
+    monkeypatch.setenv("RETRIEVAL_SPEC_DEFERRAL", "0")
+    _m, _a, off = _inject(ask)
+    monkeypatch.delenv("RETRIEVAL_SPEC_DEFERRAL", raising=False)
+    msg, audit, on = _inject(ask)
+    return off, on, msg, audit
+
+
+@pytest.mark.parametrize("ask", S1_PHRASINGS)
+def test_g3_s1_phrasing_absent_off_ranked_on(corpus, monkeypatch, ask):
+    off, on, msg, audit = _inject_off_on(ask, monkeypatch)
+    assert len(off) <= 5 and len(on) <= 5, (off, on)
+    assert _rank(off, SPEC_DOC) is None, f"flag off, spec already in: {off}"
+    assert _rank(off, ST200_DOC) is None, f"flag off, drawing already in: {off}"
+    assert msg is not None, audit
+    assert _rank(on, SPEC_DOC), f"3.1.25.8 not injected: {on}"
+    assert _rank(on, ST200_DOC), f"footing drawing not injected: {on}"
+    content = msg["content"]
+    assert "3.1.25.8" in content and "on the Drawings" in content
+    assert "BOTTOM OF FOOTINGS IN CONTACT WITH SOIL ON THIS SHEET : 100mm" in content
+
+
+def test_g3_s1_spec_as_subject_bare_cover(corpus, monkeypatch):
+    off, on, msg, audit = _inject_off_on(S1_SPEC_SUBJECT, monkeypatch)
+    assert _rank(off, SPEC_DOC) is None, f"flag off, spec already in: {off}"
+    assert msg is not None, audit
+    assert _rank(on, SPEC_DOC), f"3.1.25.8 not injected: {on}"
+    assert _rank(on, ST200_DOC), f"footing drawing dropped: {on}"
+
+
+@pytest.mark.parametrize("ask", S2_PHRASINGS)
+def test_g3_s2_phrasing_unchanged_by_flag(corpus, monkeypatch, ask):
+    off, on, msg, _audit = _inject_off_on(ask, monkeypatch)
+    assert on == off, (off, on)
+    assert SPEC_DOC not in on and ST200_DOC not in on, on
+    if MDD_DOC in off:
+        assert MDD_DOC in on, on
+        assert "95% of maximum dry density" in msg["content"]
+
+
+def test_g3_spec_named_and_bare_cover_detectors(monkeypatch):
+    ret = _ret(monkeypatch)
+    assert ret.query_asks_spec_deferred_cover(S1_SPEC_SUBJECT)
+    for q in ("What does the specification state about cover to slabs?",
+              "What concrete cover is given in the spec for columns?"):
+        assert ret.query_asks_spec_deferred_cover(q), q
+    # "cover" as a verb, or a lid/hatch, is not a concrete cover ask.
+    for q in ("Does the spec cover concrete curing?",
+              "What does the spec say about manhole covers in slabs?",
+              "What does the spec say about compacting the subgrade?",
+              "What cover is required for footings?"):
+        assert not ret.query_asks_spec_deferred_cover(q), q
