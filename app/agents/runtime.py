@@ -1386,9 +1386,15 @@ async def _predispatch_look_ahead(
             return None
         from app.dependencies import get_block_instance
         container = get_block_instance("construction")
-        result = await container.look_ahead(
-            {}, {"schedule_file": schedule_file},
-        )
+        from app.containers.construction.schedule import _stated_look_ahead_date
+        la_params: dict[str, Any] = {
+            "schedule_file": schedule_file,
+            "user_message": user_msg,
+        }
+        stated = _stated_look_ahead_date(user_msg)
+        if stated:
+            la_params["as_of"] = stated
+        result = await container.look_ahead({}, la_params)
         if not isinstance(result, dict) or result.get("status") != "success":
             return None
         compact = dict(result)
@@ -10228,7 +10234,13 @@ class Agent:
                             },
                             "as_of": {
                                 "type": "string",
-                                "description": "As-of / data date YYYY-MM-DD (optional).",
+                                "description": (
+                                    "Reference date YYYY-MM-DD for the window "
+                                    "start. Pass the date the user states as "
+                                    "today ('Today is 21 September', '21/09', "
+                                    "'21/09/2026'). Omit only when no date is "
+                                    "stated; the tool then uses the real clock."
+                                ),
                             },
                             "activities": {
                                 "type": "array",
@@ -13763,10 +13775,17 @@ class Agent:
                         ),
                     },
                 }
-            la_params = {"schedule_file": resolved}
+            la_params: dict[str, Any] = {"schedule_file": resolved}
+            if user_message:
+                la_params["user_message"] = user_message
             for key in ("weeks", "days", "as_of", "data_date", "activities"):
                 if args.get(key) is not None:
                     la_params[key] = args.get(key)
+            if la_params.get("as_of") is None and la_params.get("data_date") is None:
+                from app.containers.construction.schedule import _stated_look_ahead_date
+                stated = _stated_look_ahead_date(user_message or "")
+                if stated:
+                    la_params["as_of"] = stated
             try:
                 result = await container.look_ahead({}, la_params)
             except Exception as e:

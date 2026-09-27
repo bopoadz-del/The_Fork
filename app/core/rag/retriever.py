@@ -1726,6 +1726,8 @@ def chunk_states_cover_length(text: str) -> bool:
     """
     blob = text or ""
     if spec_boost_guard_enabled():
+        if spec_deferral_enabled():
+            return _cover_clause_states_length(blob)
         return _mm_near_cover_phrase(blob)
     return bool(_COVER_WORD_RE.search(blob) and _MM_FIGURE_RE.search(blob))
 
@@ -1845,12 +1847,379 @@ def _cap_specification_class_bonus(
             continue
         if chunk_matches_quantity_question(query, chunk.text or "", kinds):
             continue
+        if spec_deferral_enabled() and chunk_defers_cover_to_drawings(chunk.text or ""):
+            continue
         if not _loose_cover_and_millimetre(chunk.text or ""):
             continue
         excess = add - _SOURCE_CLASS_BONUS_CAP
         adjusted = score - excess
         chunk.score = round(adjusted, 6)
         scored[i] = (adjusted, chunk)
+
+
+# ── specification defers the asked cover to the drawings (FW4 S1) ────────
+#
+# "Per the project specification, what is the minimum concrete cover for
+# foundations cast directly against soil?" The specification states no
+# figure. Its reinforcement clause sends the cover to the drawings and
+# states no cover millimetre. The drawings carry the figures (bottom of
+# footings in contact with soil 100 mm; other elements in contact with
+# soil 75 mm). Local rag_inject on b13aed07 injected neither:
+#
+#   * The deferral clause was never a candidate. It shares no cover
+#     millimetre with the question, so ``_fetch_numeric_requirement_chunks``
+#     rejects it, and cosine for a spacer paragraph is low. When it did
+#     reach the pool its +1.2 class lift was capped, because an unrelated
+#     wire-gauge millimetre sits in the same chunk.
+#   * The drawing note was pooled but never lifted. Its 100 mm is a list
+#     item under the cover heading, about 120 characters after the cover
+#     phrase, past the 64-character proximity window.
+#
+# Every passed slot then went to non-specification chunks that state a
+# millimetre next to "cover" (+2.5), which is exactly what the model
+# answered from. This block: fetch the specification clause that defers
+# the cover to the drawings; lift it like a stated figure (it IS the
+# specification's answer); once it is in the pool, prefer drawing chunks
+# that state the cover (the authority the clause names) and chunks about
+# the element the question names. A cover list item under its heading
+# counts as a stated length; a lid size "250mm x 250mm x 10mm" does not.
+# Kill-switch: RETRIEVAL_SPEC_DEFERRAL=0 restores b13aed07 exactly.
+_COVER_CLAUSE_PHRASE_RE = re.compile(
+    r"(?i)(?:nominal\s+cover|concrete\s+cover|clear\s+cover|minimum\s+cover|"
+    r"cover\s+to\s+(?:the\s+)?(?:steel\s+)?reinforce)"
+)
+_COVER_CLAUSE_WINDOW = 160
+# A new sentence or a new numbered note ends the clause a heading governs.
+_CLAUSE_BREAK_RE = re.compile(
+    r"(?:[.;!?](?=\s)|\n\s*-?\s*\d+(?:\.\d+)*[.)]\s)"
+)
+_DIMENSION_SIDE_RE = re.compile(r"(?i)[x×]\s*$")
+_DIMENSION_NEXT_RE = re.compile(r"(?i)^\s*[x×]\s*\d")
+_COVER_REF_RE = re.compile(
+    r"(?i)\b(?:concrete\s+cover|nominal\s+cover|minimum\s+cover|clear\s+cover|"
+    r"cover\s+to\s+(?:the\s+)?(?:steel\s+)?reinforce\w*|"
+    r"cover\s+specified|specified\s+(?:minimum\s+)?(?:concrete\s+)?cover)\b"
+)
+_DRAWINGS_REF_RE = re.compile(
+    r"(?i)\b(?:(?:on|in|by)\s+the\s+drawings?|"
+    r"(?:shown|indicated|detailed|noted|specified|given)\s+(?:on|in)\s+"
+    r"(?:the\s+)?drawings?|(?:as\s+)?per\s+(?:the\s+)?drawings?)\b"
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.;!?])\s+")
+_DRAWING_NAME_RE = re.compile(r"(?i)(?:(?:^|[^a-z])dwg(?:[^a-z]|$)|\bdrawings?\b)")
+# Needles for the deferral fetch. Every set carries "drawings"; the scoped
+# pass runs inside specification volumes already in the pool, the open
+# pass only on the phrasings that are rare outside a reinforcement clause.
+_SPEC_DEFERRAL_SCOPED_NEEDLES = (
+    ("cover specified", "drawings"),
+    ("specified cover", "drawings"),
+    ("concrete cover", "drawings"),
+    ("cover to", "reinforcement", "drawings"),
+)
+_SPEC_DEFERRAL_OPEN_NEEDLES = (
+    ("cover specified", "drawings"),
+    ("specified cover", "drawings"),
+)
+_SPEC_DEFERRAL_FETCH_K = 60
+_SPEC_DEFERRAL_MAX_SCOPED_DOCS = 24
+_DEFERRED_AUTHORITY_BONUS = 0.5
+_COVER_SUBJECT_BONUS = 0.3
+# A cover question names what is covered. Same idea as the compaction
+# subject groups: the chunk may use the document's word for the element.
+_COVER_SUBJECT_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("foundation", "footing", "raft", "pile cap"),
+    ("slab",),
+    ("wall",),
+    ("column",),
+    ("beam",),
+)
+
+
+def spec_deferral_enabled() -> bool:
+    """ON by default. ``RETRIEVAL_SPEC_DEFERRAL=0`` restores the b13aed07
+    cover detector, candidate pool and scores."""
+    return (os.getenv("RETRIEVAL_SPEC_DEFERRAL", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _figure_is_dimension(blob: str, start: int, end: int) -> bool:
+    """True when the millimetre is one side of a size ("250mm x 250mm")."""
+    return bool(
+        _DIMENSION_SIDE_RE.search(blob[max(0, start - 4):start])
+        or _DIMENSION_NEXT_RE.match(blob[end:end + 6])
+    )
+
+
+def _cover_clause_states_length(text: str) -> bool:
+    """True when a cover phrase is given a single millimetre length.
+
+    Either next to the phrase (the 64-character window) or as a list item
+    the phrase heads, with no sentence or numbered-note break between.
+    A millimetre that is one side of a size is not a cover length.
+    """
+    blob = text or ""
+    phrases = [m for m in _COVER_CLAUSE_PHRASE_RE.finditer(blob)]
+    if not phrases:
+        return False
+    figures = [
+        m for m in _MM_FIGURE_RE.finditer(blob)
+        if not _figure_is_dimension(blob, m.start(), m.end())
+    ]
+    for ph in phrases:
+        for fig in figures:
+            if abs(ph.start() - fig.start()) <= _COVER_PHRASE_WINDOW:
+                return True
+            if 0 < fig.start() - ph.end() <= _COVER_CLAUSE_WINDOW:
+                between = blob[ph.end():fig.start()]
+                if not _CLAUSE_BREAK_RE.search(between):
+                    return True
+    return False
+
+
+def chunk_defers_cover_to_drawings(text: str) -> bool:
+    """True when one sentence names the cover and sends it to the drawings.
+
+    One sentence must name the concrete or reinforcement cover and point
+    at the drawings. A manhole-cover sentence does not count: the cover
+    has to be the reinforcement / concrete cover.
+    """
+    for sentence in _SENTENCE_SPLIT_RE.split(text or ""):
+        if _COVER_REF_RE.search(sentence) and _DRAWINGS_REF_RE.search(sentence):
+            return True
+    return False
+
+
+def filename_is_drawing(filename: str) -> bool:
+    """True when the document name says it is a drawing or drawings volume."""
+    return bool(_DRAWING_NAME_RE.search(filename or ""))
+
+
+def cover_subject_named(query: str) -> List[tuple]:
+    """The element groups a cover question names, or []."""
+    q = (query or "").lower()
+    return [
+        group for group in _COVER_SUBJECT_GROUPS
+        if any(_term_in(q, term) for term in group)
+    ]
+
+
+def cover_subject_agrees(groups: List[tuple], text: str) -> bool:
+    """True when ``text`` names one of the asked element groups."""
+    if not groups:
+        return False
+    blob = (text or "").lower()
+    return any(any(_term_in(blob, term) for term in group) for group in groups)
+
+
+# The specification can be named as the source without "per the": "what
+# cover does the spec require", "what does the specification say about".
+# Used only by this path, so the global +1.2 class lift is unchanged.
+_SPEC_AS_SUBJECT_RE = re.compile(
+    r"(?i)\b(?:the\s+|this\s+)?(?:project\s+)?spec(?:ification)?s?\s+"
+    r"(?:require|requires|required|say|says|state|states|specify|specifies|"
+    r"call\s+for|calls\s+for|give|gives|set|sets|demand|demands)\b"
+    r"|\b(?:in|by|from)\s+the\s+(?:project\s+)?spec(?:ification)?s?\b"
+)
+# "cover" alone is a cover ask when the question is about concrete work,
+# not a lid, hatch, letter or sheet.
+_BARE_COVER_RE = re.compile(r"(?i)\bcover\b")
+_COVER_CONCRETE_CONTEXT_RE = re.compile(
+    r"(?i)\b(?:foundations?|footings?|rafts?|pile\s+caps?|slabs?|walls?|"
+    r"columns?|beams?|reinforc\w*|rebar|bars?|concrete)\b"
+)
+_NOT_CONCRETE_COVER_RE = re.compile(
+    r"(?i)\b(?:cover\s+(?:letter|sheet|page|note|plate)s?|manholes?|hatch\w*|"
+    r"lids?|insurance|cover(?:ed|s)?\s+by)\b"
+    # "cover" as a verb: "does the spec cover curing", "specs cover".
+    r"|\b(?:does|do|did|will|would|can|should)\s+(?:the\s+|this\s+)?"
+    r"(?:project\s+)?\w+\s+cover\b"
+    r"|\bspec(?:ification)?s?\s+covers?\b"
+)
+
+
+def query_names_specification(query: str) -> bool:
+    """The question names the specification as its source."""
+    if source_class_named_by(query) == "specification":
+        return True
+    return bool(_SPEC_AS_SUBJECT_RE.search(query or ""))
+
+
+def query_asks_concrete_cover(query: str) -> bool:
+    """A cover-length ask, including a bare "cover" about concrete work."""
+    if "length_mm" in asked_quantity_kinds(query):
+        return True
+    text = query or ""
+    return bool(
+        _BARE_COVER_RE.search(text)
+        and _COVER_CONCRETE_CONTEXT_RE.search(text)
+        and not _NOT_CONCRETE_COVER_RE.search(text)
+    )
+
+
+def query_asks_spec_deferred_cover(query: str) -> bool:
+    """Specification-scoped cover-length question."""
+    if not spec_deferral_enabled() or not spec_boost_guard_enabled():
+        return False
+    return query_names_specification(query) and query_asks_concrete_cover(query)
+
+
+def _rescue_spec_deferral_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    *,
+    embedder=None,
+    query_vec=None,
+) -> Dict[str, str]:
+    """Pool the specification clause that defers the cover to the drawings.
+
+    Returns ``{doc_id: name}`` for every doc resolved here, so the later
+    name pass does not look them up twice. Project corpus only. No-op when
+    a specification-class deferral clause is already pooled. Failures
+    leave the pool standing.
+
+    A pooled clause enters with its own cosine to the query when the
+    embedder is at hand (0.0 otherwise), like any semantic candidate.
+    """
+    names: Dict[str, str] = {}
+    if not query_asks_spec_deferred_cover(query):
+        return names
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return names
+
+    def _name(doc_id: str) -> str:
+        if doc_id not in names:
+            names[doc_id] = _doc_name_for_id(doc_id)
+        return names[doc_id]
+
+    def _is_spec(doc_id: str) -> bool:
+        return filename_is_source_class(_name(doc_id), "specification")
+
+    spec_docs: List[str] = []
+    for chunk, _sem, _bonus in list(fused.values()):
+        if getattr(chunk, "project_id", project_id) != project_id:
+            continue
+        if not _is_spec(chunk.doc_id):
+            continue
+        if chunk_defers_cover_to_drawings(chunk.text or ""):
+            return names
+        if chunk.doc_id not in spec_docs:
+            spec_docs.append(chunk.doc_id)
+
+    passes: List[Tuple[tuple, Optional[List[str]]]] = []
+    if spec_docs:
+        scoped = spec_docs[:_SPEC_DEFERRAL_MAX_SCOPED_DOCS]
+        passes.extend((needles, scoped) for needles in _SPEC_DEFERRAL_SCOPED_NEEDLES)
+    passes.extend((needles, None) for needles in _SPEC_DEFERRAL_OPEN_NEEDLES)
+
+    admitted: List[Chunk] = []
+    for needles, doc_ids in passes:
+        try:
+            hits = fetch(
+                project_id, list(needles), k=_SPEC_DEFERRAL_FETCH_K, doc_ids=doc_ids,
+            )
+        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
+            logger.warning(
+                "spec-deferral rescue for %s (%r) failed: %s",
+                project_id, needles, exc,
+            )
+            continue
+        for chunk in hits or []:
+            if chunk.chunk_id in fused:
+                continue
+            if not chunk_defers_cover_to_drawings(chunk.text or ""):
+                continue
+            if not _is_spec(chunk.doc_id):
+                continue
+            if any(c.chunk_id == chunk.chunk_id for c in admitted):
+                continue
+            admitted.append(chunk)
+    sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
+    for chunk, sim in zip(admitted, sims):
+        chunk.score = round(sim, 6)
+        fused[chunk.chunk_id] = (chunk, sim, 0.0)
+    recovered = len(admitted)
+    if recovered:
+        logger.info(
+            "spec-deferral rescue pooled %d specification clause(s) that "
+            "defer the cover to the drawings", recovered,
+        )
+    return names
+
+
+def _cosine_to_query(embedder, query_vec, texts: List[str]) -> List[float]:
+    """Cosine of each text to the query vector; zeros when unavailable."""
+    if not texts:
+        return []
+    if embedder is None or query_vec is None:
+        return [0.0] * len(texts)
+    try:
+        vecs = embedder.encode(texts)
+        return [
+            float(sum(float(a) * float(b) for a, b in zip(vec, query_vec)))
+            for vec in vecs
+        ]
+    except Exception as exc:  # noqa: BLE001 — scoring must not break the turn
+        logger.warning("spec-deferral cosine failed: %s; entering at 0.0", exc)
+        return [0.0] * len(texts)
+
+
+def _apply_spec_deferral_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    name_by_id: Dict[str, str],
+) -> None:
+    """In-place: rank the deferral clause and the drawings it names.
+
+    A specification chunk that sends the asked cover to the drawings takes
+    the stated-figure lift. With such a clause in the pool, a drawing chunk
+    that states the cover gets a small lift over other documents, and a
+    cover chunk about the element the question names gets another. No-op
+    unless the question is a specification-scoped cover ask.
+    """
+    if not query_asks_spec_deferred_cover(query):
+        return
+    if not numeric_requirement_boost_enabled():
+        return
+    # A bare "cover" ask is a cover-length ask on this path.
+    kinds = asked_quantity_kinds(query) | frozenset({"length_mm"})
+
+    def _nm(chunk) -> str:
+        return name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
+
+    deferral_idx = [
+        i for i, (_s, c) in enumerate(scored)
+        if filename_is_source_class(_nm(c), "specification")
+        and chunk_defers_cover_to_drawings(c.text or "")
+        and not chunk_matches_quantity_question(query, c.text or "", kinds)
+    ]
+    if not deferral_idx:
+        return
+    for i in deferral_idx:
+        score, chunk = scored[i]
+        adjusted = score + _NUMERIC_REQUIREMENT_BONUS
+        chunk.score = round(adjusted, 6)
+        scored[i] = (adjusted, chunk)
+    groups = cover_subject_named(query)
+    for i, (score, chunk) in enumerate(scored):
+        if i in deferral_idx:
+            continue
+        if not chunk_matches_quantity_question(query, chunk.text or "", kinds):
+            continue
+        add = 0.0
+        # Name only: a parsed drawing_number also fires on contract ids
+        # ("DD-2023-118 ... Other Documents"), which are not drawings.
+        if filename_is_drawing(_nm(chunk)):
+            add += _DEFERRED_AUTHORITY_BONUS
+        if cover_subject_agrees(groups, chunk.text or ""):
+            add += _COVER_SUBJECT_BONUS
+        if add:
+            adjusted = score + add
+            chunk.score = round(adjusted, 6)
+            scored[i] = (adjusted, chunk)
 
 
 _SOURCE_HEADER_RE = re.compile(r"(?i)^\[source:[^\]]*\]\s*")
@@ -9666,6 +10035,14 @@ def retrieve_with_filter(
     # in the top-k, and only for this question.
     _rescue_foundation_backfill_degree(query, project_id, fused, store, k)
 
+    # FW4 S1: "per the specification" + a cover ask. The specification's own
+    # clause says the cover is "as specified on the Drawings" and states no
+    # millimetre, so neither cosine nor the numeric fetch ever pools it.
+    spec_deferral_names = _rescue_spec_deferral_chunks(
+        query, project_id, fused, store,
+        embedder=embedder, query_vec=query_vec,
+    )
+
     # Letter / named-party filename rescue (D1). Runs EVEN WHEN term rescue
     # already found place-name overlap in Volume 5 — that in-pool hit is
     # what used to skip the out-of-pool fetch of the actual letter.
@@ -9681,6 +10058,8 @@ def retrieve_with_filter(
     # found "specification" / "procedure" overlap in a demolition volume
     # — that in-pool hit is what used to skip the out-of-pool fetch of
     # the titled Variation Procedure spec.
+    for _did, _nm in spec_deferral_names.items():
+        filename_names.setdefault(_did, _nm)
     filename_names.update(_rescue_spec_title_docs(
         query,
         project_id,
@@ -9874,6 +10253,7 @@ def retrieve_with_filter(
     _apply_source_class_preference(query, scored, name_by_id)
     _cap_specification_class_bonus(query, scored, name_by_id)
     _apply_numeric_requirement_boost(query, scored)
+    _apply_spec_deferral_boost(query, scored, name_by_id)
     _apply_spec_title_filename_boost(query, scored, name_by_id)
     _apply_spec_identity_text_boost(query, scored)
     _apply_contract_data_filename_boost(query, scored, name_by_id)

@@ -670,6 +670,11 @@ def activity_overlaps_window(
     return not (a1 < window_start or a0 > window_end)
 
 
+def _clock_today() -> date:
+    """The real clock. Tests freeze this; look-ahead must not call date.today directly."""
+    return date.today()
+
+
 def select_look_ahead(
     activities: List[Dict[str, Any]],
     *,
@@ -689,7 +694,7 @@ def select_look_ahead(
     """
     if window_days < 1:
         raise ValueError("window_days must be >= 1")
-    as_of_d = as_of or date.today()
+    as_of_d = as_of or _clock_today()
     # Inclusive end: a 21-day window from day D covers D .. D+20.
     window_end = as_of_d + timedelta(days=window_days - 1)
 

@@ -307,9 +307,9 @@ def test_ocr_required_stamps_ocr_degraded(monkeypatch, tmp_path):
     assert OCR_DEGRADED in (stamped["ingest_status_reason"] or "")
 
 
-def test_gdrive_list_fields_request_md5_and_etag():
+def test_gdrive_list_fields_request_md5_not_etag():
     from pathlib import Path
 
     src = Path("app/core/gdrive_service.py").read_text(encoding="utf-8")
     assert "md5Checksum" in src
-    assert "etag" in src
+    assert "etag" not in src.lower()
