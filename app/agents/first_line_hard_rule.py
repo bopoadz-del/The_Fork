@@ -5,32 +5,22 @@ tells the model to open with the figure and the document that carries it.
 Live SET5 close-out on 209bc83 still scored the first line, and the model
 still opened with a narrative, a bare figure, or "properly compacted".
 
-This guard runs at the end of answer post-processing. It does not invent a
-number: a qualitative clause stays qualitative when the retrieved excerpts
-hold no numeric figure. When they do, the first line names that figure and
-the file that states it. A question that names a source class prefers a
-numeric figure from a document of that class (the specification's own 98%
-over another file's 95%). A different file's figure is labelled as not the
-named source. Copies of one figure, including signed and unsigned copies of
-one clause, collapse to one line that cites one copy. The line asks which
-document only when two or more figures match the same condition the
-question names, or when the question names no condition and the figures
-cannot be separated. A condition is read from the figure's own sentence,
-from the nearest clause heading above it (several lines up, or at the
-chunk start), from a section title, and from the document title. Figures
-that each carry a different material or condition are stated together,
-each tied to that condition and to the document, clause, or drawing that
-contains it. An unbound figure whose document is a different system does
-not force that question against a figure that matches. An optional higher
-compaction degree in the same clause ("could be compacted to … under the
-approval of the engineer") is not a second figure. A millimetre counts as
-concrete cover only when it is tied to that quantity, not to a panel,
-tile, or paint band. "That document is not the specification" is emitted
-only when the document is positively a drawing, a report, or a design
-note, and never when the chunk calls itself a Specification section.
-"Which contract governs this project?" names the one contract in the
-excerpts, or asks which when more than one non-template contract is
-visible.
+This guard verifies the first line. It does not rewrite it. When the
+model's first line already carries a figure and a source, the answer
+passes through unchanged. Otherwise it may prepend only the figure the
+body commits to — the first figure the body states as the answer — and
+it never asks once that commitment exists. 98% backfill, 90% storm-water
+bedding, and 95% structural fill are different subjects. A question is
+prepended only when the body commits to no figure and the remaining
+figures share one subject. The filename class is a hint: when the body
+names the class ("Specification Section 9.1"), that naming governs, and
+the server does not emit "That document is not the specification".
+An optional higher compaction degree in the same clause ("could be
+compacted to … under the approval of the engineer") is not a second
+figure. A millimetre counts as concrete cover only when it is tied to
+that quantity, not to a panel, tile, or paint band. "Which contract
+governs this project?" names the one contract in the excerpts, or asks
+which when more than one non-template contract is visible.
 
 Kill-switch: FIRST_LINE_HARD_RULE=0.
 """
@@ -120,6 +110,8 @@ _SECTION_TITLE_RE = re.compile(
     r"(?i)^specification[ \t]+section[ \t]+(\d+(?:\.\d+)*)\b[ \t]*(.*)$"
 )
 _SELF_SPEC_RE = re.compile(r"(?i)\bspecification\s+section\b")
+# The answer body naming the class overrides the filename hint.
+_BODY_NAMES_SPEC_RE = re.compile(r"(?i)\bspecifications?\b")
 _POSITIVE_NONSPEC_RE = re.compile(
     r"(?i)(?:\bdrawings?\b|\bdwg\b|\breports?\b|\bdesign\s+notes?\b)"
 )
@@ -150,13 +142,6 @@ class _Hit:
     calls_itself_spec: bool = False
 
 
-@dataclass(frozen=True)
-class _Bound:
-    """Figures that answer different conditions. State each; do not ask."""
-
-    hits: tuple[_Hit, ...]
-
-
 def first_line_hard_rule_enabled() -> bool:
     return (os.getenv("FIRST_LINE_HARD_RULE", "1") or "").strip().lower() not in (
         "0", "false", "no", "off",
@@ -168,11 +153,14 @@ def apply_first_line_hard_rule(
     rag_sys_msg: dict | None,
     messages: list | None,
 ) -> str:
-    """Prepend a first line that carries the figure and its document.
+    """Verify the first line. Annotate a missing figure, or leave the answer.
 
-    Returns ``text`` unchanged when the question is outside this rule, the
-    excerpts do not hold the figure, the first line already complies, or
-    the kill-switch is off.
+    Returns ``text`` unchanged when the kill-switch is off, the question
+    is outside this rule, the first line already carries a figure and a
+    source, or the body commits to no figure and the hits are not one
+    subject. A committed figure is prepended. A question is prepended
+    only when the body itself does not commit and the figures share a
+    subject.
     """
     if not first_line_hard_rule_enabled():
         return text or ""
@@ -197,22 +185,26 @@ def _apply(text: str, rag_sys_msg: dict | None, messages: list | None) -> str:
     topic = _topic(ask)
     if not class_name or not topic:
         return text
-    hits = _figure_hits(topic, class_name, _retrieval_records(rag_sys_msg, messages))
+    hits = _figure_hits(
+        topic, class_name, _retrieval_records(rag_sys_msg, messages), text,
+    )
     if not hits:
         return text
-    chosen = _select(hits, text, topic, ask)
-    if isinstance(chosen, _Bound):
-        if _states_bound(_first(text), chosen.hits):
-            return text
-        return _prepend(text, _bound_line(topic, chosen.hits, class_name))
-    if isinstance(chosen, list):
-        line = _ask_which_figure(topic, chosen)
-        if _asks_which_figures(text, chosen):
-            return text
-        return _prepend(text, line)
-    if _line_states(_first(text), chosen, class_name):
+    first = _first(text)
+    # (A) A first line that already names a figure and a source stands.
+    if _first_carries_figure_and_source(first, hits):
         return text
-    return _prepend(text, _state_line(topic, chosen, class_name))
+    # (B) The first figure the body states is the one it committed to.
+    committed = _committed_hit(text, hits)
+    if committed is not None:
+        return _prepend(text, _state_line(topic, committed, class_name))
+    # (C) A question only when nothing was committed and the subject is one.
+    conflict = _same_subject_conflict(topic, hits)
+    if conflict is None:
+        return text
+    if _asks_which_figures(text, conflict):
+        return text
+    return _prepend(text, _ask_which_figure(topic, conflict))
 
 
 def _apply_contract(text: str, rag_sys_msg: dict | None, messages: list | None) -> str:
@@ -255,9 +247,23 @@ def _retrieval_records(rag_sys_msg: dict | None, messages: list | None):
     ]
 
 
-def _figure_hits(topic: str, class_name: str, records) -> list[_Hit]:
+def _body_names_class(answer: str, class_name: str) -> bool:
+    """True when the answer itself names the governing class.
+
+    The filename test is only a hint. "Specification Section 9.1" in the
+    body means the document is being treated as a specification.
+    """
+    if class_name != "specification":
+        return False
+    return bool(_BODY_NAMES_SPEC_RE.search(answer or ""))
+
+
+def _figure_hits(
+    topic: str, class_name: str, records, answer: str = "",
+) -> list[_Hit]:
     from app.core.rag.retriever import filename_is_source_class
 
+    body_names = _body_names_class(answer, class_name)
     hits: list[_Hit] = []
     seen: set[tuple[str, str]] = set()
     for record in records:
@@ -269,7 +275,8 @@ def _figure_hits(topic: str, class_name: str, records) -> list[_Hit]:
         numbers = (
             _cover_numbers(body) if topic == "cover" else _mdd_numbers(body)
         )
-        is_class = filename_is_source_class(source, class_name)
+        # Filename is a hint. The body naming the class overrides it.
+        is_class = filename_is_source_class(source, class_name) or body_names
         for number, start, end in numbers:
             figure = f"{number} mm" if topic == "cover" else f"{number}%"
             key = (figure, source)
@@ -285,66 +292,84 @@ def _figure_hits(topic: str, class_name: str, records) -> list[_Hit]:
                 is_class=is_class,
                 condition=condition,
                 clause=clause,
-                calls_itself_spec=calls_spec,
+                calls_itself_spec=calls_spec or body_names,
             ))
     return hits
 
 
-def _select(
-    hits: list[_Hit], answer: str, topic: str, ask: str,
-) -> _Hit | list[_Hit] | _Bound:
-    """One figure to state, the bound set, or the conflicting hits to ask.
+def _first_carries_figure_and_source(first: str, hits: list[_Hit]) -> bool:
+    """(A) The model's opening line already names a figure and a source."""
+    if not first:
+        return False
+    has_figure = any(_figure_in(first, hit.figure) for hit in hits)
+    has_source = any(_source_in(first, hit.source) for hit in hits)
+    return has_figure and has_source
 
-    Same figure, any number of copies: one hit, so the line cites one copy.
-    Ask which document only when two or more figures match the condition
-    the question names and they come from different documents, or when the
-    question names no condition and the figures cannot be separated. One
-    document that still holds two figures for one condition does not ask.
-    Exactly one match is stated, with its clause. Other figures are stated
-    with their own condition, or omitted when they are unbound. An unbound
-    figure from a different system does not force the question.
+
+def _figure_at(text: str, figure: str) -> int:
+    if figure.endswith("%"):
+        number = re.escape(figure[:-1])
+        match = re.search(rf"(?i)\b{number}\s*(?:%|percent\b)", text or "")
+    elif figure.endswith(" mm"):
+        number = re.escape(figure[:-3])
+        match = re.search(rf"(?i)\b{number}\s*mm\b", text or "")
+    else:
+        match = re.search(re.escape(figure), text or "", re.IGNORECASE)
+    return match.start() if match else -1
+
+
+def _committed_hit(text: str, hits: list[_Hit]) -> _Hit | None:
+    """The first figure the body states as the answer, or None.
+
+    Later figures are other mentions. They do not become a conflict once
+    this first figure exists.
     """
-    class_hits = [hit for hit in hits if hit.is_class]
-    pool = class_hits or hits
+    found: list[tuple[int, _Hit]] = []
+    for hit in hits:
+        pos = _figure_at(text, hit.figure)
+        if pos >= 0:
+            found.append((pos, hit))
+    if not found:
+        return None
+    pos = min(item[0] for item in found)
+    figure = next(hit.figure for at, hit in found if at == pos)
+    candidates = [hit for hit in hits if hit.figure == figure]
+    window = (text or "")[max(0, pos - 180): pos + 420]
+    named = [hit for hit in candidates if _source_in(window, hit.source)]
+    return named[0] if named else candidates[0]
+
+
+def _collapse_figures(hits: list[_Hit]) -> list[_Hit]:
     collapsed: list[_Hit] = []
-    seen_figures: set[str] = set()
-    for hit in pool:
-        if hit.figure in seen_figures:
+    seen: set[str] = set()
+    for hit in hits:
+        if hit.figure in seen:
             continue
-        seen_figures.add(hit.figure)
+        seen.add(hit.figure)
         collapsed.append(hit)
-    if len(collapsed) == 1:
-        return collapsed[0]
-    asked = _labels_in(topic, ask or "")
-    if asked:
-        matched = [
-            hit for hit in collapsed
-            if _condition_matches(topic, hit.condition, asked)
-        ]
-        matched_sources = {hit.source for hit in matched}
-        if len(matched) >= 2 and len(matched_sources) >= 2:
-            return matched
-        if len(matched) == 1:
-            lead = matched[0]
-            others = [
-                hit for hit in collapsed
-                if hit.figure != lead.figure
-                and hit.condition
-                and not _condition_matches(topic, hit.condition, asked)
-            ]
-            if others:
-                return _Bound(tuple(_lead_first([lead, *others], topic, asked)))
-            return lead
-        if len(matched) >= 2:
-            return matched[0]
-    if _conditions_distinguish(collapsed):
-        return _Bound(tuple(_lead_first(collapsed, topic, asked)))
-    stated = [hit for hit in collapsed if _figure_in(answer, hit.figure)]
-    if len(stated) == 1:
-        return stated[0]
-    sources = {hit.source for hit in collapsed}
-    if len(sources) < 2:
-        return collapsed[0]
+    return collapsed
+
+
+def _same_subject_conflict(topic: str, hits: list[_Hit]) -> list[_Hit] | None:
+    """Figures that share one subject, from more than one document.
+
+    Returns None when the subject cannot be shown to be the same, so the
+    caller does not invent a question. Backfill, storm-water bedding, and
+    structural fill are different subjects.
+    """
+    collapsed = _collapse_figures(hits)
+    if len(collapsed) < 2:
+        return None
+    if len({hit.source for hit in collapsed}) < 2:
+        return None
+    if any(not hit.condition for hit in collapsed):
+        return None
+    head = collapsed[0]
+    for other in collapsed[1:]:
+        if other.condition == head.condition:
+            continue
+        if not _condition_matches(topic, other.condition, head.condition):
+            return None
     return collapsed
 
 
@@ -567,31 +592,11 @@ def _clause_before(text: str, end: int) -> str:
     return found[-1].group(1)
 
 
-def _conditions_distinguish(hits: list[_Hit]) -> bool:
-    """True when every figure carries its own non-empty condition."""
-    if len(hits) < 2:
-        return False
-    labels = [hit.condition for hit in hits]
-    if any(not label for label in labels):
-        return False
-    return len(set(labels)) == len(labels)
-
-
-def _lead_first(hits: list[_Hit], topic: str, asked: str) -> list[_Hit]:
-    if not asked:
-        return list(hits)
-    return sorted(
-        hits,
-        key=lambda hit: 0 if _condition_matches(topic, hit.condition, asked) else 1,
-    )
-
-
 def _emit_not_the_spec(hit: _Hit, class_name: str) -> bool:
-    """True only for a positive non-spec document the chunk does not claim.
+    """True only for a positive non-spec document the body does not claim.
 
-    An unrecognised filename is not enough. A chunk that calls itself a
-    Specification section is never labelled "not the specification", even
-    when the filename says report.
+    The filename is a hint. A body or chunk that calls the document a
+    specification is never labelled "not the specification".
     """
     if not class_name or hit.is_class or hit.calls_itself_spec:
         return False
@@ -628,13 +633,6 @@ def _first(text: str) -> str:
     return ""
 
 
-def _line_states(first: str, hit: _Hit, class_name: str) -> bool:
-    if not (_figure_in(first, hit.figure) and _source_in(first, hit.source)):
-        return False
-    missing_denial = f"not the {class_name}" not in first.lower()
-    return not (_emit_not_the_spec(hit, class_name) and missing_denial)
-
-
 def _state_line(topic: str, hit: _Hit, class_name: str) -> str:
     cond = f" for {hit.condition}" if hit.condition else ""
     clause = f" (§{hit.clause})" if hit.clause else ""
@@ -651,47 +649,6 @@ def _state_line(topic: str, hit: _Hit, class_name: str) -> str:
     if _emit_not_the_spec(hit, class_name):
         line += f" That document is not the {class_name}."
     return line
-
-
-def _bound_line(
-    topic: str, hits: tuple[_Hit, ...] | list[_Hit], class_name: str,
-) -> str:
-    parts: list[str] = []
-    for hit in hits:
-        cond = f" for {hit.condition}" if hit.condition else ""
-        clause = f" (§{hit.clause})" if hit.clause else ""
-        if topic == "cover":
-            parts.append(
-                f"{hit.figure} is the concrete-cover figure{cond}{clause} "
-                f"in {hit.source}."
-            )
-        else:
-            parts.append(
-                f"{hit.figure} of maximum dry density is the compaction figure"
-                f"{cond}{clause} in {hit.source}."
-            )
-    line = " ".join(parts)
-    if (
-        class_name
-        and hits
-        and all(_emit_not_the_spec(hit, class_name) for hit in hits)
-    ):
-        line += f" These documents are not the {class_name}."
-    return line
-
-
-def _states_bound(first: str, hits: tuple[_Hit, ...] | list[_Hit]) -> bool:
-    low = (first or "").lower()
-    if "which document" in low:
-        return False
-    for hit in hits:
-        if not (_figure_in(first, hit.figure) and _source_in(first, hit.source)):
-            return False
-        if hit.condition and hit.condition.lower() not in low:
-            return False
-        if hit.clause and hit.clause not in (first or ""):
-            return False
-    return True
 
 
 def _ask_which_figure(topic: str, hits: list[_Hit]) -> str:

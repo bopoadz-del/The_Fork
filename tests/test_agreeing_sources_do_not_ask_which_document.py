@@ -103,8 +103,13 @@ def test_identical_figures_in_package_copies_do_not_ask_which_document():
     The first line states that 98% and cites a copy. It does not ask
     which document's figure is meant.
     """
+    answer = (
+        "I will answer from the retrieved context.\n\n"
+        "Structural backfill under foundations is compacted to 98% of "
+        "maximum dry density.\n"
+    )
     out = apply_first_line_hard_rule(
-        NARRATIVE,
+        answer,
         _rag(
             _chunk("a", COPY_A, BACKFILL_98, "0.860"),
             _chunk("b", COPY_B, BACKFILL_98, "0.840"),
@@ -151,8 +156,12 @@ def test_s2_optional_higher_degree_of_the_same_subgrade_does_not_ask_which_docum
     two percents and asking which document governs is wrong. The first
     line states the specified 95% and cites the geotech excerpt.
     """
+    answer = (
+        "I will answer from the retrieved context.\n\n"
+        "The specified compaction is 95% of maximum dry density.\n"
+    )
     out = apply_first_line_hard_rule(
-        NARRATIVE,
+        answer,
         _rag(_chunk("v5", VOL5, SUBGRADE)),
         _msgs(S2_ASK),
     )
