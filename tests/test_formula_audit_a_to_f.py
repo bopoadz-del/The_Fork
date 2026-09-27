@@ -642,14 +642,15 @@ def test_audit_cost_buildup_concrete():
     """Documented GCC build-up (rates are parameters / fallbacks).
     Hand: cement 0.4×190=76; agg 1.839×29=53.331; water 0.16×10=1.6;
           MS 12×1.5=18; plast 5×2.4=12 → material 160.931
-          direct = 160.931+39.2+8+3+2.5+4 = 217.631
-          sell = 217.631×1.03×1.18/0.85 = 311.19 SAR/m³
-          ×100 m³ = 31,119.
+          waste is on material only: 160.931×1.03 = 165.759
+          direct = 165.759+39.2+8+3+2.5+4 = 222.459
+          sell = 222.459×1.18/0.85 = 308.83 SAR/m³
+          ×100 m³ = 30,883.
     """
     r = _ok("cost_buildup_concrete", {"quantity_m3": 100})
     assert r["material_cost_sar_m3"] == pytest.approx(160.93, abs=0.01)
-    assert r["selling_price_sar_m3"] == pytest.approx(311.19, abs=0.1)
-    assert r["total_project_value_sar"] == pytest.approx(31119, abs=2)
+    assert r["selling_price_sar_m3"] == pytest.approx(308.83, abs=0.1)
+    assert r["total_project_value_sar"] == pytest.approx(30883, abs=2)
 
     _err("cost_buildup_concrete", {"quantity_m3": -1})
 

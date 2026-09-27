@@ -47,9 +47,10 @@ def test_cost_buildup_concrete_arithmetic():
     # material = 0.4*190 + 1.839*29 + 0.16*10 + 12*1.5 + 5*2.4 = 160.93
     r = cf.cost_buildup_concrete(quantity_m3=100)
     assert r["material_cost_sar_m3"] == pytest.approx(160.93, abs=0.01)
-    # direct 217.63 -> *1.03 waste -> *1.18 indirect -> /0.85 markup = 311.19
-    assert r["selling_price_sar_m3"] == pytest.approx(311.19, abs=0.1)
-    assert r["total_project_value_sar"] == pytest.approx(31119, abs=2)
+    # waste on material only: 160.931*1.03 + 39.2+8+3+2.5+4 = 222.459
+    # *1.18 indirect / 0.85 markup = 308.83 SAR/m3; ×100 = 30883
+    assert r["selling_price_sar_m3"] == pytest.approx(308.83, abs=0.1)
+    assert r["total_project_value_sar"] == pytest.approx(30883, abs=2)
 
 
 def test_cost_buildup_rebar_arithmetic():
