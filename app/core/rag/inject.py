@@ -858,6 +858,10 @@ def build_retrieval_query(
 # so no API response can carry it. ON by default (nobody can set env on the
 # live server); RAG_RETRIEVAL_TRACE=0 is the kill switch.
 _TRACE_LOG = logging.getLogger("app.rag.retrieval_trace")
+# Root stays WARNING. setLevel (not a bare attribute write) is what makes
+# this INFO line eligible, and it clears the enablement cache so an earlier
+# isEnabledFor(INFO) cannot stick a false.
+_TRACE_LOG.setLevel(logging.INFO)
 _TRACE_EVENT = "rag_retrieval_trace"
 
 
