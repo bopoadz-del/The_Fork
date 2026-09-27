@@ -1,4 +1,4 @@
-"""A Section delay-damages rate uses the Contract Price, and says so.
+"""The 8.8.1 delay-damages rate is per Milestone, on the Contract Price.
 
 Live SET4.1 M3, "What are the delay damages in SAR per calendar day for
 a section?":
@@ -9,7 +9,9 @@ a section?":
   * 2/6 runs multiplied by the Contract Price SAR 1,754,504,456.25
     (SAR 263,175.67) and then called it the whole-of-the-Works rate.
 
-The rate is per Section. The base is the Contract Price, excluding VAT.
+Contract Data 8.8.1 states the rate per calendar day per Milestone.
+A question that says Section selects that same rate, and the sentence
+states it as per Milestone. The base is the Contract Price, excluding VAT.
 """
 from __future__ import annotations
 
@@ -18,18 +20,24 @@ import pytest
 from app.lib import construction_formulas_commercial as cc
 
 SECTION_ASK = "What are the delay damages in SAR per calendar day for a section?"
+MILESTONE_ASK = (
+    "What are the delay damages in SAR per calendar day for a Milestone?"
+)
 WHOLE_ASK = (
     "What are the delay damages in SAR per calendar day for the whole of the Works?"
 )
 CONTRACT_PRICE = 1_754_504_456.25
-SECTION_AMOUNT = 144_042_486.50
+OTHER_AMOUNT = 144_042_486.50
 DAILY = 263_175.67
+MONEY_LINE = (
+    "Delay damages per Milestone are SAR 263,175.67 per calendar day "
+    "(0.015% of the Contract Price SAR 1,754,504,456.25)."
+)
 
-# The row the contract uses for a Section. Quoted back, not paraphrased
-# into the whole-of-the-Works sentence.
-SECTION_CLAUSE = (
-    "8.8.1 Delay Damages (for a Section): 0.015% of the Contract Price "
-    "per calendar day"
+# Contract Data 8.8.1. Quoted back; not paraphrased as the whole of the Works.
+MILESTONE_CLAUSE = (
+    "8.8.1: Delay Damages: 0.015% of the Contract Price per calendar day "
+    "per Milestone"
 )
 WHOLE_CLAUSE = (
     "8.8.1 Delay Damages (for the whole of the Works): 0.1% of the "
@@ -40,68 +48,66 @@ PRICE_ROW = (
 )
 
 # Live shape: the wrong amount is in other documents and is concatenated
-# first. The Section rate and the Contract Price share the conditions.
+# first. The Milestone rate and the Contract Price share the conditions.
 LIVE_BUNDLE = (
-    "[doc_id=REDACTED chunk=0] Form of Agreement | Section contract value "
-    f"SAR {SECTION_AMOUNT:,.2f} | "
+    "[doc_id=REDACTED chunk=0] Form of Agreement | package value "
+    f"SAR {OTHER_AMOUNT:,.2f} | "
     "[doc_id=REDACTED chunk=11] GCH Pre-Kick off meeting | "
-    f"Accepted Contract Amount excluding VAT SAR {SECTION_AMOUNT:,.2f} | "
+    f"Accepted Contract Amount excluding VAT SAR {OTHER_AMOUNT:,.2f} | "
     "[doc_id=coc chunk=20] CONTRACT DATA | "
-    f"{SECTION_CLAUSE} | {WHOLE_CLAUSE} | {PRICE_ROW}"
+    f"{MILESTONE_CLAUSE} | {WHOLE_CLAUSE} | {PRICE_ROW}"
 )
 
 # The wrong amount leads, inside one window, with only "Contract Price"
 # nearby — the bleed that used to elect it as the Accepted Contract Amount.
 UNMARKED_BLEED = (
-    f"Delay Damages (for a Section): 0.015% of the Contract Price per "
-    f"calendar day. Section contract value SAR {SECTION_AMOUNT:,.2f}. "
+    f"{MILESTONE_CLAUSE}. contract value SAR {OTHER_AMOUNT:,.2f}. "
     f"{PRICE_ROW}. {WHOLE_CLAUSE}."
 )
 
 
-def test_a_section_ask_uses_the_contract_price_not_the_other_amount():
-    out = cc.compose_delay_damages_daily_from_excerpts(SECTION_ASK, LIVE_BUNDLE)
+@pytest.mark.parametrize("ask", [SECTION_ASK, MILESTONE_ASK])
+def test_either_ask_uses_the_contract_price_and_says_per_milestone(ask):
+    out = cc.compose_delay_damages_daily_from_excerpts(ask, LIVE_BUNDLE)
     assert out is not None
     assert out["rate_percent"] == pytest.approx(0.015)
     assert out["contract_amount"] == pytest.approx(CONTRACT_PRICE)
     assert out["daily_amount"] == pytest.approx(DAILY)
-    assert out["basis"] == "section"
-
-
-def test_the_line_says_per_section_and_quotes_the_clause():
-    out = cc.compose_delay_damages_daily_from_excerpts(SECTION_ASK, LIVE_BUNDLE)
+    assert out["basis"] == "milestone"
     line = cc.format_delay_damages_daily_line(out)
-    assert line.startswith("Delay damages per Section are SAR 263,175.67 ")
+    assert line.startswith(MONEY_LINE)
+    assert "per Section" not in line
     assert "whole of the Works" not in line
-    assert "1,754,504,456.25" in line
     assert "144,042,486.50" not in line
     assert "The contract states:" in line
-    assert "for a Section" in line
-    assert "0.015% of the Contract Price per calendar day" in line
+    assert "8.8.1" in line
+    assert "per calendar day per Milestone" in line
 
 
-def test_a_leading_section_sum_does_not_beat_clause_1_1_1():
+def test_a_leading_other_sum_does_not_beat_clause_1_1_1():
     out = cc.compose_delay_damages_daily_from_excerpts(SECTION_ASK, UNMARKED_BLEED)
     assert out is not None
     assert out["contract_amount"] == pytest.approx(CONTRACT_PRICE)
     assert out["daily_amount"] == pytest.approx(DAILY)
+    assert out["basis"] == "milestone"
 
 
-def test_another_documents_amount_is_not_the_section_base():
+def test_another_documents_amount_is_not_the_milestone_base():
     """The rate's document has no Contract Price. Do not borrow 144M."""
     bundle = (
         "[doc_id=coc chunk=20] CONTRACT DATA | "
-        f"{SECTION_CLAUSE} | "
+        f"{MILESTONE_CLAUSE} | "
         "[doc_id=REDACTED chunk=11] GCH Pre-Kick off meeting | "
-        f"Accepted Contract Amount excluding VAT SAR {SECTION_AMOUNT:,.2f}"
+        f"Accepted Contract Amount excluding VAT SAR {OTHER_AMOUNT:,.2f}"
     )
+    assert cc.compose_delay_damages_daily_from_excerpts(MILESTONE_ASK, bundle) is None
     assert cc.compose_delay_damages_daily_from_excerpts(SECTION_ASK, bundle) is None
 
 
 def test_the_whole_of_the_works_line_is_unchanged():
     bundle = (
         "[doc_id=coc chunk=20] CONTRACT DATA | "
-        f"{WHOLE_CLAUSE} | {SECTION_CLAUSE} | {PRICE_ROW}"
+        f"{WHOLE_CLAUSE} | {MILESTONE_CLAUSE} | {PRICE_ROW}"
     )
     out = cc.compose_delay_damages_daily_from_excerpts(WHOLE_ASK, bundle)
     assert out is not None
@@ -110,5 +116,6 @@ def test_the_whole_of_the_works_line_is_unchanged():
     assert out.get("basis") == "whole"
     line = cc.format_delay_damages_daily_line(out)
     assert line.startswith("Delay damages for the whole of the Works are ")
+    assert "per Milestone" not in line
     assert "per Section" not in line
     assert "The contract states:" not in line
