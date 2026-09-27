@@ -1,52 +1,32 @@
-# BRANCH_NOTES — `agent-e/fw3-s1-retrieval`
+# BRANCH_NOTES — `agent-e/fw4-spec-retrieval`
 
-Local lane for Agent D to fold into the batch PR. No pull request from this branch. No merge, no deploy, no Render/Neon/env changes.
+FIX WAVE 4, #2 RETRIEVAL. Local lane for Agent D's batch PR. No pull request from this branch. No merge, no deploy, no AWS / Render / env / Neon changes. Not READY.
 
-Base: `23a04d0931b588b19352d292c53d7db76ad3c7db`.
+Base: `b13aed07b570ca6c82d04a8315052e726a9a8d60` (main). Merged `origin/main` at `4c4efc8` (PR #716 Dockerfile change) after the patch.
 
 ## Root cause
 
-Pre-answer retrieval is `rag_inject` → `retrieve_with_filter` (`RAG_K` default 5). The specification filename lift lives in `_apply_source_class_preference` (`app/core/rag/retriever.py`): a question matching "per the project specification" adds `_SOURCE_CLASS_BONUS` (1.2) to every chunk whose filename says specification.
+Pre-answer retrieval is `rag_inject` → `build_retrieval_query` → `retrieve_with_filter` (`RAG_K` 5) → token cap → system message. `build_retrieval_query` returns S1/S2 unchanged (they are not thin follow-ups), and `RAG_K` was not the limit. The misses are in `retrieve_with_filter`:
 
-That lift stacks on `_NUMERIC_REQUIREMENT_BONUS` (2.5). The cover detector (`chunk_states_cover_length`) treated any "cover" plus any millimetre anywhere in the chunk as a stated cover length. Specification chunks about bollards, raised floors, and rebar fixing therefore scored cosine + 2.5 + 1.2. With cosine near 0 that is the flat **3.7** plateau in the live probe. The durability sentence (nominal cover 50 mm / 75 mm, no "specification" in the filename) kept cosine + 2.5 (~3.26) and landed at rank 22, outside the five chunks passed to the model.
+1. **Specification clause 3.1.25.8 is never a candidate.** It says spacers give the cover specified in the clause, on the drawings, or as directed, and states no cover millimetre. `_fetch_numeric_requirement_chunks` only admits chunks that state a cover length, and the vector leg does not pull a spacer paragraph for "minimum concrete cover for foundations cast directly against soil". Had it been pooled, `_cap_specification_class_bonus` would still have cut its +1.2 class lift, because an unrelated wire-gauge millimetre sits in the same chunk.
+2. **The footing-cover drawing note is pooled but never lifted.** Its 100 mm is a list item about 120 characters after the cover heading, past the 64-character window in `_mm_near_cover_phrase`. Chunks with a millimetre next to "cover" get +2.5 and take the slots.
 
-Signed and unsigned copies of that same body each took a slot. Dedupe runs in the same top-k cut.
+## Change (`app/core/rag/retriever.py`)
 
-`app/agents/first_line_hard_rule.py` was not edited. The verbatim co-search path is not used.
+Flag `RETRIEVAL_SPEC_DEFERRAL`, default **on**. `=0` restores b13aed07 exactly (tested).
 
-## Flag
-
-`RETRIEVAL_SPEC_BOOST_GUARD` defaults **on**. `RETRIEVAL_SPEC_BOOST_GUARD=0` restores the uncapped lift, the loose cover detector, the old lexical query, and both duplicate slots.
-
-When the flag is on:
-
-- A cover length is a millimetre within 64 characters of "nominal cover", "concrete cover", or "cover to reinforcement".
-- On a cover-length ask, the 1.2 filename lift is capped at 0.25 for a chunk that has a cover-word and a millimetre but does not state that length. A chunk that states the asked figure (including P1a's 98% MDD) keeps the full lift. Compaction asks and non-specification classes are not capped.
-- The BM25 leg of pre-answer retrieval appends `nominal cover cast against soil casted against blinding`. The embedded query stays the operator's words.
-- Duplicate bodies collapse to the higher-scored copy before the top-k cut.
-
-## Dedupe key
-
-`chunk_copy_key`: strip one leading `[source: …]` line, collapse whitespace, lowercase. Bodies shorter than 80 characters are not collapsed. The kept copy is the higher score (the candidate list is already in rank order).
-
-## Fixture ranks (fake embedder, not the live index)
-
-S1 ask, passed k=5, guard off: five `vol2-specification-*` chunks, scores 3.811, 3.758, 3.736, 3.710, 3.708. Cover copies absent.
-
-S1 ask, guard on: `vol5-other-4-signed` score 2.525 (the 75 mm clause), then four specification fillers that do not state a cover length (scores 1.283–1.196). The unsigned copy is not a second slot.
-
-P1a (98% MDD, modified Proctor) is rank 1 at 3.819 with the guard on and off.
-
-S2 (Vol 5 other documents 2 of 5, RSM 15492-Rev0, 95% MDD / CBR 25) is rank 1 at 2.491 with the guard on and off.
-
-S4 ("Which contract governs this project?") does not name the specification class, so this lift does not run. The PSA chunk 1032 text is not in the repo; it was not fixture-ranked.
+- `chunk_states_cover_length` → `_cover_clause_states_length`: a cover phrase (nominal / concrete / clear / minimum cover, cover to (steel) reinforcement) states a length when a single millimetre is within 64 characters, or is a list item up to 160 characters after the phrase with no sentence end or new numbered note in between. A millimetre that is one side of a size (`250mm x 250mm`) is not a cover length.
+- `chunk_defers_cover_to_drawings`: one sentence names the concrete/reinforcement cover and sends it to the drawings ("on the Drawings", "as shown on the drawings", "per drawings"). A hatch-cover sentence does not count.
+- `_rescue_spec_deferral_chunks` (candidate pool, before the top-k cut): only for a specification-scoped cover ask (`query_asks_spec_deferred_cover`), and only when no specification deferral clause is already pooled. `chunks_containing_all` with `drawings` + a cover phrasing, scoped to specification volumes already in the pool, plus an open pass on "cover specified" / "specified cover". Admits specification-named chunks whose sentence defers. The clause enters with its own cosine to the query.
+- `_apply_spec_deferral_boost` (after the numeric boost): the deferral clause takes the stated-figure lift (+2.5) and keeps its class lift (`_cap_specification_class_bonus` skips it). With it in the pool, drawing-named chunks that state the cover get +0.5 (the authority the clause names) and cover chunks naming the asked element (foundation / footing / raft …) get +0.3.
+- Compaction asks never take this path. S2 injection is byte-identical flag on vs off (tested).
 
 ## Tests
 
-`tests/test_fw3_s1_retrieval_rank.py`. Fixtures prefixed `FIXTURE-e-20260926-`. Clause text mirrors the quoted sentences only.
+`tests/test_fw4_spec_deferral_retrieval.py`, fixture `tests/fixtures/fw4_spec_deferral_chunks.json`. Chunk bodies are synthetic (`FIXTURE-e-20260927-…`, invented project Example Harbour Works). They keep the properties the tests need: clause 3.1.25.8 deferring cover with no cover millimetre; a drawing note whose 100 mm footing figure sits about 120 characters after the cover phrase; 75 mm contact-with-soil drawing notes; a lid size `250mm x 250mm`; and 95% MDD / CBR 25 compaction clauses. Each end-to-end test runs `rag_inject` with the fake embedder and with BAAI/bge-small-en-v1.5 (skipped unless cached and `HF_HUB_OFFLINE=1`).
 
-Relevant suite (this file, numeric-requirement, named-source, P1a, first-line hard rule, spec-title, hybrid, dual-query, letter-filename, rag injection, source class, one-chunk-per-document): **179 passed, 4 skipped** with `CEREBRUM_VIRGIN=false` and the same **179 passed, 4 skipped** with `CEREBRUM_VIRGIN=true`. `RAG_EMBEDDING_MODEL=fake`. `scripts/scan_exception_pass.py`: `RETURN: 0 new`.
+On the synthetic corpus the tests assert: S1 injects the deferral clause and the footing-cover drawing; `RETRIEVAL_SPEC_DEFERRAL=0` injects neither; S2 still injects the 95% MDD / CBR 25 clause and does not inject those two cover docs; S2's injected doc list is identical with the flag on and off.
 
-## Caveat
+## Limits
 
-These ranks are the fixture store with the fake embedder. The live index was not queried. Live rank 22 / score 3.264 for chunk 92 is from the attached probe on d708b5d, not a re-measure of this branch.
+Fixture store only. Prod was not queried.
