@@ -327,7 +327,7 @@ def test_g3_s1_spec_as_subject_bare_cover(corpus, monkeypatch):
 
 @pytest.mark.parametrize("ask", S2_PHRASINGS)
 def test_g3_s2_phrasing_unchanged_by_flag(corpus, monkeypatch, ask):
-    off, on, msg, audit = _inject_off_on(ask, monkeypatch)
+    off, on, msg, _audit = _inject_off_on(ask, monkeypatch)
     assert on == off, (off, on)
     assert SPEC_DOC not in on and ST200_DOC not in on, on
     if MDD_DOC in off:
