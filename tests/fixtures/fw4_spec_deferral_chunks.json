@@ -1,231 +1,145 @@
 {
- "_about": "FW4 S1/S2 pre-injection retrieval fixture. Chunk bodies copied from the local evidence of the FW3 remeasure (Agent C spec_cover_search / Agent E rag probes); drive paths replaced by FIXTURE names. evidence_chunk = original <doc>:<chunk> id, for traceability only.",
- "docs": [
-  {
-   "doc_id": "FIXTURE-fw4-vol2-spec-4of9",
-   "name": "FIXTURE-fw4 REDACTED).pdf",
-   "chunks": [
+  "_about": "FW4 S1/S2 pre-injection retrieval fixture. Every chunk body is synthetic (FIXTURE-e-20260927). Bodies keep the structural properties the tests assert: a 3.1.25.8 clause that defers cover to the drawings and states no cover millimetre; a drawing note whose 100 mm footing figure sits about 120 characters after the cover phrase (outside the 64-character window); a 75 mm contact-with-soil drawing note; a lid size 250mm x 250mm; and 95% MDD / CBR 25 compaction clauses. Invented project: Example Harbour Works. No text copied from a client document.",
+  "docs": [
     {
-     "evidence_chunk": "REDACTED:106",
-     "text": "after finishing. Attention shall be given to the curing of concrete containing cement replacement material. The Contractor shall prepare and submit a detailed method statement for curing of concrete and maintaining the curing regime to the standards and times specified. Curing shall be continued for a period of not less than 7 days from the time of placing the concrete. Concrete containing Ground Granulated Blast furnace Slag, Fly Ash or Silica Fume shall be protected for a period of at least 10 days. The concrete shall be kept protected against loss of moisture, rapid temperature change, rain and flowing water, mechanical injury, contamination by airborne dust and sand, drying winds and surface heating by the sun’s rays. The Contractor’s attention is particularly drawn to the importance of starting to cure as early as possible after placing concrete and maintaining full curing procedures throughout, as specified and directed. 126 of 738 67 Any concrete which exhibits plastic settlement or plastic or drying shrinkage cracking or which has not been properly cured is liable to rejection and shall be cut out and replaced with satisfactory concrete by the Contractor at his own expense. The maximum crack width is limited to a value of 0.30 and 0.1 to below table: Table 3-14: Concrete Crack Width Class Designation Description of Environment Design Crack width (mm) XS1 All structural elements except water retaining structure 0.30 XS2 Water retaining structure 0.10 3.1.24.1 Curing Methods All methods to be used for curing and protection of freshly placed concrete must receive the prior approval. These methods shall include the use of curing membranes, water, covers, shades and any other precautions that are required for the Contractor to ensure satisfactory curing of the concrete. The Contractor’s attention is drawn to the recommendations of the American Concrete Institute Standard ACI 308R-01 Guide to Curing Concrete and CIRIA /Concrete Society Guide to the construction of reinforced concrete in the Arabian Peninsula. For large concrete pours, in particular, the avoidance of thermal shock caused by rapid cooling is very important and the external faces of the hardening concrete shall be insulated to prevent heat loss such that the temperature difference specified in this specification is not exceeded. 3.1.24.2 Water Curing Water curing is the preferred method. Where used, the concrete shall be covered with sacking, hessian, or other absorbent material, or a 75 mm layer of sand, kept constantly wet for the minimum curing period, also covered with plastic sheeting to reduce loss by evaporation. Water for curing shall ensure that the temperature of all water used at all stages of the curing process is as close as possible to that of the concrete being cured. 3.1.24.3 Curing Membranes The Contractor shall submit full details of the materials he proposes to use including their comparative efficiency with respect to the specified method of water curing. The efficiency shall be a minimum of 90%. Curing membranes shall be of the resin based white reflective film type which fully degrades by exposure to UV"
+      "doc_id": "FIXTURE-e-20260927-spec-vol-a",
+      "name": "FIXTURE-e-20260927 Specification Volume A.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c01",
+          "text": "3.1.25.8 Fixing of bars. Binding wire shall be 1.4 mm in diameter and the ends turned inward. Spacer blocks fixed to the reinforcement shall give the cover specified in this volume, on the Drawings or as the engineer directs. This clause states no cover millimetre."
+        }
+      ]
     },
     {
-     "evidence_chunk": "REDACTED:109",
-     "text": "shall not be re- bent at the site of the original bend. Reinforcement shall be bent by gradual and uniform application of pressure by suitable machines to the forms and dimensions shown on the Contractor's schedules and in accordance with BS 8666. 3.1.25.8 Fixing of Reinforcement The Contractor shall be responsible for maintaining the reinforcement in the correct position during concreting and to this end reinforcing bars shall be fixed together as shown on the Drawings with such laps as are indicated, all to form a rigid cage. Bar crossings shall be secured with at least one turn of tying wire of minimum gauge 16 (dia 1.29mm), the ends of the tie being twisted together and turned down into the work. Every bar shall be secured in at least two places and in addition tie wire spacing shall be not greater than every fourth intersection. Patent stainless steel ties may be used for securing bars. Spacer units fixed to the reinforcement shall be used in all reinforced concrete to give the cover specified herein, on the Drawings or as directed. In slabs, spacers shall be used to support the bottom face reinforcement and chairs shall be used to support the top face reinforcement. The spacing of spacers and chairs shall be in accordance with ACI 315R-18/BS 7973-2. No ferrous metal part of any device used for connecting bars or for maintaining reinforcement in the correct position shall remain within the specified minimum concrete cover to the reinforcement except where expressly instructed or provided for within the Contract. 129 of 738 70 No permanent spacers to reinforcement shall be allowed to affect the overall uniformity of the surface appearance of Classes F2, F3, F3P, U1B, U2, U3 and U4 surface finishes which shall, in any event, comply with the Specification requirements. Reinforcement temporarily projecting from the concrete at construction or other joints shall be adequately supported and shall not be bent out of position unless expressly permitted or directed. Temporary supports to the reinforcement, other than the mild steel chairs referred to above, shall not be incorporated within the finished concrete. 3.1.25.9 Spacers Spacers shall conform to ACI 315R-18/BS 7973 Parts 1 & 2, shall be as small as practicable for their purpose and shall be securely fixed in place by approved means to ensure that they will not be displaced during the placing, vibration or finishing of the concrete. Favorable consideration will be given to the use of proprietary plastic or precast concrete spacers provided these are suitable for the particular use required. Any precast spacer blocks approved for use shall be at least equal in strength to the body of the concrete in which they are being placed. They shall be of equal durability and where used on an exposed face shall provide a good color match as required under the preceding Clause. Any blocks cast on site will be required to be of the same mix to the main body of the concrete. The use of spacer blocks"
+      "doc_id": "FIXTURE-e-20260927-dwg-footing-cover",
+      "name": "FIXTURE-e-20260927 DWG footing cover note.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c02",
+          "text": "THE CLEAR CONCRETE COVER TO STEEL REINFORCEMENT SHALL NOT BE LESS THAN THE FOLLOWING: BOTTOM OF FOOTINGS IN CONTACT WITH SOIL ON THIS SHEET : 100mm SURFACES AWAY FROM SOIL : 75mm"
+        }
+      ]
     },
     {
-     "evidence_chunk": "REDACTED:148",
-     "text": "▪ All floor drains shall be supplied and installed at the locations and to the details shown on the drawings and as specified herein. ▪ Each floor drain shall be of heavy duty uPVC with \"S\" or \"P\" trap complete with chrome plated heavy duty, 200 x 200mm, bronze strainer. The strainer shall be screwed to the body of the drain. All floor drains shall have chrome plated removable covers to their strainers or heavy duty aluminium cover. 4.3.4.10 Clean Outs ▪ All clean outs shall be supplied and installed at the locations and to the details shown on the Drawings and wherever specified herein. ▪ Each clean out shall be of the same material and dimensions as the pipe to be cleaned, and shall be placed in walls, slabs or floors as required for ease of operation. ▪ Where cleanouts terminate in floors, a bronze cleanout tile 200 x 200mm, with screwed and sealed cover shall be provided. Tile and cover shall be chrome plated. 4.3.4.11 Vent Caps ▪ Vent caps shall be supplied and installed on all waste, soil and vent stacks at the locations and to the details shown on the drawings and in accordance with this specification. ▪ Each vent cap shall be of uPVC and shall be solvent cemented onto the waste, vent and soil stack. 4.3.4.12 Septic Tank ▪ This shall be a rectangular chamber of concrete built underground and to dimension and depth as shown on the drawings. ▪ The base, walls and roof shall be of reinforced concrete construction. Concrete shall be to grade C40. ▪ The base shall be constructed on layer of 100mm blinding. For specification relating to concrete, refer to Specification for Concrete Works. ▪ One aluminium ladder shall be provided to access inside each section of the tank for cleaning purposes from time to time. A 600mm x 600mm manhole opening shall be provided on the roof of the septic tank. Adequate manhole cover of minimum size 680mm x 680mm with handgrip shall be provided as described for soak ways. The floor of the tank shall slope 1 in 30 towards one side or centre to facilitate cleaning of sludge and the manhole shall be located directly over this ▪ Initially the septic tank shall be filled with water to its outlet level before sewage is allowed to enter the tank. A small quantity of decaying organic matter should preferably be put into the septic tank to start the initial reaction. 4.3.4.13 Contaminated Water Drainage ▪ The Contaminated Water drainage system is required to collect specific discharges of predominantly contaminated water together with floor spillages within the buildings and other contaminant spillages. Flow rates, salinity, other contaminant levels and temperatures of the contaminated drainage shall be determined. ▪ Sources of possible spillage are to be routed via tundishes and hard piped systems above- ground as detailed by the CONTRACTOR'S piping/mechanical department, discharging to suitable lined reinforced concrete gullies and trenches from where the contaminated material shall be routed"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-dwg-st200-0000007-04",
-   "name": "FIXTURE-fw4 REDACTED.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:1",
-     "text": "GRADE 60 OR BS 4449:2005+A2:2009. 4. CLEAR COVER TO STEEL REINFORCEMENT SHALL BE THE MINIMUM CLEAR DISTANCE MEASURED FROM THE SURFACE OF THE CONCRETE TO ANY REINFORCING BAR INCLUDING LINKS AND STIRRUPS.. THE CLEAR CONCRETE COVER TO STEEL REINFORCEMENT SHALL NOT BE LESS THAN THE FOLLOWING: FOR BURIED STRUCTURE: BOTTOM FACE OF FOOTING & IN CONTACT WITH SOIL : 100mm SURFACES BELOW GROUND LEVEL & NOT IN CONTACT WITH SOIL : 75mm FOR STRUCTURE ABOVE GROUND LEVEL: INTERNAL & EXTERNAL FACES ABOVE GROUND LEVEL & NOT IN CONTACT WITH SOIL : 50mm COVER TOLERANCE IS ADDED TO THE MINIMUM COVER TO OBTAIN THE NORMAL CONCRETE COVER USED IN CONSTRUCTION. RECOMMENDED COVER TOLERANCES: ELEMENTS CAST AGAINST FORM WORKS : 10mm (ASSUMING GOOD QUALITY CONTROL) PRECAST ELEMENTS : 5mm (IF CASTING IS FACTORY-CONTROLLED AND GOOD QUALITY) 5. WHERE LAPS ARE USED, THE LAP LENGTHS SHALL BE AS STATED IN THE FOLLOWING TABLE EXCEPT WHERE NOTED OTHERWISE ON THE DRAWINGS: 6. THE LAP SPLICE LENGTHS SHALL BE IN ACCORDANCE WITH AASHTO LRFD. 7. WHERE BARS OF DIFFERENT DIAMETERS ARE LAPPED, THE LAP LENGTH SHALL BE BASED ON THE SMALLER DIAMETER BAR. 8. NOT MORE THAN 50% OF BARS SHALL BE LAPPED AT A SECTION. 9. **THE ANCHORAGE LENGTH FOR HORIZONTAL BARS WITH MORE THAN 300mm OF CONCRETE CAST BELOW SHALL BE INCREASED BY 40%. THE ANCHORAGE LENGTHS IN THE TABLE ARE FOR THE STRAIGHT LENGTH OF A STANDARD HOOK. 10. REINFORCEMENT BARS INCLUDING HELICAL REINFORCEMENT AND DOWELS BUT NOT FABRIC REINFORCEMENT ARE CALLED UP ON THE DRAWINGS AS FOLLOWS: 10T16-01-150 WHERE 10 REFERS TO THE NUMBER OF BARS T TYPE OF BAR 16 DIAMETRE OF BAR 01 BAR MARK 150 SPACING OF BAR 11. LEGEND TO POSITION OF REINFORCING BARS: FF : FAR FACE EF : EACH FACE NF : NEAR FACE ALT : IN AN ALTERNATE ARRANGEMENT STG : STAGGERED DESIGN LOADINGS 1. ALL STRUCTURAL COMPONENTS ARE DESIGNED IN ACCORDANCE WITH MINISTRY OF MUNICIPAL AND RURAL AFFAIRS (MOMRA), UNDERPASS/TUNNEL DESIGN SPECIFICATION 2013, THE KINGDOM OF SAUDI ARABIA (KSA) MINISTRY OF COMMUNICATION, HIGHWAY DESIGN MANUAL VOL.3, STRUCTURAL DESIGN SPECIFICATIONS AND AASHTO LRFD DESIGN SPECIFICATIONS 9TH EDITION. WHERE CONFLICTS / INCONSISTENCIES EXIST BETWEEN THE CLAUSES, THE MOST CONSERVATIVE CLAUSE WILL BE USED. 2. DESIGN LIFE OF UNDERPASS STRUCTURE TO BE 100 YEARS. 3. DEAD LOAD AND MATERIAL OWN WEIGHT MASS CONCRETE 24.0 kN/m³ REINFORCED/PRESTRESSED CONCRETE 25.0 kN/m³ STRUCTURAL STEELWORK 78.5 kN/m³ SURFACING 23.0 kN/m³ PARAPET 5.0 kN/m ( TO BE VERIFIED WITH ACTUAL) UTILITIES 2.0 kN/m² ( TO BE VERIFIED WITH ACTUAL) UNIT WEIGHT OF SOIL FILL ABOVE WATER TABLE 18 kN/m³ UNIT WEIGHT OF SOIL BELOW WATER TABLE 10.0 kN/m³ UNIT WEIGHT OF SATURATED SOIL 20 kN/m³ UNIT WEIGHT OF WATER 10 kN/m³ 4. TEMPERATURE COEFFICIENT OF THERMAL EXPANSION FOR CONCRETE SHALL BE 10.8X10^-6°C. THERMAL FORCES DUE TO UNIFORM TEMPERATURE VARIATION & TEMPERATURE GRADIENT SHALL BE IN ACCORDANCE WITH THE REQUIREMENT OF BS EN 1991-1-5 SECTION 5. FOR BURIED CONCRETE BOX AND PORTAL FRAME STRUCTURES, AND MASONRY ARCH BRIDGES WITH SOLID SPANDRELS, WHERE"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-vol5-4of5-unsigned",
-   "name": "FIXTURE-fw4 Vol 5 - Other Documents (4 of 5) not signed.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:92",
-     "text": "[source: FIXTURE-fw4 Vol 5 - Other Documents (4 of 5) not signed.pdf]\n0.21 %. The maximum reported \npH value is 8.0. \n \nIn accordance with Table A2 of BS8500-1-2006, and given an SO4 of 0.132 % the design sulfate \nclass will be DS-1. \n \nIn accordance with BS8500-1-2006, a site exposure class of (XC1) is considered representative for \nthe concrete elements. Referring to Table A.3 of the nominal cover should be 50mm for \nfoundations cast against blinding and 75mm for foundations casted against soil. Furthermore, the \nminimum designated concrete is RC20/25."
+      "doc_id": "FIXTURE-e-20260927-dwg-soil-75-a",
+      "name": "FIXTURE-e-20260927 DWG soil contact note A.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c03",
+          "text": "7. MINIMUM CLEAR COVER TO REINFORCEMENT FOR ELEMENTS IN CONTACT WITH SOIL : 75mm FOR THE CHAMBER WALLS."
+        }
+      ]
     },
     {
-     "evidence_chunk": "REDACTED:518",
-     "text": "[source: FIXTURE-fw4 Vol 5 - Other Documents (4 of 5) not signed.pdf]\n0.21 %. The maximum reported pH value \nis 8.0. \n \nIn accordance with Table A2 of BS8500‐1‐2006, and given an SO4 of 0.132 % the design sulfate \nclass will be DS‐1. \n \nIn accordance with BS8500‐1‐2006, a site exposure class of (XC1) is considered representative for \nthe  concrete  elements.  Referring  to  Table  A.3  of  the  nominal  cover  should  be  50mm  for \nfoundations cast against blinding and 75mm for foundations casted against soil. Furthermore, the"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-vol5-4of5-signed",
-   "name": "FIXTURE-fw4 Vol 5 - Other Documents (4 of 5) signed.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:92",
-     "text": "[source: FIXTURE-fw4 Vol 5 - Other Documents (4 of 5) signed.pdf]\n0.21 %. The maximum reported \npH value is 8.0. \n \nIn accordance with Table A2 of BS8500-1-2006, and given an SO4 of 0.132 % the design sulfate \nclass will be DS-1. \n \nIn accordance with BS8500-1-2006, a site exposure class of (XC1) is considered representative for \nthe concrete elements. Referring to Table A.3 of the nominal cover should be 50mm for \nfoundations cast against blinding and 75mm for foundations casted against soil. Furthermore, the \nminimum designated concrete is RC20/25."
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-vol5-2of5-unsigned",
-   "name": "FIXTURE-fw4 REDACTED) not signed.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:79",
-     "text": "[source: FIXTURE-fw4 REDACTED) not signed.pdf]\nng type of cement (Type V SRC) in the foundation \nand subsurface construction. Cement content should not be less than 350kg/m3, while the minimum \nconcrete cover for the reinforcement should not be less than 60mm. with a water/cement ratio not \nexceeding 0.45. In addition, double coats of bituminous paints should be applied on concrete surface. \n8.8 \nGeneral Sewage System \nSince there is no sewage system near the project, therefore proper sewage system and tanks for the"
+      "doc_id": "FIXTURE-e-20260927-dwg-soil-75-b",
+      "name": "FIXTURE-e-20260927 DWG soil contact note B.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c04",
+          "text": "8. CLEAR COVER TO REINFORCEMENT IN CONTACT WITH SOIL : 75mm BESIDE THE SERVICE PIT."
+        }
+      ]
     },
     {
-     "evidence_chunk": "REDACTED:81",
-     "text": "[source: FIXTURE-fw4 REDACTED) not signed.pdf]\ne, and compacted to ninety five percent (95%) of \nmaximum dry density to get a minimum CBR value of 25. The material could be compacted to 98% or \neven 100% of maximum dry density to get a minimum CBR value of 25 under the approval of the \nengineer. \n9.2 \nCut Section  \nIn the cut section the bottom twenty (20) centimeters of the subgrade layer shall be scarified, brought \nto uniform moisture content within the specified range and compacted to ninety five percent (95%) to"
+      "doc_id": "FIXTURE-e-20260927-dwg-soil-75-c",
+      "name": "FIXTURE-e-20260927 DWG soil contact note C.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c05",
+          "text": "9. COVER TO REINFORCEMENT IN CONTACT WITH SOIL : 75mm AT THE DUCT BANK WALL."
+        }
+      ]
     },
     {
-     "evidence_chunk": "REDACTED:82",
-     "text": "[source: FIXTURE-fw4 REDACTED) not signed.pdf]\nge and compacted to ninety five percent (95%) to \nget a minimum CBR value of 25. The material could be compacted to 98% or even 100% of maximum \ndry density to get a minimum CBR value of 25 under the approval of the engineer. \n9.3 \nFill Material Section (Embankment) \nAt least twenty (20) cm of material placed on the embankment to form the sub-grade layer shall meet \nthe requirement of class A-1-a, A-1-b or A-2-4(0) as determined by MRDTM 210, with a minimum"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-vol5-2of5-unsigned-b",
-   "name": "FIXTURE-fw4 REDACTED) not signed copy.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:79",
-     "text": "[source: FIXTURE-fw4 REDACTED) not signed copy.pdf]\nng type of cement (Type V SRC) in the foundation \nand subsurface construction. Cement content should not be less than 350kg/m3, while the minimum \nconcrete cover for the reinforcement should not be less than 60mm. with a water/cement ratio not \nexceeding 0.45. In addition, double coats of bituminous paints should be applied on concrete surface. \n8.8 \nGeneral Sewage System \nSince there is no sewage system near the project, therefore proper sewage system and tanks for the"
+      "doc_id": "FIXTURE-e-20260927-notes-nominal",
+      "name": "FIXTURE-e-20260927 Site notes durability.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c06",
+          "text": "Example Harbour Works durability note. The nominal cover should be 50mm where foundations are cast against blinding and 75mm where foundations are cast against soil."
+        }
+      ]
     },
     {
-     "evidence_chunk": "REDACTED:81",
-     "text": "[source: FIXTURE-fw4 REDACTED) not signed copy.pdf]\ne, and compacted to ninety five percent (95%) of \nmaximum dry density to get a minimum CBR value of 25. The material could be compacted to 98% or \neven 100% of maximum dry density to get a minimum CBR value of 25 under the approval of the \nengineer. \n9.2 \nCut Section  \nIn the cut section the bottom twenty (20) centimeters of the subgrade layer shall be scarified, brought \nto uniform moisture content within the specified range and compacted to ninety five percent (95%) to"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-dwg-st400-2000462-01",
-   "name": "FIXTURE-fw4 REDACTED.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:3",
-     "text": "[source: FIXTURE-fw4 REDACTED.pdf]\nEQUIVALENT.\n- PLOT CONNECTION INSPECTION CHAMBER\n- 6. CONCRETE GRADE SHALL BE C35/45 WITH 28 DAYS CUBE\n- STRENGTH AS 45N/mm2 AND MAXIMUM AGGREGATE SIZE\n- AS 20mm.\n- 7. MINIMUM CLEAR COVER TO REINFORCEMENT\n- ALL CONCRETE ELEMENTS\n- IN CONTACT WITH SOIL : 75mm\n- FOR CONCRETE ELEMENTS NOT IN\n- CONTACT WITH SOIL\n- TOP SLAB : 40 mm\n- COLUMN : 50mm\n- BEAM : 50mm\n- 8. MINIMUM LAP LENGTH SHALL BE 50 DIAMETER OF BAR.\n- 9. FOR WALL CUTOUT SIZE AND LOCATION DETAILS REFER"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-dwg-st400-2000469-02",
-   "name": "FIXTURE-fw4 REDACTED.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:3",
-     "text": "[source: FIXTURE-fw4 REDACTED.pdf]\nAS 45N/mm2 AND MAXIMUM AGGREGATE SIZE\n- AS 20mm.\n- 8. MINIMUM CLEAR COVER TO REINFORCEMENT\n- ALL CONCRETE ELEMENTS\n- IN CONTACT WITH SOIL : 75mm\n- TYPICAL MANHOLE PIT SECTION B\n- FOR CONCRETE ELEMENTS NOT IN\n- CONTACT WITH SOIL\n- TOP SLAB : 40 mm\n- 1 : 20\n- TYPICAL PLAN VIEW OF MANHOLE PIT\n- COLUMN : 50mm\n- BEAM : 50mm\n- 9. MINIMUM LAP LENGTH SHALL BE 50 DIAMETER OF BAR.\n- 10. FOR TOP SLAB SIZE AND LOCATION OPENING DETAILS\n- REFER ELECTRICAL DRAWINGS."
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-dwg-st400-2000477-01",
-   "name": "FIXTURE-fw4 REDACTED.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:3",
-     "text": "[source: FIXTURE-fw4 REDACTED.pdf]\nS SHALL BE OF GRADE\n- 1.4401 (316) OR EQUIVALENT.\n- 6. CONCRETE GRADE SHALL BE C35/45 WITH 28 DAYS CUBE\n- STRENGTH AS 45N/mm2 AND MAXIMUM AGGREGATE SIZE\n- AS 20mm.\n- 7. MINIMUM CLEAR COVER TO REINFORCEMENT\n- ALL CONCRETE ELEMENTS\n- N 2735841115\n- IN CONTACT WITH SOIL : 75mm\n- FOR CONCRETE ELEMENTS NOT IN\n- CONTACT WITH SOIL\n- TOP SLAB : 40 mm\n- COLUMN : 50mm\n- BEAM : 50mm\n- 8. MINIMUM LAP LENGTH SHALL BE 50 DIAMETER OF BAR.\n- 9. FOR WALL CUTOUT SIZE AND LOCATION DETAILS REFER"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-dwg-st400-2000463-01",
-   "name": "FIXTURE-fw4 REDACTED.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:3",
-     "text": "[source: FIXTURE-fw4 REDACTED.pdf]\nCONCRETE GRADE SHALL BE C35/45 WITH 28 DAYS CUBE\n- STRENGTH AS 45N/mm2 AND MAXIMUM AGGREGATE SIZE\n- AS 20mm.\n- 7. MINIMUM CLEAR COVER TO REINFORCEMENT\n- ALL CONCRETE ELEMENTS\n- IN CONTACT WITH SOIL : 75mm\n- FOR CONCRETE ELEMENTS NOT IN\n- PLAN VIEW OF PLOT TO PLOT CONNECTION PC-03 (SPECIAL)\n- CONTACT WITH SOIL\n- TOP SLAB : 40 mm\n- 1 : 50\n- COLUMN : 50mm\n- REFER DRAWING IP-INF-054-0000-JCB-DWG-ST-200-2000103 FOR LOCATION OF THE PLOT CONNECTION\n- BEAM : 50mm"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-vol3-drawings-6of7",
-   "name": "FIXTURE-fw4 Vol 3 – Drawings (6 of 7) not signed.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:17",
-     "text": "[source: FIXTURE-fw4 Vol 3 – Drawings (6 of 7) not signed.pdf]\nNCE MEASURED FROM THE SURFACE OF  THE CONCRETE TO\nANY REINFORCING BAR INCLUDING LINKS AND STIRRUPS.. THE CLEAR CONCRETE COVER TO STEEL REINFORCEMENT SHALL NOT BE LESS THAN\nTHE FOLLOWING:\nFOR BURIED STRUCTURE:\nBOTTOM FACE OF FOOTING & IN CONTACT WITH SOIL\n: 100mm\nSURFACES BELOW GROUND LEVEL & NOT IN CONTACT WITH SOIL\n: 75mm\n    FOR STRUCTURE ABOVE GROUND LEVEL:\n   \nINTERNAL & EXTERNAL FACES ABOVE GROUND LEVEL &  NOT IN CONTACT WITH SOIL\n    :   50mm"
+      "doc_id": "FIXTURE-e-20260927-notes-60mm",
+      "name": "FIXTURE-e-20260927 Site notes foundation bars.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c07",
+          "text": "Example Harbour Works bar note. For the foundation the minimum concrete cover is 60mm to the outer bar."
+        }
+      ]
     },
     {
-     "evidence_chunk": "REDACTED:1955",
-     "text": "[source: FIXTURE-fw4 Vol 3 – Drawings (6 of 7) not signed.pdf]\nTHE SIZE OF BAR IF GREATER, AT 1000mm c/c; CHAIRS\nIN SLABS SHALL BE A MINIMUM T12@1000mm c/c; AND MINIMUM TIES IN WALLS SHALL BE T8@1000mm c/c.\n5.5  CLEAR COVER TO REINFORCEMENT INCLUDING LINKS, STIRRUPS, AND TIES SHALL BE AS FOLLOWS:-\na) STRUCTURE IN CONTACT WITH SOIL\nSTRIP FOOTINGS/RAFT\n=\n75mm\nWALL AND COLUMN\n=\n50mm\nSLAB AT GRADE LEVEL\n=\n50mm\nb) SUPER STRUCTURE\nCOLUMNS\n=\n40mm\nBEAMS\n=\n40mm\nSLABS\n=\n30mm\nWALLS\n=\n40mm\nALL CONCRETE ELEMENTS IN CONTACT WITH WATER  50mm\n5.6"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-vol3-drawings-4of7",
-   "name": "FIXTURE-fw4 Vol 3 – Drawings (4 of 7).pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:194",
-     "text": "BE THE MINIMUM CLEAR DISTANCE MEASURED FROM THE SURFACE OF THE CONCRETE TO ANY REINFORCING BAR INCLUDING LINKS AND STIRRUPS.. THE CLEAR CONCRETE COVER TO STEEL REINFORCEMENT SHALL NOT BE LESS THAN THE FOLLOWING: FOR BURIED STRUCTURE: BOTTOM FACE OF FOOTING & IN CONTACT WITH SOIL : 100mm SURFACES BELOW GROUND LEVEL & NOT IN CONTACT WITH SOIL : 75mm FOR STRUCTURE ABOVE GROUND LEVEL: INTERNAL & EXTERNAL FACES ABOVE GROUND LEVEL & NOT IN CONTACT WITH SOIL : 50mm COVER TOLERANCE IS ADDED TO THE MINIMUM COVER TO OBTAIN THE NORMAL CONCRETE COVER USED IN CONSTRUCTION. RECOMMENDED COVER TOLERANCES: OTHER ELEMENTS CAST AGAINST FORM WORKS : 10mm (ASSUMING GOOD QUALITY CONTROL) ELEMENTS : 5mm (AS CASTING IS FACTORY-CONTROLLED AND GOOD QUALITY) 5. WHERE LAPS ARE USED, THE LAP LENGTHS SHALL BE AS STATED IN THE FOLLOWING TABLE EXCEPT WHERE NOTED OTHERWISE ON THE DRAWINGS: 6. THE LAP SPLICE LENGTHS SHALL BE IN ACCORDANCE WITH AASHTO LRFD. 7. WHERE BARS OF DIFFERENT DIAMETERS ARE LAPPED, THE LAP LENGTH SHALL BE BASED ON THE SMALLER DIAMETER BAR. 8. NOT MORE THAN 50% OF BARS SHALL BE LAPPED AT A SECTION. 9. **THE ANCHORAGE LENGTH FOR HORIZONTAL BARS WITH MORE THAN 300mm OF CONCRETE CAST BELOW SHALL BE INCREASED BY 40%. THE ANCHORAGE LENGTHS IN THE TABLE ARE FOR THE STRAIGHT LENGTH OF A STANDARD HOOK. 10. REINFORCEMENT BARS INCLUDING HELICAL REINFORCEMENT AND DOWELS BUT NOT FABRIC REINFORCEMENT ARE CALLED UP ON THE DRAWINGS AS FOLLOWS: 10T16-01-150 WHERE 10 REEFERS TO THE NUMBER OF BARS T TYPE OF BAR 16 DIAMETRE OF BAR 01 BAR MARK 150 SPACING OF BAR 11. LEGEND TO POSITION OF REINFORCING BARS: FF : FAR FACE EF : EACH FACE NF : NEAR FACE ALT : IN AN ALTERNATE ARRANGEMENT STG : STAGGERED DESIGN LOADINGS 1. ALL STRUCTURAL COMPONENTS ARE DESIGNED IN ACCORDANCE WITH MINISTRY OF MUNICIPAL AND RURAL AFFAIRS (MOMRA), UNDERPASS/TUNNEL DESIGN SPECIFICATION 2013, THE KINGDOM OF SAUDI ARABIA (KSA) MINISTRY OF COMMUNICATION, HIGHWAY DESIGN MANUAL VOL.3, STRUCTURAL DESIGN SPECIFICATIONS AND AASHTO LRFD DESIGN SPECIFICATIONS 9TH EDITION. WHERE CONFLICTS / INCONSISTENCIES EXIST BETWEEN THE CLAUSES, THE MOST CONSERVATIVE CLAUSE WILL BE USED. 2. DESIGN LIFE OF UNDERPASS STRUCTURE TO BE 100 YEARS. 3. DEAD LOAD AND MATERIAL OWN WEIGHT MASS CONCRETE 24.0 kN/m³ REINFORCED/PRESTRESSED CONCRETE 25.0 kN/m³ STRUCTURAL STEELWORK 78.5 kN/m³ SURFACING 23.0 kN/m³ PARAPET 5.0 kN/m ( TO BE VERIFIED WITH ACTUAL) UTILITIES 2.0 kN/m² ( TO BE VERIFIED WITH ACTUAL) UNIT WEIGHT OF SOIL FILL ABOVE WATER TABLE 18 kN/m³ UNIT WEIGHT OF SOIL BELOW WATER TABLE 10.0 kN/m³ UNIT WEIGHT OF SATURATED SOIL 20 kN/m³ UNIT WEIGHT OF WATER 10 kN/m³ 4. TEMPERATURE THERMAL FORCES DUE TO UNIFORM TEMPERATURE VARIATION & TEMPERATURE GRADIENT SHALL BE IN ACCORDANCE WITH THE REQUIREMENT OF BS EN 1991-1-5 SECTION 5. COEFFICIENT OF THERMAL EXPANSION FOR CONCRETE SHALL BE 10.8X10^-6°C. 5. WIND LOAD WIND LOADING ARE CONSIDERED FOR UNDERPASS/TUNNEL STRUCTURE DESIGN IN ACCORDANCE WITH CLAUSE 3.8 OF AASHTO-LRFD BASED ON WIND GUST VELOCITIES (WITH 3-SEC WIND GUST SPEED)"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-vol2-spec-3of9",
-   "name": "FIXTURE-fw4 REDACTED) not signed.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:1056",
-     "text": "[source: FIXTURE-fw4 REDACTED) not signed.pdf]\nshall be welded to the top of the earth well for \nbranch connections. The well shall be protected by a concrete housing with a mild Steel or \nconcrete cover of 250mm x 250mm x 10mm at grade level. \n \n2.8 \nEARTH PITS \nA. \nGenerally: \n \n1. Unless required otherwise by the electrical supply authority or noted otherwise in the \nparticular specification, schedules or drawings concrete earth pits with cast iron covers \nshall be used"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-dwg-st100-2000001-01",
-   "name": "FIXTURE-fw4 REDACTED.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:23",
-     "text": "[source: FIXTURE-fw4 REDACTED.pdf]\nENTERED ON GRID UNO.\n- APPROVED BY THE ENGINEERS.\n- AND STIRRUPS. SIMILARLY, NOMINAL COVER TO CONCRETE NOT IN CONTACT WITH THE GROUND\n- SHALL BE 50mm FROM SURFACE TO MAIN REINFORCEMENT. SPACERS WILL BE OF CONCRETE OF\n- 1.19 DESIGN LIFE OF THE STRUCTURE OF THIS PROJECT SHALL MAINTAIN A MINIMUM OF 75 YEARS LIFE PERIOD. THE\n- 7.4 ALL SUBSTRUCTURE CONCRETE WORKS SHOULD BE PROTECTED WITH BITUMINOUS WATER\n- THE SAME MIX AS THE SUBSTRATE CONCRETE IN WHICH THEY WILL BE EMBEDDED OR OF THE"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-dwg-sw100-1000003-a",
-   "name": "FIXTURE-fw4 REDACTED.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:3",
-     "text": "[source: FIXTURE-fw4 REDACTED.pdf]\nD MATCH WITH SURROUNDING BITUMINOUS /PAVED AREAS.\n- 11. ALL CONCRETE SHALL BE CLASS 'A' UNLESS OTHERWISE INDICATED. SULFATE RESISTING PORTLAND CEMENT (TYPE V) COMPLYING\n- WITH BS 4027 SHALL BE USED IN ALL CONCRETE MIXES.\n- 12. STEEL REINFORCEMENT SHALL BE GRADE 460 (BS 4449) STEEL BARS OR AS SPECIFIED.\n- 13. ALL REINFORCEMENT IN MANHOLES/CHAMBERS SHALL BE EPOXY COATED AS SPECIFIED.\n- 14. MINIMUM COVER TO REINFORCEMENT SHALL BE 50mm, UNLESS SPECIFIED OTHERWISE ."
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-vol5-2of5-rsm15492",
-   "name": "FIXTURE-fw4 REDACTED).pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:8",
-     "text": "of weakness or soil layering. - The ground to be excavated is not level. - There are vibration forces. - The presence of groundwater table and the fluctuation due to the seasonal precipitation and surface runoff, as well as irrigation water used for the landscape areas. In this case, it recommended using a suitable protection and drainage system such as French drain. If fill is used to raise the grade as engineering fill around the foundation, a proper fill (A-1-a or A-1-b, controlled by the Soil Engineer) should be spread in uniform lifts not exceeding 25cm in uncompacted thickness and compacted to a minimum standard compaction of 95%. Appendix D presents the Engineered Fill requirements. 8.5 Suitable and Unsuitable Material Based on laboratory tests the investigated soils are classified as A-1-a, A-1-b, A-2-4(0), A-2-6, A-2-7, A-7-6, A-4, A-6 material as per AASHTO classification. These materials classified as A-1-a, A-1-b and A-2-4 are suitable for reuse as fill around footings or for general fill. Cohesionless soils (A3) are compacted by some means of confining the soil as per AASHTO M 145. Soil Type** Average SPT (N Values) H:V ratio Slope angle* Very loose & loose < 10 1.5 : 1 34° Medium dense to dense 10 to 50 1 : 1 45° Very Dense > 50 0.75 : 1 53° Rock Rock 0.25 : 1 76° 20 of 546 -----------------------------------18------------------------------------- RSM 15492-Rev0 Diriyah Gate Development Project 8.6 Cavity Probing In mostly boreholes partial to total water loss were observed during drilling works. This could indicate a fractured rock but also could indicate the presence of some cavities. Therefore, the condition of rock should be evaluated after excavation and during foundation inspection visit to provide the proper recommendation. 8.7 Corrosion Control According to the chemical analysis which has been conducted on the subsurface soil, it is recommended to use a Portland sulphate resisting type of cement (Type V SRC) in the foundation and subsurface construction. Cement content should not be less than 350kg/m3, while the minimum concrete cover for the reinforcement should not be less than 60mm. with a water/cement ratio not exceeding 0.45. In addition, double coats of bituminous paints should be applied on concrete surface. 8.8 General Sewage System Since there is no sewage system near the project, therefore proper sewage system and tanks for the waste water should be constructed. 9) PREPARATION OF SUITABLE SUBGRADE MATERIAL AND PAVEMENT DESIGN (Reference to M.O.T. Specification) 9.1 Touch Grade Section In the touch grade section, the top twenty (20) centimeters subgrade layer shall be scarified, brought to uniform moisture content within the specified range, and compacted to ninety five percent (95%) of maximum dry density to get a minimum CBR value of 25. The material could be compacted to 98% or even 100% of maximum dry density to get a minimum CBR value of 25 under the approval of the engineer. 9.2 Cut Section In the cut section the bottom twenty (20) centimeters of the subgrade layer shall be scarified, brought to"
+      "doc_id": "FIXTURE-e-20260927-spec-lid",
+      "name": "FIXTURE-e-20260927 Specification Volume B.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c08",
+          "text": "The inspection pit shall be protected by a concrete housing with a concrete cover of 250mm x 250mm x 10mm at grade level."
+        }
+      ]
     },
     {
-     "evidence_chunk": "REDACTED:9",
-     "text": "uniform moisture content within the specified range and compacted to ninety five percent (95%) to get a minimum CBR value of 25. The material could be compacted to 98% or even 100% of maximum dry density to get a minimum CBR value of 25 under the approval of the engineer. 9.3 Fill Material Section (Embankment) At least twenty (20) cm of material placed on the embankment to form the sub-grade layer shall meet the requirement of class A-1-a, A-1-b or A-2-4(0) as determined by MRDTM 210, with a minimum soaked CBR value of twenty five (25) as determined by MRDTM 213 when compacted to ninety five percent (95%) of maximum dry density to get a minimum CBR value of 25. The material could be compacted to 98% or even 100% of maximum dry density to get a minimum CBR value of 25 under 21 of 546 -----------------------------------19------------------------------------- RSM 15492-Rev0 Diriyah Gate Development Project the approval of the engineer. The entire subgrade layer shall be compacted to the specified density in one layer or two approximately equal layers. The pavement design after preparation of the suitable subgrade materials in accordance with section 10.0 is recommended to be as follows: Bituminous Wearing course 05cm Subgrade Material 20cm 10) LIMITATION OF REPORT The recommendations which are given in this report are based on the assumption that the soil condition does not deviate appreciably from those disclosed in the borings and laboratory test results. At the time of construction, if there will be any unanticipated variations in the subsurface conditions or if the proposed construction will differ from those planned at this time, as it is described in this report, the SAFCO should be notified to verify the bottom of excavation so that supplementary recommendations can be given. Please note that all the samples recovered from this investigation will be discarded after 15 days upon the submission of this final report if the client does not ask formally for the retention of the samples. Our company, after having been chosen to perform this geotechnical investigation, shall in case of counter claims be liable only to the extent of what has been paid for the work done. 22 of 546 APPENDIX A SITE & BOREHOLES LOCATION PLANS 23 of 546 24 of 546 2735000.000 2735000.000 2737500.000 2737500.000 658000.000 658000.000 660000.000 660000.000 662000.000 662000.000 N PROJECT NAME: Diriyah Gate Development Project PROJECT REF:RSM 15492 LOCATION: Diriyah, Riyadh, KSA Trail pits Boreholes Legend 25 of 546 APPENDIX B SUMMARY OF FIELD WORK 26 of 546 ---------------------------------------1--------------------------------------- RSM 15492-Rev0 Diriyah Gate Development Project Summary of Field Works Borehole No. Northing (m) Easting (m) Elevation WGS (m) Actual Depth (m) In-Situ Tests Remark BH-1 2737363.120 658331.01 660.038 15 BH-2 2737231.440 658534 657.732 20 Piezometer BH-3R 2737241 658789 656.745 15 Repeated BH-4R 2737165 658941 654.43 15 Repeated BH-7R 2737392 660926 662.165 15 Repeated BH-8 2737276.090 660736.640 660.16 15 BH-9R 2737230 660893 661.799 25 Piezometer & Packer Repeated BH-10 2737092.800 660728.220 662.341 15 BH-12R 2737053 658917 657.92 25 Repeated BH-13 2737010.190"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-itp-earthworks-subgrade",
-   "name": "FIXTURE-fw4 ITP Earth Works upto Bottom of Subgrade and under Structures.pdf",
-   "chunks": [
-    {
-     "evidence_chunk": "REDACTED:13",
-     "text": "[source: FIXTURE-fw4 ITP Earth Works upto Bottom of Subgrade and under Structures.pdf]\new) = of relevant records and documents only\nDate\nTop 60 cm of Embankment- \nCompaction ≥ 95% of MDD.\nS.Ruben\nMohamed Sobhi\nQC Engineer \nQuality Manager\n25/03/2024\n25/03/2024\nSherif Abdulsattar\nProject Director\n25/03/2024\n4.1\nCompaction of existing soil before receiving fill\nVisual Inspection\nI\nKSA Ministry of Transport, General Specs for \nRoad & Bridge Construction Part 2 Para. \n2.05.4.3- MOT\nW\nQC/TPL\nP\nP\nWork Inspection \nRequest , Survey \nSheet and Test Report"
+      "doc_id": "FIXTURE-e-20260927-spec-earthworks",
+      "name": "FIXTURE-e-20260927 Specification Earthworks.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c09",
+          "text": "Example Harbour Works earthworks. The road pavement subgrade shall be compacted to 95% of maximum dry density so the reported CBR is 25."
+        }
+      ]
     },
     {
-     "evidence_chunk": "REDACTED:23",
-     "text": "[source: FIXTURE-fw4 ITP Earth Works upto Bottom of Subgrade and under Structures.pdf]\n-1-a, A-1-b & A-2-4 Embankement & Structural fill\nCompaction requirment for Bottom Portion of Embankment Compaction ≥ 90% of MDD\nCompaction requirment for Top 60 cm of Embankment & Structral fill: Compaction ≥ 95% of MDD.\nCompaction requirment for Existing Soil & NGL Compaction ≥ 90% of MDD\nTest locations are clean & free from debris?\nThe required relative density is attained?\nExcavation Final level & profile is as per approved Shop drawings/ IFC Drawings and with in specification tolerance"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-ccf-gate-2l",
-   "name": "FIXTURE-fw4 CCF Gate 2L Rev00.xlsx",
-   "chunks": [
+      "doc_id": "FIXTURE-e-20260927-notes-subgrade",
+      "name": "FIXTURE-e-20260927 Site notes subgrade.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c10",
+          "text": "In the cut the road subgrade is compacted to 95% of maximum dry density before the pavement is placed."
+        }
+      ]
+    },
     {
-     "evidence_chunk": "REDACTED:597",
-     "text": "[source: FIXTURE-fw4 CCF Gate 2L Rev00.xlsx]\nh 275mm\tm2\t28\t0\nM\tCrushed sand, depth 50mm\tm2\t8\t0\nN\t200 x 100 x 80mm thick block paving in contrasting colour laid in stretcher pattern\tm2\t95\t0\nLight Duty Pavements (cont'd)\nRaised junction, complete as specified and as shown on drawings\nA\tSub-grade, CBR≥22%, depth 300mm\tm2\t15\t0\nB\tLower road base (granular base material),  depth 275mm\tm2\t28\t0\nC\tCrushed sand, depth 50mm\tm2\t8\t0\nD\t200 x 100 x 80mm thick block paving in contrasting colour laid in stretcher pattern\tm2\t95\t0"
-    }
-   ]
-  },
-  {
-   "doc_id": "FIXTURE-fw4-dwg-tm400-1000051-a",
-   "name": "FIXTURE-fw4 REDACTED.pdf",
-   "chunks": [
+      "doc_id": "FIXTURE-e-20260927-notes-embankment",
+      "name": "FIXTURE-e-20260927 Site notes embankment.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c11",
+          "text": "Embankment fill under the road shall be compacted to 95% of MDD in a single layer."
+        }
+      ]
+    },
     {
-     "evidence_chunk": "REDACTED:1",
-     "text": "[source: FIXTURE-fw4 REDACTED.pdf]\nNIMUM\n- CBR OF 30% SHALL BE CONSTRUCTED UNDER ALL\n- THE TYPES OF PAVEMENTS.\n- 4. ALL THE ITEMS OF WORK SHALL BE CONSTRUCTED\n- TO MEET THE REQUIREMENTS OF GENERAL\n- SPECIFICATION OF URBAN ROADS CONSTRUCTION,\n- MOMRA, KSA 2005.\n- 5. CRUSHED AGGREGATE BASE COURSE SHALL BE\n- CLASS B (MIN. CBR 80%) CONSTRUCTED TO MEET\n- REQUIREMENTS OF CLAUSE 6.4 OF GENERAL\n- SUB GRADE (300mm)\n- AGGREGATE BASE COURSE (300mm)\n- AC BASE COURSE (235mm)\n- AC SURFACE COURSE (50mm)\n- ASPHALT PAVEMENT - PT1"
+      "doc_id": "FIXTURE-e-20260927-notes-layers",
+      "name": "FIXTURE-e-20260927 Site notes layer checks.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c12",
+          "text": "Each embankment layer under the pavement shall reach 95% of maximum dry density."
+        }
+      ]
+    },
+    {
+      "doc_id": "FIXTURE-e-20260927-notes-pavement",
+      "name": "FIXTURE-e-20260927 Site notes pavement base.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c13",
+          "text": "The pavement subgrade CBR is 25 after compaction to the density stated for the road."
+        }
+      ]
+    },
+    {
+      "doc_id": "FIXTURE-e-20260927-notes-shoulder",
+      "name": "FIXTURE-e-20260927 Site notes shoulder.pdf",
+      "chunks": [
+        {
+          "evidence_chunk": "FIXTURE-e-20260927-c14",
+          "text": "Shoulder fill beside the road pavement is compacted to 95% of maximum dry density."
+        }
+      ]
     }
-   ]
-  }
- ]
+  ]
 }
