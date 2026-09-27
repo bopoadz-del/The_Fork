@@ -178,6 +178,93 @@ def _mint_access_token() -> Optional[str]:
 # ── Drive REST helpers ───────────────────────────────────────────────────
 
 
+# files.list rejects pageSize above 1000 with HTTP 400.
+_DRIVE_LIST_PAGE_MAX = 1000
+_DRIVE_LIST_FIELDS = (
+    "nextPageToken, files(id, name, mimeType, size, "
+    "modifiedTime, md5Checksum, etag)"
+)
+_SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
+
+
+def _clamp_drive_page_size(page_size: int) -> int:
+    try:
+        size = int(page_size)
+    except (TypeError, ValueError):
+        size = 100
+    if size < 1:
+        return 1
+    if size > _DRIVE_LIST_PAGE_MAX:
+        return _DRIVE_LIST_PAGE_MAX
+    return size
+
+
+def _drive_child_list_params(
+    folder_id: str,
+    page_size: int,
+    page_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Exact ``files.list`` query for one folder's children.
+
+    Shared-drive folders 400 when this call sets ``corpora=drive`` without
+    ``driveId``, or ``includeItemsFromAllDrives`` without
+    ``supportsAllDrives``. Both flags are set together, and ``corpora`` /
+    ``driveId`` / ``orderBy`` are left unset: a parent query does not need
+    a drive id. ``pageToken`` is added only for a later page.
+    """
+    escaped = _escape_drive_query_value(folder_id)
+    params: Dict[str, Any] = {
+        "q": f"'{escaped}' in parents and trashed = false",
+        "pageSize": page_size,
+        "fields": _DRIVE_LIST_FIELDS,
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+    }
+    if page_token:
+        params["pageToken"] = page_token
+    return params
+
+
+def _resolve_listable_folder_id(
+    client: Any, token: str, folder_id: str,
+) -> Tuple[str, Optional[str]]:
+    """Follow one shortcut. A file id is not a parent and must not be listed.
+
+    ``'<shortcut-or-file-id>' in parents`` is HTTP 400 (Invalid Value),
+    not 403 or 404. ``files.get`` is how the walker tells those apart.
+    """
+    resp = client.get(
+        f"{_DRIVE_API}/files/{folder_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        params={
+            "fields": "id,mimeType,shortcutDetails",
+            "supportsAllDrives": "true",
+        },
+    )
+    if resp.status_code != 200:
+        return folder_id, None
+    payload = resp.json() if resp.content else {}
+    if not isinstance(payload, dict):
+        return folder_id, None
+    mime = payload.get("mimeType") or ""
+    if mime == _SHORTCUT_MIME:
+        details = payload.get("shortcutDetails") or {}
+        target = (details.get("targetId") or "").strip()
+        target_mime = details.get("targetMimeType") or ""
+        if (
+            target
+            and target != folder_id
+            and target_mime in ("", "application/vnd.google-apps.folder")
+        ):
+            return target, None
+        return folder_id, (
+            f"Drive id {folder_id} is a shortcut with no folder target"
+        )
+    if mime and mime != "application/vnd.google-apps.folder":
+        return folder_id, f"Drive id {folder_id} is not a folder ({mime})"
+    return folder_id, None
+
+
 def list_folder_files(folder_id: str, page_size: int = 100) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """List non-trashed files directly inside ``folder_id``.
 
@@ -186,6 +273,9 @@ def list_folder_files(folder_id: str, page_size: int = 100) -> Tuple[List[Dict[s
     rather than crashing the whole pass. Subfolders are NOT recursed — one
     Drive folder maps to one platform project; deeper structure can be
     flattened later if it becomes a real need.
+
+    A shortcut id is resolved once and the target folder is listed. A
+    non-folder id is reported as such instead of being sent as ``in parents``.
     """
     token = _mint_access_token()
     if not token:
@@ -196,34 +286,47 @@ def list_folder_files(folder_id: str, page_size: int = 100) -> Tuple[List[Dict[s
     except ImportError:
         return [], "httpx not available"
 
-    q = f"'{folder_id}' in parents and trashed = false"
+    page_size = _clamp_drive_page_size(page_size)
     files: List[Dict[str, Any]] = []
-    page_token: Optional[str] = None
+
+    def _read_pages(client: Any, listed_id: str) -> Tuple[List[Dict[str, Any]], Optional[str], int]:
+        """Return ``(files, error, status)``. ``status`` is 0 when the body was read."""
+        found: List[Dict[str, Any]] = []
+        page_token: Optional[str] = None
+        while True:
+            params = _drive_child_list_params(listed_id, page_size, page_token)
+            resp = client.get(
+                f"{_DRIVE_API}/files",
+                headers={"Authorization": f"Bearer {token}"},
+                params=params,
+            )
+            if resp.status_code != 200:
+                return [], (
+                    f"Drive list returned {resp.status_code}: {resp.text[:200]}"
+                ), resp.status_code
+            payload = resp.json()
+            found.extend(payload.get("files") or [])
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                return found, None, 200
+
     try:
         with httpx.Client(timeout=30) as client:
-            while True:
-                params: Dict[str, Any] = {
-                    "q": q,
-                    "pageSize": page_size,
-                    "fields": (
-                        "nextPageToken, files(id, name, mimeType, size, "
-                        "modifiedTime, md5Checksum, etag)"
-                    ),
-                }
-                if page_token:
-                    params["pageToken"] = page_token
-                resp = client.get(
-                    f"{_DRIVE_API}/files",
-                    headers={"Authorization": f"Bearer {token}"},
-                    params=params,
+            found, err, status = _read_pages(client, folder_id)
+            if status == 400:
+                # `'<id>' in parents` 400s when the id is a shortcut or a
+                # file. Resolve once; a shared-drive grant problem stays
+                # the original 400 for the owner.
+                listed_id, resolve_err = _resolve_listable_folder_id(
+                    client, token, folder_id,
                 )
-                if resp.status_code != 200:
-                    return [], f"Drive list returned {resp.status_code}: {resp.text[:200]}"
-                payload = resp.json()
-                files.extend(payload.get("files") or [])
-                page_token = payload.get("nextPageToken")
-                if not page_token:
-                    break
+                if resolve_err:
+                    return [], resolve_err
+                if listed_id != folder_id:
+                    found, err, status = _read_pages(client, listed_id)
+            if err:
+                return [], err
+            files = found
     except Exception as exc:  # noqa: BLE001
         return [], f"{type(exc).__name__}: {exc}"
     return files, None
