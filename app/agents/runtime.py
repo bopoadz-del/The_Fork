@@ -6182,24 +6182,27 @@ def _graft_asked_contract_particular(
             format_named_percentage_line,
             query_asks_named_percentage_particular,
             query_asks_percentage_particular_in_money,
+            strip_conflicting_named_percentage,
+            text_states_percent,
         )
         if query_asks_named_percentage_particular(user):
             parsed = extract_named_percentage_particular(user, rag)
             if not parsed:
                 return text
             line = format_named_percentage_line(parsed)
-            raw = text or ""
-            already = (
-                f"{parsed['percent']:g}%" in raw.replace(" ", "")
-                or f"{parsed['percent']:g} %" in raw
-                or f"{int(parsed['percent'])}%" in raw
+            # "10%" is a substring of "0.10%". That token is the daily
+            # rate, not this particular. Strip a sentence that assigns
+            # the label the neighbouring percent before deciding.
+            raw = strip_conflicting_named_percentage(
+                text or "", parsed.get("label") or "", float(parsed["percent"]),
             )
+            already = text_states_percent(raw, float(parsed["percent"]))
             if already and not _MISSING_PARTICULAR_RE.search(raw):
-                return text
+                return raw
             # A money ask ("Calculate … in SAR") still needs the product;
             # do not lock the turn on the percentage-only line here.
             if query_asks_percentage_particular_in_money(user) and already:
-                return text
+                return raw
             if (
                 not raw.strip()
                 or _MISSING_PARTICULAR_RE.search(raw)

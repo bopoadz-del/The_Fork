@@ -821,6 +821,18 @@ _PCT_PARTICULAR_SPECS = (
 )
 _PCT_BOND_RE = re.compile(r"(?i)\bbond\b|\bguarantee\b|\bsecurity\b")
 _PCT_VALUE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+# The next particular ends this label's figure. A later copy of the same
+# label ends it too, so an earlier mention cannot reach across Delay
+# Damages and take that row's percent.
+_COMPETING_PARTICULAR_RES = (
+    re.compile(r"(?i)advance\s+payment"),
+    re.compile(r"(?i)limitation\s+of\s+liability"),
+    re.compile(r"(?i)(?:delay|liquidated)\s+damages"),
+    re.compile(r"(?i)percentage\s+of\s+retention"),
+)
+_PER_DAY_AFTER_PCT_RE = re.compile(
+    r"(?i)per\s+(?:calendar\s+|working\s+)?day\b",
+)
 _MONEY_ARITHMETIC_ASK_RE = re.compile(
     r"(?i)\b(?:calculate|compute|work\s+out|how\s+much)\b",
 )
@@ -893,6 +905,48 @@ def query_asks_percentage_particular_in_money(query: str) -> bool:
     return bool(_MONEY_ARITHMETIC_ASK_RE.search(q) and _MONEY_UNIT_ASK_RE.search(q))
 
 
+def _percent_owned_by_label(
+    text: str,
+    label_rx: re.Pattern,
+    *,
+    ask_wants_bond: bool,
+    horizon: int | None = None,
+) -> tuple[float, str] | None:
+    """Percentage that follows this label, not a neighbouring particular.
+
+    A peeled Contract Data row can open on Advance Payment and then hold
+    the delay-damages daily rate (0.1% per day) before the filled Advance
+    Payment percentage. The first percent in that row is the daily rate.
+    Take the percent that follows this label and stop at the next
+    particular. A per-day rate is the delay-damages figure, not an
+    advance-payment or liability percentage. An Advance Payment Bond row
+    is not the Advance Payment itself.
+    """
+    blob = text or ""
+    for match in label_rx.finditer(blob):
+        rest = blob[match.end():]
+        if horizon is not None:
+            rest = rest[:horizon]
+        cut = len(rest)
+        for other in _COMPETING_PARTICULAR_RES:
+            hit = other.search(rest)
+            if hit is not None and hit.start() < cut:
+                cut = hit.start()
+        segment = rest[:cut]
+        pct = _PCT_VALUE_RE.search(segment)
+        if pct is None:
+            continue
+        tail = segment[pct.end(): pct.end() + 64]
+        if _PER_DAY_AFTER_PCT_RE.search(tail):
+            continue
+        between = segment[: pct.start()]
+        if not ask_wants_bond and _PCT_BOND_RE.search(match.group(0) + between):
+            continue
+        snippet = blob[match.start(): match.end() + pct.end()].strip()
+        return float(pct.group(1)), snippet
+    return None
+
+
 def extract_named_percentage_particular(
     query: str,
     excerpts: str,
@@ -900,7 +954,8 @@ def extract_named_percentage_particular(
     """Filled percentage for the named particular, or None.
 
     Does not invent a percentage. Skips an Advance Payment *Bond* row
-    when the ask is the Advance Payment itself.
+    when the ask is the Advance Payment itself. Does not elect a
+    neighbouring delay-damages daily rate that shares the same window.
     """
     spec = _asked_percentage_spec(query)
     if not spec:
@@ -912,17 +967,15 @@ def extract_named_percentage_particular(
     ask_wants_bond = bool(_PCT_BOND_RE.search(query or ""))
 
     def _from_pair(key: str, val: str) -> dict | None:
-        blob = f"{key} {val}"
-        if not label_rx.search(key) and not label_rx.search(val[:96]):
+        owned = _percent_owned_by_label(
+            f"{key} {val}", label_rx, ask_wants_bond=ask_wants_bond,
+        )
+        if owned is None:
             return None
-        if _PCT_BOND_RE.search(blob) and not ask_wants_bond:
-            return None
-        m = _PCT_VALUE_RE.search(val) or _PCT_VALUE_RE.search(key)
-        if not m:
-            return None
+        percent, _snippet = owned
         return {
             "label": display,
-            "percent": float(m.group(1)),
+            "percent": percent,
             "value": val.strip(),
             "key": key.strip(),
         }
@@ -938,20 +991,18 @@ def extract_named_percentage_particular(
             "particulars percentage parse failed; using scanned regex",
             exc_info=True,
         )
-    blob = _collapse_ws(t)
-    for m in label_rx.finditer(blob):
-        window = blob[m.start(): m.end() + 160]
-        if _PCT_BOND_RE.search(window) and not ask_wants_bond:
-            continue
-        pct = _PCT_VALUE_RE.search(window)
-        if pct:
-            return {
-                "label": display,
-                "percent": float(pct.group(1)),
-                "value": window.strip(),
-                "key": display,
-            }
-    return None
+    owned = _percent_owned_by_label(
+        _collapse_ws(t), label_rx, ask_wants_bond=ask_wants_bond, horizon=200,
+    )
+    if owned is None:
+        return None
+    percent, snippet = owned
+    return {
+        "label": display,
+        "percent": percent,
+        "value": snippet,
+        "key": display,
+    }
 
 
 def format_named_percentage_line(parsed: dict) -> str:
@@ -960,6 +1011,49 @@ def format_named_percentage_line(parsed: dict) -> str:
     return (
         f"The {label} is {pct:g}% of the Accepted Contract Amount."
     )
+
+
+def text_states_percent(text: str, percent: float) -> bool:
+    """True when ``text`` states ``percent`` as its own percentage.
+
+    ``10`` must not match inside ``0.10%`` — that token is the 0.1%
+    delay-damages daily rate, not the advance-payment percentage.
+    """
+    token = f"{float(percent):g}"
+    return bool(re.search(
+        rf"(?i)(?<![\d.]){re.escape(token)}\s*(?:%|percent\b)",
+        text or "",
+    ))
+
+
+def strip_conflicting_named_percentage(
+    text: str, label: str, percent: float,
+) -> str:
+    """Drop sentences that give ``label`` a percentage other than ``percent``.
+
+    Leaves a neighbouring particular alone: "Delay Damages are 0.1% per
+    day" does not name Advance Payment. A sentence that calls the Advance
+    Payment 0.1% is the daily rate wearing the wrong label.
+    """
+    raw = text or ""
+    if not raw or not label:
+        return raw
+    pat = re.compile(
+        rf"(?i)[^.!\n]*\b{re.escape(label)}\b[^.!\n]{{0,160}}?"
+        rf"(\d+(?:\.\d+)?)\s*%[^.!\n]*[.!]?"
+    )
+
+    def _keep(match: re.Match) -> str:
+        got = float(match.group(1))
+        if abs(got - float(percent)) <= 1e-9:
+            return match.group(0)
+        return ""
+
+    cleaned = pat.sub(_keep, raw)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r" {2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 def compose_percentage_of_aca_from_excerpts(
