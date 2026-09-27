@@ -6294,6 +6294,7 @@ def _graft_composed_delay_damages_daily(
         from app.lib.construction_formulas_commercial import (
             answer_states_daily_amount,
             compose_delay_damages_daily_from_excerpts,
+            drop_whole_of_works_delay_claims,
             format_delay_damages_daily_line,
         )
         user = _latest_operator_ask(messages)
@@ -6355,6 +6356,11 @@ def _graft_composed_delay_damages_daily(
             for m in messages
         ):
             messages.append({"role": "tool", "content": payload})
+        # A Milestone or section answer that already states the right
+        # daily figure must not keep a "whole of the Works" lead. That
+        # label is the other rate.
+        if (composed.get("basis") or "") in ("milestone", "section"):
+            text = drop_whole_of_works_delay_claims(text or "")
         if answer_states_daily_amount(text or "", composed["daily_amount"]):
             return text
         figs = _cg_money_values(text or "")
