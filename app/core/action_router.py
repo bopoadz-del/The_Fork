@@ -393,6 +393,27 @@ _CASH_FLOW_QA_RE = re.compile(
     r"\b(what is|what's|whats|explain|define)\b",
     re.IGNORECASE,
 )
+# Dewatering "drawdown" is the water-table drop (required_drawdown_m on
+# dewatering_well_point_spacing), not an S-curve. A cash-flow phrase still
+# wins when both appear.
+_DEWATERING_DRAWDOWN_RE = re.compile(
+    r"well[_\s\-]?points?|dewater|permeabilit|water[_\s\-]?table",
+    re.IGNORECASE,
+)
+_CASH_FLOW_EXPLICIT_RE = re.compile(
+    r"cash[_\- ]?flow|cashflow|s-curve|s curve|spend curve",
+    re.IGNORECASE,
+)
+
+
+def dewatering_drawdown_not_cash_flow(text: str) -> bool:
+    """True when ``drawdown`` is a dewatering input, not a cash-flow curve."""
+    raw = text or ""
+    if not re.search(r"drawdown", raw, re.IGNORECASE):
+        return False
+    if _CASH_FLOW_EXPLICIT_RE.search(raw):
+        return False
+    return bool(_DEWATERING_DRAWDOWN_RE.search(raw))
 
 
 def message_wants_cash_flow(text: str) -> bool:
@@ -401,9 +422,14 @@ def message_wants_cash_flow(text: str) -> bool:
     Live tip 50c37f: "Use cash_flow_forecast. Synthetic schedule/costs…"
     classified as generate_wbs because schedule nouns outscored cash flow
     (orchestrator keywords lacked the underscore tool name).
+
+    A well-point / permeability ask that names drawdown is dewatering, not
+    this detector. Matching it locked the turn and skipped construction_calc.
     """
     raw = text or ""
     if not raw.strip() or _CASH_FLOW_QA_RE.search(raw):
+        return False
+    if dewatering_drawdown_not_cash_flow(raw):
         return False
     low = raw.lower()
     return any(p in low for p in _CASH_FLOW_PHRASES)

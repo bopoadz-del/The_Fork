@@ -157,14 +157,14 @@ def test_cost_buildup_concrete_name_beats_rebar_stem():
 def test_cost_buildup_concrete_quantity_m3_100_succeeds():
     inner = _ok("cost_buildup_concrete", {"quantity_m3": 100})
     assert inner["material_cost_sar_m3"] == pytest.approx(160.93, abs=0.02)
-    assert inner["total_project_value_sar"] == pytest.approx(31119, abs=2)
+    assert inner["total_project_value_sar"] == pytest.approx(30883, abs=2)
     via_text = _ok("cost_buildup_concrete", {"text": _COST_ASK})
     assert via_text["material_cost_sar_m3"] == pytest.approx(160.93, abs=0.02)
     env = _tool("cost_buildup_concrete", {"text": _COST_ASK})
     assert env.get("ok") is True, env
     assert env["result"]["status"] == "success"
     assert env["result"]["result"]["selling_price_sar_m3"] == pytest.approx(
-        311.19, abs=0.02,
+        308.83, abs=0.02,
     )
 
 

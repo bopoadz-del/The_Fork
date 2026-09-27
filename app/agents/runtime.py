@@ -1580,9 +1580,14 @@ def _message_wants_rfp_draft(text: str) -> bool:
 
 
 def _message_wants_cash_flow(text: str) -> bool:
+    raw = text or ""
+    # Local import: action_router must not import runtime at module load.
+    from app.core.action_router import dewatering_drawdown_not_cash_flow
+    if dewatering_drawdown_not_cash_flow(raw):
+        return False
     return bool(re.search(
         r"cash[_\- ]flow|s-curve|s curve|spend curve|drawdown",
-        text or "",
+        raw,
         re.I,
     ))
 
