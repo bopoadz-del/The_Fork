@@ -24,7 +24,10 @@ import re
 
 import pytest
 
-from app.agents.first_line_hard_rule import apply_first_line_hard_rule
+from app.agents.first_line_hard_rule import (
+    apply_first_line_hard_rule,
+    first_line_hard_rule_enabled,
+)
 
 P1A_ASK = (
     "Per the project specification, to what degree must structural "
@@ -141,14 +144,19 @@ def _has_percent(line: str, number: str) -> bool:
 
 
 def test_p1a_different_materials_do_not_ask_which_document():
-    """Structural backfill 98% (§8.4) is not structural fill 95% (§8.1).
+    """The body commits to 98% first. 95% and 90% are other subjects.
 
-    General fill at 90% is a third material. The first line leads with
-    98% and names §8.4. It does not ask which document. 95% stays bound
-    to structural fill, §8.1, and the document that states it.
+    The annotation names only that 98% and §8.4. It does not ask.
     """
+    answer = (
+        "I will answer from the retrieved context.\n\n"
+        "Structural backfill under foundations is compacted to 98% of "
+        "maximum dry density.\n"
+        "General fill is 90% of maximum dry density.\n"
+        "Structural fill is 95% of maximum dry density.\n"
+    )
     out = apply_first_line_hard_rule(
-        NARRATIVE,
+        answer,
         _rag(
             _chunk("f95", DOC_95, STRUCTURAL_FILL_95, "0.860"),
             _chunk("f90", DOC_90, GENERAL_FILL_90, "0.840"),
@@ -158,34 +166,27 @@ def test_p1a_different_materials_do_not_ask_which_document():
     )
     first = _first(out)
     assert HEDGE not in out.lower(), first
-    assert "more than one" not in first.lower(), first
+    assert "?" not in first, first
     assert first.lower().startswith("98%"), first
     assert "8.4" in first, first
-    lead = _percent_sentence(first, "98")
-    assert "structural backfill" in lead.lower(), lead
-    assert "8.4" in lead, lead
-    assert DOC_98 in lead, lead
-    assert DOC_95 not in lead and DOC_90 not in lead, lead
-    other = _percent_sentence(first, "95")
-    assert "structural fill" in other.lower(), other
-    assert "8.1" in other, other
-    assert DOC_95 in other, other
-    assert DOC_98 not in other, other
-    third = _percent_sentence(first, "90")
-    assert "general fill" in third.lower(), third
-    assert DOC_90 in third, third
-    assert DOC_98 not in third and DOC_95 not in third, third
+    assert DOC_98 in first, first
+    assert not _has_percent(first, "95"), first
+    assert not _has_percent(first, "90"), first
 
 
 def test_s1_different_cover_conditions_name_the_drawing_not_the_spec():
-    """75 mm against soil and 100 mm at the bottom of footings.
+    """The body commits to 75 mm first. 100 mm is a later, other subject.
 
-    The specification clause has no cover figure. Each figure is bound
-    to its condition and to the drawing that states it. Neither figure
-    is credited to the specification.
+    The annotation names 75 mm and its drawing. The specification
+    deferral is not credited.
     """
+    answer = (
+        "I will answer from the retrieved context.\n\n"
+        "Nominal concrete cover is 75 mm for concrete cast against soil.\n"
+        "The bottom of footings is 100 mm.\n"
+    )
     out = apply_first_line_hard_rule(
-        NARRATIVE,
+        answer,
         _rag(
             _chunk("spec", SPEC_COVER, SPEC_DEFERS, "0.900"),
             _chunk("soil", DWG_SOIL, COVER_75, "0.860"),
@@ -195,26 +196,24 @@ def test_s1_different_cover_conditions_name_the_drawing_not_the_spec():
     )
     first = _first(out)
     assert HEDGE not in out.lower(), first
-    assert "more than one" not in first.lower(), first
+    assert "?" not in first, first
     soil = _mm_sentence(first, "75")
     assert soil, first
     assert "contact with soil" in soil.lower() or "cast against" in soil.lower(), soil
-    assert "soil" in soil.lower(), soil
     assert DWG_SOIL in soil, soil
     assert SPEC_COVER not in soil, soil
-    foot = _mm_sentence(first, "100")
-    assert foot, first
-    assert "bottom of footing" in foot.lower(), foot
-    assert DWG_FOOT in foot, foot
-    assert SPEC_COVER not in foot, foot
-    assert SPEC_COVER not in out, out
-    assert "3.1.25.8" not in out, out
+    assert not re.search(r"(?i)\b100\s*mm\b", first), first
+    assert SPEC_COVER not in first, first
 
 
 def test_s2_single_corpus_figure_is_credited_without_a_hedge():
-    """One figure, 95%, named on the first line with its own document."""
+    """The body commits to 95%. The annotation credits that document."""
+    answer = (
+        "I will answer from the retrieved context.\n\n"
+        "The sub-grade is compacted to 95% of maximum dry density.\n"
+    )
     out = apply_first_line_hard_rule(
-        NARRATIVE,
+        answer,
         _rag(_chunk("g95", DOC_S2, SUBGRADE_95)),
         _msgs(S2_ASK),
     )
@@ -369,93 +368,204 @@ S2_PHRASINGS = [
 ]
 
 
-def _p1a_heading_rag() -> dict:
-    return _rag(
-        _chunk("v4", DOC_VOL5_4, BACKFILL_98_HEADING, "0.820"),
-        _chunk("sw", DOC_STORM, STORM_90, "0.800"),
-        _chunk("v2", DOC_VOL5_2, STRUCTURAL_95_SECTION, "0.780"),
-    )
-
-
-@pytest.mark.parametrize(
-    "ask",
-    [ask for _id, ask in P1A_PHRASINGS],
-    ids=[pid for pid, _ask in P1A_PHRASINGS],
+# The 95% chunk used for (D) does not itself say "specification".
+# Only the model's answer does. The filename remains a geotechnical report.
+BARE_95 = (
+    "Compact the layer to 95% of maximum dry density of the "
+    "modified Proctor test.\n"
 )
-def test_p1a_heading_binds_backfill_and_does_not_ask(ask):
-    """98% under the '8.4 Backfill' heading is the one match.
 
-    The 95% is structural fill in Specification Section 9. The 90%
-    belongs to the storm water network. Neither forces a question.
-    The first line leads with 98% and §8.4 of the Vol 5 (4 of 5)
-    report, and does not credit RSM 15492.
-    """
-    out = apply_first_line_hard_rule(NARRATIVE, _p1a_heading_rag(), _msgs(ask))
-    first = _first(out)
-    assert "which document" not in out.lower(), first
-    assert "?" not in first, first
-    assert first.lower().startswith("98%"), first
-    assert "8.4" in first, first
-    assert DOC_VOL5_4 in first, first
-    assert "rsm" not in first.lower(), first
-    assert "15492" not in first, first
+VERIFY_CASES = P1A_PHRASINGS + S1_PHRASINGS + S2_PHRASINGS
 
 
-@pytest.mark.parametrize(
-    "ask",
-    [ask for _id, ask in S1_PHRASINGS],
-    ids=[pid for pid, _ask in S1_PHRASINGS],
-)
-def test_s1_heading_binds_each_cover_to_its_drawing(ask):
-    """75 mm and 100 mm take their conditions from the note headings.
+def _kind(pid: str) -> str:
+    if pid.startswith("p1a"):
+        return "p1a"
+    if pid.startswith("s1"):
+        return "s1"
+    return "s2"
 
-    Each figure is credited to its drawing. The specification deferral
-    is not credited with either figure.
-    """
-    out = apply_first_line_hard_rule(
-        NARRATIVE,
-        _rag(
+
+def _multi_rag(kind: str) -> dict:
+    if kind == "p1a":
+        return _rag(
+            _chunk("v4", DOC_VOL5_4, BACKFILL_98_HEADING, "0.820"),
+            _chunk("sw", DOC_STORM, STORM_90, "0.800"),
+            _chunk("v2", DOC_VOL5_2, STRUCTURAL_95_SECTION, "0.780"),
+        )
+    if kind == "s1":
+        return _rag(
             _chunk("spec", SPEC_DEFER_H, SPEC_DEFERS, "0.900"),
             _chunk("soil", DWG_SOIL_H, COVER_75_HEADING, "0.860"),
             _chunk("foot", DWG_FOOT_H, COVER_100_HEADING, "0.840"),
-        ),
-        _msgs(ask),
+        )
+    return _rag(
+        _chunk("v2", DOC_VOL5_2, BARE_95, "0.820"),
+        _chunk("sw", DOC_STORM, STORM_90, "0.800"),
     )
+
+
+def _single_rag(kind: str) -> dict:
+    if kind == "p1a":
+        return _rag(_chunk("v4", DOC_VOL5_4, BACKFILL_98_HEADING))
+    if kind == "s1":
+        return _rag(_chunk("soil", DWG_SOIL_H, COVER_75_HEADING))
+    return _rag(_chunk("v2", DOC_VOL5_2, BARE_95))
+
+
+def _pass_through_text(kind: str) -> str:
+    """(A) First line already carries the committed figure and its source."""
+    if kind == "p1a":
+        return (
+            f"98% of maximum dry density is the compaction figure in "
+            f"{DOC_VOL5_4}.\n\n"
+            "Storm water bedding is compacted to 90% of maximum dry "
+            "density. Structural fill is 95% of maximum dry density.\n"
+        )
+    if kind == "s1":
+        return (
+            f"75 mm is the concrete-cover figure in {DWG_SOIL_H}.\n\n"
+            "The bottom of footings is 100 mm on the other drawing.\n"
+        )
+    return (
+        f"95% of maximum dry density is the compaction figure in "
+        f"{DOC_VOL5_2}.\n\n"
+        "Specification Section 9.1 is the governing clause. Storm water "
+        "bedding elsewhere is 90% of maximum dry density.\n"
+    )
+
+
+def _committed_text(kind: str) -> str:
+    """(B) The first figure in the body is the one the model chose."""
+    if kind == "p1a":
+        return (
+            "I will answer from the retrieved context.\n\n"
+            "Backfill under foundations is 98% of maximum dry density.\n"
+            "Storm water bedding is 90% of maximum dry density.\n"
+            "Structural fill is 95% of maximum dry density.\n"
+        )
+    if kind == "s1":
+        return (
+            "I will answer from the retrieved context.\n\n"
+            "Concrete cover is 75 mm where concrete is cast against soil.\n"
+            "The bottom of footings is 100 mm.\n"
+        )
+    return (
+        "I will answer from the retrieved context.\n\n"
+        "Specification Section 9.1 requires 95% of maximum dry density.\n"
+        "Storm water bedding is 90% of maximum dry density.\n"
+    )
+
+
+def _uncommitted_text(kind: str) -> str:
+    """(C) No figure is stated, so no question may be invented."""
+    if kind == "s2":
+        return (
+            "I will answer from the retrieved context. "
+            "Specification Section 9.1 is the governing clause.\n"
+        )
+    return "I will answer from the retrieved context.\n"
+
+
+def _body_spec_text(kind: str) -> str:
+    """(D) The body names the class. The opening line has no figure."""
+    if kind == "p1a":
+        return (
+            "The clause I am using is below.\n\n"
+            "Specification Section 8.4 requires 98% of maximum dry density.\n"
+        )
+    if kind == "s1":
+        return (
+            "The clause I am using is below.\n\n"
+            "Specification Section 4.2 gives a nominal concrete cover of "
+            "75 mm.\n"
+        )
+    return (
+        "The clause I am using is below.\n\n"
+        "Specification Section 9.1 requires 95% of maximum dry density.\n"
+    )
+
+
+@pytest.mark.parametrize("pid,ask", VERIFY_CASES, ids=[p for p, _a in VERIFY_CASES])
+def test_a_figure_and_source_pass_through(pid, ask):
+    """(A) A first line that already has a figure and a source is kept."""
+    kind = _kind(pid)
+    text = _pass_through_text(kind)
+    out = apply_first_line_hard_rule(text, _multi_rag(kind), _msgs(ask))
+    assert out == text, _first(out)
+
+
+@pytest.mark.parametrize("pid,ask", VERIFY_CASES, ids=[p for p, _a in VERIFY_CASES])
+def test_b_prepends_only_the_committed_figure(pid, ask):
+    """(B) Prepend only the first figure the body states. Do not ask."""
+    kind = _kind(pid)
+    text = _committed_text(kind)
+    out = apply_first_line_hard_rule(text, _multi_rag(kind), _msgs(ask))
     first = _first(out)
     assert "which document" not in out.lower(), first
     assert "?" not in first, first
-    soil = _mm_sentence(first, "75")
-    assert soil, first
-    assert "contact with soil" in soil.lower() or "cast against" in soil.lower(), soil
-    assert DWG_SOIL_H in soil, soil
-    assert SPEC_DEFER_H not in soil, soil
-    foot = _mm_sentence(first, "100")
-    assert foot, first
-    assert "bottom of footing" in foot.lower(), foot
-    assert DWG_FOOT_H in foot, foot
-    assert SPEC_DEFER_H not in foot, foot
-    assert SPEC_DEFER_H not in out, out
+    if kind == "p1a":
+        assert first.lower().startswith("98%"), first
+        assert "8.4" in first, first
+        assert DOC_VOL5_4 in first, first
+        assert "rsm" not in first.lower(), first
+        assert not _has_percent(first, "90"), first
+        assert not _has_percent(first, "95"), first
+    elif kind == "s1":
+        assert re.search(r"(?i)\b75\s*mm\b", first), first
+        assert DWG_SOIL_H in first, first
+        assert SPEC_DEFER_H not in first, first
+        assert not re.search(r"(?i)\b100\s*mm\b", first), first
+    else:
+        assert first.lower().startswith("95%"), first
+        assert DOC_VOL5_2 in first, first
+        assert not _has_percent(first, "90"), first
+        assert "not the specification" not in out.lower(), out
 
 
-@pytest.mark.parametrize(
-    "ask",
-    [ask for _id, ask in S2_PHRASINGS],
-    ids=[pid for pid, _ask in S2_PHRASINGS],
-)
-def test_s2_specification_section_is_not_called_not_the_specification(ask):
-    """95% is credited to the Vol 5 (2 of 5) document.
+@pytest.mark.parametrize("pid,ask", VERIFY_CASES, ids=[p for p, _a in VERIFY_CASES])
+def test_c_does_not_invent_a_question(pid, ask):
+    """(C) Different subjects, and no commitment, do not get a question."""
+    kind = _kind(pid)
+    text = _uncommitted_text(kind)
+    out = apply_first_line_hard_rule(text, _multi_rag(kind), _msgs(ask))
+    assert out == text, _first(out)
+    assert "which document" not in out.lower(), out
 
-    The chunk calls itself Specification Section 9. The filename is a
-    report, and that must not produce 'not the specification'.
-    """
-    out = apply_first_line_hard_rule(
-        NARRATIVE,
-        _rag(_chunk("v2", DOC_VOL5_2, STRUCTURAL_95_SECTION)),
-        _msgs(ask),
-    )
+
+@pytest.mark.parametrize("pid,ask", VERIFY_CASES, ids=[p for p, _a in VERIFY_CASES])
+def test_d_body_specification_is_not_contradicted(pid, ask):
+    """(D) The body says Specification Section. Do not deny that."""
+    kind = _kind(pid)
+    text = _body_spec_text(kind)
+    out = apply_first_line_hard_rule(text, _single_rag(kind), _msgs(ask))
     first = _first(out)
-    assert "which document" not in first.lower(), first
-    assert _has_percent(first, "95"), first
-    assert first.lower().startswith("95%"), first
-    assert DOC_VOL5_2 in first, first
-    assert "not the specification" not in out.lower(), out
+    assert "not the specification" not in out.lower(), first
+    assert "which document" not in out.lower(), first
+    if kind == "p1a":
+        assert _has_percent(first, "98"), first
+        assert DOC_VOL5_4 in first, first
+        assert "8.4" in first, first
+    elif kind == "s1":
+        assert re.search(r"(?i)\b75\s*mm\b", first), first
+        assert DWG_SOIL_H in first, first
+    else:
+        assert _has_percent(first, "95"), first
+        assert DOC_VOL5_2 in first, first
+
+
+def test_e_kill_switch_off_leaves_the_answer(monkeypatch):
+    """(E) FIRST_LINE_HARD_RULE=0 leaves the model's answer unchanged."""
+    monkeypatch.setenv("FIRST_LINE_HARD_RULE", "0")
+    assert first_line_hard_rule_enabled() is False
+    text = _committed_text("p1a")
+    out = apply_first_line_hard_rule(
+        text, _multi_rag("p1a"), _msgs(P1A_PHRASINGS[0][1]),
+    )
+    assert out == text
+
+
+def test_e_kill_switch_defaults_on(monkeypatch):
+    """(E) With the env unset the guard stays on."""
+    monkeypatch.delenv("FIRST_LINE_HARD_RULE", raising=False)
+    assert first_line_hard_rule_enabled() is True
