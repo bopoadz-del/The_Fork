@@ -90,12 +90,14 @@ async def understand_intent(message: str, has_documents: bool = False) -> Dict[s
     if message_wants_answer_report(message):
         return empty
     if message_wants_look_ahead(message):
+        from app.containers.construction.schedule import _stated_look_ahead_date
+        stated = _stated_look_ahead_date(message)
         return {
             "workflow": "look_ahead",
             "action": "look_ahead",
             "mode": "produce",
             "deliverable": True,
-            "params": {},
+            "params": {"as_of": stated} if stated else {},
         }
     if message_wants_cash_flow(message):
         # Live tip 53b8b29 ask1: "Use cash_flow_forecast. Synthetic
