@@ -13,16 +13,24 @@ numeric figure from a document of that class (the specification's own 98%
 over another file's 95%). A different file's figure is labelled as not the
 named source. Copies of one figure, including signed and unsigned copies of
 one clause, collapse to one line that cites one copy. The line asks which
-document only when different figures answer the same material and condition,
-or when no named condition separates them. Figures that each carry a
-different material or condition are stated together, each tied to that
-condition and to the document, clause, or drawing that contains it. An
-optional higher compaction degree in the same clause ("could be compacted
-to … under the approval of the engineer") is not a second figure. A
-millimetre counts as concrete cover only when it is tied to that quantity,
-not to a panel, tile, or paint band. "Which contract governs this
-project?" names the one contract in the excerpts, or asks which when more
-than one non-template contract is visible.
+document only when two or more figures match the same condition the
+question names, or when the question names no condition and the figures
+cannot be separated. A condition is read from the figure's own sentence,
+from the nearest clause heading above it (several lines up, or at the
+chunk start), from a section title, and from the document title. Figures
+that each carry a different material or condition are stated together,
+each tied to that condition and to the document, clause, or drawing that
+contains it. An unbound figure whose document is a different system does
+not force that question against a figure that matches. An optional higher
+compaction degree in the same clause ("could be compacted to … under the
+approval of the engineer") is not a second figure. A millimetre counts as
+concrete cover only when it is tied to that quantity, not to a panel,
+tile, or paint band. "That document is not the specification" is emitted
+only when the document is positively a drawing, a report, or a design
+note, and never when the chunk calls itself a Specification section.
+"Which contract governs this project?" names the one contract in the
+excerpts, or asks which when more than one non-template contract is
+visible.
 
 Kill-switch: FIRST_LINE_HARD_RULE=0.
 """
@@ -90,12 +98,32 @@ _COMPACTION_MATERIALS = (
     ("subgrade", re.compile(r"(?i)\bsub-?grade\b")),
     ("backfill", re.compile(r"(?i)\bbackfill\b")),
 )
+# "below foundations" and "beneath footings" are the same place as
+# "under foundations". The label stays canonical so a heading and a
+# question still meet.
 _COMPACTION_LOCATIONS = (
-    ("under foundations", re.compile(r"(?i)\bunder\s+foundations?\b")),
+    ("under foundations", re.compile(
+        r"(?i)\b(?:under|below|beneath)\s+(?:the\s+)?"
+        r"(?:foundations?|footings?)\b"
+    )),
     ("under road pavement", re.compile(
-        r"(?i)\bunder\s+(?:the\s+)?road\s+pavement\b"
+        r"(?i)\b(?:under|below|beneath)\s+(?:the\s+)?road\s+pavements?\b"
     )),
 )
+# "8.4 Backfill" at the start of a line. A bare report number such as
+# "RSM 15492" does not match: it is not a dotted clause at line start.
+_CLAUSE_HEADING_RE = re.compile(
+    r"(?i)^(?:clause[ \t]+|section[ \t]+|§[ \t]*)?"
+    r"(\d+(?:\.\d+)+)\.?(?:[ \t]+(.*))?$"
+)
+_SECTION_TITLE_RE = re.compile(
+    r"(?i)^specification[ \t]+section[ \t]+(\d+(?:\.\d+)*)\b[ \t]*(.*)$"
+)
+_SELF_SPEC_RE = re.compile(r"(?i)\bspecification\s+section\b")
+_POSITIVE_NONSPEC_RE = re.compile(
+    r"(?i)(?:\bdrawings?\b|\bdwg\b|\breports?\b|\bdesign\s+notes?\b)"
+)
+_STORM_WATER_RE = re.compile(r"(?i)\bstorm\s*water\b")
 # "cast against soil" and "in contact with soil" are one condition.
 _COVER_CONDITIONS = (
     ("concrete cast against or in contact with soil", re.compile(
@@ -119,6 +147,7 @@ class _Hit:
     is_class: bool
     condition: str = ""
     clause: str = ""
+    calls_itself_spec: bool = False
 
 
 @dataclass(frozen=True)
@@ -247,12 +276,16 @@ def _figure_hits(topic: str, class_name: str, records) -> list[_Hit]:
             if key in seen:
                 continue
             seen.add(key)
+            condition, clause, calls_spec = _bind_figure(
+                topic, body, start, end, source,
+            )
             hits.append(_Hit(
                 figure=figure,
                 source=source,
                 is_class=is_class,
-                condition=_condition_near(topic, body, start, end),
-                clause=_clause_before(body, end),
+                condition=condition,
+                clause=clause,
+                calls_itself_spec=calls_spec,
             ))
     return hits
 
@@ -263,11 +296,13 @@ def _select(
     """One figure to state, the bound set, or the conflicting hits to ask.
 
     Same figure, any number of copies: one hit, so the line cites one copy.
-    Different figures ask which document only when they answer the same
-    material and condition, or when no named condition separates them, and
-    they come from different documents. One document that still holds two
-    figures for one condition does not ask. Figures that each name a
-    different condition are returned bound, not as a question.
+    Ask which document only when two or more figures match the condition
+    the question names and they come from different documents, or when the
+    question names no condition and the figures cannot be separated. One
+    document that still holds two figures for one condition does not ask.
+    Exactly one match is stated, with its clause. Other figures are stated
+    with their own condition, or omitted when they are unbound. An unbound
+    figure from a different system does not force the question.
     """
     class_hits = [hit for hit in hits if hit.is_class]
     pool = class_hits or hits
@@ -280,9 +315,30 @@ def _select(
         collapsed.append(hit)
     if len(collapsed) == 1:
         return collapsed[0]
+    asked = _labels_in(topic, ask or "")
+    if asked:
+        matched = [
+            hit for hit in collapsed
+            if _condition_matches(topic, hit.condition, asked)
+        ]
+        matched_sources = {hit.source for hit in matched}
+        if len(matched) >= 2 and len(matched_sources) >= 2:
+            return matched
+        if len(matched) == 1:
+            lead = matched[0]
+            others = [
+                hit for hit in collapsed
+                if hit.figure != lead.figure
+                and hit.condition
+                and not _condition_matches(topic, hit.condition, asked)
+            ]
+            if others:
+                return _Bound(tuple(_lead_first([lead, *others], topic, asked)))
+            return lead
+        if len(matched) >= 2:
+            return matched[0]
     if _conditions_distinguish(collapsed):
-        asked = _condition_near(topic, ask or "", 0, len(ask or ""))
-        return _Bound(tuple(_lead_first(collapsed, asked)))
+        return _Bound(tuple(_lead_first(collapsed, topic, asked)))
     stated = [hit for hit in collapsed if _figure_in(answer, hit.figure)]
     if len(stated) == 1:
         return stated[0]
@@ -368,20 +424,140 @@ def _clause_window(text: str, start: int, end: int) -> str:
     return text[begin:stop]
 
 
-def _condition_near(topic: str, text: str, start: int, end: int) -> str:
-    window = _clause_window(text or "", start, end)
+def _labels_in(topic: str, text: str) -> str:
+    """Material and location named in ``text``, or ""."""
     patterns = _COVER_CONDITIONS if topic == "cover" else _COMPACTION_MATERIALS
     label = ""
     for name, rx in patterns:
-        if rx.search(window):
+        if rx.search(text or ""):
             label = name
             break
-    if topic == "compaction" and label:
-        for loc, rx in _COMPACTION_LOCATIONS:
-            if rx.search(window):
-                label = f"{label} {loc}"
-                break
+    if topic != "compaction":
+        return label
+    for loc, rx in _COMPACTION_LOCATIONS:
+        if rx.search(text or ""):
+            return f"{label} {loc}".strip() if label else loc
     return label
+
+
+def _condition_near(topic: str, text: str, start: int, end: int) -> str:
+    return _labels_in(topic, _clause_window(text or "", start, end))
+
+
+def _heading_binding(topic: str, text: str, figure_start: int) -> tuple[str, str]:
+    """Condition and clause from the nearest heading above the figure.
+
+    Numbered clause headings ("8.4 Backfill"), section titles
+    ("Specification Section 9"), and a short note heading
+    ("Bottom of footings") all count. The search walks upward, so a
+    heading several lines above the figure, or at the chunk start, still
+    binds. A closer heading that names a condition wins over a section
+    title further up.
+    """
+    clause = ""
+    for raw_line in reversed((text or "")[:figure_start].splitlines()):
+        line = raw_line.strip()
+        if not line:
+            continue
+        numbered = _CLAUSE_HEADING_RE.match(line)
+        if numbered:
+            number = numbered.group(1)
+            title = numbered.group(2) or ""
+            if not clause:
+                clause = number
+            cond = _labels_in(topic, title) or _labels_in(topic, line)
+            if cond:
+                return cond, number
+            continue
+        section = _SECTION_TITLE_RE.match(line)
+        if section:
+            number = section.group(1) or ""
+            title = section.group(2) or ""
+            if number and not clause:
+                clause = number
+            cond = _labels_in(topic, title) or _labels_in(topic, line)
+            if cond:
+                return cond, clause
+            continue
+        if len(line) <= 80 and "." not in line:
+            cond = _labels_in(topic, line)
+            if cond:
+                return cond, clause
+    return "", clause
+
+
+def _title_condition(topic: str, source: str) -> str:
+    """Condition carried only by the document title."""
+    name = source or ""
+    if topic == "compaction" and _STORM_WATER_RE.search(name):
+        return "storm water network"
+    return _labels_in(topic, name)
+
+
+def _bind_figure(
+    topic: str, text: str, start: int, end: int, source: str,
+) -> tuple[str, str, bool]:
+    """Condition, clause, and whether the chunk calls itself a specification.
+
+    Inline words win when they name a condition. Otherwise the nearest
+    clause heading, then the section title, then the document title.
+    """
+    inline = _condition_near(topic, text, start, end)
+    heading_cond, heading_clause = _heading_binding(topic, text, start)
+    if inline:
+        condition = inline
+    elif heading_cond:
+        condition = heading_cond
+    else:
+        condition = _title_condition(topic, source)
+    clause = heading_clause or _clause_before(text, end)
+    return condition, clause, bool(_SELF_SPEC_RE.search(text or ""))
+
+
+def _material_only(text: str) -> str:
+    for name, rx in _COMPACTION_MATERIALS:
+        if rx.search(text or ""):
+            return name
+    return ""
+
+
+def _location_only(text: str) -> str:
+    for name, rx in _COMPACTION_LOCATIONS:
+        if rx.search(text or ""):
+            return name
+    return ""
+
+
+def _materials_compatible(figure_mat: str, asked_mat: str) -> bool:
+    """True when one material name is the other, or a heading's shorter form.
+
+    "backfill" matches "structural backfill". "structural fill" does not.
+    """
+    if figure_mat == asked_mat:
+        return True
+    fig_words = set(figure_mat.lower().split())
+    ask_words = set(asked_mat.lower().split())
+    if not fig_words or not ask_words:
+        return False
+    return fig_words <= ask_words or ask_words <= fig_words
+
+
+def _condition_matches(topic: str, figure: str, asked: str) -> bool:
+    """True when this figure's condition is the one the question names."""
+    if not figure or not asked:
+        return False
+    if topic == "cover":
+        return figure == asked
+    fig_m = _material_only(figure)
+    ask_m = _material_only(asked)
+    fig_l = _location_only(figure)
+    ask_l = _location_only(asked)
+    if ask_m:
+        if not fig_m or not _materials_compatible(fig_m, ask_m):
+            return False
+    elif not (ask_l and fig_l == ask_l):
+        return False
+    return not (ask_l and fig_l and fig_l != ask_l)
 
 
 def _clause_before(text: str, end: int) -> str:
@@ -401,10 +577,27 @@ def _conditions_distinguish(hits: list[_Hit]) -> bool:
     return len(set(labels)) == len(labels)
 
 
-def _lead_first(hits: list[_Hit], asked: str) -> list[_Hit]:
+def _lead_first(hits: list[_Hit], topic: str, asked: str) -> list[_Hit]:
     if not asked:
         return list(hits)
-    return sorted(hits, key=lambda hit: 0 if hit.condition == asked else 1)
+    return sorted(
+        hits,
+        key=lambda hit: 0 if _condition_matches(topic, hit.condition, asked) else 1,
+    )
+
+
+def _emit_not_the_spec(hit: _Hit, class_name: str) -> bool:
+    """True only for a positive non-spec document the chunk does not claim.
+
+    An unrecognised filename is not enough. A chunk that calls itself a
+    Specification section is never labelled "not the specification", even
+    when the filename says report.
+    """
+    if not class_name or hit.is_class or hit.calls_itself_spec:
+        return False
+    if class_name == "specification":
+        return bool(_POSITIVE_NONSPEC_RE.search(hit.source or ""))
+    return True
 
 
 def _trim_num(token: str) -> str:
@@ -438,21 +631,24 @@ def _first(text: str) -> str:
 def _line_states(first: str, hit: _Hit, class_name: str) -> bool:
     if not (_figure_in(first, hit.figure) and _source_in(first, hit.source)):
         return False
-    if not hit.is_class and class_name:
-        if f"not the {class_name}" not in first.lower():
-            return False
-    return True
+    missing_denial = f"not the {class_name}" not in first.lower()
+    return not (_emit_not_the_spec(hit, class_name) and missing_denial)
 
 
 def _state_line(topic: str, hit: _Hit, class_name: str) -> str:
+    cond = f" for {hit.condition}" if hit.condition else ""
+    clause = f" (§{hit.clause})" if hit.clause else ""
     if topic == "cover":
-        line = f"{hit.figure} is the concrete-cover figure in {hit.source}."
-    else:
         line = (
-            f"{hit.figure} of maximum dry density is the compaction figure "
+            f"{hit.figure} is the concrete-cover figure{cond}{clause} "
             f"in {hit.source}."
         )
-    if not hit.is_class and class_name:
+    else:
+        line = (
+            f"{hit.figure} of maximum dry density is the compaction figure"
+            f"{cond}{clause} in {hit.source}."
+        )
+    if _emit_not_the_spec(hit, class_name):
         line += f" That document is not the {class_name}."
     return line
 
@@ -475,7 +671,11 @@ def _bound_line(
                 f"{cond}{clause} in {hit.source}."
             )
     line = " ".join(parts)
-    if class_name and hits and not any(hit.is_class for hit in hits):
+    if (
+        class_name
+        and hits
+        and all(_emit_not_the_spec(hit, class_name) for hit in hits)
+    ):
         line += f" These documents are not the {class_name}."
     return line
 

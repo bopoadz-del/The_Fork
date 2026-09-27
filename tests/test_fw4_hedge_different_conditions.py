@@ -9,11 +9,20 @@ material and condition, or when no condition separates them. Otherwise
 state each figure bound to its own condition and to the document,
 clause, or drawing that actually contains it.
 
+The live miss keeps the condition off the figure's own sentence: a
+clause heading several lines above ("8.4 Backfill"), a section title
+("Specification Section 9"), or only the document title ("Storm Water
+network"). Those still bind. "not the specification" is emitted only
+for a drawing, a report, or a design note, and never when the chunk
+calls itself a Specification section.
+
 Synthetic chunks only. Names start with FIXTURE-d-20260927-.
 """
 from __future__ import annotations
 
 import re
+
+import pytest
 
 from app.agents.first_line_hard_rule import apply_first_line_hard_rule
 
@@ -236,3 +245,217 @@ def test_same_condition_from_two_documents_still_asks_which():
     assert HEDGE in first.lower(), first
     assert _has_percent(first, "98") and _has_percent(first, "95"), first
     assert DOC_SAME_A in first and DOC_SAME_B in first, first
+
+
+# ── Live shape: condition lives in a heading, a section title, or the name ──
+#
+# The figure line itself does not name the material. "8.4 Backfill" sits
+# several sentences above 98%. "8.1 Structural Fill" and "Specification
+# Section 9" sit above 95%. 90% names no material; the document title is
+# the storm water network. "RSM 15492" is a lab reference, not the clause.
+
+DOC_VOL5_4 = "FIXTURE-d-20260927-Vol 5 Geotechnical Report (4 of 5).pdf"
+DOC_VOL5_2 = "FIXTURE-d-20260927-Vol 5 Geotechnical Report (2 of 5).pdf"
+DOC_STORM = "FIXTURE-d-20260927-Storm Water network.pdf"
+BACKFILL_98_HEADING = (
+    "8.4 Backfill\n"
+    "\n"
+    "RSM 15492 is the laboratory reference cited in the borehole logs.\n"
+    "Place the material in loose layers not exceeding the stated thickness.\n"
+    "Each layer is tested before the next layer is placed.\n"
+    "Compact the placed material to 98% of maximum dry density of the "
+    "modified Proctor test.\n"
+)
+STRUCTURAL_95_SECTION = (
+    "Specification Section 9\n"
+    "8.1 Structural Fill\n"
+    "\n"
+    "The following clauses apply to engineered fill.\n"
+    "Place and test each layer before the next is placed.\n"
+    "Compact the material to 95% of maximum dry density of the "
+    "modified Proctor test.\n"
+)
+STORM_90 = (
+    "Bedding for the piped network shall be compacted to 90% of "
+    "maximum dry density.\n"
+)
+
+P1A_PHRASINGS = [
+    (
+        "p1a-under-foundations",
+        (
+            "Per the project specification, to what degree must structural "
+            "backfill under foundations be compacted?"
+        ),
+    ),
+    (
+        "p1a-below-foundations",
+        (
+            "As per the project specification, what compaction applies to "
+            "backfill below foundations?"
+        ),
+    ),
+    (
+        "p1a-beneath-footings",
+        (
+            "According to the project specification, how thoroughly must "
+            "backfill beneath footings be compacted?"
+        ),
+    ),
+]
+
+DWG_SOIL_H = "FIXTURE-d-20260927-Foundation Cover Drawing A.pdf"
+DWG_FOOT_H = "FIXTURE-d-20260927-Foundation Cover Drawing B.pdf"
+SPEC_DEFER_H = "FIXTURE-d-20260927-Vol 2 Specification cover deferral.pdf"
+COVER_75_HEADING = (
+    "Concrete cast against or in contact with soil\n"
+    "\n"
+    "General notes on this drawing govern unless a dimension is shown.\n"
+    "Foundations on this sheet follow that note.\n"
+    "Nominal concrete cover to reinforcement is 75 mm.\n"
+)
+COVER_100_HEADING = (
+    "Bottom of footings\n"
+    "\n"
+    "Refer to the structural notes for reinforcement grades.\n"
+    "Cover at the foundation element on this drawing is noted below.\n"
+    "Nominal concrete cover to reinforcement is 100 mm.\n"
+)
+S1_PHRASINGS = [
+    (
+        "s1-minimum-cover",
+        (
+            "Per the project specification, what is the minimum concrete "
+            "cover to reinforcement for foundations?"
+        ),
+    ),
+    (
+        "s1-required-cover",
+        (
+            "As per the project specification, what concrete cover to "
+            "reinforcement is required for a foundation?"
+        ),
+    ),
+    (
+        "s1-which-cover",
+        (
+            "According to the project specification, which minimum cover "
+            "to reinforcement applies for foundations?"
+        ),
+    ),
+]
+S2_PHRASINGS = [
+    (
+        "s2-under-pavement",
+        (
+            "Per the project specification, what compaction is required "
+            "under road pavement?"
+        ),
+    ),
+    (
+        "s2-degree-pavement",
+        (
+            "As per the project specification, to what degree must material "
+            "under the road pavement be compacted?"
+        ),
+    ),
+    (
+        "s2-percent-pavement",
+        (
+            "According to the project specification, what percentage "
+            "compaction is required beneath the road pavement?"
+        ),
+    ),
+]
+
+
+def _p1a_heading_rag() -> dict:
+    return _rag(
+        _chunk("v4", DOC_VOL5_4, BACKFILL_98_HEADING, "0.820"),
+        _chunk("sw", DOC_STORM, STORM_90, "0.800"),
+        _chunk("v2", DOC_VOL5_2, STRUCTURAL_95_SECTION, "0.780"),
+    )
+
+
+@pytest.mark.parametrize(
+    "ask",
+    [ask for _id, ask in P1A_PHRASINGS],
+    ids=[pid for pid, _ask in P1A_PHRASINGS],
+)
+def test_p1a_heading_binds_backfill_and_does_not_ask(ask):
+    """98% under the '8.4 Backfill' heading is the one match.
+
+    The 95% is structural fill in Specification Section 9. The 90%
+    belongs to the storm water network. Neither forces a question.
+    The first line leads with 98% and §8.4 of the Vol 5 (4 of 5)
+    report, and does not credit RSM 15492.
+    """
+    out = apply_first_line_hard_rule(NARRATIVE, _p1a_heading_rag(), _msgs(ask))
+    first = _first(out)
+    assert "which document" not in out.lower(), first
+    assert "?" not in first, first
+    assert first.lower().startswith("98%"), first
+    assert "8.4" in first, first
+    assert DOC_VOL5_4 in first, first
+    assert "rsm" not in first.lower(), first
+    assert "15492" not in first, first
+
+
+@pytest.mark.parametrize(
+    "ask",
+    [ask for _id, ask in S1_PHRASINGS],
+    ids=[pid for pid, _ask in S1_PHRASINGS],
+)
+def test_s1_heading_binds_each_cover_to_its_drawing(ask):
+    """75 mm and 100 mm take their conditions from the note headings.
+
+    Each figure is credited to its drawing. The specification deferral
+    is not credited with either figure.
+    """
+    out = apply_first_line_hard_rule(
+        NARRATIVE,
+        _rag(
+            _chunk("spec", SPEC_DEFER_H, SPEC_DEFERS, "0.900"),
+            _chunk("soil", DWG_SOIL_H, COVER_75_HEADING, "0.860"),
+            _chunk("foot", DWG_FOOT_H, COVER_100_HEADING, "0.840"),
+        ),
+        _msgs(ask),
+    )
+    first = _first(out)
+    assert "which document" not in out.lower(), first
+    assert "?" not in first, first
+    soil = _mm_sentence(first, "75")
+    assert soil, first
+    assert "contact with soil" in soil.lower() or "cast against" in soil.lower(), soil
+    assert DWG_SOIL_H in soil, soil
+    assert SPEC_DEFER_H not in soil, soil
+    foot = _mm_sentence(first, "100")
+    assert foot, first
+    assert "bottom of footing" in foot.lower(), foot
+    assert DWG_FOOT_H in foot, foot
+    assert SPEC_DEFER_H not in foot, foot
+    assert SPEC_DEFER_H not in out, out
+
+
+@pytest.mark.parametrize(
+    "ask",
+    [ask for _id, ask in S2_PHRASINGS],
+    ids=[pid for pid, _ask in S2_PHRASINGS],
+)
+def test_s2_specification_section_is_not_called_not_the_specification(ask):
+    """95% is credited to the Vol 5 (2 of 5) document.
+
+    The chunk calls itself Specification Section 9. The filename is a
+    report, and that must not produce 'not the specification'.
+    """
+    out = apply_first_line_hard_rule(
+        NARRATIVE,
+        _rag(_chunk("v2", DOC_VOL5_2, STRUCTURAL_95_SECTION)),
+        _msgs(ask),
+    )
+    first = _first(out)
+    assert "which document" not in first.lower(), first
+    assert _has_percent(first, "95"), first
+    assert first.lower().startswith("95%"), first
+    assert DOC_VOL5_2 in first, first
+    assert "not the specification" not in out.lower(), out
