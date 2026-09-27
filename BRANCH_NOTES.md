@@ -1,52 +1,47 @@
-# BRANCH_NOTES — `agent-e/fw3-s1-retrieval`
+# BRANCH_NOTES — `agent-e/fw4-spec-retrieval`
 
-Local lane for Agent D to fold into the batch PR. No pull request from this branch. No merge, no deploy, no Render/Neon/env changes.
+FIX WAVE 4, #2 RETRIEVAL. Local lane for Agent D's batch PR. No pull request from this branch. No merge, no deploy, no AWS / Render / env / Neon changes. Not READY.
 
-Base: `23a04d0931b588b19352d292c53d7db76ad3c7db`.
+Base: `b13aed07b570ca6c82d04a8315052e726a9a8d60` (main).
 
 ## Root cause
 
-Pre-answer retrieval is `rag_inject` → `retrieve_with_filter` (`RAG_K` default 5). The specification filename lift lives in `_apply_source_class_preference` (`app/core/rag/retriever.py`): a question matching "per the project specification" adds `_SOURCE_CLASS_BONUS` (1.2) to every chunk whose filename says specification.
+Pre-answer retrieval is `rag_inject` → `build_retrieval_query` → `retrieve_with_filter` (`RAG_K` 5) → token cap → system message. `build_retrieval_query` returns S1/S2 unchanged (they are not thin follow-ups), and `RAG_K` was not the limit. The misses are in `retrieve_with_filter`:
 
-That lift stacks on `_NUMERIC_REQUIREMENT_BONUS` (2.5). The cover detector (`chunk_states_cover_length`) treated any "cover" plus any millimetre anywhere in the chunk as a stated cover length. Specification chunks about bollards, raised floors, and rebar fixing therefore scored cosine + 2.5 + 1.2. With cosine near 0 that is the flat **3.7** plateau in the live probe. The durability sentence (nominal cover 50 mm / 75 mm, no "specification" in the filename) kept cosine + 2.5 (~3.26) and landed at rank 22, outside the five chunks passed to the model.
+1. **Vol 2 Specification (4 of 9) cl 3.1.25.8 is never a candidate.** It says spacers give "the cover specified herein, on the Drawings or as directed" and states no cover millimetre. `_fetch_numeric_requirement_chunks` only admits chunks that state a cover length, and the vector leg does not pull a tie-wire / spacer paragraph for "minimum concrete cover for foundations cast directly against soil". Local rag_inject over ~780 evidence chunks with bge-small: not in the 79-chunk pool. Had it been pooled, `_cap_specification_class_bonus` would still have cut its +1.2 class lift, because an unrelated "1.29mm" tie-wire gauge sits in the same chunk.
+2. **ST-200-0000007-04 is pooled but never lifted.** Its 100 mm is a list item ~120 characters after its "CLEAR CONCRETE COVER TO STEEL REINFORCEMENT SHALL NOT BE LESS THAN THE FOLLOWING:" heading, past the 64-character window in `_mm_near_cover_phrase`. It stays at cosine (~0.74, pool rank 33) while chunks with a millimetre next to "cover" get +2.5.
 
-Signed and unsigned copies of that same body each took a slot. Dedupe runs in the same top-k cut.
+All five slots then go to Vol 5 (4 of 5) chunk 92, Vol 5 (2 of 5) chunk 79, ST-400 notes and a Vol 2 (3 of 9) earth-well lid "concrete cover of 250mm x 250mm x 10mm". That matches the FW3 remeasure (chunk 92 6/6, chunk 79 5/6, ST-400, spec 0/6, ST-200 0/6).
 
-`app/agents/first_line_hard_rule.py` was not edited. The verbatim co-search path is not used.
+## Change (`app/core/rag/retriever.py`)
 
-## Flag
+Flag `RETRIEVAL_SPEC_DEFERRAL`, default **on**. `=0` restores b13aed07 exactly (tested).
 
-`RETRIEVAL_SPEC_BOOST_GUARD` defaults **on**. `RETRIEVAL_SPEC_BOOST_GUARD=0` restores the uncapped lift, the loose cover detector, the old lexical query, and both duplicate slots.
-
-When the flag is on:
-
-- A cover length is a millimetre within 64 characters of "nominal cover", "concrete cover", or "cover to reinforcement".
-- On a cover-length ask, the 1.2 filename lift is capped at 0.25 for a chunk that has a cover-word and a millimetre but does not state that length. A chunk that states the asked figure (including P1a's 98% MDD) keeps the full lift. Compaction asks and non-specification classes are not capped.
-- The BM25 leg of pre-answer retrieval appends `nominal cover cast against soil casted against blinding`. The embedded query stays the operator's words.
-- Duplicate bodies collapse to the higher-scored copy before the top-k cut.
-
-## Dedupe key
-
-`chunk_copy_key`: strip one leading `[source: …]` line, collapse whitespace, lowercase. Bodies shorter than 80 characters are not collapsed. The kept copy is the higher score (the candidate list is already in rank order).
-
-## Fixture ranks (fake embedder, not the live index)
-
-S1 ask, passed k=5, guard off: five `vol2-specification-*` chunks, scores 3.811, 3.758, 3.736, 3.710, 3.708. Cover copies absent.
-
-S1 ask, guard on: `vol5-other-4-signed` score 2.525 (the 75 mm clause), then four specification fillers that do not state a cover length (scores 1.283–1.196). The unsigned copy is not a second slot.
-
-P1a (98% MDD, modified Proctor) is rank 1 at 3.819 with the guard on and off.
-
-S2 (Vol 5 other documents 2 of 5, RSM 15492-Rev0, 95% MDD / CBR 25) is rank 1 at 2.491 with the guard on and off.
-
-S4 ("Which contract governs this project?") does not name the specification class, so this lift does not run. The PSA chunk 1032 text is not in the repo; it was not fixture-ranked.
+- `chunk_states_cover_length` → `_cover_clause_states_length`: a cover phrase (nominal / concrete / clear / minimum cover, cover to (steel) reinforcement) states a length when a single millimetre is within 64 characters, or is a list item up to 160 characters after the phrase with no sentence end or new numbered note in between. A millimetre that is one side of a size (`250mm x 250mm`) is not a cover length.
+- `chunk_defers_cover_to_drawings`: one sentence names the concrete/reinforcement cover and sends it to the drawings ("on the Drawings", "as shown on the drawings", "per drawings"). A manhole-cover sentence does not count.
+- `_rescue_spec_deferral_chunks` (candidate pool, before the top-k cut): only for a specification-scoped cover ask (`query_asks_spec_deferred_cover`), and only when no specification deferral clause is already pooled. `chunks_containing_all` with `drawings` + a cover phrasing, scoped to specification volumes already in the pool, plus an open pass on "cover specified" / "specified cover". Admits specification-named chunks whose sentence defers. The clause enters with its own cosine to the query.
+- `_apply_spec_deferral_boost` (after the numeric boost): the deferral clause takes the stated-figure lift (+2.5) and keeps its class lift (`_cap_specification_class_bonus` skips it). With it in the pool, drawing-named chunks that state the cover get +0.5 (the authority the clause names) and cover chunks naming the asked element (foundation / footing / raft …) get +0.3.
+- Compaction asks never take this path. S2 injection is byte-identical flag on vs off (tested).
 
 ## Tests
 
-`tests/test_fw3_s1_retrieval_rank.py`. Fixtures prefixed `FIXTURE-e-20260926-`. Clause text mirrors the quoted sentences only.
+`tests/test_fw4_spec_deferral_retrieval.py`, fixture `tests/fixtures/fw4_spec_deferral_chunks.json` (28 chunk bodies from the FW3 evidence files: the two targets, chunk 92 ×2 + 518, chunk 79 ×2, ST-400 462/463/469/477, Vol 3 note 5.5 and the ST-200 note copies, Vol 2 spec distractors incl. the earth-well lid, and the S2 set: RSM 15492 chunks 8/9, Vol 5 2/5 chunks 81/82, ITP, CCF, TM-400). Drive paths replaced by `FIXTURE-fw4` names. Each end-to-end test runs `rag_inject` with the fake embedder and with BAAI/bge-small-en-v1.5 (skipped unless cached and `HF_HUB_OFFLINE=1`).
 
-Relevant suite (this file, numeric-requirement, named-source, P1a, first-line hard rule, spec-title, hybrid, dual-query, letter-filename, rag injection, source class, one-chunk-per-document): **179 passed, 4 skipped** with `CEREBRUM_VIRGIN=false` and the same **179 passed, 4 skipped** with `CEREBRUM_VIRGIN=true`. `RAG_EMBEDDING_MODEL=fake`. `scripts/scan_exception_pass.py`: `RETURN: 0 new`.
+Injected ranks, fixture corpus (`rag_inject`, k=5):
 
-## Caveat
+| ask | embedder | b13aed07 | this branch |
+|---|---|---|---|
+| S1 3.1.25.8 | bge | — | 1 |
+| S1 ST-200-0000007-04 | bge | — | 3 |
+| S1 3.1.25.8 | fake | — | 1 |
+| S1 ST-200-0000007-04 | fake | — | 4 |
+| S2 RSM 15492 chunk 9 | bge | — | — (same clause via Vol 5 2/5 chunks 81/82 at 4, 5 both) |
+| S2 RSM 15492 chunk 9 | fake | 1 | 1 |
 
-These ranks are the fixture store with the fake embedder. The live index was not queried. Live rank 22 / score 3.264 for chunk 92 is from the attached probe on d708b5d, not a re-measure of this branch.
+On b13aed07 the new file fails 6 (both S1 end-to-end params, 4 detector units) and passes 7. On this branch: 13 passed (with `tests/test_fw3_s1_retrieval_rank.py`: 19 passed).
+
+Full suite (`pytest tests/ --ignore=tests/browser`, SQLite default, `RAG_EMBEDDING_MODEL=fake`, `HF_HUB_OFFLINE=1`): `CEREBRUM_VIRGIN=false` + `CEREBRUM_DOMAIN_KITS=construction` 8231 passed, 33 skipped, 1 xfailed, 1 xpassed; `CEREBRUM_VIRGIN=true` 7982 passed, 282 skipped, 1 xfailed, 1 xpassed. `scripts/scan_exception_pass.py`: `RETURN: 0 new`.
+
+## Limits
+
+Fixture store and a ~780-chunk local evidence corpus, not the 123,233-chunk prod index; prod was not queried. In the larger local corpus S1 injects 3.1.25.8 at 1 and ST-200-0000007-04 at 3; the other slots go to copies of the same 100 mm drawing note (Vol 3 Drawings 6/7 and 4/7), so chunk 92 and the ST-400 75 mm notes drop out there. S2 chunk 9 is not injected with bge before or after; the same 95% MDD / CBR 25 clause is, and this change does not touch that path.
