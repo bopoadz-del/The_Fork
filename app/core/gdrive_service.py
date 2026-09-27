@@ -177,6 +177,21 @@ def _mint_access_token() -> Optional[str]:
 
 # ── Drive REST helpers ───────────────────────────────────────────────────
 
+# files.list rejects pageSize above 1000 with HTTP 400.
+_DRIVE_LIST_PAGE_MAX = 1000
+
+
+def _clamp_drive_page_size(page_size: int) -> int:
+    try:
+        size = int(page_size)
+    except (TypeError, ValueError):
+        size = 100
+    if size < 1:
+        return 1
+    if size > _DRIVE_LIST_PAGE_MAX:
+        return _DRIVE_LIST_PAGE_MAX
+    return size
+
 
 def list_folder_files(folder_id: str, page_size: int = 100) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """List non-trashed files directly inside ``folder_id``.
@@ -196,7 +211,9 @@ def list_folder_files(folder_id: str, page_size: int = 100) -> Tuple[List[Dict[s
     except ImportError:
         return [], "httpx not available"
 
-    q = f"'{folder_id}' in parents and trashed = false"
+    page_size = _clamp_drive_page_size(page_size)
+    escaped = _escape_drive_query_value(folder_id)
+    q = f"'{escaped}' in parents and trashed = false"
     files: List[Dict[str, Any]] = []
     page_token: Optional[str] = None
     try:
@@ -207,8 +224,10 @@ def list_folder_files(folder_id: str, page_size: int = 100) -> Tuple[List[Dict[s
                     "pageSize": page_size,
                     "fields": (
                         "nextPageToken, files(id, name, mimeType, size, "
-                        "modifiedTime, md5Checksum, etag)"
+                        "modifiedTime, md5Checksum)"
                     ),
+                    "supportsAllDrives": "true",
+                    "includeItemsFromAllDrives": "true",
                 }
                 if page_token:
                     params["pageToken"] = page_token
@@ -355,7 +374,7 @@ def find_file_id_by_exact_name(filename: str) -> Tuple[Optional[str], Optional[s
                 params={
                     "q": q,
                     "pageSize": 10,
-                    "fields": "files(id, name, mimeType, size, md5Checksum, etag)",
+                    "fields": "files(id, name, mimeType, size, md5Checksum)",
                     "supportsAllDrives": "true",
                     "includeItemsFromAllDrives": "true",
                 },
@@ -411,7 +430,7 @@ def get_file_metadata(file_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[
                 f"{_DRIVE_API}/files/{fid}",
                 headers={"Authorization": f"Bearer {token}"},
                 params={
-                    "fields": "id,name,mimeType,size,md5Checksum,etag",
+                    "fields": "id,name,mimeType,size,md5Checksum",
                     "supportsAllDrives": "true",
                 },
             )
