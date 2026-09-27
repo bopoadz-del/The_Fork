@@ -188,7 +188,7 @@ FOUNDATION_75 = (
 )
 FOUNDATION_50 = (
     "Minimum concrete cover to reinforcement for foundations is 50 mm "
-    "where the foundation is cast against blinding."
+    "where the foundation is cast against soil."
 )
 
 
@@ -218,10 +218,10 @@ def test_unrelated_millimetres_in_one_specification_do_not_ask_which_document():
 
 
 def test_conflicting_cover_figures_across_documents_may_ask_which_document():
-    """Guard. 75 mm and 50 mm are both concrete cover to reinforcement.
+    """Guard. 75 mm and 50 mm are both cover for foundations cast against soil.
 
-    Different figures for that same item, in two different documents, may
-    still ask which document's figure is meant.
+    Same condition, two documents, two figures: still ask which document's
+    figure is meant. A different condition is not this case.
     """
     out = apply_first_line_hard_rule(
         NARRATIVE,
