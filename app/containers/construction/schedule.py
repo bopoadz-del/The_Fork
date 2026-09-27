@@ -399,18 +399,59 @@ def _look_ahead_message_text(data: Dict, p: Dict) -> str:
     )
 
 
-def _look_ahead_as_of(data: Dict, p: Dict):
-    """Explicit as_of, else the date the operator stated as today, else None.
+def _as_of_equals_the_clock(raw) -> bool:
+    """True when ``raw`` is the server's today, not a different date."""
+    if not raw:
+        return False
+    try:
+        from app.lib.pm_computations import _clock_today, _coerce_date
+        return _coerce_date(raw) == _clock_today()
+    except Exception:  # noqa: BLE001
+        logger.debug(
+            "look_ahead: could not compare as_of %r to the clock", raw,
+            exc_info=True,
+        )
+        return False
 
-    None means "use the clock". A stated "Today is 21 September" wins over
-    the clock. An explicit ``as_of`` argument still wins over the prose.
+
+def _resolve_stated_or_explicit_as_of(data: Dict, p: Dict) -> tuple[str | None, bool]:
+    """``(raw, from_stated_prose)``.
+
+    A model ``as_of`` equal to the server clock is the clock. The date
+    the operator stated as today wins over that echo. A genuine as_of
+    that is not the clock still wins over the prose.
     """
     raw = (
         p.get("as_of") or data.get("as_of")
         or p.get("data_date") or data.get("data_date")
     )
-    if not raw:
-        raw = _stated_look_ahead_date(_look_ahead_message_text(data, p))
+    stated = _stated_look_ahead_date(_look_ahead_message_text(data, p))
+    if raw and stated and _as_of_equals_the_clock(raw):
+        try:
+            from app.lib.pm_computations import _coerce_date
+            if _coerce_date(stated) != _coerce_date(raw):
+                return stated, True
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "look_ahead: stated today %r did not coerce; using it over the clock",
+                stated, exc_info=True,
+            )
+            return stated, True
+    if raw:
+        return str(raw), False
+    if stated:
+        return stated, True
+    return None, False
+
+
+def _look_ahead_as_of(data: Dict, p: Dict):
+    """Explicit as_of, else the date the operator stated as today, else None.
+
+    None means "use the clock". A stated "Today is 21 September" wins over
+    the clock, including a model as_of that merely repeats the clock. A
+    genuine as_of that is not the clock still wins over the prose.
+    """
+    raw, _from_stated = _resolve_stated_or_explicit_as_of(data, p)
     if not raw:
         return None
     try:
@@ -1415,16 +1456,10 @@ class ConstructionScheduleMixin:
                 ),
             }
 
-        as_of_raw = (
-            p.get("as_of") or data.get("as_of")
-            or p.get("data_date") or data.get("data_date")
-        )
-        stated_as_of = False
-        if not as_of_raw:
-            as_of_raw = _stated_look_ahead_date(_look_ahead_message_text(data, p))
-            stated_as_of = bool(as_of_raw)
+        as_of_raw, stated_as_of = _resolve_stated_or_explicit_as_of(data, p)
         if not as_of_raw:
             as_of_raw = schedule_data.get("data_date")
+            stated_as_of = False
         as_of_date = None
         if as_of_raw:
             try:
@@ -2952,7 +2987,13 @@ class ConstructionScheduleMixin:
 
         start_date = p.get("start_date") or data.get("start_date")
         if not start_date:
-            start_date = datetime.now(timezone.utc).date().isoformat()
+            stated_today = _stated_look_ahead_date(" ".join(
+                str(x) for x in (
+                    user_message, brief,
+                    p.get("message"), data.get("message"),
+                ) if x
+            ))
+            start_date = stated_today or datetime.now(timezone.utc).date().isoformat()
 
         if boq_derived:
             from app.lib.boq_schedule import (

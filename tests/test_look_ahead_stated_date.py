@@ -113,12 +113,20 @@ def test_a_yearless_today_with_no_programme_year_uses_the_clock_year(monkeypatch
 
 
 def test_an_explicit_as_of_still_wins_over_the_prose(monkeypatch):
+    """A model as_of equal to the clock is the clock, not an explicit date.
+
+    This used to assert the opposite: as_of 2026-09-27 beat "Today is
+    21 September" while the clock was also 27 September. That echo is
+    how a stated today lost. The stated date now wins. A genuine as_of
+    that is not the clock still wins; that case is
+    test_a_genuine_as_of_that_is_not_the_clock_still_wins.
+    """
     _freeze(monkeypatch, date(2026, 9, 27))
     out = _look_ahead({
         "user_message": D3,
         "as_of": "2026-09-27",
     })
-    assert out["as_of"] == "2026-09-27"
+    assert out["as_of"] == "2026-09-21"
 
 
 def test_understand_intent_passes_the_stated_date():
