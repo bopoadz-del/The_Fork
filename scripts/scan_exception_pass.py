@@ -62,16 +62,19 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # handlers — only the line numbers moved. No new silent returns.
     "app/agents/runtime.py:649": "baseline 2026-09-10",
     "app/agents/runtime.py:973": "baseline 2026-09-10",
-    "app/agents/runtime.py:2208": "baseline 2026-09-10",
+    # Re-indexed 2026-09-27: stated look-ahead date passed in predispatch.
+    # Same handlers — only the line numbers moved. No new silent returns.
     "app/agents/runtime.py:2214": "baseline 2026-09-10",
-    "app/agents/runtime.py:2277": "baseline 2026-09-10",
+    "app/agents/runtime.py:2220": "baseline 2026-09-10",
     "app/agents/runtime.py:2283": "baseline 2026-09-10",
-    "app/agents/runtime.py:2967": "baseline 2026-09-10",
-    "app/agents/runtime.py:3991": "baseline 2026-09-10",
-    "app/agents/runtime.py:5347": "baseline 2026-09-10",
+    "app/agents/runtime.py:2289": "baseline 2026-09-10",
+    "app/agents/runtime.py:2973": "baseline 2026-09-10",
+    "app/agents/runtime.py:3997": "baseline 2026-09-10",
+    "app/agents/runtime.py:5353": "baseline 2026-09-10",
     # Re-indexed 2026-09-25: standards-note relevance helper inserted above
     # _aca_claim_amount. Same ValueError return — only the line moved.
-    "app/agents/runtime.py:5925": "baseline 2026-09-10",
+    # Re-indexed 2026-09-27 with the look-ahead predispatch date pass.
+    "app/agents/runtime.py:5931": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
