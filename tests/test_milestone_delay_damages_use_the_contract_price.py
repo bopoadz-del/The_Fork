@@ -52,7 +52,7 @@ PRICE_ROW = (
 LIVE_BUNDLE = (
     "[doc_id=ocr1exec chunk=0] Form of Agreement | package value "
     f"SAR {OTHER_AMOUNT:,.2f} | "
-    "[doc_id=50e28bc6 chunk=11] GCH Pre-Kick off meeting | "
+    "[doc_id=fixture-doc-b chunk=11] FIXTURE-c-20260927 kickoff note | "
     f"Accepted Contract Amount excluding VAT SAR {OTHER_AMOUNT:,.2f} | "
     "[doc_id=coc chunk=20] CONTRACT DATA | "
     f"{MILESTONE_CLAUSE} | {WHOLE_CLAUSE} | {PRICE_ROW}"
@@ -97,7 +97,7 @@ def test_another_documents_amount_is_not_the_milestone_base():
     bundle = (
         "[doc_id=coc chunk=20] CONTRACT DATA | "
         f"{MILESTONE_CLAUSE} | "
-        "[doc_id=50e28bc6 chunk=11] GCH Pre-Kick off meeting | "
+        "[doc_id=fixture-doc-b chunk=11] FIXTURE-c-20260927 kickoff note | "
         f"Accepted Contract Amount excluding VAT SAR {OTHER_AMOUNT:,.2f}"
     )
     assert cc.compose_delay_damages_daily_from_excerpts(MILESTONE_ASK, bundle) is None
