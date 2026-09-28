@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-09-28).** Historical snapshot. Not a source of open items or current status. Current state lives in the fleet standing-order loop and the live measurements.
+
 # Session Reference
 
 A pointer for picking this work back up. Last updated 2026-05-20.

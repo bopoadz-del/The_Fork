@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-09-28).** Historical snapshot. Not a source of open items or current status. Current state lives in the fleet standing-order loop and the live measurements.
+
 # Client-desk readiness verdict — 2026-08-13
 
 Supersedes `CLIENT_DESK_READINESS_20260802.md`. That pass ran against the
