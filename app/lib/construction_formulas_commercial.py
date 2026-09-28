@@ -60,10 +60,15 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
         return {"error": "labor_hours must be > 0"}
     rate = o / h
     per_worker = (rate / crew_size) if crew_size else rate
+    rate_r = round(rate, 3)
+    per_r = round(per_worker, 4)
     return {
-        "rate_per_hour": round(rate, 3),
-        "rate_per_worker_hour": round(per_worker, 4),
+        "rate_per_hour": rate_r,
+        "rate_per_worker_hour": per_r,
         "crew_size": crew_size,
+        "unit": "/hr",
+        "value": rate_r,
+        "rate_per_worker_hour_unit": "/worker-hr",
         "standard": "arithmetic (productivity)",
         "note": (f"Rate = output/hours = {o}/{h} = {rate:.3f}/hr; "
                  f"per worker = /{crew_size} = {per_worker:.4f}/worker-hr."),
@@ -182,13 +187,15 @@ _MILESTONE_OR_SECTION_ASK_RE = re.compile(r"(?i)\b(?:milestone|section)s?\b")
 
 
 def ask_is_about_a_milestone_or_section(query: str) -> bool:
-    """True when the operator asked about ONE Milestone or Section.
+    """True when the operator asked about one Milestone, or said Section.
 
-    The contract carries two daily rates -- 0.1% of the Contract Price for the
-    whole of the Works, 0.015% per Milestone -- and which one answers the
-    question is decided by the question. The parser never saw it, so a
-    Milestone ask was scored by whole-of-Works preferences and the Milestone
-    row lost (live SET4 M3).
+    Contract Data 8.8.1 states the 0.015% rate per calendar day per
+    Milestone. There is no separate per-Section rate. A question that
+    says Section selects this same row, and the answer states it as per
+    Milestone. The other daily rate is 0.1% of the Contract Price for
+    the whole of the Works. The parser never saw the question, so a
+    Milestone ask was scored by whole-of-Works preferences and the
+    Milestone row lost (live SET4 M3).
     """
     return bool(_MILESTONE_OR_SECTION_ASK_RE.search(query or ""))
 
@@ -196,8 +203,11 @@ def ask_is_about_a_milestone_or_section(query: str) -> bool:
 def delay_damages_rate_preference_score(
     rate: float, ctx: str = "", ask: str = "",
 ) -> int:
-    """Higher wins. Whole-of-Works prefers Contract Data 0.1% over 0.015%;
-    a Milestone/Section ask demotes the whole-of-Works row instead."""
+    """Higher wins. Whole-of-Works prefers Contract Data 0.1% over 0.015%.
+
+    A question that says Milestone or Section demotes the whole-of-Works
+    row. Both are answered with the 8.8.1 per-Milestone rate.
+    """
     ctx = ctx or ""
     if _DD_CAP_KEY_RE.search(ctx):
         return -1
@@ -515,12 +525,216 @@ def delay_damages_daily(
     }
 
 
+def delay_damages_daily_basis(ask: str) -> str:
+    """``milestone`` or ``whole``.
+
+    Contract Data 8.8.1 is per calendar day per Milestone. A question
+    that says Section selects that same rate, and the sentence states
+    it as per Milestone. The whole of the Works stays its own row.
+    """
+    if ask_is_about_a_milestone_or_section(ask):
+        return "milestone"
+    return "whole"
+
+
+# A Section sum, a change-control "contract value", or a kickoff note is
+# not the Contract Price the 0.015% row is a percentage of.
+_NOT_THE_CONTRACT_PRICE_RE = re.compile(
+    r"(?i)\b(?:contract\s+value|change\s+control|kick-?\s*off|"
+    r"section\s+(?:amount|price|value|sum)|package\s+value)\b",
+)
+
+
+def _contract_price_row_score(amount: float, row: str, wide: str) -> int:
+    """Higher is the Contract Data Contract Price. 0 means do not use it.
+
+    The rate sentence says "of the Contract Price", so a nearby SAR figure
+    matches the ACA label without being clause 1.1.1. That is how another
+    amount was multiplied by the per-Milestone rate.
+    """
+    row = row or ""
+    wide = wide or ""
+    label_blob = row if re.search(r"(?i)accepted\s+contract\s+amount", row) else wide
+    if not re.search(r"(?i)accepted\s+contract\s+amount", label_blob):
+        return 0
+    if (
+        _DD_ASK_RE.search(row)
+        and "%" in row
+        and not _CLAUSE_111_RE.search(row)
+    ):
+        return 0
+    if _NOT_THE_CONTRACT_PRICE_RE.search(row) and not _CLAUSE_111_RE.search(row):
+        return 0
+    if aca_amount_is_toy_example(amount, wide):
+        return 0
+    if not _EXCL_VAT_RE.search(label_blob):
+        return 0
+    score = 3
+    if _CLAUSE_111_RE.search(label_blob):
+        score += 4
+    return score
+
+
+def _best_contract_price_figure(text: str) -> tuple[int, float, str] | None:
+    """``(score, amount, currency)`` for the Contract Price in ``text``."""
+    blob = _collapse_ws(text)
+    best: tuple[int, float, str] | None = None
+    for m in _MONEY_RE.finditer(blob):
+        amount = float(m.group(2).replace(",", ""))
+        if amount < 1000:
+            continue
+        row = _row_around(blob, m.start(), m.end())
+        wide = blob[max(0, m.start() - 96): m.end() + 48]
+        score = _contract_price_row_score(amount, row, wide)
+        if score <= 0:
+            continue
+        cand = (score, amount, m.group(1).upper())
+        if best is None or cand[0] > best[0] or (
+            cand[0] == best[0] and cand[1] > best[1]
+        ):
+            best = cand
+    return best
+
+
+def _contract_price_beside_the_rate(
+    text: str, rate: float, ask: str,
+) -> tuple[float, str] | None:
+    """Contract Price from a document that actually states ``rate``.
+
+    A higher-ranked excerpt can carry another document's Accepted Contract
+    Amount (live: SAR 144,042,486.50 on a kickoff / executed cover) ahead
+    of clause 1.1.1. First-match then multiplies the per-Milestone rate
+    by that figure. The price has to sit with the rate, and a 1.1.1 excluding-VAT
+    row beats a smaller amount that merely shares the label.
+    """
+    grouped: dict[str, list[str]] = {}
+    order: list[str] = []
+    for doc, seg in _excerpt_segments(text):
+        if doc not in grouped:
+            order.append(doc)
+            grouped[doc] = []
+        grouped[doc].append(seg)
+    best: tuple[int, float, str] | None = None
+    saw_rate_doc = False
+    for doc in order:
+        blob = "\n".join(grouped[doc])
+        got = parse_delay_damages_rate_percent(blob, ask)
+        if got is None or abs(float(got) - float(rate)) > 1e-9:
+            continue
+        saw_rate_doc = True
+        fig = _best_contract_price_figure(blob)
+        if fig is None:
+            continue
+        if best is None or fig[0] > best[0] or (
+            fig[0] == best[0] and fig[1] > best[1]
+        ):
+            best = fig
+    if best is None:
+        # Unmarked text is one segment and was already searched. A marked
+        # bundle whose rate document has no Contract Price must not borrow
+        # another document's amount.
+        if saw_rate_doc:
+            return None
+        return None
+    return best[1], best[2]
+
+
+def elected_delay_damages_clause(text: str, ask: str) -> str:
+    """The Contract Data row that supplied the elected rate, or ""."""
+    rate = parse_delay_damages_rate_percent(text, ask)
+    if rate is None:
+        return ""
+    blob = _collapse_ws(text)
+    best_row = ""
+    best_score = -1
+    for m in _DD_RATE_PCT_RE.finditer(blob):
+        try:
+            pct = float(m.group(1))
+        except ValueError:
+            logger.debug("delay-damages clause percent was not a float", exc_info=True)
+            continue
+        if abs(pct - float(rate)) > 1e-9:
+            continue
+        row = _row_around(blob, m.start(), m.end()).strip()
+        score = delay_damages_rate_preference_score(pct, row, ask)
+        if score > best_score:
+            best_score = score
+            best_row = row
+    return best_row
+
+
+def drop_whole_of_works_delay_claims(text: str) -> str:
+    """Drop sentences that call delay damages the whole of the Works.
+
+    A decimal point inside ``SAR 1,200.00`` is not the end of the
+    sentence. The lead is one claim, and the claim goes.
+    """
+    raw = text or ""
+    if not raw or not _WHOLE_WORKS_RE.search(raw):
+        return raw
+    parts = re.split(r"(?<=[.!])\s+|\n+", raw)
+    kept = [part.strip() for part in parts if part.strip() and not _WHOLE_WORKS_RE.search(part)]
+    return " ".join(kept).strip()
+
+
+def _milestone_quote_without_whole_of_works(quote: str, percent: float) -> str:
+    """The elected-rate fragment, without the neighbouring whole-of-Works label.
+
+    A 96-character row window reaches back into that label when the two
+    particulars are not separated. Quoting it would call a Milestone
+    answer the whole of the Works.
+    """
+    raw = (quote or "").strip()
+    if not raw or not _WHOLE_WORKS_RE.search(raw):
+        return raw
+    token = f"{float(percent):g}"
+    pct_re = re.compile(rf"(?<![\d.]){re.escape(token)}\s*%")
+    for match in pct_re.finditer(raw):
+        cuts = [
+            raw.rfind(sep, 0, match.start())
+            for sep in (". ", "; ", " and ")
+        ]
+        hits = [idx for idx in cuts if idx >= 0]
+        # " and " is 5 characters; ". " and "; " are 2.
+        if hits:
+            boundary = max(hits)
+            start = boundary + (5 if raw[boundary:boundary + 5].lower() == " and " else 2)
+        else:
+            start = 0
+        end = len(raw)
+        for sep in (". ", "; "):
+            idx = raw.find(sep, match.end())
+            if idx >= 0:
+                end = min(end, idx)
+        frag = raw[start:end].strip(" ,;.")
+        if frag and not _WHOLE_WORKS_RE.search(frag):
+            return frag
+    return ""
+
+
 def format_delay_damages_daily_line(composed: dict) -> str:
     """User-facing one-liner for the composed daily figure."""
     cur = composed.get("currency") or "SAR"
     daily = float(composed["daily_amount"])
     pct = float(composed["rate_percent"])
     base = float(composed["contract_amount"])
+    basis = (composed.get("basis") or "whole").strip()
+    quote = (composed.get("clause_quote") or "").strip()
+    # A question that says Section is the 8.8.1 per-Milestone rate.
+    # compose_delay_damages_daily_from_excerpts always sets basis from
+    # the ask before this runs, so a section or Milestone ask does not
+    # arrive here with basis missing. The missing-basis line below is
+    # the whole-of-Works sentence.
+    if basis in ("milestone", "section"):
+        line = (
+            f"Delay damages per Milestone are "
+            f"{cur} {daily:,.2f} per calendar day "
+            f"({pct:g}% of the Contract Price {cur} {base:,.2f})."
+        )
+        safe_quote = _milestone_quote_without_whole_of_works(quote, pct)
+        if safe_quote:
+            line = f"{line} The contract states: {safe_quote}"
+        return line
     return (
         f"Delay damages for the whole of the Works are "
         f"{cur} {daily:,.2f} per calendar day "
@@ -581,10 +795,18 @@ def rate_and_base_from_one_document(
         contracts.update(m.group(1).upper() for m in _CONTRACT_ID_RE.finditer(seg))
     if len(contracts) > 1:
         return None
-    # parse_accepted_contract_amount already requires a labelled Accepted
-    # Contract Amount and applies the excl-VAT / toy-example preferences, so
-    # the whole bundle is the right input once the contract check has passed.
-    base = parse_accepted_contract_amount(text)
+    # The 8.8.1 rate (a Milestone question, or one that says Section) is
+    # "of the Contract Price". The first labelled amount in the bundle
+    # can be another document's figure (live M3: SAR 144,042,486.50).
+    # Whole-of-Works keeps first-match
+    # excl-VAT, which the E1 fixtures are tuned to.
+    if ask_is_about_a_milestone_or_section(ask):
+        base = _contract_price_beside_the_rate(text, rate, ask)
+    else:
+        # parse_accepted_contract_amount already requires a labelled Accepted
+        # Contract Amount and applies the excl-VAT / toy-example preferences, so
+        # the whole bundle is the right input once the contract check has passed.
+        base = parse_accepted_contract_amount(text)
     if base is None:
         return None
     return rate, base, segments[0][0]
@@ -608,11 +830,18 @@ def compose_delay_damages_daily_from_excerpts(
         return None
     rate, aca, _doc_id = found
     amount, currency = aca
-    return delay_damages_daily(
+    out = delay_damages_daily(
         rate_percent=rate,
         contract_amount=amount,
         currency=currency,
     )
+    if out.get("error"):
+        return None
+    basis = delay_damages_daily_basis(query)
+    out["basis"] = basis
+    if basis != "whole":
+        out["clause_quote"] = elected_delay_damages_clause(excerpts, query)
+    return out
 
 
 def answer_states_daily_amount(text: str, daily_amount: float) -> bool:
@@ -651,6 +880,18 @@ _PCT_PARTICULAR_SPECS = (
 )
 _PCT_BOND_RE = re.compile(r"(?i)\bbond\b|\bguarantee\b|\bsecurity\b")
 _PCT_VALUE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+# The next particular ends this label's figure. A later copy of the same
+# label ends it too, so an earlier mention cannot reach across Delay
+# Damages and take that row's percent.
+_COMPETING_PARTICULAR_RES = (
+    re.compile(r"(?i)advance\s+payment"),
+    re.compile(r"(?i)limitation\s+of\s+liability"),
+    re.compile(r"(?i)(?:delay|liquidated)\s+damages"),
+    re.compile(r"(?i)percentage\s+of\s+retention"),
+)
+_PER_DAY_AFTER_PCT_RE = re.compile(
+    r"(?i)per\s+(?:calendar\s+|working\s+)?day\b",
+)
 _MONEY_ARITHMETIC_ASK_RE = re.compile(
     r"(?i)\b(?:calculate|compute|work\s+out|how\s+much)\b",
 )
@@ -723,6 +964,48 @@ def query_asks_percentage_particular_in_money(query: str) -> bool:
     return bool(_MONEY_ARITHMETIC_ASK_RE.search(q) and _MONEY_UNIT_ASK_RE.search(q))
 
 
+def _percent_owned_by_label(
+    text: str,
+    label_rx: re.Pattern,
+    *,
+    ask_wants_bond: bool,
+    horizon: int | None = None,
+) -> tuple[float, str] | None:
+    """Percentage that follows this label, not a neighbouring particular.
+
+    A peeled Contract Data row can open on Advance Payment and then hold
+    the delay-damages daily rate (0.1% per day) before the filled Advance
+    Payment percentage. The first percent in that row is the daily rate.
+    Take the percent that follows this label and stop at the next
+    particular. A per-day rate is the delay-damages figure, not an
+    advance-payment or liability percentage. An Advance Payment Bond row
+    is not the Advance Payment itself.
+    """
+    blob = text or ""
+    for match in label_rx.finditer(blob):
+        rest = blob[match.end():]
+        if horizon is not None:
+            rest = rest[:horizon]
+        cut = len(rest)
+        for other in _COMPETING_PARTICULAR_RES:
+            hit = other.search(rest)
+            if hit is not None and hit.start() < cut:
+                cut = hit.start()
+        segment = rest[:cut]
+        pct = _PCT_VALUE_RE.search(segment)
+        if pct is None:
+            continue
+        tail = segment[pct.end(): pct.end() + 64]
+        if _PER_DAY_AFTER_PCT_RE.search(tail):
+            continue
+        between = segment[: pct.start()]
+        if not ask_wants_bond and _PCT_BOND_RE.search(match.group(0) + between):
+            continue
+        snippet = blob[match.start(): match.end() + pct.end()].strip()
+        return float(pct.group(1)), snippet
+    return None
+
+
 def extract_named_percentage_particular(
     query: str,
     excerpts: str,
@@ -730,7 +1013,8 @@ def extract_named_percentage_particular(
     """Filled percentage for the named particular, or None.
 
     Does not invent a percentage. Skips an Advance Payment *Bond* row
-    when the ask is the Advance Payment itself.
+    when the ask is the Advance Payment itself. Does not elect a
+    neighbouring delay-damages daily rate that shares the same window.
     """
     spec = _asked_percentage_spec(query)
     if not spec:
@@ -742,17 +1026,15 @@ def extract_named_percentage_particular(
     ask_wants_bond = bool(_PCT_BOND_RE.search(query or ""))
 
     def _from_pair(key: str, val: str) -> dict | None:
-        blob = f"{key} {val}"
-        if not label_rx.search(key) and not label_rx.search(val[:96]):
+        owned = _percent_owned_by_label(
+            f"{key} {val}", label_rx, ask_wants_bond=ask_wants_bond,
+        )
+        if owned is None:
             return None
-        if _PCT_BOND_RE.search(blob) and not ask_wants_bond:
-            return None
-        m = _PCT_VALUE_RE.search(val) or _PCT_VALUE_RE.search(key)
-        if not m:
-            return None
+        percent, _snippet = owned
         return {
             "label": display,
-            "percent": float(m.group(1)),
+            "percent": percent,
             "value": val.strip(),
             "key": key.strip(),
         }
@@ -768,20 +1050,18 @@ def extract_named_percentage_particular(
             "particulars percentage parse failed; using scanned regex",
             exc_info=True,
         )
-    blob = _collapse_ws(t)
-    for m in label_rx.finditer(blob):
-        window = blob[m.start(): m.end() + 160]
-        if _PCT_BOND_RE.search(window) and not ask_wants_bond:
-            continue
-        pct = _PCT_VALUE_RE.search(window)
-        if pct:
-            return {
-                "label": display,
-                "percent": float(pct.group(1)),
-                "value": window.strip(),
-                "key": display,
-            }
-    return None
+    owned = _percent_owned_by_label(
+        _collapse_ws(t), label_rx, ask_wants_bond=ask_wants_bond, horizon=200,
+    )
+    if owned is None:
+        return None
+    percent, snippet = owned
+    return {
+        "label": display,
+        "percent": percent,
+        "value": snippet,
+        "key": display,
+    }
 
 
 def format_named_percentage_line(parsed: dict) -> str:
@@ -790,6 +1070,49 @@ def format_named_percentage_line(parsed: dict) -> str:
     return (
         f"The {label} is {pct:g}% of the Accepted Contract Amount."
     )
+
+
+def text_states_percent(text: str, percent: float) -> bool:
+    """True when ``text`` states ``percent`` as its own percentage.
+
+    ``10`` must not match inside ``0.10%`` — that token is the 0.1%
+    delay-damages daily rate, not the advance-payment percentage.
+    """
+    token = f"{float(percent):g}"
+    return bool(re.search(
+        rf"(?i)(?<![\d.]){re.escape(token)}\s*(?:%|percent\b)",
+        text or "",
+    ))
+
+
+def strip_conflicting_named_percentage(
+    text: str, label: str, percent: float,
+) -> str:
+    """Drop sentences that give ``label`` a percentage other than ``percent``.
+
+    Leaves a neighbouring particular alone: "Delay Damages are 0.1% per
+    day" does not name Advance Payment. A sentence that calls the Advance
+    Payment 0.1% is the daily rate wearing the wrong label.
+    """
+    raw = text or ""
+    if not raw or not label:
+        return raw
+    pat = re.compile(
+        rf"(?i)[^.!\n]*\b{re.escape(label)}\b[^.!\n]{{0,160}}?"
+        rf"(\d+(?:\.\d+)?)\s*%[^.!\n]*[.!]?"
+    )
+
+    def _keep(match: re.Match) -> str:
+        got = float(match.group(1))
+        if abs(got - float(percent)) <= 1e-9:
+            return match.group(0)
+        return ""
+
+    cleaned = pat.sub(_keep, raw)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r" {2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 def compose_percentage_of_aca_from_excerpts(
@@ -971,8 +1294,23 @@ def compose_delay_damages_over_period_from_excerpts(
     if not query_asks_delay_damages_over_a_period(query):
         return None
     days = parse_delay_period_days(query)
-    aca = parse_accepted_contract_amount(excerpts)
-    if days is None or aca is None:
+    if days is None:
+        return None
+    # A section or Milestone day-count uses the Contract Price that sits
+    # with the elected rate. Another document's Accepted Contract Amount
+    # is a different figure. When the rate's own document has no price,
+    # keep the bundle parse so a rate chunk and a price chunk of one
+    # contract still compose.
+    if ask_is_about_a_milestone_or_section(query):
+        rate_hint = parse_delay_damages_rate_percent(excerpts, query)
+        owned = (
+            _contract_price_beside_the_rate(excerpts, rate_hint, query)
+            if rate_hint is not None else None
+        )
+        aca = owned if owned is not None else parse_accepted_contract_amount(excerpts)
+    else:
+        aca = parse_accepted_contract_amount(excerpts)
+    if aca is None:
         return None
     amount, currency = aca
     milestones = parse_asked_milestones(query)
@@ -987,7 +1325,7 @@ def compose_delay_damages_over_period_from_excerpts(
                 return None
             rates.append(rate)
     else:
-        rate = parse_delay_damages_rate_percent(excerpts)
+        rate = parse_delay_damages_rate_percent(excerpts, query)
         if rate is None:
             return None
         rates = [rate]

@@ -288,7 +288,7 @@ def test_json_string_params_nest_binds():
     inner = _ok("cost_buildup_concrete", {
         "params": json.dumps({"quantity_m3": 100}),
     })
-    assert inner["total_project_value_sar"] == pytest.approx(31119, abs=2)
+    assert inner["total_project_value_sar"] == pytest.approx(30883, abs=2)
 
 
 def test_bolt_shear_capacity_model_aliases():
@@ -372,9 +372,9 @@ def test_concrete_volume_t_and_lwt_aliases():
 
 def test_cost_buildup_concrete_qty_and_volume_aliases():
     inner = _ok("cost_buildup_concrete", {"qty": 100})
-    assert inner["total_project_value_sar"] == pytest.approx(31119, abs=2)
+    assert inner["total_project_value_sar"] == pytest.approx(30883, abs=2)
     via_vol = _ok("cost_buildup_concrete", {"volume": 100})
-    assert via_vol["total_project_value_sar"] == pytest.approx(31119, abs=2)
+    assert via_vol["total_project_value_sar"] == pytest.approx(30883, abs=2)
 
 
 def test_cost_per_area_cost_and_area_m2_aliases():

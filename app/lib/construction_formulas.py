@@ -722,23 +722,56 @@ def cost_buildup_concrete(
     indirect_pct: float = 0.18,
     markup_pct: float = 0.15,
     waste_pct: float = 0.03,
-) -> Dict[str, float]:
-    """Full concrete cost build-up (SAR/m3)."""
+) -> Dict[str, Any]:
+    """Full concrete cost build-up (SAR/m3).
+
+    Waste is a material allowance (batching loss), same as
+    ``cost_buildup_rebar``. Plant, labour, erection, power and the
+    indirect SAR/m3 line are not wasted. The indirect percent is applied
+    once, on that direct cost. Selling price is
+
+        direct × (1 + indirect_pct) / (1 − markup_pct)
+
+    Documented batch masses (not caller inputs): combined aggregate
+    1839 kg/m3, mixing water 160 L/m3 (= 0.16 m3).
+    """
     if quantity_m3 < 0:
         raise ValueError("quantity_m3 must be >= 0")
     cement_cost = (cement_kg_m3 / 1000) * cement_price_sar_t
     aggregate_cost = (1839 / 1000) * aggregate_price_sar_t  # ~1839 kg/m3 combined
-    water_cost = (160 / 1000) * water_price_sar_m3
-    material_cost = cement_cost + aggregate_cost + water_cost + (microsilica_kg_m3 * microsilica_price_sar_kg) + (plasticizer_lit_m3 * plasticizer_price_sar_lit)
-    direct = material_cost + plant_cost_sar_m3 + labour_cost_sar_m3 + erection_sar_m3 + power_sar_m3 + indirect_sar_m3
-    with_waste = direct * (1 + waste_pct)
-    with_indirect = with_waste * (1 + indirect_pct)
-    with_markup = with_indirect / (1 - markup_pct)
+    water_cost = (160 / 1000) * water_price_sar_m3  # 160 L/m3 = 0.16 m3
+    material_cost = (
+        cement_cost
+        + aggregate_cost
+        + water_cost
+        + (microsilica_kg_m3 * microsilica_price_sar_kg)
+        + (plasticizer_lit_m3 * plasticizer_price_sar_lit)
+    )
+    wasted_material = material_cost * (1 + waste_pct)
+    direct = (
+        wasted_material
+        + plant_cost_sar_m3
+        + labour_cost_sar_m3
+        + erection_sar_m3
+        + power_sar_m3
+        + indirect_sar_m3
+    )
+    selling = direct * (1 + indirect_pct) / (1 - markup_pct)
+    selling_r = round(selling, 2)
+    total_r = round(selling_r * quantity_m3, 0)
     return {
         "material_cost_sar_m3": round(material_cost, 2),
         "direct_cost_sar_m3": round(direct, 2),
-        "selling_price_sar_m3": round(with_markup, 2),
-        "total_project_value_sar": round(with_markup * quantity_m3, 0),
+        "selling_price_sar_m3": selling_r,
+        "total_project_value_sar": total_r,
+        "note": (
+            f"Material {material_cost:.2f} SAR/m3 × (1+{waste_pct:g} waste) "
+            f"= {wasted_material:.2f}; direct {direct:.2f} SAR/m3 "
+            f"(plant, labour, erection, power and the indirect line are "
+            f"not wasted); selling {selling_r:.2f} SAR/m3 "
+            f"= direct × (1+{indirect_pct:g}) / (1-{markup_pct:g}); "
+            f"total {total_r:.0f} SAR for {quantity_m3:g} m3."
+        ),
     }
 
 
