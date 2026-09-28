@@ -274,6 +274,7 @@ def test_query_names_soil_contact_cover(monkeypatch, ask):
     BLINDING_ASK, S2_ASK,
     "Please send the cover letter for the soil investigation report.",
     "What is the minimum concrete cover for slabs above ground?",
+    "What is the minimum concrete cover where foundations are not in contact with soil?",
 ])
 def test_other_asks_do_not_take_the_soil_contact_path(monkeypatch, ask):
     ret = _ret(monkeypatch)
@@ -290,6 +291,14 @@ def test_chunk_detector_needs_a_cover_length_and_the_soil_condition(monkeypatch)
     )
     assert not ret.chunk_states_soil_contact_cover(
         "NOMINAL COVER WHERE CAST AGAINST BLINDING : 50mm."
+    )
+    # Negation is a different condition. A chunk that states both still matches.
+    assert not ret.chunk_states_soil_contact_cover(
+        "MINIMUM CONCRETE COVER FOR CONCRETE CAST NOT IN CONTACT WITH SOIL : 50mm."
+    )
+    assert ret.chunk_states_soil_contact_cover(
+        "MINIMUM CONCRETE COVER: BOTTOM OF FOOTINGS CAST IN CONTACT WITH SOIL : 100mm. "
+        "TOP NOT IN CONTACT WITH SOIL : 50mm."
     )
 
 
