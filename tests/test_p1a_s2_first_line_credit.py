@@ -259,3 +259,80 @@ def test_sibling_embankment_first_line_credits_clause_and_document():
     assert WRONG not in first, first
     assert not _has_percent(first, "90"), first
     _assert_quiet(first, out)
+
+
+# The truth chunk is already on the turn. The model still refuses.
+# Live: S2-f1, S2-f2, and P1a-f2, with Specification Section 9.1
+# (RSM 15492) and §8.4 / 98% in the handed chunks.
+REFUSAL = (
+    "I could not find that compaction requirement in the project "
+    "specification. The retrieved excerpts do not state it."
+)
+REFUSAL_CASES = [
+    ("p1a-f2", P1A_CASES[2][1], "p1a", "98", "§8.4", P1A_DOC_ID, P1A_DOC),
+    ("s2-f1", S2_CASES[1][1], "s2", "95", "Specification Section 9.1", S2_DOC_ID, S2_DOC),
+    ("s2-f2", S2_CASES[2][1], "s2", "95", "Specification Section 9.1", S2_DOC_ID, S2_DOC),
+]
+SIB_REWORD = (
+    "According to the project specification, how thoroughly must "
+    "embankment fill be compacted?"
+)
+
+
+def _truth_rag(kind: str) -> dict:
+    if kind == "p1a":
+        truth = ("p1a", P1A_DOC, P1A_TEXT)
+    elif kind == "s2":
+        truth = ("s2", S2_DOC, S2_TEXT)
+    else:
+        truth = ("sib", SIB_DOC, SIB_TEXT)
+    return _rag(
+        _chunk("wrong", WRONG, WRONG_TEXT, "0.910"),
+        _chunk(truth[0], truth[1], truth[2], "0.840"),
+    )
+
+
+def _assert_handed(out: str, number: str, clause: str, doc_id: str, doc: str) -> None:
+    first = _first(out)
+    assert _has_percent(first, number), first
+    assert clause in first, first
+    assert doc_id in first, first
+    assert doc in first, first
+    assert WRONG not in first, first
+    assert not _has_percent(first, "90"), first
+    assert "could not" not in out.lower(), out
+    assert "do not state" not in out.lower(), out
+    assert "?" not in out, out
+    assert "which document" not in out.lower(), out
+
+
+@pytest.mark.parametrize(
+    "pid,ask,kind,number,clause,doc_id,doc",
+    REFUSAL_CASES,
+    ids=[row[0] for row in REFUSAL_CASES],
+)
+def test_refusal_yields_to_the_handed_figure(
+    pid, ask, kind, number, clause, doc_id, doc,
+):
+    """A reworded ask whose truth chunk was handed is answered, not refused."""
+    assert pid
+    out = apply_first_line_hard_rule(REFUSAL, _truth_rag(kind), _msgs(ask))
+    _assert_handed(out, number, clause, doc_id, doc)
+
+
+def test_sibling_refusal_yields_to_the_handed_figure():
+    """Same refusal shape, a different clause and figure."""
+    out = apply_first_line_hard_rule(
+        REFUSAL, _truth_rag("sib"), _msgs(SIB_REWORD),
+    )
+    _assert_handed(out, "92", "§6.2", SIB_DOC_ID, SIB_DOC)
+
+
+def test_refusal_stands_when_no_handed_chunk_matches():
+    """A general-fill note is not structural backfill. The refusal stays."""
+    out = apply_first_line_hard_rule(
+        REFUSAL,
+        _rag(_chunk("wrong", WRONG, WRONG_TEXT)),
+        _msgs(P1A_CASES[2][1]),
+    )
+    assert out == REFUSAL
