@@ -960,8 +960,9 @@ def test_index_project_writes_file_and_returns_summary(fresh_db, tmp_path, monke
 def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
     """A genuinely unsupported document lands in 'skipped', not 'documents'.
 
-    Stream F: images are now OCR-able and SUPPORTED, so this uses .dwg — a
-    type that remains unsupported.
+    Stream F: images are now OCR-able and SUPPORTED. ``.ttf`` stays a
+    terminal unsupported type. ``.dwg`` is covered separately as a
+    recoverable skip.
     """
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
@@ -972,9 +973,9 @@ def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
     proj = projects_mod.create_project("Beta Project")
     pid = proj["id"]
 
-    img_path = str(tmp_path / "model.dwg")
-    file_crypto.write_document(img_path, b"AutoCAD DWG")
-    projects_mod.add_document(pid, "model.dwg", file_path=img_path, size=6)
+    img_path = str(tmp_path / "font.ttf")
+    file_crypto.write_document(img_path, b"not a font")
+    projects_mod.add_document(pid, "font.ttf", file_path=img_path, size=6)
 
     result = doc_index.index_project(pid)
 
