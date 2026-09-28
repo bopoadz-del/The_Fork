@@ -397,8 +397,12 @@ def test_dir7_flatten_strips_envelope_keys_not_passed_as_kwargs(calc):
         assert key not in bound, (
             f"bind leaked envelope key {key!r} into calculator kwargs: {bound}"
         )
-    # Mixed envelope + real kwargs still compute (tool + run_calculation).
-    inner = _ok(calc, leaked)
+    # ``noise`` is not an envelope key and not a parameter. It used to be
+    # dropped; the tool must now say so, so the model can retry.
+    rejected = _err(calc, leaked)
+    assert "noise" in rejected["error"]
+    clean = {**kwargs, **_DIR7_ENVELOPE}
+    inner = _ok(calc, clean)
     assert inner[spec["result_key"]] == pytest.approx(
         spec["result_value"], abs=spec["abs"]
     )
