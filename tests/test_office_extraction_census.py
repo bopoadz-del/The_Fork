@@ -172,7 +172,9 @@ def test_corrupt_pptx_names_extract_failed(tmp_path):
     from app.core.doc_index import _extract_with_meta_impl
 
     path = tmp_path / "not-really.pptx"
-    path.write_bytes(b"this is not a presentation")
+    # Zip local-file magic so the quarantine gate keeps it. The package is
+    # still not a presentation, which is what this census names.
+    path.write_bytes(b"PK\x03\x04this is not a presentation")
     text, meta = _extract_with_meta_impl(str(path), "not-really.pptx")
     assert text == ""
     assert meta.get("extract_failed")
@@ -185,7 +187,7 @@ def test_index_corrupt_pptx_stamps_extract_failed(monkeypatch, tmp_path):
     pm.create_project("PptxFail", user_id="system")
     proj = pm.list_projects("system")[0]
     path = tmp_path / "broken.pptx"
-    path.write_bytes(b"not a zip")
+    path.write_bytes(b"PK\x03\x04not a valid package")
     doc = pm.add_document(
         proj["id"], "broken.pptx", file_path=str(path), size=path.stat().st_size,
     )

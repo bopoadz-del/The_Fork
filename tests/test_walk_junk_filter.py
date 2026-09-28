@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 from app.core import gdrive_service as gds
@@ -28,8 +26,21 @@ def tree(monkeypatch):
     return store
 
 
-def test_walk_drops_junk_classes_and_keeps_siblings(tree, caplog):
-    """Three phrasings per junk class, plus names that must still be assigned."""
+def test_walk_drops_junk_classes_and_keeps_siblings(tree, monkeypatch):
+    """Three phrasings per junk class, plus names that must still be assigned.
+
+    Spy the module logger. caplog misses this line in the full suite once an
+    earlier test has replaced root handlers or raised logging.disable.
+    """
+    lines: list[str] = []
+
+    def _info(msg, *args, **kwargs):
+        try:
+            lines.append(msg % args if args else str(msg))
+        except (TypeError, ValueError):
+            lines.append(str(msg))
+
+    monkeypatch.setattr(gds.logger, "info", _info)
     tree["root"] = [
         _file("os1", "DESKTOP.INI"),
         _file("os2", "desktop.ini"),
@@ -58,16 +69,13 @@ def test_walk_drops_junk_classes_and_keeps_siblings(tree, caplog):
         _file("keep6", "inside.pdf", "application/pdf"),
     ]
 
-    with caplog.at_level(logging.INFO, logger="app.core.gdrive_service"):
-        files, errors = gds.walk_folder("root")
+    files, errors = gds.walk_folder("root")
 
     assert errors == []
     assert sorted(f["id"] for f in files) == [
         "keep1", "keep2", "keep3", "keep4", "keep5", "keep6",
     ]
-    summary = "\n".join(
-        r.getMessage() for r in caplog.records if "WALK_JUNK" in r.getMessage()
-    )
+    summary = "\n".join(line for line in lines if "WALK_JUNK" in line)
     assert summary
     assert "os_metadata=6" in summary
     assert "office_lock=3" in summary
