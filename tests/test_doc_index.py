@@ -1152,7 +1152,7 @@ def test_index_document_boq_total_hedged_when_pages_skipped(fresh_db, tmp_path, 
 
     proj = projects_mod.create_project("Partial BOQ")
     pid = proj["id"]
-    csv = b"Description,Amount\nExcavation,5000\n"
+    csv = b"%PDF-1.4\nDescription,Amount\nExcavation,5000\n"
     doc_path = _write_txt_doc(tmp_path, "scanned BOQ.pdf", csv)  # .pdf -> boq path
     doc = projects_mod.add_document(pid, "scanned BOQ.pdf", file_path=doc_path, size=len(csv))
 
@@ -1181,7 +1181,9 @@ def test_boq_named_pdf_without_computable_total_emits_guard(fresh_db, tmp_path, 
 
     proj = projects_mod.create_project("Scanned BOQ")
     pid = proj["id"]
-    doc_path = _write_txt_doc(tmp_path, "Demolition BOQ.pdf", b"scanned image content")
+    doc_path = _write_txt_doc(
+        tmp_path, "Demolition BOQ.pdf", b"%PDF-1.4\nscanned image content",
+    )
     doc = projects_mod.add_document(pid, "Demolition BOQ.pdf", file_path=doc_path, size=21)
 
     doc_index.index_document(pid, doc["id"])

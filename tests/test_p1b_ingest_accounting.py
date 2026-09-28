@@ -270,6 +270,27 @@ def test_identity_also_holds_when_complete_so_it_never_discriminates(harness):
     assert harness.report()["run_complete"] is True
 
 
+def test_quarantine_counted_in_run_summary(harness, monkeypatch, capfd):
+    """A QUARANTINED_* index result is its own run-summary bucket."""
+    from app.core import doc_index
+
+    def _index(project_id, doc_id, **_k):
+        return {
+            "status": "error",
+            "error": "QUARANTINED_NOT_PDF",
+            "document_id": doc_id,
+        }
+
+    monkeypatch.setattr(doc_index, "index_document", _index)
+    assert harness.run() == 0
+    tally = harness.report()["global_tally"]
+    assert tally["quarantined"] == harness.expected_assigned
+    assert tally["zero_chunk"] == 0
+    assert tally["errors"] == 0
+    err = capfd.readouterr().err
+    assert f"quarantined={harness.expected_assigned}" in err
+
+
 # ── attempted reconciliation ──────────────────────────────────────────────
 
 
