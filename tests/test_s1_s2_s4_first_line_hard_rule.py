@@ -155,7 +155,8 @@ def test_s1_figure_without_document_is_repaired_on_the_first_line():
 def test_s1_document_without_figure_is_repaired_on_the_first_line():
     bad = (
         f"Per {SPEC_COVER}, the specification addresses concrete cover "
-        "for foundations cast against soil."
+        "for foundations cast against soil.\n\n"
+        "The cover to reinforcement is 75 mm."
     )
     assert "SYN-SPEC-001" in _first(bad)
     assert not _has_75_mm(_first(bad))
@@ -212,7 +213,8 @@ def test_s2_properly_compacted_plus_spec_name_fails_the_first_line():
     """The live 0/6 shape. Qualitative spec wording is not the figure."""
     bad = (
         f"Per the project specification ({SPEC_QUAL}), the retrieved clause "
-        "states that all soils shall be properly compacted."
+        "states that all soils shall be properly compacted.\n\n"
+        "The sub-grade figure is 95% of maximum dry density."
     )
     first_bad = _first(bad)
     assert "properly compacted" in first_bad.lower()
@@ -244,8 +246,14 @@ def test_s2_does_not_invent_a_percent_the_context_does_not_hold():
 
 
 def test_s2_specification_percent_beats_another_documents_percent():
-    """SET4.1: the named source's own number stays the first-line figure."""
-    bad = f"Compaction is 95% of maximum dry density per {OTHER_95}."
+    """The figure the body states first is the one the first line carries.
+
+    The model commits to 98% before it mentions the other document's 95%.
+    """
+    bad = (
+        "Compaction for this pavement is 98% of maximum dry density.\n\n"
+        f"A separate note in {OTHER_95} states 95% of maximum dry density."
+    )
     out = _postprocess_answer(
         bad,
         _rag(

@@ -3,7 +3,7 @@
 The ledger already has the columns (``drive_md5``, ``ingest_status``,
 ``TOMBSTONED``). This module is the missing *use* of those columns:
 
-* resume compares Drive ``md5Checksum``/``etag`` to stored ``drive_md5``
+* resume compares Drive ``md5Checksum`` (then version / modifiedTime) to stored ``drive_md5``
   (id-only skip hid edited files);
 * a complete Drive walk can tombstone rows whose ``drive_file_id`` is gone
   (hide from retrieval; never delete chunks);
@@ -192,14 +192,17 @@ def office_extraction_census(*, project_id: str | None = None) -> dict[str, Any]
 
 
 def source_content_token(file_meta: Mapping[str, Any] | None) -> str | None:
-    """Drive content identity: ``md5Checksum`` first, then ``etag``.
+    """Drive content identity. ``md5Checksum`` first.
 
-    Never SHA-256 — Drive does not publish it, and comparing sha to md5
-    can only ever report "changed".
+    Drive v3 does not return the v2 identity field, so a file that omits
+    the checksum still resolves through ``version`` then ``modifiedTime``.
+    A caller that already holds the legacy key can still use it. Never
+    SHA-256 — Drive does not publish it, and comparing sha to md5 can
+    only ever report "changed".
     """
     if not file_meta:
         return None
-    for key in ("md5Checksum", "md5", "etag"):
+    for key in ("md5Checksum", "md5", "version", "modifiedTime", "etag"):
         raw = file_meta.get(key)
         if raw is None:
             continue
@@ -231,7 +234,7 @@ def resume_source_changed(
     """True only when *both* tokens exist and differ.
 
     Missing stored token: historical row, do not thrash.
-    Missing source token: Drive omitted md5/etag (Google-native), cannot tell.
+    Missing source token: Drive omitted md5, version, and modifiedTime, cannot tell.
     """
     stored = stored_source_token(doc)
     source = source_content_token(file_meta)

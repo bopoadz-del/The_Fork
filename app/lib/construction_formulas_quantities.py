@@ -457,6 +457,12 @@ _FW_PRESENTATION = {
         "unit": "kN",
         "value_keys": ("base_shear_kn", "value"),
     },
+    # Live probe: productivity_rate returned 12.5 with the unit only buried
+    # in the note. Headline value + unit so the stream can copy "/hr".
+    "productivity_rate": {
+        "unit": "/hr",
+        "value_keys": ("value", "rate_per_hour"),
+    },
 }
 
 

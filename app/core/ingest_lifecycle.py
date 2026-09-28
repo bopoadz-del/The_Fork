@@ -89,14 +89,17 @@ def _read_text(path: Path) -> Optional[str]:
     """File contents, or None when the path is absent or unreadable.
 
     Every reader here is best-effort by design: this module runs on Render
-    (cgroup v2), on a dev box (v1 or neither) and under pytest with fake
-    roots. A missing counter must degrade to "unknown", never raise into the
-    ingest loop it is supposed to be diagnosing.
+    (cgroup v2), on Fargate (no cgroup-v1 memory files), on a dev box, and
+    under pytest with fake roots. A missing file is not an error — the
+    snapshot logs once when no memory counter exists. A present file that
+    cannot be read logs one line and does not raise into the ingest loop.
     """
+    if not path.is_file():
+        return None
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        logger.warning("could not read %s", path, exc_info=True)
+        logger.warning("could not read %s", path)
         return None
 
 
@@ -310,10 +313,13 @@ def read_memory_snapshot(
     peak = _read_proc_kb(proc_root / pid / "status", "VmHWM")
 
     dirs = cgroup_candidate_dirs(proc_root=proc_root, cgroup_root=cgroup_root)
+    # v2 names first (memory.current / memory.max). v1 names are the fallback.
     current = _first_int(dirs, "memory.current", "memory.usage_in_bytes")
     limit = _first_int(dirs, "memory.max", "memory.limit_in_bytes")
     cg_peak = _first_int(dirs, "memory.peak", "memory.max_usage_in_bytes")
     events = _first_kv(dirs, "memory.events", "memory.oom_control")
+    if current is None and limit is None and cg_peak is None and not events:
+        logger.warning("cgroup memory path isn't available at %s", cgroup_root)
 
     def _mb(value: Optional[int]) -> Optional[float]:
         return None if value is None else round(value / _MB, 1)
