@@ -18,9 +18,12 @@ the server does not emit "That document is not the specification".
 An optional higher compaction degree in the same clause ("could be
 compacted to … under the approval of the engineer") is not a second
 figure. A millimetre counts as concrete cover only when it is tied to
-that quantity, not to a panel, tile, or paint band. "Which contract
-governs this project?" names the one contract in the excerpts, or asks
-which when more than one non-template contract is visible.
+that quantity, not to a panel, tile, or paint band. A condition the
+excerpt negates ("not in contact with soil", "other than structural
+fill") is not that condition, and the first line does not print it on
+the figure. "Which contract governs this project?" names the one
+contract in the excerpts, or asks which when more than one non-template
+contract is visible.
 
 Kill-switch: FIRST_LINE_HARD_RULE=0.
 """
@@ -130,6 +133,27 @@ _COVER_CONDITIONS = (
 _CLAUSE_RE = re.compile(
     r"(?i)(?:§|\bsection\b|\bclause\b)\s*(\d+(?:\.\d+)*)"
 )
+# Negation that governs the condition phrase, not a later "not" in the
+# same paragraph. "non-" is the prefix form ("non-structural").
+_NEGATION_RE = re.compile(
+    r"(?i)(?:\b(?:not|no|except|without)\b|\bother\s+than\b|\bnon-)"
+)
+# "faces not exposed to soil" does not match the soil-contact pattern.
+# It is still a negation of that condition.
+_NEGATED_EXPOSURE_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:not|no|except|without)\b|\bother\s+than\b|\bnon-"
+    r")"
+    r"[^.\n]{0,40}?"
+    r"\bexposed\s+to\s+soil\b"
+)
+# "Cl." / "Fig." are not sentence ends. "4.2" is handled separately.
+_ABBREV_DOT_RE = re.compile(
+    r"(?i)(?:^|[^A-Za-z])(?:"
+    r"cl|fig|figs|no|nos|dr|mr|mrs|ms|vs|etc|eg|ie|st|vol|sec|para|"
+    r"approx|eq|ref|cf"
+    r")\.$"
+)
 
 
 @dataclass(frozen=True)
@@ -140,6 +164,7 @@ class _Hit:
     condition: str = ""
     clause: str = ""
     calls_itself_spec: bool = False
+    negated: bool = False
 
 
 def first_line_hard_rule_enabled() -> bool:
@@ -194,8 +219,9 @@ def _apply(text: str, rag_sys_msg: dict | None, messages: list | None) -> str:
     # (A) A first line that already names a figure and a source stands.
     if _first_carries_figure_and_source(first, hits):
         return text
-    # (B) The first figure the body states is the one it committed to.
-    committed = _committed_hit(text, hits)
+    # (B) A figure the body states. Prefer the condition the question
+    # asks. A negated or mismatched condition is not promoted.
+    committed = _committed_hit(text, hits, topic, ask)
     if committed is not None:
         return _prepend(text, _state_line(topic, committed, class_name))
     # (C) A question only when nothing was committed and the subject is one.
@@ -283,9 +309,11 @@ def _figure_hits(
             if key in seen:
                 continue
             seen.add(key)
-            condition, clause, calls_spec = _bind_figure(
+            condition, clause, calls_spec, negated = _bind_figure(
                 topic, body, start, end, source,
             )
+            if negated:
+                condition = ""
             hits.append(_Hit(
                 figure=figure,
                 source=source,
@@ -293,6 +321,7 @@ def _figure_hits(
                 condition=condition,
                 clause=clause,
                 calls_itself_spec=calls_spec or body_names,
+                negated=negated,
             ))
     return hits
 
@@ -318,24 +347,50 @@ def _figure_at(text: str, figure: str) -> int:
     return match.start() if match else -1
 
 
-def _committed_hit(text: str, hits: list[_Hit]) -> _Hit | None:
-    """The first figure the body states as the answer, or None.
+def _committed_hit(
+    text: str, hits: list[_Hit], topic: str, ask: str,
+) -> _Hit | None:
+    """A figure the body states, or None so the caller can take path (C).
 
-    Later figures are other mentions. They do not become a conflict once
-    this first figure exists.
+    A negated figure is never promoted. When the question names a
+    condition and a stated figure carries it, that figure wins over an
+    earlier figure for a different condition. When nothing stated matches,
+    the earliest figure the body actually states still stands.
     """
+    asked = _labels_in(topic, ask or "")
     found: list[tuple[int, _Hit]] = []
     for hit in hits:
+        if hit.negated:
+            continue
         pos = _figure_at(text, hit.figure)
         if pos >= 0:
             found.append((pos, hit))
     if not found:
         return None
-    pos = min(item[0] for item in found)
-    figure = next(hit.figure for at, hit in found if at == pos)
-    candidates = [hit for hit in hits if hit.figure == figure]
+    found.sort(key=lambda item: item[0])
+    matches: list[tuple[int, _Hit]] = []
+    if asked:
+        matches = [
+            (pos, hit) for pos, hit in found
+            if hit.condition and _condition_matches(topic, hit.condition, asked)
+        ]
+    pool = matches or found
+    pos, hit = pool[0]
+    candidates = [
+        item for item in hits
+        if item.figure == hit.figure and not item.negated
+        and (
+            not matches
+            or (
+                item.condition
+                and _condition_matches(topic, item.condition, asked)
+            )
+        )
+    ]
+    if not candidates:
+        candidates = [hit]
     window = (text or "")[max(0, pos - 180): pos + 420]
-    named = [hit for hit in candidates if _source_in(window, hit.source)]
+    named = [item for item in candidates if _source_in(window, item.source)]
     return named[0] if named else candidates[0]
 
 
@@ -357,7 +412,7 @@ def _same_subject_conflict(topic: str, hits: list[_Hit]) -> list[_Hit] | None:
     caller does not invent a question. Backfill, storm-water bedding, and
     structural fill are different subjects.
     """
-    collapsed = _collapse_figures(hits)
+    collapsed = _collapse_figures([hit for hit in hits if not hit.negated])
     if len(collapsed) < 2:
         return None
     if len({hit.source for hit in collapsed}) < 2:
@@ -439,45 +494,97 @@ def _mdd_numbers(body: str) -> list[tuple[str, int, int]]:
     return found
 
 
+def _negated_at(text: str, match_start: int) -> bool:
+    """True when a negation in the 40 characters before the match governs it.
+
+    A figure digit between the negation and the match means the negation
+    applies to the figure ("shall not be less than 75 mm for … soil"),
+    not to the condition ("not in contact with soil").
+    """
+    before = (text or "")[max(0, match_start - 40): match_start]
+    for found in _NEGATION_RE.finditer(before):
+        if not re.search(r"\d", before[found.end():]):
+            return True
+    return False
+
+
+def _first_positive(text: str, patterns) -> tuple[str, bool]:
+    """First pattern that is not negated, and whether a negated match was seen."""
+    saw_negated = False
+    body = text or ""
+    for name, rx in patterns:
+        for match in rx.finditer(body):
+            if _negated_at(body, match.start()):
+                saw_negated = True
+                continue
+            return name, False
+    return "", saw_negated
+
+
+def _condition_binding(topic: str, text: str) -> tuple[str, bool]:
+    """Condition label in ``text``, and whether the only match was negated."""
+    patterns = _COVER_CONDITIONS if topic == "cover" else _COMPACTION_MATERIALS
+    label, saw_neg = _first_positive(text, patterns)
+    if topic == "compaction":
+        loc, loc_neg = _first_positive(text, _COMPACTION_LOCATIONS)
+        if label and loc:
+            label = f"{label} {loc}"
+        elif loc and not saw_neg:
+            label = loc
+        elif loc_neg and not label:
+            saw_neg = True
+    if label:
+        return label, False
+    if topic == "cover" and _NEGATED_EXPOSURE_RE.search(text or ""):
+        return "", True
+    return "", saw_neg
+
+
+def _dot_is_sentence_end(text: str, index: int) -> bool:
+    """False for a '.' inside a number or an abbreviation."""
+    if index < 0 or index >= len(text) or text[index] != ".":
+        return False
+    prev = text[index - 1] if index else ""
+    nxt = text[index + 1] if index + 1 < len(text) else ""
+    if prev.isdigit() and nxt.isdigit():
+        return False
+    if _ABBREV_DOT_RE.search(text[max(0, index - 8): index + 1]):
+        return False
+    return True
+
+
 def _clause_window(text: str, start: int, end: int) -> str:
-    """The sentence holding the figure, plus the sentence before it."""
-    prev = text.rfind(".", 0, start)
-    prev2 = text.rfind(".", 0, prev) if prev > 0 else -1
-    begin = 0 if prev2 < 0 else prev2 + 1
-    nxt = text.find(".", end)
-    stop = len(text) if nxt < 0 else nxt + 1
-    return text[begin:stop]
+    """The sentence that holds the figure. A neighbouring sentence does not."""
+    body = text or ""
+    begin = 0
+    for i in range(min(start, len(body)) - 1, -1, -1):
+        if _dot_is_sentence_end(body, i):
+            begin = i + 1
+            break
+    stop = len(body)
+    for i in range(max(end, 0), len(body)):
+        if _dot_is_sentence_end(body, i):
+            stop = i + 1
+            break
+    return body[begin:stop]
 
 
 def _labels_in(topic: str, text: str) -> str:
-    """Material and location named in ``text``, or ""."""
-    patterns = _COVER_CONDITIONS if topic == "cover" else _COMPACTION_MATERIALS
-    label = ""
-    for name, rx in patterns:
-        if rx.search(text or ""):
-            label = name
-            break
-    if topic != "compaction":
-        return label
-    for loc, rx in _COMPACTION_LOCATIONS:
-        if rx.search(text or ""):
-            return f"{label} {loc}".strip() if label else loc
+    """Material and location named in ``text``, or "" when negated or absent."""
+    label, _negated = _condition_binding(topic, text)
     return label
 
 
-def _condition_near(topic: str, text: str, start: int, end: int) -> str:
-    return _labels_in(topic, _clause_window(text or "", start, end))
-
-
-def _heading_binding(topic: str, text: str, figure_start: int) -> tuple[str, str]:
-    """Condition and clause from the nearest heading above the figure.
+def _heading_binding(topic: str, text: str, figure_start: int) -> tuple[str, str, bool]:
+    """Condition, clause, and whether the nearest heading negates it.
 
     Numbered clause headings ("8.4 Backfill"), section titles
     ("Specification Section 9"), and a short note heading
     ("Bottom of footings") all count. The search walks upward, so a
     heading several lines above the figure, or at the chunk start, still
     binds. A closer heading that names a condition wins over a section
-    title further up.
+    title further up. A closer heading that negates the condition stops
+    the walk.
     """
     clause = ""
     for raw_line in reversed((text or "")[:figure_start].splitlines()):
@@ -490,9 +597,13 @@ def _heading_binding(topic: str, text: str, figure_start: int) -> tuple[str, str
             title = numbered.group(2) or ""
             if not clause:
                 clause = number
-            cond = _labels_in(topic, title) or _labels_in(topic, line)
+            cond, neg = _condition_binding(topic, title or line)
+            if not cond and title:
+                cond, neg = _condition_binding(topic, line)
+            if neg and not cond:
+                return "", number, True
             if cond:
-                return cond, number
+                return cond, number, False
             continue
         section = _SECTION_TITLE_RE.match(line)
         if section:
@@ -500,15 +611,21 @@ def _heading_binding(topic: str, text: str, figure_start: int) -> tuple[str, str
             title = section.group(2) or ""
             if number and not clause:
                 clause = number
-            cond = _labels_in(topic, title) or _labels_in(topic, line)
+            cond, neg = _condition_binding(topic, title or line)
+            if not cond and title:
+                cond, neg = _condition_binding(topic, line)
+            if neg and not cond:
+                return "", clause, True
             if cond:
-                return cond, clause
+                return cond, clause, False
             continue
         if len(line) <= 80 and "." not in line:
-            cond = _labels_in(topic, line)
+            cond, neg = _condition_binding(topic, line)
+            if neg and not cond:
+                return "", clause, True
             if cond:
-                return cond, clause
-    return "", clause
+                return cond, clause, False
+    return "", clause, False
 
 
 def _title_condition(topic: str, source: str) -> str:
@@ -521,22 +638,25 @@ def _title_condition(topic: str, source: str) -> str:
 
 def _bind_figure(
     topic: str, text: str, start: int, end: int, source: str,
-) -> tuple[str, str, bool]:
-    """Condition, clause, and whether the chunk calls itself a specification.
+) -> tuple[str, str, bool, bool]:
+    """Condition, clause, self-spec, and whether the figure's condition is negated.
 
-    Inline words win when they name a condition. Otherwise the nearest
-    clause heading, then the section title, then the document title.
+    The figure's own sentence wins. A negation there does not inherit a
+    heading or a title. Otherwise the nearest clause heading, then the
+    section title, then the document title.
     """
-    inline = _condition_near(topic, text, start, end)
-    heading_cond, heading_clause = _heading_binding(topic, text, start)
-    if inline:
-        condition = inline
-    elif heading_cond:
-        condition = heading_cond
-    else:
-        condition = _title_condition(topic, source)
+    window = _clause_window(text or "", start, end)
+    inline, inline_neg = _condition_binding(topic, window)
+    heading_cond, heading_clause, heading_neg = _heading_binding(topic, text, start)
+    calls = bool(_SELF_SPEC_RE.search(text or ""))
     clause = heading_clause or _clause_before(text, end)
-    return condition, clause, bool(_SELF_SPEC_RE.search(text or ""))
+    if inline:
+        return inline, clause, calls, False
+    if inline_neg or (heading_neg and not heading_cond):
+        return "", clause, calls, True
+    if heading_cond:
+        return heading_cond, clause, calls, False
+    return _title_condition(topic, source), clause, calls, False
 
 
 def _material_only(text: str) -> str:
@@ -634,7 +754,9 @@ def _first(text: str) -> str:
 
 
 def _state_line(topic: str, hit: _Hit, class_name: str) -> str:
-    cond = f" for {hit.condition}" if hit.condition else ""
+    # The printed condition is the figure's own. A negated figure has none.
+    condition = "" if hit.negated else (hit.condition or "")
+    cond = f" for {condition}" if condition else ""
     clause = f" (§{hit.clause})" if hit.clause else ""
     if topic == "cover":
         line = (
