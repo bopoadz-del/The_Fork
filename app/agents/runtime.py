@@ -766,12 +766,6 @@ _HISTOGRAM_PHRASES = (
     "resource histogram", "crew histogram", "workforce histogram",
     "labor loading", "labour loading",
 )
-_LOOKAHEAD_PHRASES = (
-    "look ahead", "look-ahead", "lookahead",
-    "3 week look", "4 week look", "three week look", "four week look",
-    "rolling look ahead", "short term programme", "short-term programme",
-    "short term program", "short-term program",
-)
 _PROCUREMENT_LIST_PHRASES = (
     "procurement_list_generator",
     "procurement list",
@@ -859,15 +853,15 @@ def _message_wants_resource_histogram(text: str) -> bool:
 
 
 def _message_wants_look_ahead(text: str) -> bool:
-    """True when the turn asks for a 3–4 week look-ahead from a .xer."""
-    low = (text or "").lower()
-    if not low or _HISTOGRAM_QA_RE.search(low):
-        return False
-    if any(p in low for p in _LOOKAHEAD_PHRASES):
-        return True
-    return "look" in low and "ahead" in low and any(
-        t in low for t in (".xer", "primavera", "p6", "schedule", "programme", "program")
-    )
+    """True when the turn asks for a rolling / N-day window, not a WBS.
+
+    Delegates so forced-tool selection cannot disagree with the router
+    on an 'as of today' / next-N-days ask.
+    """
+    # Router owns the detector. A second phrase list here is how
+    # 'as of today' slipped past the steal-guard into generate_wbs.
+    from app.core.action_router import message_wants_look_ahead
+    return message_wants_look_ahead(text)
 
 
 def _message_wants_procurement_list(text: str) -> bool:
@@ -10557,7 +10551,10 @@ class Agent:
                                 "description": (
                                     "Reference date YYYY-MM-DD for the window "
                                     "start. Pass the date the user states as "
-                                    "today ('Today is 21 September', '21/09', "
+                                    "today ('Today is 21 September', "
+                                    "'as of today, 21 September', "
+                                    "'today's date is 21 September', "
+                                    "'as at 21 September', '21/09', "
                                     "'21/09/2026'). Omit only when no date is "
                                     "stated; the tool then uses the real clock."
                                 ),
