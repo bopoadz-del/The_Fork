@@ -278,7 +278,25 @@ _WHATSAPP_MEDIA_RE = re.compile(
     r")$",
     re.IGNORECASE,
 )
-_JUNK_CLASSES = ("os_metadata", "office_lock", "whatsapp")
+# Non-document support files. Denied by extension at the walk so they are
+# never assigned. Document types (.pdf .docx .xlsx .dwg .jpg .vsdx .rtf
+# .xls .zip and the rest of the extractor set) are not in these sets.
+_FONT_EXTS = frozenset({".ttf", ".otf", ".shx", ".fon"})
+_CAD_SUPPORT_EXTS = frozenset({
+    ".ctb", ".stb", ".pc3", ".pmp", ".bak", ".bax", ".dwl", ".dwl2",
+})
+_GIS_EXTS = frozenset({".lyr", ".lyrx", ".mxd", ".aprx", ".atbx"})
+_SCRATCH_EXTS = frozenset({".ini", ".log", ".tmp"})
+_EXT_JUNK = (
+    (_FONT_EXTS, "font"),
+    (_CAD_SUPPORT_EXTS, "cad_support"),
+    (_GIS_EXTS, "gis"),
+    (_SCRATCH_EXTS, "scratch"),
+)
+_JUNK_CLASSES = (
+    "os_metadata", "office_lock", "whatsapp",
+    "font", "cad_support", "gis", "scratch",
+)
 
 
 def walk_junk_class(filename: str) -> Optional[str]:
@@ -295,6 +313,10 @@ def walk_junk_class(filename: str) -> Optional[str]:
         return "office_lock"
     if _WHATSAPP_MEDIA_RE.match(base):
         return "whatsapp"
+    ext = Path(base).suffix.casefold()
+    for exts, cls in _EXT_JUNK:
+        if ext in exts:
+            return cls
     return None
 
 
