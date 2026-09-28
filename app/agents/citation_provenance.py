@@ -48,6 +48,12 @@ SCOPE, stated so the edges are known rather than discovered:
   document and may still be NAMED as a source — what it may not do is lend
   its identifiers to a claim about this project's contract, which is the G1
   shape.
+* A figure a calculator actually returned is credited to that calculation
+  and the tool's own notes (the inputs it was given, and the note lines it
+  emitted). A retrieved chunk that did not produce the figure — a ``Source:``
+  line or an inline "chunk N" — is not that credit. A chunk that supplied a
+  governing input may still be named for that input. An answer with no
+  calculator result is left untouched.
 """
 
 from __future__ import annotations
@@ -186,6 +192,7 @@ class EvidenceRecord:
     inputs: str = ""
     source_name: str = ""
     source_class: str = "project_corpus"
+    chunk_index: int | None = None
 
     @property
     def reads_corpus(self) -> bool:
@@ -316,6 +323,7 @@ def _retrieval_records(rag_sys_msg: dict[str, Any] | None) -> list[EvidenceRecor
             text=content[start:end].strip(),
             source_name=(src_m.group(1).strip() if src_m else m.group("doc")),
             source_class=(cls_m.group(1).lower() if cls_m else "project_corpus"),
+            chunk_index=int(m.group("chunk")),
         ))
     return records
 
@@ -449,14 +457,334 @@ def _strip_cued_ids(text: str, allowed: set[str]) -> tuple[str, list[str]]:
     return _ATTRIB_CUE_ID_RE.sub(repl, text), removed
 
 
-def _strip_source_lines(text: str, ev: Evidence) -> tuple[str, list[str]]:
+# A chunk citation ("chunk 40", "file.pdf, chunk 40"). The whole Source
+# line is one shape; an inline mention is the other. Both are the credit
+# for a figure only when a calculator produced that figure.
+_CHUNK_REF_RE = re.compile(r"\bchunks?\s*(\d+)\b", re.IGNORECASE)
+_NUMBER_RE = re.compile(r"(?<![\w])(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w])")
+_INLINE_CHUNK_RE = re.compile(
+    r"[\[【]\s*sources?\s*:\s*[^\]】,]{1,200}?\s*,\s*chunks?\s*\d+\s*[\]】]"
+    r"|\(\s*(?:sources?\s*:\s*)?[^()]{0,200}?\s*chunks?\s*\d+\s*\)"
+    r"|(?<![\w.])[\w][\w.+-]{0,160}\.(?:pdf|docx?|xlsx?|txt|md|csv)"
+    r"\s*,?\s*chunks?\s*\d+"
+    r"|(?:\b(?:see|per|from|source|sources)\s+)?\bchunks?\s*\d+\b",
+    re.IGNORECASE,
+)
+_CALC_INPUT_SKIP = frozenset({
+    "calculation", "name", "calculator", "params", "input", "text", "formula",
+    "message", "query", "project_id", "conversation_id", "user_id", "action",
+})
+
+
+@dataclass
+class _CalculatorCredit:
+    """One successful calculator envelope and the figure it actually returned."""
+
+    tool: str
+    calculation: str
+    notes: list[str]
+    inputs: dict[str, Any]
+    result_numbers: list[float]
+
+
+def _parse_dict(raw: str) -> dict | None:
+    if not raw or not str(raw).lstrip().startswith("{"):
+        return None
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError) as exc:
+        _LOG.debug(
+            "citation_provenance: tool payload is not JSON (%s)",
+            type(exc).__name__,
+        )
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _calculation_payload(raw: str) -> dict | None:
+    """The ``run_calculation`` envelope, or one wrapped a single level down."""
+    obj = _parse_dict(raw)
+    if not obj:
+        return None
+    if obj.get("status") not in (None, "success", "ok"):
+        return None
+    if obj.get("calculation") and isinstance(obj.get("result"), dict):
+        return obj
+    inner = obj.get("result")
+    if isinstance(inner, dict) and inner.get("status") in (None, "success", "ok"):
+        if inner.get("calculation") and isinstance(inner.get("result"), dict):
+            return inner
+    return None
+
+
+def _result_numbers(result: dict) -> list[float]:
+    """Numeric fields the calculator returned. Notes are prose, not targets."""
+    found: list[float] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, bool) or obj is None:
+            return
+        if isinstance(obj, (int, float)):
+            if obj != float("inf") and obj == obj:  # not NaN
+                found.append(float(obj))
+            return
+        if isinstance(obj, dict):
+            for key, val in obj.items():
+                if key == "notes":
+                    continue
+                walk(val)
+            return
+        if isinstance(obj, list):
+            for val in obj:
+                if not isinstance(val, str):
+                    walk(val)
+
+    walk(result)
+    return found
+
+
+def _governing_inputs(raw: str) -> dict[str, Any]:
+    obj = _parse_dict(raw) or {}
+    params = obj.get("params") if isinstance(obj.get("params"), dict) else None
+    if params is None and isinstance(obj.get("input"), dict):
+        params = obj["input"]
+    if params is None:
+        params = obj
+    clean: dict[str, Any] = {}
+    for key, val in params.items():
+        if key in _CALC_INPUT_SKIP or isinstance(val, bool):
+            continue
+        if isinstance(val, (int, float)):
+            clean[str(key)] = val
+        elif isinstance(val, str) and val.strip():
+            clean[str(key)] = val.strip()
+    return clean
+
+
+def _calculator_credits(ev: Evidence) -> list[_CalculatorCredit]:
+    credits: list[_CalculatorCredit] = []
+    for rec in ev.records:
+        if rec.kind != "tool_run":
+            continue
+        payload = _calculation_payload(rec.text)
+        if payload is None:
+            continue
+        result = payload["result"]
+        calculation = str(payload.get("calculation") or "").strip()
+        numbers = _result_numbers(result)
+        if not calculation or not numbers:
+            continue
+        notes_raw = result.get("notes") or []
+        notes = (
+            [str(note) for note in notes_raw if str(note).strip()]
+            if isinstance(notes_raw, list) else []
+        )
+        credits.append(_CalculatorCredit(
+            tool=rec.tool or "construction_calc",
+            calculation=calculation,
+            notes=notes,
+            inputs=_governing_inputs(rec.inputs),
+            result_numbers=numbers,
+        ))
+    return credits
+
+
+def _numbers_in(text: str) -> list[float]:
+    found: list[float] = []
+    for match in _NUMBER_RE.finditer(text or ""):
+        try:
+            found.append(float(match.group(0).replace(",", "")))
+        except ValueError:
+            continue
+    return found
+
+
+def _close(left: float, right: float) -> bool:
+    tol = 1e-3 * max(1.0, abs(left), abs(right))
+    if abs(left - right) <= tol:
+        return True
+    return abs(round(left, 3) - round(right, 3)) <= 1e-9
+
+
+def _has_number(text: str, targets: list[float]) -> bool:
+    if not targets:
+        return False
+    return any(
+        _close(found, target)
+        for found in _numbers_in(text)
+        for target in targets
+    )
+
+
+def _answer_commits(answer: str, credit: _CalculatorCredit) -> bool:
+    return _has_number(answer, credit.result_numbers)
+
+
+def _fmt_input(val: Any) -> str:
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    if isinstance(val, float):
+        return format(val, "g")
+    return str(val)
+
+
+def _record_supplies_input(text: str, inputs: dict[str, Any]) -> bool:
+    """True when this chunk's words carry a value the calculator was given."""
+    low = (text or "").lower()
+    for key, val in inputs.items():
+        if isinstance(val, str):
+            if val.lower() in low:
+                return True
+            continue
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            continue
+        label = str(key).replace("_", " ").lower()
+        if label not in low and str(key).lower() not in low:
+            continue
+        if _has_number(text, [float(val)]):
+            return True
+    return False
+
+
+def _record_backs_figure(rec: EvidenceRecord, credit: _CalculatorCredit) -> bool:
+    text = rec.text or ""
+    if _has_number(text, credit.result_numbers):
+        return True
+    return _record_supplies_input(text, credit.inputs)
+
+
+def _records_for_citation(citation: str, ev: Evidence) -> list[EvidenceRecord]:
+    low = (citation or "").lower()
+    indexes = {int(n) for n in _CHUNK_REF_RE.findall(citation or "")}
+    named = [
+        rec for rec in ev.records
+        if rec.kind == "retrieval" and rec.source_name and rec.source_name.lower() in low
+    ]
+    if named and indexes:
+        indexed = [rec for rec in named if rec.chunk_index in indexes]
+        if indexed:
+            return indexed
+    if named:
+        return named
+    if not indexes:
+        return []
+    return [
+        rec for rec in ev.records
+        if rec.kind == "retrieval" and rec.chunk_index in indexes
+    ]
+
+
+def _citation_is_false_chunk_credit(
+    citation: str,
+    ev: Evidence,
+    credits: list[_CalculatorCredit],
+    answer: str,
+) -> bool:
+    """A chunk mention crediting a figure the chunk did not produce.
+
+    Kept when the chunk text contains the figure, or a governing input the
+    calculator was actually given. No calculator, or no chunk mention, and
+    this class does not apply.
+    """
+    if not credits or not _CHUNK_REF_RE.search(citation or ""):
+        return False
+    committed = [c for c in credits if _answer_commits(answer, c)]
+    if not committed:
+        return False
+    pool = _records_for_citation(citation, ev)
+    if not pool:
+        return True
+    for rec in pool:
+        for credit in committed:
+            if _record_backs_figure(rec, credit):
+                return False
+    return True
+
+
+def _fmt_credit(credit: _CalculatorCredit) -> str:
+    rendered = ", ".join(
+        f"{key}={_fmt_input(val)}" for key, val in credit.inputs.items()
+    )
+    head = f"Source: {credit.tool} {credit.calculation}"
+    if rendered:
+        head += f" ({rendered})"
+    if credit.notes:
+        head += " — " + "; ".join(credit.notes)
+    return head
+
+
+def _credit_already_present(answer: str, credit: _CalculatorCredit) -> bool:
+    if credit.calculation not in (answer or ""):
+        return False
+    if credit.tool and credit.tool not in answer:
+        return False
+    for note in credit.notes:
+        if note not in answer:
+            return False
+    for key, val in credit.inputs.items():
+        if f"{key}={_fmt_input(val)}" not in answer:
+            return False
+    return True
+
+
+def _missing_calculator_credit(
+    out: str,
+    credits: list[_CalculatorCredit],
+    answer: str,
+) -> str:
+    lines: list[str] = []
+    for credit in credits:
+        if not _answer_commits(answer, credit):
+            continue
+        if _credit_already_present(out, credit):
+            continue
+        lines.append(_fmt_credit(credit))
+    return "\n".join(lines)
+
+
+def _strip_inline_chunk_credits(
+    text: str,
+    ev: Evidence,
+    credits: list[_CalculatorCredit],
+    answer: str,
+) -> tuple[str, list[str]]:
+    """Drop an inline chunk credit that is not a whole Source line.
+
+    ``_SOURCE_LINE_RE`` only sees a line that begins with Source. "see chunk
+    40" and "(file.pdf chunk 40)" sit in the sentence and used to survive.
+    """
+    if not credits:
+        return text, []
+    removed: list[str] = []
+
+    def repl(m: re.Match[str]) -> str:
+        if not _citation_is_false_chunk_credit(m.group(0), ev, credits, answer):
+            return m.group(0)
+        removed.append(m.group(0).strip())
+        return SENTINEL
+
+    return _INLINE_CHUNK_RE.sub(repl, text), removed
+
+
+def _strip_source_lines(
+    text: str,
+    ev: Evidence,
+    credits: list[_CalculatorCredit] | None = None,
+    answer: str | None = None,
+) -> tuple[str, list[str]]:
     """Drop a Source line whose named sources are all unbacked.
 
     A line naming something the evidence does have is left alone: the job is
     to remove invention, not to delete correct attributions.
+
+    A filename match is not enough when the line is a chunk credit for a
+    figure a calculator returned and that chunk did not produce. The
+    calculation's own line (it names the tool) is still kept.
     """
     allowed_ids = ev.citable_ids()
     tools = ev.tool_names()
+    credits = credits or []
+    judged = text if answer is None else answer
     removed: list[str] = []
 
     def repl(m: re.Match[str]) -> str:
@@ -473,10 +801,18 @@ def _strip_source_lines(text: str, ev: Evidence) -> tuple[str, list[str]]:
         # only a citable record's filename may rescue it. Otherwise a template
         # or reference note whose own name carries the contract id would back
         # the attribution the class exists to refuse.
+        #
+        # That rescue does not cover a chunk credit for a calculator figure
+        # the chunk did not produce (Dewatering-p2: the proposal chunk was
+        # retrieved, and the factor of safety came from the tool).
         names = ev.source_names(citable_only=bool(ids))
+        name_hit = False
         for n in names:
             if n and (n in low or low in n):
-                return m.group(0)
+                name_hit = True
+                break
+        if name_hit and not _citation_is_false_chunk_credit(body, ev, credits, judged):
+            return m.group(0)
         # A line naming the TOOL that ran is a RENDERED citation, not an
         # invention -- and R3 requires exactly that self-declaration from the
         # template scheduler. Never strip it.
@@ -505,11 +841,14 @@ def gate(
         if not _enabled() or not text or not text.strip():
             return text
         ev = build_evidence(rag_sys_msg, messages)
+        credits = _calculator_credits(ev)
         removed: list[str] = []
 
         out, r = _strip_boq_attributions(text, ev)
         removed += r
-        out, r = _strip_source_lines(out, ev)
+        out, r = _strip_source_lines(out, ev, credits, text)
+        removed += r
+        out, r = _strip_inline_chunk_credits(out, ev, credits, text)
         removed += r
 
         if ev.any_corpus_read():
@@ -524,13 +863,21 @@ def gate(
             out, r = _strip_cued_ids(out, allowed)
             removed += r
 
-        if not removed:
+        if removed:
+            out = _tidy(out)
+        credit = _missing_calculator_credit(out, credits, text)
+        if not removed and not credit:
             return text
-        _LOG.warning(
-            "citation_provenance: removed %d unbacked attribution(s): %s",
-            len(removed), removed[:5],
-        )
-        return _tidy(out) + UNVERIFIED_NOTE
+        if removed:
+            _LOG.warning(
+                "citation_provenance: removed %d unbacked attribution(s): %s",
+                len(removed), removed[:5],
+            )
+        if credit:
+            out = out.rstrip() + "\n\n" + credit
+        if removed:
+            out += UNVERIFIED_NOTE
+        return out
     except Exception:  # noqa: BLE001 -- a gate must never break an answer
         _LOG.exception("citation_provenance failed; passing answer through")
         return text
