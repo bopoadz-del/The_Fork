@@ -50,7 +50,14 @@ jobs:
 
       - name: Install system deps for OCR + PDF
         run: |
-          sudo apt-get update -qq
+          if ! sudo apt-get update -qq; then
+            # Some GitHub-hosted 24.04 images ship a Microsoft prod repo that
+            # 403s and is unsigned. That aborts this step before tesseract
+            # and poppler install. Drop that list and retry once.
+            sudo grep -l packages.microsoft.com /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null \
+              | xargs -r sudo rm -f
+            sudo apt-get update -qq
+          fi
           sudo apt-get install -y -qq tesseract-ocr poppler-utils
 
       - name: Install Python deps
@@ -208,7 +215,14 @@ jobs:
 
       - name: Install system deps for OCR + PDF
         run: |
-          sudo apt-get update -qq
+          if ! sudo apt-get update -qq; then
+            # Some GitHub-hosted 24.04 images ship a Microsoft prod repo that
+            # 403s and is unsigned. That aborts this step before tesseract
+            # and poppler install. Drop that list and retry once.
+            sudo grep -l packages.microsoft.com /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null \
+              | xargs -r sudo rm -f
+            sudo apt-get update -qq
+          fi
           sudo apt-get install -y -qq tesseract-ocr poppler-utils
 
       - name: Install Python deps
