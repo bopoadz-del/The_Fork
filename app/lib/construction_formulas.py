@@ -1302,9 +1302,13 @@ def _alias_calculate_evm_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """Bind case-insensitive PMI / PE names onto ``calculate_evm`` kwargs.
 
     Canonical keys already present win; aliases only fill holes so mixed
-    ``pv`` + ``BCWP`` + ``acwp`` still resolve.
+    ``pv`` + ``BCWP`` + ``acwp`` still resolve. The source key is removed
+    once it has been applied: ``pv`` and ``bcws`` are both real parameters,
+    so the generic binder cannot pick one, and leaving ``planned_value``
+    in the dict would be reported as an unknown argument.
     """
     out = dict(params)
+    consumed: List[str] = []
     for raw_key, val in params.items():
         if val is None or val == "":
             continue
@@ -1313,6 +1317,10 @@ def _alias_calculate_evm_params(params: Dict[str, Any]) -> Dict[str, Any]:
             continue
         if dest not in out or out[dest] in (None, ""):
             out[dest] = val
+        if _snake_key(raw_key) != _snake_key(dest):
+            consumed.append(str(raw_key))
+    for key in consumed:
+        out.pop(key, None)
     return out
 
 
@@ -1402,17 +1410,21 @@ def _result_is_failure(result: Dict[str, Any]) -> bool:
 
 # Keys the model / container / tool envelope add beside real calculator kwargs.
 # Flatten unwraps ``params`` / ``input`` then drops these so they never
-# reach fn(**kwargs). ``text`` / ``formula`` stay available for the E4 /
-# F–W resolvers that run *before* bind, and are stripped at bind time.
+# reach fn(**kwargs). ``text`` / ``formula`` / ``prior_text`` / ``query``
+# stay available for the E4 / E6 / F–W resolvers that run *before* bind,
+# and are stripped at bind time so they are not unknown-argument errors.
 _BIND_JUNK_KEYS = frozenset({
     "action", "calculation", "name", "calculator", "params",
     "block", "unit", "formula", "text", "ok", "status",
     "input", "project_id", "conversation_id", "user_id",
     "message", "history", "messages", "chat",
     "kwargs", "arguments", "variables", "values",
+    "prior_text", "query",
 })
 _FLATTEN_NEST_KEYS = ("params", "input", "kwargs", "arguments", "variables", "values")
-_E4_PASSTHROUGH_KEYS = frozenset({"text", "formula"})
+_E4_PASSTHROUGH_KEYS = frozenset({
+    "text", "formula", "prior_text", "query",
+})
 
 # Longest-first unit suffixes stripped when matching volume ↔ volume_m3.
 _BIND_UNIT_SUFFIXES: Tuple[Tuple[str, str], ...] = (
@@ -1455,7 +1467,11 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "volume": ("volume_m3", "quantity_m3"),
     "vol": ("volume_m3", "quantity_m3"),
     "qty": ("quantity_m3", "quantity_kg", "quantity", "volume_m3"),
-    "quantity": ("quantity_m3", "quantity_kg", "quantity"),
+    "quantity": ("quantity_m3", "quantity_kg", "quantity", "quantity_of_work"),
+    # Element count the model sends ("count": 24). Alias of ``quantity``
+    # only — not floor_count / room_count. A calculator without ``quantity``
+    # does not accept it.
+    "count": ("quantity",),
     "quantity_t": ("quantity_kg",),
     "qty_t": ("quantity_kg",),
     "tonnes": ("quantity_kg",),
@@ -1467,7 +1483,7 @@ _BIND_SEMANTIC_ALIASES: Dict[str, Tuple[str, ...]] = {
     "material_price": ("material_price_sar_t",),
     "steel_price": ("material_price_sar_t",),
     "rebar_price": ("material_price_sar_t",),
-    "unit_rate": ("material_price_sar_t",),
+    "unit_rate": ("material_price_sar_t", "day_rate"),
     "waste": ("waste_pct",),
     "waste_percent": ("waste_pct",),
     "bidders": ("tenderers",),
@@ -2055,13 +2071,36 @@ def _unique_stem_dest(
     return None
 
 
-def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Map incoming kwargs onto ``fn``'s signature names.
+def _ignored_explicit_stem(incoming: str, accepted: Dict[str, str]) -> bool:
+    """True when the only stem hit is an explicit-bind-only parameter.
 
-    Shared with Agent C (#636 flattened the tool path + EVM aliases). This
-    generalises that bind: case-insensitive keys, unit-suffix stems, and a
-    small synonym table. Canonical names already present win.
-    Shared with Agent C / #636 / #639 / #652.
+    ``sand`` must not become ``dune_sand_pct`` (live mix-table SGs). It is
+    also not an unknown argument: the call still computes from the keys
+    that did bind. ``bogus_param`` matches nothing here and stays unknown.
+    """
+    stem = _param_stem(incoming)
+    if len(stem) < 3:
+        return False
+    hits = []
+    for dest in accepted.values():
+        dest_stem = _param_stem(dest)
+        if dest_stem == stem or (
+            dest_stem.endswith(stem) and len(dest_stem) > len(stem)
+        ):
+            hits.append(dest)
+    return bool(hits) and all(dest in _EXPLICIT_BIND_ONLY for dest in hits)
+
+
+def _partition_bound_params(
+    fn: Any, params: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Map kwargs onto ``fn``. The list is unbound keys, in input order.
+
+    A ``**kwargs`` calculator absorbs unbound keys. ``concrete_mix_slip_form``
+    is the only one: extra kwargs are ignored so a probe that sends slump
+    next to the name still returns the locked mix. Every other calculator
+    leaves the key unbound so ``run_calculation`` can return a tool error
+    instead of dropping it.
     """
     raw = _flatten_calc_kwargs(params or {})
     sig = _inspect.signature(fn)
@@ -2078,7 +2117,7 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     }
 
     bound: Dict[str, Any] = {}
-    leftovers: Dict[str, Any] = {}
+    unknown: List[str] = []
     for key, val in raw.items():
         if val is None or val == "":
             continue
@@ -2091,8 +2130,10 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
             dest = _unique_semantic_dest(_snake_key(key), accepted_norm)
         if dest is None:
             dest = _unique_stem_dest(key, accepted_norm, required=required)
+        if dest is None and _ignored_explicit_stem(key, accepted_norm):
+            continue
         if dest is None:
-            leftovers[key] = val
+            unknown.append(str(key))
             continue
         if isinstance(val, (list, tuple)) and len(val) == 1:
             val = val[0]
@@ -2101,8 +2142,21 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
             bound[dest] = scaled
 
     if has_var_kw:
-        for key, val in leftovers.items():
-            bound.setdefault(key, val)
+        for key in unknown:
+            bound.setdefault(key, raw.get(key))
+        return bound, []
+    return bound, unknown
+
+
+def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Map incoming kwargs onto ``fn``'s signature names.
+
+    Shared with Agent C (#636 flattened the tool path + EVM aliases). This
+    generalises that bind: case-insensitive keys, unit-suffix stems, and a
+    small synonym table. Canonical names already present win.
+    Shared with Agent C / #636 / #639 / #652.
+    """
+    bound, _unknown = _partition_bound_params(fn, params)
     return bound
 
 
@@ -2730,6 +2784,83 @@ def _bind_error_envelope(
     }
 
 
+def _accepts_param(fn: Any, param_name: str) -> bool:
+    try:
+        sig = _inspect.signature(fn)
+    except (TypeError, ValueError):
+        logger.debug(
+            "signature unavailable for %s",
+            getattr(fn, "__name__", type(fn).__name__),
+        )
+        return False
+    param = sig.parameters.get(param_name)
+    if param is None:
+        return False
+    return param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+
+
+def _numbers_agree(left: Any, right: Any) -> bool:
+    """True when both tokens are the same number, including ``\"24\"`` and 24."""
+    a = _coerce_scalar(left)
+    b = _coerce_scalar(right)
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) <= 1e-9
+    return a == b
+
+
+def _count_quantity_conflict(params: Dict[str, Any]) -> Optional[str]:
+    """Error text when ``count`` and ``quantity`` are both set and differ.
+
+    Equal values (including a numeric string) are one element count. A
+    silent pick of either side is the bug: the model cannot tell which
+    figure was used.
+    """
+    count_val: Any = None
+    qty_val: Any = None
+    seen_count = False
+    seen_qty = False
+    for key, val in params.items():
+        if val is None or val == "":
+            continue
+        nk = _snake_key(key)
+        if nk == "count":
+            seen_count = True
+            count_val = val
+        elif nk == "quantity":
+            seen_qty = True
+            qty_val = val
+    if not (seen_count and seen_qty):
+        return None
+    if _numbers_agree(count_val, qty_val):
+        return None
+    return (
+        f"count and quantity differ: count={count_val!r}, quantity={qty_val!r}. "
+        "Pass one element count, or the same value for both."
+    )
+
+
+def _unknown_arg_envelope(
+    name: str, fn: Any, unknown: List[str],
+) -> Dict[str, Any]:
+    """Structured tool error for keys that did not bind. The turn does not raise."""
+    expected = describe_calculation_params(fn, name=name)
+    labels = ", ".join(_format_param_label(row) for row in expected) or "(none)"
+    listed = ", ".join(unknown)
+    return {
+        "status": "error",
+        "calculation": name,
+        "error": (
+            f"Unknown argument(s) for {name}: {listed}. "
+            f"These were not applied. Expected: {labels}."
+        ),
+        "unknown": list(unknown),
+        "signature": f"{name}{_inspect.signature(fn)}",
+        "expected_params": expected,
+    }
+
+
 def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run one whitelisted deterministic calculator by name with keyword params.
 
@@ -2828,9 +2959,34 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         for key, val in extract_calculation_params_from_text(fn, text_blob).items():
             if params.get(key) in (None, ""):
                 params[key] = val
-    params = bind_calculation_params(fn, params)
+    if _accepts_param(fn, "quantity"):
+        conflict = _count_quantity_conflict(params)
+        if conflict:
+            return {
+                "status": "error",
+                "calculation": name,
+                "error": conflict,
+                "signature": f"{name}{_inspect.signature(fn)}",
+                "expected_params": describe_calculation_params(fn, name=str(name)),
+            }
+    params, unknown = _partition_bound_params(fn, params)
     params = _coerce_bound_values(fn, params)
     missing = _missing_required(fn, params, name=str(name))
+    if unknown:
+        if missing:
+            env = _bind_error_envelope(str(name), fn, missing)
+            # #649 canned help names paired alternatives (rebar length-or-mass,
+            # productivity pairs) that the signature-required list omits.
+            if str(name or "").strip() in _CALC_REQUIRED_HELP:
+                env["error"] = required_params_error(name, fn)
+            env["error"] = (
+                f"{env['error']} Unknown argument(s) not applied: "
+                f"{', '.join(unknown)}."
+            )
+            env["unknown"] = list(unknown)
+            env["calculation"] = name
+            return env
+        return _unknown_arg_envelope(str(name), fn, unknown)
     if missing:
         env = _bind_error_envelope(str(name), fn, missing)
         # #649 canned help names paired alternatives (rebar length-or-mass,
