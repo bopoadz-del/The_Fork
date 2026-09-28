@@ -2268,18 +2268,35 @@ def soil_contact_cover_enabled() -> bool:
     )
 
 
+def _affirmed_soil_contact(text: str) -> bool:
+    """A soil-contact phrase that is not immediately negated.
+
+    ``not in contact with soil`` contains the positive phrase. A chunk or
+    question that only states the negated condition is a different cover
+    (the 50 mm case) and must not take this pool. A chunk that states both
+    still matches on the affirmed phrase.
+    """
+    blob = text or ""
+    for match in _SOIL_CONTACT_RE.finditer(blob):
+        prefix = blob[max(0, match.start() - 16):match.start()]
+        if re.search(r"(?i)\bnot\s+$", prefix):
+            continue
+        return True
+    return False
+
+
 def query_asks_soil_contact_cover(query: str) -> bool:
     """A concrete-cover ask that names the soil-contact condition."""
     if not soil_contact_cover_enabled() or not spec_boost_guard_enabled():
         return False
     text = query or ""
-    return bool(_SOIL_CONTACT_RE.search(text)) and query_asks_concrete_cover(text)
+    return _affirmed_soil_contact(text) and query_asks_concrete_cover(text)
 
 
 def chunk_states_soil_contact_cover(text: str) -> bool:
     """The chunk states a cover length and names the soil-contact condition."""
     blob = text or ""
-    return bool(_SOIL_CONTACT_RE.search(blob)) and chunk_states_cover_length(blob)
+    return _affirmed_soil_contact(blob) and chunk_states_cover_length(blob)
 
 
 def _rescue_soil_contact_cover_chunks(
