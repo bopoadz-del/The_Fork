@@ -6299,6 +6299,7 @@ def _graft_composed_delay_damages_daily(
         from app.lib.construction_formulas_commercial import (
             answer_states_daily_amount,
             compose_delay_damages_daily_from_excerpts,
+            delay_damages_base_is_clause_111,
             drop_whole_of_works_delay_claims,
             format_delay_damages_daily_line,
         )
@@ -6319,7 +6320,21 @@ def _graft_composed_delay_damages_daily(
         except Exception:  # noqa: BLE001 — ask-class fence must never break
             _LOG.debug("A2 compose fence failed; keeping E1 ask check", exc_info=True)
         composed = compose_delay_damages_daily_from_excerpts(user, rag)
-        if not composed:
+        # A partial Accepted Contract Amount on the rate chunk composes
+        # on its own (live M3: 0.015% × SAR 39,098,392.98). That success
+        # used to skip the loaded-volume scan, so clause 1.1.1 never
+        # replaced it. Look when the base is not clause 1.1.1, and only
+        # replace it when the volume states that clause.
+        needs_clause = True
+        if composed:
+            try:
+                needs_clause = not delay_damages_base_is_clause_111(
+                    rag, float(composed["contract_amount"]),
+                )
+            except Exception:  # noqa: BLE001 — a scored base still stands
+                _LOG.debug("clause 1.1.1 check failed", exc_info=True)
+                needs_clause = False
+        if needs_clause:
             # Live leftover E1 after #536: top-k is refuse-prone Contract
             # Data chunks 9–11 that do not surface both operands. When
             # excl-VAT ACA + Contract Data 0.1% exist in the loaded CD
@@ -6334,15 +6349,21 @@ def _graft_composed_delay_damages_daily(
                     extra_pids=extra_project_ids,
                 )
                 if extra:
-                    composed = compose_delay_damages_daily_from_excerpts(
+                    better = compose_delay_damages_daily_from_excerpts(
                         user, extra,
                     )
+                    if better and (
+                        composed is None
+                        or delay_damages_base_is_clause_111(
+                            extra, float(better["contract_amount"]),
+                        )
+                    ):
+                        composed = better
             except Exception:  # noqa: BLE001 — volume scan must never break
                 _LOG.debug(
                     "e1 loaded-volume compose failed; keeping excerpt compose",
                     exc_info=True,
                 )
-                composed = None
         if not composed:
             return text
         line = format_delay_damages_daily_line(composed)
