@@ -28,7 +28,6 @@ MANIFEST_DIR = REPO_ROOT / "manifests"
 KNOWN_FOLDERS: list[dict] = [
     # Tier 1 — pilot project + golden set/fixtures
     {"project_id": "client_infra_pack_1", "folder_name": "the client project", "tier": 1, "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j"},
-    {"project_id": "construction_3_001", "folder_name": "construction-3-001", "tier": 1, "folder_id": None, "note": "pilot project / fixture source"},
 
     # Tier 2 — procedures and other pilot-relevant folders
     {"project_id": "sop_project_controls", "folder_name": "200-Project Controls Procedures", "tier": 2, "folder_id": None},
