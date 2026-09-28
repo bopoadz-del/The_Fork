@@ -133,7 +133,7 @@ def test_a_corrupt_pdf_still_degrades_to_empty(monkeypatch, tmp_path):
     """Only memory failures change behaviour; ordinary breakage must not start
     raising, or one bad file aborts a whole ingest run."""
     pdf = tmp_path / "corrupt.pdf"
-    pdf.write_bytes(b"not a pdf")
+    pdf.write_bytes(b"%PDF-1.4\nnot a pdf")
 
     import fitz
     monkeypatch.setattr(doc_index, "_pdf_tables_enabled", lambda *a, **k: False)

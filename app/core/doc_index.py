@@ -512,6 +512,123 @@ def _is_memory_exhaustion(exc: BaseException) -> bool:
     return False
 
 
+_PDF_MAGIC = b"%PDF-"
+_ZIP_LOCAL_MAGIC = b"PK\x03\x04"
+_OFFICE_PACKAGE_EXTS = {".docx", ".xlsx", ".pptx"}
+_QUARANTINE_HEAD = 1024
+
+
+def _sniff_name(file_path: str, filename: str) -> str:
+    return filename or os.path.basename(file_path or "")
+
+
+def _size_bucket(size: int) -> str:
+    if size <= 0:
+        return "0 B"
+    if size <= 1024:
+        return "1 B-1 KB"
+    if size <= 100 * 1024:
+        return "1-100 KB"
+    if size <= 1024 * 1024:
+        return "100 KB-1 MB"
+    return ">1 MB"
+
+
+def _sniffed_kind(size: int, head: bytes) -> str:
+    if size <= 0 or not head:
+        return "empty"
+    sample = head.lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    if sample.startswith(b"<!doctype") or sample.startswith(b"<html"):
+        return "html"
+    return "other"
+
+
+def _file_head(file_path: str, n: int = _QUARANTINE_HEAD) -> tuple[int, bytes] | None:
+    """Size plus the first ``n`` plaintext bytes. None when the path cannot be read."""
+    try:
+        size = os.path.getsize(file_path)
+    except OSError:
+        return None
+    if size <= 0:
+        return 0, b""
+    from app.core import file_crypto
+
+    try:
+        if file_crypto.encryption_enabled():
+            with file_crypto.open_plaintext(file_path) as readable:
+                with open(readable, "rb") as fh:
+                    return size, fh.read(n)
+        with open(file_path, "rb") as fh:
+            return size, fh.read(n)
+    except OSError:
+        return None
+
+
+def _quarantine_meta(file_path: str, filename: str) -> dict[str, Any] | None:
+    """Metadata when this file must not be handed to a parser. None to proceed.
+
+    PDFs are quarantined when they are empty or the first 1024 bytes do not
+    contain ``%PDF-``. Office packages are quarantined when they do not open
+    with the zip local-file magic. Real PDFs, including ones with junk before
+    ``%PDF-`` inside that window, and real zip-based Office files, return None.
+    """
+    ext = os.path.splitext(_sniff_name(file_path, filename).lower())[1]
+    if ext == ".pdf":
+        reason = "QUARANTINED_NOT_PDF"
+    elif ext in _OFFICE_PACKAGE_EXTS:
+        reason = "QUARANTINED_NOT_OFFICE"
+    else:
+        return None
+    probed = _file_head(file_path)
+    if probed is None:
+        return None
+    size, head = probed
+    if ext == ".pdf":
+        blocked = size <= 0 or _PDF_MAGIC not in head
+    else:
+        blocked = size <= 0 or not head.startswith(_ZIP_LOCAL_MAGIC)
+    if not blocked:
+        return None
+    return {
+        "quarantine_reason": reason,
+        "size_bucket": _size_bucket(size),
+        "sniffed_kind": _sniffed_kind(size, head),
+    }
+
+
+def _quarantine_index_result(
+    project_id: str,
+    document_id: str,
+    filename: str,
+    meta: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Log one quarantine line and return the index error, or None to continue."""
+    reason = (meta or {}).get("quarantine_reason")
+    if not reason:
+        return None
+    bucket = (meta or {}).get("size_bucket") or ""
+    kind = (meta or {}).get("sniffed_kind") or ""
+    logging.getLogger(__name__).warning(
+        "%s doc_id=%s size_bucket=%s sniffed=%s",
+        reason, document_id, bucket, kind,
+    )
+    _stamp_index_ledger(
+        document_id, filename, 0,
+        extract_failed=True,
+        advance_extractor_version=False,
+    )
+    return {
+        "status": "error",
+        "error": reason,
+        "project_id": project_id,
+        "document_id": document_id,
+        "indexed": 0,
+        "total_chunks": 0,
+        "size_bucket": bucket,
+        "sniffed_kind": kind,
+    }
+
+
 def _extract_pdf(
     file_path: str,
     filename: str = "",
@@ -540,6 +657,9 @@ def _extract_pdf(
     plaintext file is under the whole-PDF ceiling, and uses the force page
     budget so a 370-page scanned BOQ is not capped at 160.
     """
+    blocked = _quarantine_meta(file_path, filename)
+    if blocked:
+        return "", blocked
     import fitz
 
     parts: list[str] = []
@@ -761,6 +881,10 @@ def _extract_pdf_batched(
     28 MB scan that had already OCR'd its first pages).
     """
     from app.core.extract_isolated import run_isolated
+
+    blocked = _quarantine_meta(file_path, filename)
+    if blocked:
+        return "", blocked
 
     size_mb = _document_size_mb(file_path)
     max_mb = pdf_max_size_mb()
@@ -1542,6 +1666,10 @@ def _extract_with_meta_impl(
         # ── DOC / DOCX ───────────────────────────────────────────────────────
         if ext == ".doc":
             return _extract_doc(file_path), {}
+        if ext in _OFFICE_PACKAGE_EXTS:
+            blocked = _quarantine_meta(file_path, filename)
+            if blocked:
+                return "", blocked
         if ext == ".docx":
             import docx
             with file_crypto.open_plaintext(file_path) as readable_path:
@@ -2871,6 +2999,11 @@ def index_document(
         text, meta = _extract_with_meta(
             file_path, filename, force_ocr=force_ocr
         )
+        quarantined = _quarantine_index_result(
+            project_id, document_id, filename, meta,
+        )
+        if quarantined is not None:
+            return quarantined
         chunks = chunk_extracted_document(
             text,
             chunker=_chunker_for_document(filename, chunker),
