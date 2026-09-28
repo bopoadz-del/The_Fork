@@ -775,6 +775,7 @@ def main() -> int:
         "duplicate_sha": 0,
         "download_failed": 0,
         "errors": 0,
+        "quarantined": 0,
         "already_indexed": 0,
         "stale_extractor_open": 0,
         "retried": 0,
@@ -825,6 +826,7 @@ def main() -> int:
             "succeeded": 0, "zero_chunk": 0, "skipped_too_large": 0,
             "skipped_too_small": 0, "skipped_unsupported": 0,
             "skipped_empty": 0, "duplicate_sha": 0, "download_failed": 0, "errors": 0,
+            "quarantined": 0,
         })[key] += 1
 
     def _sync_outstanding() -> None:
@@ -970,6 +972,7 @@ def main() -> int:
             f"{global_tally['skipped_empty']} empty, "
             f"{global_tally['download_failed']} download-failed, "
             f"{global_tally['errors']} errors "
+            f"quarantined={global_tally['quarantined']} "
             f"| attempted={accounting['attempted']}/batch={accounting['batch']} "
             f"assigned={accounting['assigned']} "
             f"already_indexed={global_tally['already_indexed']} "
@@ -1377,6 +1380,9 @@ def main() -> int:
                 elif err.startswith("DOWNLOAD_FAILED"):
                     global_tally["download_failed"] += 1
                     _bump_folder(folder_name, "download_failed")
+                elif isinstance(err, str) and err.startswith("QUARANTINED_"):
+                    global_tally["quarantined"] += 1
+                    _bump_folder(folder_name, "quarantined")
                 else:
                     global_tally["errors"] += 1
                     _bump_folder(folder_name, "errors")

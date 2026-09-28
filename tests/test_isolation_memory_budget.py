@@ -121,7 +121,9 @@ def test_generic_failures_are_still_absorbed(monkeypatch, tmp_path):
     from app.core import doc_index
 
     pdf = tmp_path / "corrupt.pdf"
-    pdf.write_bytes(b"not a pdf at all")
+    # Header present so the quarantine gate keeps the file and the mocked
+    # opener still absorbs a generic parser failure.
+    pdf.write_bytes(b"%PDF-1.4\nnot a pdf at all")
 
     import fitz
 
