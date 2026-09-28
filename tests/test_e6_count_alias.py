@@ -220,6 +220,7 @@ def test_var_keyword_calculators_are_the_only_unknown_arg_swallowers():
             sig = inspect.signature(fn)
         except (TypeError, ValueError):
             continue
-        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        params = sig.parameters.values()
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
             swallowers.append(name)
     assert swallowers == ["concrete_mix_slip_form"]
