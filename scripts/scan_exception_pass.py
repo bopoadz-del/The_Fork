@@ -130,7 +130,9 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/core/doc_index.py:1338": "baseline 2026-09-10",
     # Re-indexed 2026-09-28: drawing wiring plaintext open added 5 lines
     # above this handler. Same handler. No new silent return.
-    "app/core/doc_index.py:2805": "baseline 2026-09-10",
+    # Shifted again the same day: the recoverable-skip helper sits above
+    # _ifc_step_census_chunk. Same empty return. No new silent return.
+    "app/core/doc_index.py:2818": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:333": "baseline 2026-09-10",
     "app/core/rag/vector_store.py:1791": "baseline 2026-09-10",
     "app/infra/monitoring.py:320": "baseline 2026-09-10",

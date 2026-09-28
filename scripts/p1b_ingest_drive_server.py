@@ -248,6 +248,39 @@ def _is_geodatabase_internal(path: str) -> bool:
     return any(part.lower().endswith(".gdb") for part in Path(path).parts[:-1])
 
 
+def tally_key_for_index_result(result: Dict[str, Any]) -> str:
+    """Run-tally bucket for one ``index_document`` result.
+
+    A recoverable CAD skip (``.dwg`` / ``.dxf``, no parser) is
+    ``skipped_recoverable``, not ``zero_chunk``. ``zero_chunk`` stays the
+    bucket for a supported file that extracted nothing.
+    """
+    if result.get("skip_reason") == "skipped_recoverable":
+        return "skipped_recoverable"
+    if result.get("status") == "error":
+        err = result.get("error")
+        if err == "ZERO_CHUNK":
+            return "zero_chunk"
+        if err == "SKIPPED_TOO_LARGE":
+            return "skipped_too_large"
+        if err == "SKIPPED_TOO_SMALL":
+            return "skipped_too_small"
+        if err == "SKIPPED_UNSUPPORTED":
+            return "skipped_unsupported"
+        if err == "SKIPPED_EMPTY":
+            return "skipped_empty"
+        if err == "DUPLICATE_SHA":
+            return "duplicate_sha"
+        if isinstance(err, str) and err.startswith("DOWNLOAD_FAILED"):
+            return "download_failed"
+        if isinstance(err, str) and err.startswith("QUARANTINED_"):
+            return "quarantined"
+        return "errors"
+    if result.get("rag_indexed", 0) == 0:
+        return "zero_chunk"
+    return "succeeded"
+
+
 def _ingest_status_from_index_result(
     result: Dict[str, Any], existing_doc: Dict[str, Any],
 ) -> str:
@@ -776,6 +809,7 @@ def main() -> int:
         "download_failed": 0,
         "errors": 0,
         "quarantined": 0,
+        "skipped_recoverable": 0,
         "already_indexed": 0,
         "stale_extractor_open": 0,
         "retried": 0,
@@ -826,7 +860,7 @@ def main() -> int:
             "succeeded": 0, "zero_chunk": 0, "skipped_too_large": 0,
             "skipped_too_small": 0, "skipped_unsupported": 0,
             "skipped_empty": 0, "duplicate_sha": 0, "download_failed": 0, "errors": 0,
-            "quarantined": 0,
+            "quarantined": 0, "skipped_recoverable": 0,
         })[key] += 1
 
     def _sync_outstanding() -> None:
@@ -967,6 +1001,7 @@ def main() -> int:
         log(
             f"[p1b-server] tier {args.tier}: {global_tally['succeeded']} succeeded, "
             f"{global_tally['zero_chunk']} zero-chunk, "
+            f"{global_tally['skipped_recoverable']} skipped-recoverable, "
             f"{global_tally['skipped_too_large']} too-large, "
             f"{global_tally['skipped_too_small']} too-small, "
             f"{global_tally['skipped_empty']} empty, "
@@ -1357,41 +1392,9 @@ def main() -> int:
             # `skipped_unsupported` also carries discovery-side files.
             accounting["attempted"] += 1
             folder_record["attempted"] += 1
-            if result.get("status") == "error":
-                err = result.get("error")
-                if err == "ZERO_CHUNK":
-                    global_tally["zero_chunk"] += 1
-                    _bump_folder(folder_name, "zero_chunk")
-                elif err == "SKIPPED_TOO_LARGE":
-                    global_tally["skipped_too_large"] += 1
-                    _bump_folder(folder_name, "skipped_too_large")
-                elif err == "SKIPPED_TOO_SMALL":
-                    global_tally["skipped_too_small"] += 1
-                    _bump_folder(folder_name, "skipped_too_small")
-                elif err == "SKIPPED_UNSUPPORTED":
-                    global_tally["skipped_unsupported"] += 1
-                    _bump_folder(folder_name, "skipped_unsupported")
-                elif err == "SKIPPED_EMPTY":
-                    global_tally["skipped_empty"] += 1
-                    _bump_folder(folder_name, "skipped_empty")
-                elif err == "DUPLICATE_SHA":
-                    global_tally["duplicate_sha"] += 1
-                    _bump_folder(folder_name, "duplicate_sha")
-                elif err.startswith("DOWNLOAD_FAILED"):
-                    global_tally["download_failed"] += 1
-                    _bump_folder(folder_name, "download_failed")
-                elif isinstance(err, str) and err.startswith("QUARANTINED_"):
-                    global_tally["quarantined"] += 1
-                    _bump_folder(folder_name, "quarantined")
-                else:
-                    global_tally["errors"] += 1
-                    _bump_folder(folder_name, "errors")
-            elif result.get("rag_indexed", 0) == 0:
-                global_tally["zero_chunk"] += 1
-                _bump_folder(folder_name, "zero_chunk")
-            else:
-                global_tally["succeeded"] += 1
-                _bump_folder(folder_name, "succeeded")
+            bucket = tally_key_for_index_result(result)
+            global_tally[bucket] += 1
+            _bump_folder(folder_name, bucket)
             if result.get("stale_extractor_retry"):
                 accounting["retried"] += 1
                 global_tally["retried"] += 1

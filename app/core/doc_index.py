@@ -2312,6 +2312,19 @@ def _ext_of(filename: str) -> str:
     return ext
 
 
+def _unsupported_skip_reason(ext: str) -> str:
+    """Skip-list reason for an extension the text indexer does not parse.
+
+    ``.dwg`` / ``.dxf`` stay open work (``ingest_status`` recoverable). They
+    are not a zero-chunk failure and this path does not parse them.
+    """
+    from app.core.ingest_status import RECOVERABLE_EXTS
+
+    if ext in RECOVERABLE_EXTS:
+        return "skipped_recoverable"
+    return "unsupported_type"
+
+
 def index_project(project_id: str) -> dict[str, Any]:
     """Build (or rebuild) the full text index for ``project_id``.
 
@@ -2337,7 +2350,7 @@ def index_project(project_id: str) -> dict[str, Any]:
             skipped.append({
                 "document_id": doc["id"],
                 "filename": filename,
-                "reason": "unsupported_type",
+                "reason": _unsupported_skip_reason(ext),
                 "fingerprint": fingerprint,
             })
             continue
@@ -2998,7 +3011,7 @@ def index_document(
         skipped_entry = {
             "document_id": document_id,
             "filename": filename,
-            "reason": "unsupported_type",
+            "reason": _unsupported_skip_reason(ext),
             "fingerprint": fingerprint,
         }
     else:
@@ -3197,13 +3210,19 @@ def index_document(
         _stamp_index_ledger(
             document_id, filename, 0, stamp_as_indexed=stamp_as_indexed,
         )
-        return {
+        skipped = {
             "status": "ok",
             "project_id": project_id,
             "indexed": 0,
             "skipped_unsupported": 1,
             "total_chunks": 0,
         }
+        if skipped_entry and skipped_entry.get("reason") == "skipped_recoverable":
+            # Visible to the Drive ingest tally so this is not booked as
+            # zero_chunk. The ledger row stays UNSUPPORTED_TYPE / recoverable
+            # and therefore open for a later retry. No DWG parse happens here.
+            skipped["skip_reason"] = "skipped_recoverable"
+        return skipped
     # Embed miss never advances. Thin TEXT_SPARSE advances only when the
     # prior stamp is the reopen sentinel (terminal-close). The ledger
     # helper enforces that even if this caller veto is too loose.
