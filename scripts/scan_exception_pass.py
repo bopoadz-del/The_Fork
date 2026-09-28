@@ -63,23 +63,25 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # Re-indexed 2026-09-27: dewatering drawdown guard in
     # _message_wants_cash_flow added 5 lines. Same handlers below it.
     "app/agents/runtime.py:649": "baseline 2026-09-10",
-    "app/agents/runtime.py:973": "baseline 2026-09-10",
+    "app/agents/runtime.py:967": "baseline 2026-09-10",
     # Re-indexed 2026-09-27: stated look-ahead date passed in predispatch.
     # Same handlers — only the line numbers moved. No new silent returns.
     # Shifted again the same day: dewatering drawdown guard in
     # _message_wants_cash_flow added 5 lines below these handlers.
+    # Re-indexed 2026-09-28: duplicate look-ahead phrase tuple removed
+    # from runtime (the router owns the detector). Same handlers, -6 lines.
+    "app/agents/runtime.py:2213": "baseline 2026-09-10",
     "app/agents/runtime.py:2219": "baseline 2026-09-10",
-    "app/agents/runtime.py:2225": "baseline 2026-09-10",
+    "app/agents/runtime.py:2282": "baseline 2026-09-10",
     "app/agents/runtime.py:2288": "baseline 2026-09-10",
-    "app/agents/runtime.py:2294": "baseline 2026-09-10",
-    "app/agents/runtime.py:2978": "baseline 2026-09-10",
-    "app/agents/runtime.py:4002": "baseline 2026-09-10",
-    "app/agents/runtime.py:5358": "baseline 2026-09-10",
+    "app/agents/runtime.py:2972": "baseline 2026-09-10",
+    "app/agents/runtime.py:3996": "baseline 2026-09-10",
+    "app/agents/runtime.py:5352": "baseline 2026-09-10",
     # Re-indexed 2026-09-25: standards-note relevance helper inserted above
     # _aca_claim_amount. Same ValueError return — only the line moved.
     # Re-indexed 2026-09-27 with the look-ahead predispatch date pass,
     # then +5 for the drawdown guard.
-    "app/agents/runtime.py:5936": "baseline 2026-09-10",
+    "app/agents/runtime.py:5930": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",

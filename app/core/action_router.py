@@ -351,6 +351,51 @@ _LOOKAHEAD_QA_RE = re.compile(
     r"\b(what is|what's|whats|explain|define)\b",
     re.IGNORECASE,
 )
+# "what falls in the next 14 days" / "over the next 3 weeks" never says
+# look-ahead. Digits and the same week-words the window parser accepts.
+_NEXT_WINDOW_NUM = r"(?:\d+|two|three|four)"
+_NEXT_WINDOW_UNIT = r"(?:day|week)s?"
+_NEXT_WINDOW_RE = re.compile(
+    rf"\b(?:in|within|over|during|for)\s+the\s+next\s+{_NEXT_WINDOW_NUM}"
+    rf"\s*[-]?\s*{_NEXT_WINDOW_UNIT}\b"
+    rf"|\bnext\s+{_NEXT_WINDOW_NUM}\s*[-]?\s*{_NEXT_WINDOW_UNIT}\b"
+    rf"|\b(?:coming|upcoming)\s+up\s+over\s+the\s+next\s+{_NEXT_WINDOW_NUM}"
+    rf"\s*[-]?\s*{_NEXT_WINDOW_UNIT}\b",
+    re.IGNORECASE,
+)
+# Imperative WBS / schedule produce. "Create a look-ahead programme" does
+# not match: the noun is not the token right after the article.
+_WBS_PRODUCE_RE = re.compile(
+    r"\b(?:wbs|work\s+breakdown(?:\s+structure)?)\b"
+    r"|\b(?:l[1-4]|level\s+[1-4])\s+schedule\b"
+    r"|\b\d{2,4}\s+activities\b"
+    r"|\b(?:generate|create|build|produce|draft|make|develop|prepare)\s+"
+    r"(?:a\s+|an\s+|the\s+)?(?:wbs|schedule|programme|program)\b",
+    re.IGNORECASE,
+)
+
+
+def _next_window_look_ahead(raw: str) -> bool:
+    """True for a next-N-days/weeks question that is not some other deliverable.
+
+    Checked before the definition veto. 'What's coming up…' and 'what is
+    due in the next 14 days' contain 'what is' / 'what's' and would
+    otherwise be thrown out with 'what is a look-ahead?'.
+    """
+    if not _NEXT_WINDOW_RE.search(raw):
+        return False
+    if _WBS_PRODUCE_RE.search(raw):
+        return False
+    if message_wants_cash_flow(raw):
+        return False
+    if message_wants_rfi_draft(raw):
+        return False
+    if "histogram" in raw.lower():
+        return False
+    from app.core.contract_lookup_intent import message_is_contract_data_lookup
+    if message_is_contract_data_lookup(raw):
+        return False
+    return True
 
 
 def message_wants_look_ahead(text: str) -> bool:
@@ -359,9 +404,17 @@ def message_wants_look_ahead(text: str) -> bool:
     Live Phase 2: "14-day look-ahead from the synthetic programme" and
     "look-ahead from the construction schedule" were classified as
     generate_wbs because those schedule nouns score higher than "look-ahead".
+
+    Live D3: "As of today, 21 September 2026, what falls in the next 14
+    days?" never says look-ahead, so the phrase guard let UNDERSTAND map
+    it to generate_wbs. A next-N-days/weeks question is the same ask.
     """
     raw = text or ""
-    if not raw.strip() or _LOOKAHEAD_QA_RE.search(raw):
+    if not raw.strip():
+        return False
+    if _next_window_look_ahead(raw):
+        return True
+    if _LOOKAHEAD_QA_RE.search(raw):
         return False
     low = raw.lower()
     if any(p in low for p in _LOOKAHEAD_PHRASES):
