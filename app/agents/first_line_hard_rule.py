@@ -17,7 +17,9 @@ subject. The filename class is a hint: when the chunk or the body
 names the class ("Specification Section 9.1"), that naming governs,
 and the server does not emit "That document is not the specification".
 A report number that opens the chunk (RSM 15492) is the document id.
-The same number named as a laboratory reference is not.
+The same number named as a laboratory reference is not. A refusal is
+not an answer when one handed chunk matches the subject the question
+asked: that figure, its clause, and its document replace the refusal.
 An optional higher compaction degree in the same clause ("could be
 compacted to … under the approval of the engineer") is not a second
 figure. A millimetre counts as concrete cover only when it is tied to
@@ -139,6 +141,18 @@ _CLAUSE_RE = re.compile(
 )
 # "RSM 15492" and "RSM-15492-Rev0" identify the document. "RSM 15492 is
 # the laboratory reference" cites a different document and does not.
+# A refusal names no figure. "I will answer from the retrieved context"
+# is not one: it does not decline.
+_REFUSAL_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:could not|couldn'?t|cannot|can'?t|unable)\b"
+    r"|\b(?:do(?:es)? not|don'?t)\s+(?:state|give|provide|contain|specify|include|list)\b"
+    r"|\bnot stated\b"
+    r"|\bnot found\b"
+    r"|\bno (?:figure|requirement|information)\b"
+    r"|\b(?:i do not have|i don't have)\b"
+    r")"
+)
 _REPORT_ID_RE = re.compile(r"(?i)\b(RSM)\s*[-_]?\s*(\d{3,})\b")
 _LAB_ASIDE_RE = re.compile(r"(?i)\blaboratory\s+reference\b|\bcited\s+in\b")
 _REV_ONLY_RE = re.compile(r"(?i)^rev(?:ision)?\.?\s*\d*$")
@@ -194,7 +208,8 @@ def apply_first_line_hard_rule(
     Returns ``text`` unchanged when the kill-switch is off, the question
     is outside this rule, the first line already carries a figure and a
     source, or the body commits to no figure and the hits are not one
-    subject. A committed figure is prepended. A question is prepended
+    subject. A committed figure is installed. A refusal is replaced when
+    one handed chunk matches the asked subject. A question is prepended
     only when the body itself does not commit and the figures share a
     subject.
     """
@@ -240,6 +255,13 @@ def _apply(text: str, rag_sys_msg: dict | None, messages: list | None) -> str:
             _state_line(topic, committed, class_name),
             _figure_in(first, committed.figure),
         )
+    # A refusal that names no figure is not the answer when one handed
+    # chunk matches the subject. Two figures for that subject still fall
+    # through, so a real conflict can ask.
+    if _answer_refuses(text):
+        handed = _handed_subject(topic, hits, ask)
+        if handed is not None:
+            return _state_line(topic, handed, class_name)
     # (A) No committed figure. A line that already names one stays.
     if _first_carries_figure_and_source(first, hits):
         return text
@@ -366,6 +388,34 @@ def _figure_at(text: str, figure: str) -> int:
     else:
         match = re.search(re.escape(figure), text or "", re.IGNORECASE)
     return match.start() if match else -1
+
+
+def _answer_refuses(text: str) -> bool:
+    """True when the answer declines instead of stating a figure."""
+    return bool(_REFUSAL_RE.search(text or ""))
+
+
+def _handed_subject(topic: str, hits: list[_Hit], ask: str) -> _Hit | None:
+    """The one figure whose condition is the subject the question asked.
+
+    None when nothing matches, or when two figures match and the caller
+    must not pick between them.
+    """
+    asked = _labels_in(topic, ask or "")
+    if not asked:
+        return None
+    matched = [
+        hit for hit in hits
+        if not hit.negated
+        and hit.condition
+        and _condition_matches(topic, hit.condition, asked)
+    ]
+    if not matched or len({hit.figure for hit in matched}) != 1:
+        return None
+    return max(
+        matched,
+        key=lambda hit: (bool(hit.clause), bool(hit.document_id)),
+    )
 
 
 def _committed_hit(
