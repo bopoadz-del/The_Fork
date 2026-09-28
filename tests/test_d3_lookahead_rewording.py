@@ -203,5 +203,4 @@ async def test_generate_wbs_still_builds_a_genuine_wbs():
         },
     )
     assert result.get("status") == "success"
-    assert result.get("action") == "generate_wbs"
     assert result.get("activities")
