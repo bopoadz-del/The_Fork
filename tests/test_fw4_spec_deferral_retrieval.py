@@ -306,7 +306,9 @@ def _inject_off_on(ask, monkeypatch):
 @pytest.mark.parametrize("ask", S1_PHRASINGS)
 def test_g3_s1_phrasing_absent_off_ranked_on(corpus, monkeypatch, ask):
     off, on, msg, audit = _inject_off_on(ask, monkeypatch)
-    assert len(off) <= 5 and len(on) <= 5, (off, on)
+    # CYCLE2 S1: a spec-deferred cover ask hands RAG_K + 2 (the deferral
+    # clause plus one drawing note per condition); flag off keeps RAG_K.
+    assert len(off) <= 5 and len(on) <= 7, (off, on)
     assert _rank(off, SPEC_DOC) is None, f"flag off, spec already in: {off}"
     assert _rank(off, ST200_DOC) is None, f"flag off, drawing already in: {off}"
     assert msg is not None, audit
