@@ -2222,6 +2222,136 @@ def _apply_spec_deferral_boost(
             scored[i] = (adjusted, chunk)
 
 
+# ── soil-contact cover in the document's own words (CYCLE2 S1) ──────────
+#
+# Live trace on 0b1d13a (e-c2s1-r1..r6): the drawing chunks that state
+# 75 mm for structure in contact with soil were never retrieved. The
+# question says "concrete cover" and "cast directly against soil"; those
+# chunks say "cover to reinforcement" and "in contact with soil". The cover
+# expansion adds "cast against soil" only, so neither 50-deep hybrid leg
+# (cosine, BM25) nor the numeric BM25 fetch reached them on the full
+# corpus, while three footing-cover chunks that repeat the question's words
+# filled the slots. This block: when a cover ask names the soil-contact
+# condition, pool every cover chunk that states a millimetre for that
+# condition (LIKE on the documents' own wording), at its own cosine.
+# A chunk that reached the pool through a lexical leg only carries no
+# cosine: a BM25-only hybrid hit keeps its ts_rank as .score (live, the
+# deferral clause d8c63ec7:109 scored 3.754625 = 0.054625 ts_rank + 2.5 +
+# 1.2; its cosine is about 0.63) and the numeric fetch sets 0.0. On this
+# path such a soil-contact cover chunk, and the specification clause that
+# defers the cover to the drawings, keep the higher of that value and
+# their cosine. Ranking lifts are unchanged. Kill-switch:
+# RETRIEVAL_SOIL_CONTACT_COVER=0 restores 0b1d13a exactly.
+_SOIL_CONTACT_RE = re.compile(
+    r"(?i)\b(?:(?:in\s+)?contact\s+with\s+(?:the\s+)?(?:soil|earth|ground)|"
+    r"(?:cast|placed|poured|concreted)\s+(?:directly\s+)?against\s+(?:the\s+)?"
+    r"(?:soil|earth|ground|excavat\w*)|"
+    r"against\s+(?:the\s+)?(?:soil|earth)|below\s+ground|earth[-\s]faced|"
+    r"exposed\s+to\s+(?:the\s+)?(?:soil|earth|ground))\b"
+)
+# LIKE needles. Every set carries "mm" so a qualitative mention (backfill,
+# waterproofing) is not a candidate; the detector below is the real gate.
+_SOIL_CONTACT_NEEDLES = (
+    ("cover", "contact with soil", "mm"),
+    ("cover", "contact with the soil", "mm"),
+    ("cover", "contact with earth", "mm"),
+    ("cover", "contact with the ground", "mm"),
+    ("cover", "against soil", "mm"),
+)
+_SOIL_CONTACT_FETCH_K = 60
+
+
+def soil_contact_cover_enabled() -> bool:
+    """ON by default. ``RETRIEVAL_SOIL_CONTACT_COVER=0`` restores 0b1d13a."""
+    return (os.getenv("RETRIEVAL_SOIL_CONTACT_COVER", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_soil_contact_cover(query: str) -> bool:
+    """A concrete-cover ask that names the soil-contact condition."""
+    if not soil_contact_cover_enabled() or not spec_boost_guard_enabled():
+        return False
+    text = query or ""
+    return bool(_SOIL_CONTACT_RE.search(text)) and query_asks_concrete_cover(text)
+
+
+def chunk_states_soil_contact_cover(text: str) -> bool:
+    """The chunk states a cover length and names the soil-contact condition."""
+    blob = text or ""
+    return bool(_SOIL_CONTACT_RE.search(blob)) and chunk_states_cover_length(blob)
+
+
+def _rescue_soil_contact_cover_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    *,
+    embedder=None,
+    query_vec=None,
+) -> int:
+    """Pool the cover chunks that state a millimetre for soil contact.
+
+    Project corpus only. New chunks enter with their own cosine to the
+    query (0.0 without an embedder), like any semantic candidate. A pooled
+    soil-contact cover chunk, or specification clause deferring the cover
+    to the drawings, without an identifier/rescue bonus keeps the higher of
+    its pooled score and its cosine, so a lexical-only entry (BM25 rank or
+    0.0 in the score slot) competes on cosine like the rest.
+    Returns the number of chunks added or re-scored. Failures leave the
+    pool standing.
+    """
+    if not query_asks_soil_contact_cover(query):
+        return 0
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return 0
+    admitted: List[Chunk] = []
+    seen: Set[str] = set()
+    for chunk_id, (chunk, _sem, bonus) in list(fused.items()):
+        if getattr(chunk, "project_id", project_id) != project_id or (bonus or 0.0):
+            continue
+        text = chunk.text or ""
+        if chunk_states_soil_contact_cover(text) or (
+            spec_deferral_enabled() and chunk_defers_cover_to_drawings(text)
+            and filename_is_source_class(_doc_name_for_id(chunk.doc_id), "specification")
+        ):
+            seen.add(chunk_id)
+            admitted.append(chunk)
+    for needles in _SOIL_CONTACT_NEEDLES:
+        try:
+            hits = fetch(project_id, list(needles), k=_SOIL_CONTACT_FETCH_K)
+        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
+            logger.warning(
+                "soil-contact cover rescue for %s (%r) failed: %s",
+                project_id, needles, exc,
+            )
+            continue
+        for chunk in hits or []:
+            if chunk.chunk_id in seen:
+                continue
+            seen.add(chunk.chunk_id)
+            if chunk.chunk_id in fused:
+                continue  # pooled: handled above (or carries a bonus)
+            if not chunk_states_soil_contact_cover(chunk.text or ""):
+                continue
+            admitted.append(chunk)
+    sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
+    for chunk, sim in zip(admitted, sims):
+        prior = fused.get(chunk.chunk_id)
+        if prior is not None:
+            sim = max(sim, prior[1] or 0.0) if (prior[1] or 0.0) > 0.0 else sim
+        chunk.score = round(sim, 6)
+        fused[chunk.chunk_id] = (chunk, sim, 0.0)
+    if admitted:
+        logger.info(
+            "soil-contact cover rescue pooled %d chunk(s) that state the cover "
+            "for the soil-contact condition", len(admitted),
+        )
+    return len(admitted)
+
+
 _SOURCE_HEADER_RE = re.compile(r"(?i)^\[source:[^\]]*\]\s*")
 _COPY_KEY_MIN_CHARS = 80
 
@@ -10039,6 +10169,13 @@ def retrieve_with_filter(
     # clause says the cover is "as specified on the Drawings" and states no
     # millimetre, so neither cosine nor the numeric fetch ever pools it.
     spec_deferral_names = _rescue_spec_deferral_chunks(
+        query, project_id, fused, store,
+        embedder=embedder, query_vec=query_vec,
+    )
+    # CYCLE2 S1: the 75 mm soil-contact notes say "cover to reinforcement"
+    # and "in contact with soil", not the question's words, so no leg above
+    # pools them. Pool them at their own cosine.
+    _rescue_soil_contact_cover_chunks(
         query, project_id, fused, store,
         embedder=embedder, query_vec=query_vec,
     )
