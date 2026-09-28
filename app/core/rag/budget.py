@@ -50,10 +50,10 @@ def _ensure_db() -> None:
 
 def _budget_value() -> int:
     try:
-        v = int(os.getenv("RAG_DAILY_TOKEN_BUDGET", "500000"))
+        v = int(os.getenv("RAG_DAILY_TOKEN_BUDGET", "2000000"))
     except ValueError:
-        return 500000
-    return v if v >= 0 else 500000
+        return 2000000
+    return v if v >= 0 else 2000000
 
 
 def _consume_stmt(day: str, tokens: int):
