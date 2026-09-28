@@ -220,6 +220,85 @@ def _spoken_date(token: str, year_hint: int | None = None) -> str | None:
     return f"{int(year):04d}-{month:02d}-{int(day):02d}"
 
 
+_STATED_TODAY_CUE_RE = re.compile(
+    r"\b(?:today(?:'s)?(?:\s+date)?\s+is|current\s+date\s+is|as\s+of|as-of)\s+",
+    re.IGNORECASE,
+)
+_STATED_ISO_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\b")
+_STATED_SLASH_RE = re.compile(r"^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
+_STATED_SPOKEN_RE = re.compile(
+    r"^(\d{1,2}\s+[A-Za-z]{3,9}(?:\s+\d{4})?)\b",
+)
+
+
+def _schedule_year_hint(text: str) -> int | None:
+    """A year already written on the programme, else None.
+
+    "Today is 21 September" next to "15 Sep 2026" is 2026. A bare stated
+    date with no year in the message falls through to the clock year.
+    """
+    years = [int(y) for y in re.findall(r"\b(20\d{2})\b", text or "")]
+    if not years:
+        return None
+    return max(set(years), key=lambda y: (years.count(y), -years.index(y)))
+
+
+def _slash_date(day: str, month: str, year: str | None, year_hint: int | None) -> str | None:
+    """Day/month[/year], the same order ``_coerce_date`` uses for slashes."""
+    from datetime import date as _date
+
+    if year is None:
+        if year_hint is None:
+            from app.lib.pm_computations import _clock_today
+            year_n = _clock_today().year
+        else:
+            year_n = year_hint
+    else:
+        year_n = int(year)
+        if year_n < 100:
+            year_n += 2000
+    try:
+        return _date(year_n, int(month), int(day)).isoformat()
+    except ValueError:
+        logger.debug(
+            "look_ahead: stated day/month is not a calendar date %s-%s-%s",
+            year_n, month, day,
+        )
+        return None
+
+
+def _stated_look_ahead_date(text: str) -> str | None:
+    """ISO date the operator stated as today, or None.
+
+    "Today is 21 September", "Today is 21/09", "as of 2026-09-21". Activity
+    spans ("15 Sep to 25 Sep") are not a stated today. Year comes from the
+    token, else a year already in the schedule text, else the clock year.
+    """
+    raw = text or ""
+    cue = _STATED_TODAY_CUE_RE.search(raw)
+    if not cue:
+        return None
+    rest = raw[cue.end():].lstrip()
+    hint = _schedule_year_hint(raw)
+    iso = _STATED_ISO_RE.match(rest)
+    if iso:
+        return _coerce_date_safe(iso.group(1))
+    slash = _STATED_SLASH_RE.match(rest)
+    if slash:
+        return _slash_date(slash.group(1), slash.group(2), slash.group(3), hint)
+    spoken = _STATED_SPOKEN_RE.match(rest)
+    if spoken:
+        token = spoken.group(1)
+        has_year = bool(re.search(r"\d{4}\s*$", token))
+        return _spoken_date(token, None if has_year else hint or _clock_year())
+    return None
+
+
+def _clock_year() -> int:
+    from app.lib.pm_computations import _clock_today
+    return _clock_today().year
+
+
 def _activities_from_text(text: str) -> List[Dict[str, Any]]:
     """Activities the operator typed in the message, or [].
 
@@ -310,12 +389,69 @@ def _inline_look_ahead_activities(data: Dict, p: Dict) -> List[Dict[str, Any]]:
     return out
 
 
-def _look_ahead_as_of(data: Dict, p: Dict):
-    """The as-of date the caller gave, or None for "today"."""
+def _look_ahead_message_text(data: Dict, p: Dict) -> str:
+    return " ".join(
+        str(x) for x in (
+            p.get("user_message"), data.get("user_message"),
+            p.get("message"), data.get("message"),
+            p.get("brief"), data.get("brief"),
+        ) if x
+    )
+
+
+def _as_of_equals_the_clock(raw) -> bool:
+    """True when ``raw`` is the server's today, not a different date."""
+    if not raw:
+        return False
+    try:
+        from app.lib.pm_computations import _clock_today, _coerce_date
+        return _coerce_date(raw) == _clock_today()
+    except Exception:  # noqa: BLE001
+        logger.debug(
+            "look_ahead: could not compare as_of %r to the clock", raw,
+            exc_info=True,
+        )
+        return False
+
+
+def _resolve_stated_or_explicit_as_of(data: Dict, p: Dict) -> tuple[str | None, bool]:
+    """``(raw, from_stated_prose)``.
+
+    A model ``as_of`` equal to the server clock is the clock. The date
+    the operator stated as today wins over that echo. A genuine as_of
+    that is not the clock still wins over the prose.
+    """
     raw = (
         p.get("as_of") or data.get("as_of")
         or p.get("data_date") or data.get("data_date")
     )
+    stated = _stated_look_ahead_date(_look_ahead_message_text(data, p))
+    if raw and stated and _as_of_equals_the_clock(raw):
+        try:
+            from app.lib.pm_computations import _coerce_date
+            if _coerce_date(stated) != _coerce_date(raw):
+                return stated, True
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "look_ahead: stated today %r did not coerce; using it over the clock",
+                stated, exc_info=True,
+            )
+            return stated, True
+    if raw:
+        return str(raw), False
+    if stated:
+        return stated, True
+    return None, False
+
+
+def _look_ahead_as_of(data: Dict, p: Dict):
+    """Explicit as_of, else the date the operator stated as today, else None.
+
+    None means "use the clock". A stated "Today is 21 September" wins over
+    the clock, including a model as_of that merely repeats the clock. A
+    genuine as_of that is not the clock still wins over the prose.
+    """
+    raw, _from_stated = _resolve_stated_or_explicit_as_of(data, p)
     if not raw:
         return None
     try:
@@ -1192,7 +1328,6 @@ class ConstructionScheduleMixin:
         ``.xer`` / no activities; never fabricates rows.
         """
         import os
-        from datetime import date as _date
 
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
@@ -1321,11 +1456,10 @@ class ConstructionScheduleMixin:
                 ),
             }
 
-        as_of_raw = (
-            p.get("as_of") or data.get("as_of")
-            or p.get("data_date") or data.get("data_date")
-            or schedule_data.get("data_date")
-        )
+        as_of_raw, stated_as_of = _resolve_stated_or_explicit_as_of(data, p)
+        if not as_of_raw:
+            as_of_raw = schedule_data.get("data_date")
+            stated_as_of = False
         as_of_date = None
         if as_of_raw:
             try:
@@ -1333,14 +1467,15 @@ class ConstructionScheduleMixin:
                 as_of_date = _coerce_date(as_of_raw)
             except Exception:  # noqa: BLE001
                 as_of_date = None
-            if as_of_date is None:
+            if as_of_date is None and not stated_as_of:
                 return {
                     "status": "error",
                     "action": "look_ahead",
                     "error": f"Invalid as_of / data_date: {as_of_raw!r}",
                 }
-        else:
-            as_of_date = _date.today()
+        if as_of_date is None:
+            from app.lib.pm_computations import _clock_today
+            as_of_date = _clock_today()
 
         try:
             from app.lib.pm_computations import select_look_ahead
@@ -2852,7 +2987,13 @@ class ConstructionScheduleMixin:
 
         start_date = p.get("start_date") or data.get("start_date")
         if not start_date:
-            start_date = datetime.now(timezone.utc).date().isoformat()
+            stated_today = _stated_look_ahead_date(" ".join(
+                str(x) for x in (
+                    user_message, brief,
+                    p.get("message"), data.get("message"),
+                ) if x
+            ))
+            start_date = stated_today or datetime.now(timezone.utc).date().isoformat()
 
         if boq_derived:
             from app.lib.boq_schedule import (

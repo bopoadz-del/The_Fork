@@ -1386,9 +1386,15 @@ async def _predispatch_look_ahead(
             return None
         from app.dependencies import get_block_instance
         container = get_block_instance("construction")
-        result = await container.look_ahead(
-            {}, {"schedule_file": schedule_file},
-        )
+        from app.containers.construction.schedule import _stated_look_ahead_date
+        la_params: dict[str, Any] = {
+            "schedule_file": schedule_file,
+            "user_message": user_msg,
+        }
+        stated = _stated_look_ahead_date(user_msg)
+        if stated:
+            la_params["as_of"] = stated
+        result = await container.look_ahead({}, la_params)
         if not isinstance(result, dict) or result.get("status") != "success":
             return None
         compact = dict(result)
@@ -1574,9 +1580,14 @@ def _message_wants_rfp_draft(text: str) -> bool:
 
 
 def _message_wants_cash_flow(text: str) -> bool:
+    raw = text or ""
+    # Local import: action_router must not import runtime at module load.
+    from app.core.action_router import dewatering_drawdown_not_cash_flow
+    if dewatering_drawdown_not_cash_flow(raw):
+        return False
     return bool(re.search(
         r"cash[_\- ]flow|s-curve|s curve|spend curve|drawdown",
-        text or "",
+        raw,
         re.I,
     ))
 
@@ -6176,24 +6187,27 @@ def _graft_asked_contract_particular(
             format_named_percentage_line,
             query_asks_named_percentage_particular,
             query_asks_percentage_particular_in_money,
+            strip_conflicting_named_percentage,
+            text_states_percent,
         )
         if query_asks_named_percentage_particular(user):
             parsed = extract_named_percentage_particular(user, rag)
             if not parsed:
                 return text
             line = format_named_percentage_line(parsed)
-            raw = text or ""
-            already = (
-                f"{parsed['percent']:g}%" in raw.replace(" ", "")
-                or f"{parsed['percent']:g} %" in raw
-                or f"{int(parsed['percent'])}%" in raw
+            # "10%" is a substring of "0.10%". That token is the daily
+            # rate, not this particular. Strip a sentence that assigns
+            # the label the neighbouring percent before deciding.
+            raw = strip_conflicting_named_percentage(
+                text or "", parsed.get("label") or "", float(parsed["percent"]),
             )
+            already = text_states_percent(raw, float(parsed["percent"]))
             if already and not _MISSING_PARTICULAR_RE.search(raw):
-                return text
+                return raw
             # A money ask ("Calculate … in SAR") still needs the product;
             # do not lock the turn on the percentage-only line here.
             if query_asks_percentage_particular_in_money(user) and already:
-                return text
+                return raw
             if (
                 not raw.strip()
                 or _MISSING_PARTICULAR_RE.search(raw)
@@ -6285,6 +6299,7 @@ def _graft_composed_delay_damages_daily(
         from app.lib.construction_formulas_commercial import (
             answer_states_daily_amount,
             compose_delay_damages_daily_from_excerpts,
+            drop_whole_of_works_delay_claims,
             format_delay_damages_daily_line,
         )
         user = _latest_operator_ask(messages)
@@ -6346,6 +6361,11 @@ def _graft_composed_delay_damages_daily(
             for m in messages
         ):
             messages.append({"role": "tool", "content": payload})
+        # A Milestone or section answer that already states the right
+        # daily figure must not keep a "whole of the Works" lead. That
+        # label is the other rate.
+        if (composed.get("basis") or "") in ("milestone", "section"):
+            text = drop_whole_of_works_delay_claims(text or "")
         if answer_states_daily_amount(text or "", composed["daily_amount"]):
             return text
         figs = _cg_money_values(text or "")
@@ -10225,7 +10245,13 @@ class Agent:
                             },
                             "as_of": {
                                 "type": "string",
-                                "description": "As-of / data date YYYY-MM-DD (optional).",
+                                "description": (
+                                    "Reference date YYYY-MM-DD for the window "
+                                    "start. Pass the date the user states as "
+                                    "today ('Today is 21 September', '21/09', "
+                                    "'21/09/2026'). Omit only when no date is "
+                                    "stated; the tool then uses the real clock."
+                                ),
                             },
                             "activities": {
                                 "type": "array",
@@ -13760,10 +13786,17 @@ class Agent:
                         ),
                     },
                 }
-            la_params = {"schedule_file": resolved}
+            la_params: dict[str, Any] = {"schedule_file": resolved}
+            if user_message:
+                la_params["user_message"] = user_message
             for key in ("weeks", "days", "as_of", "data_date", "activities"):
                 if args.get(key) is not None:
                     la_params[key] = args.get(key)
+            if la_params.get("as_of") is None and la_params.get("data_date") is None:
+                from app.containers.construction.schedule import _stated_look_ahead_date
+                stated = _stated_look_ahead_date(user_message or "")
+                if stated:
+                    la_params["as_of"] = stated
             try:
                 result = await container.look_ahead({}, la_params)
             except Exception as e:

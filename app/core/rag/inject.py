@@ -9,6 +9,7 @@ Kept in its own module so:
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import logging
 import os
 import re
@@ -850,6 +851,92 @@ def build_retrieval_query(
     return f"{context} {message}".strip()
 
 
+# Per-request retrieval trace. One server-log line per rag_inject call: which
+# chunks were handed to the model (ids, document names, scores, ranks), keyed
+# by the request id the observability middleware assigns. Chunk text and the
+# user's words are never written, and nothing here touches the return value,
+# so no API response can carry it. ON by default (nobody can set env on the
+# live server); RAG_RETRIEVAL_TRACE=0 is the kill switch.
+_TRACE_LOG = logging.getLogger("app.rag.retrieval_trace")
+# Root stays WARNING. setLevel (not a bare attribute write) is what makes
+# this INFO line eligible, and it clears the enablement cache so an earlier
+# isEnabledFor(INFO) cannot stick a false.
+_TRACE_LOG.setLevel(logging.INFO)
+_TRACE_EVENT = "rag_retrieval_trace"
+
+
+def retrieval_trace_enabled() -> bool:
+    """ON by default. ``RAG_RETRIEVAL_TRACE=0`` turns the trace line off."""
+    return (os.getenv("RAG_RETRIEVAL_TRACE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _trace_chunk(rank: int, c) -> Dict[str, Any]:
+    """Identity and rank of one chunk. Never its text."""
+    name = getattr(c, "source_name", "") or ""
+    if not name:
+        from app.core.rag.retriever import _doc_name_for_id
+
+        name = _doc_name_for_id(getattr(c, "doc_id", "") or "")
+    score = getattr(c, "score", None)
+    return {
+        "rank": rank,
+        "chunk_id": getattr(c, "chunk_id", None),
+        "doc_id": getattr(c, "doc_id", None),
+        "doc_name": name,
+        "score": round(float(score), 6) if score is not None else None,
+        "layer": getattr(c, "layer", "own"),
+    }
+
+
+def _emit_retrieval_trace(
+    *,
+    query_label: str,
+    project_id: Optional[str],
+    conversation_id: Optional[str],
+    agent_name: str,
+    retrieved: List[Chunk],
+    handed: List[Chunk],
+    threshold_fired: bool,
+    identifier_miss: bool,
+    top_score: float,
+) -> None:
+    """Write the trace line. Best-effort: a logging failure never costs a turn."""
+    if not retrieval_trace_enabled():
+        return
+    try:
+        from app.infra.monitoring import request_id_ctx
+
+        rid = request_id_ctx.get()
+        handed_ids = {getattr(c, "chunk_id", None) for c in handed}
+        payload = {
+            "request_id": rid,
+            "path": "pre_injection",
+            "query": query_label,
+            "project_id": project_id,
+            "conversation_id": conversation_id,
+            "agent": agent_name,
+            "retrieved_k": len(retrieved),
+            "handed_k": len(handed),
+            "threshold_fired": threshold_fired,
+            "identifier_miss": identifier_miss,
+            "top_score": round(float(top_score or 0.0), 6),
+            "chunks": [_trace_chunk(i + 1, c) for i, c in enumerate(handed)],
+            "not_handed": [
+                _trace_chunk(i + 1, c) for i, c in enumerate(retrieved)
+                if getattr(c, "chunk_id", None) not in handed_ids
+            ],
+        }
+        _TRACE_LOG.info(
+            "%s %s", _TRACE_EVENT,
+            json.dumps(payload, default=str, separators=(",", ":")),
+            extra={"event": _TRACE_EVENT, "request_id": rid},
+        )
+    except Exception:  # noqa: BLE001 - instrumentation must not break a turn
+        _LOG.warning("retrieval trace line failed", exc_info=True)
+
+
 def rag_inject(
     user_message: str,
     project_id: Optional[str],
@@ -895,6 +982,10 @@ def rag_inject(
     # see build_retrieval_query. Flag-gated; returns user_message untouched
     # when RAG_FOLLOWUP_CONTEXT is off, so the default pipeline is unchanged.
     retrieval_query = build_retrieval_query(user_message, history)
+    _query_label = (
+        "followup_context" if retrieval_query != (user_message or "")
+        else "user_message"
+    )
 
     chunks, noise_filtered = retrieve_with_filter(
         retrieval_query, project_id, k=effective_k,
@@ -983,6 +1074,12 @@ def rag_inject(
             "chunks": [_audit_chunk(c) for c in chunks],
         })
         _audit.write(audit_rec)
+        _emit_retrieval_trace(
+            query_label=_query_label, project_id=project_id,
+            conversation_id=conversation_id, agent_name=agent_name,
+            retrieved=chunks, handed=[], threshold_fired=True,
+            identifier_miss=identifier_miss, top_score=top_score,
+        )
         return None, audit_rec
 
     kept, total_tokens = apply_token_cap(chunks, query=user_message or "")
@@ -1003,5 +1100,11 @@ def rag_inject(
         "chunks": [_audit_chunk(c) for c in kept],
     })
     _audit.write(audit_rec)
+    _emit_retrieval_trace(
+        query_label=_query_label, project_id=project_id,
+        conversation_id=conversation_id, agent_name=agent_name,
+        retrieved=chunks, handed=kept, threshold_fired=False,
+        identifier_miss=False, top_score=top_score,
+    )
     _budget.consume(day=today, tokens=total_tokens)
     return sys_msg, audit_rec
