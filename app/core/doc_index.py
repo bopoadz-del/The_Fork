@@ -2731,33 +2731,38 @@ def _drawing_chunks_for_document(
         out: list[str] = []
         source = ""
         any_text = False
-        with fitz.open(file_path) as doc:
-            for page_num, page in enumerate(doc):
-                if page_num == 0:
-                    # The title block is on sheet 1 and names the drawing, so
-                    # every chunk below can be attributed to it.
-                    raw = page.get_text() or ""
-                    any_text = bool(raw.strip())
-                    title_block = container._extract_title_block({"raw_text": raw})
-                    source = title_block.get("drawing_number") or ""
-                    if title_block.get("fields_found"):
-                        named = ", ".join(
-                            f"{k.replace('_', ' ')}: {v}"
-                            for k, v in title_block.items()
-                            if k != "fields_found" and v
+        # The extractor already decrypted this file to a temp and deleted it.
+        # The stored path is Fernet ciphertext when DATA_ENCRYPTION_KEY is
+        # set, so opening it directly is FileDataError ("no objects found")
+        # even though the Drive PDF indexed. Re-open the plaintext bytes.
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            with fitz.open(readable_path) as doc:
+                for page_num, page in enumerate(doc):
+                    if page_num == 0:
+                        # The title block is on sheet 1 and names the drawing, so
+                        # every chunk below can be attributed to it.
+                        raw = page.get_text() or ""
+                        any_text = bool(raw.strip())
+                        title_block = container._extract_title_block({"raw_text": raw})
+                        source = title_block.get("drawing_number") or ""
+                        if title_block.get("fields_found"):
+                            named = ", ".join(
+                                f"{k.replace('_', ' ')}: {v}"
+                                for k, v in title_block.items()
+                                if k != "fields_found" and v
+                            )
+                            out.append(
+                                f"DRAWING TITLE BLOCK — {filename}. "
+                                f"Sheet identity: {named}."
+                            )
+                    elif not any_text and (page.get_text() or "").strip():
+                        any_text = True
+                    out.extend(
+                        _drawing_table_chunks(
+                            container._extract_tables_advanced(page),
+                            source or os.path.splitext(filename or "")[0],
                         )
-                        out.append(
-                            f"DRAWING TITLE BLOCK — {filename}. "
-                            f"Sheet identity: {named}."
-                        )
-                elif not any_text and (page.get_text() or "").strip():
-                    any_text = True
-                out.extend(
-                    _drawing_table_chunks(
-                        container._extract_tables_advanced(page),
-                        source or os.path.splitext(filename or "")[0],
                     )
-                )
         if out:
             return out
         # Named like a drawing, opened fine, produced nothing readable. If

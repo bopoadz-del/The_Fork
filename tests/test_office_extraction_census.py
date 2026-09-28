@@ -196,6 +196,6 @@ def test_index_corrupt_pptx_stamps_extract_failed(monkeypatch, tmp_path):
 
     result = doc_index.index_document(proj["id"], doc["id"])
     assert result["error"] == "ZERO_CHUNK"
-    assert result.get("extract_error")
+    assert "PackageNotFoundError" in (result.get("extract_error") or "")
     stamped = pm.get_document(doc["id"])
     assert stamped["ingest_status"] == ist.EXTRACT_FAILED
