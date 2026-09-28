@@ -151,27 +151,66 @@ _ONE_WAY_SLAB_RE = re.compile(
     r"\bone[\s-]?way\b(?:\s+\w+){0,6}\s+slab\b",
     re.IGNORECASE,
 )
+# "spanning 4.8 m" is the original shape. The same span is also written
+# "spans 6.0 m", "span length of 4.8 m", "span: 7.2 m", and "8.4 m span".
+_SPAN_UNIT = r"mm|m"
+_SPAN_NUM = r"\d+(?:\.\d+)?"
 _SPAN_RE = re.compile(
-    r"\bspann(?:ing|ed)\s+(?P<num>\d+(?:\.\d+)?)\s*(?P<unit>mm|m)\b"
-    r"|\bspan(?:\s+of)?\s+(?P<num2>\d+(?:\.\d+)?)\s*(?P<unit2>mm|m)\b",
+    rf"\bspann(?:ing|ed)\s+(?P<num>{_SPAN_NUM})\s*(?P<unit>{_SPAN_UNIT})\b"
+    rf"|\bspans\s+(?P<num_spans>{_SPAN_NUM})\s*(?P<unit_spans>{_SPAN_UNIT})\b"
+    rf"|\bspan(?:\s+length)?(?:\s+of)?\s*[:=]?\s*"
+    rf"(?P<num_span>{_SPAN_NUM})\s*(?P<unit_span>{_SPAN_UNIT})\b"
+    rf"|(?P<num_pre>{_SPAN_NUM})\s*(?P<unit_pre>{_SPAN_UNIT})\s+"
+    rf"(?:clear\s+)?span\b",
     re.IGNORECASE,
+)
+_SPAN_GROUP_PAIRS = (
+    ("num", "unit"),
+    ("num_spans", "unit_spans"),
+    ("num_span", "unit_span"),
+    ("num_pre", "unit_pre"),
 )
 _FY_RE = re.compile(
     r"\bfy\s*=?\s*(?P<fy>\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
 _BOTH_ENDS_RE = re.compile(r"both[\s-]+ends?[\s-]+continuous", re.IGNORECASE)
-_ONE_END_RE = re.compile(r"one[\s-]+end[\s-]+continuous", re.IGNORECASE)
+# "one end continuous" and "continuous at one end" are the same support.
+_ONE_END_RE = re.compile(
+    r"one[\s-]+end[\s-]+continuous"
+    r"|continuous(?:\s+at)?[\s-]+one[\s-]+end\b",
+    re.IGNORECASE,
+)
 _EC_ASK_RE = re.compile(r"\beurocode\b|\bEN\s*1992\b", re.IGNORECASE)
 _ACI_ASK_RE = re.compile(r"\bACI\b", re.IGNORECASE)
+# thickness, "minimum depth" / "minimum-depth", and h_min / "h min".
+_THICKNESS_RE = re.compile(
+    r"\bthickness\b"
+    r"|\bh[_\s]?min\b"
+    r"|\bminimum[\s-]+(?:thickness|depth)\b",
+    re.IGNORECASE,
+)
+# A cover or bill-of-quantities ask can share those words and a span.
+_NOT_SLAB_THICKNESS_RE = re.compile(
+    r"\b(?:boq|bill\s+of\s+quantit(?:y|ies))\b"
+    r"|\bcover\b",
+    re.IGNORECASE,
+)
 
 
 def _span_mm_from_ask(text: str) -> float | None:
     match = _SPAN_RE.search(text or "")
     if match is None:
         return None
-    raw = match.group("num") or match.group("num2")
-    unit = (match.group("unit") or match.group("unit2") or "m").lower()
+    raw = None
+    unit = None
+    for num_key, unit_key in _SPAN_GROUP_PAIRS:
+        if match.group(num_key):
+            raw = match.group(num_key)
+            unit = (match.group(unit_key) or "m").lower()
+            break
+    if raw is None:
+        return None
     value = float(raw)
     if unit == "m":
         return value * 1000.0
@@ -182,6 +221,8 @@ def _support_from_ask(text: str) -> str:
     raw = text or ""
     if _BOTH_ENDS_RE.search(raw):
         return "both_ends_continuous"
+    # One end wins over the simply-supported fallback, including
+    # "continuous at one end, the other end simply supported" (L/24).
     if _ONE_END_RE.search(raw):
         return "one_end_continuous"
     if re.search(r"\bcantilever\b", raw, re.IGNORECASE):
@@ -192,16 +233,19 @@ def _support_from_ask(text: str) -> str:
 def looks_like_slab_thickness_min_ask(text: str) -> bool:
     """True when a registered slab_thickness_min call can answer the ask.
 
-    Requires a one-way slab, the word thickness, and a span the user
-    supplied. A document lookup that names neither a span nor a one-way
-    slab stays on retrieval.
+    Requires a one-way slab, a thickness word (thickness, minimum depth,
+    or h_min), and a span the user supplied. Cover and bill-of-quantities
+    asks stay on retrieval, as does a lookup that names neither a span
+    nor a one-way slab.
     """
     raw = text or ""
     if not raw.strip():
         return False
+    if _NOT_SLAB_THICKNESS_RE.search(raw):
+        return False
     if not _ONE_WAY_SLAB_RE.search(raw):
         return False
-    if not re.search(r"\bthickness\b", raw, re.IGNORECASE):
+    if not _THICKNESS_RE.search(raw):
         return False
     return _span_mm_from_ask(raw) is not None
 
