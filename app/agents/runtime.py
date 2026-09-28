@@ -5714,6 +5714,270 @@ def _cg_operator_factor_grounds(value: float, grounded: set, tol: float) -> bool
     return False
 
 
+# Operator asked for the calculator's own defaults, not a project rate.
+_CALC_DEFAULTS_ASK_RE = re.compile(
+    r"(?i)(?:"
+    r"calculator(?:'s|’s|s)?\s+default\s+rates?"
+    r"|default\s+(?:rates?|inputs?)"
+    r"|standard\s+\w+(?:\s+\w+){0,4}\s+cost\s+build-?\s*up"
+    r"|cost\s+build-?\s*up"
+    r"|cost_buildup_"
+    r")"
+)
+_DOC_COST_RE = re.compile(
+    r"(?i)(?:\b(?:SAR|AED|USD|EUR|GBP|QAR|BHD|KWD|OMR|Dhs?|dirhams?)\s*"
+    r"\d[\d,]*(?:\.\d+)?"
+    r"|\d[\d,]*(?:\.\d+)?\s*"
+    r"(?:SAR|AED|USD|EUR|GBP|QAR|BHD|KWD|OMR|Dhs?|dirhams?)\b)"
+)
+_COST_SELLING_UNITS = (
+    ("selling_price_sar_m3", "SAR/m3"),
+    ("selling_price_sar_t", "SAR/t"),
+    ("selling_price_sar_m2", "SAR/m2"),
+)
+_COST_TOTAL_KEYS = (
+    "total_project_value_sar",
+    "total_for_area_sar",
+    "total_cost",
+    "grand_total_sar",
+)
+_NOT_A_COST_CALC = frozenset({
+    "delay_damages_daily",
+    "delay_damages_over_period",
+    "percentage_of_aca",
+    "concrete_volume",
+    "user_priced_takeoff",
+})
+
+
+def _answer_is_no_rate_refusal(text: str) -> bool:
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if raw == _CG_REFUSAL:
+        return True
+    return "don't have a rate on file" in raw.lower()
+
+
+def _cost_calc_result_dict(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Inner result of a successful deterministic cost calculator, or None."""
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("status") == "error":
+        return None
+    if _tool_error_payload(payload):
+        return None
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else None
+    calc = str(payload.get("calculation") or "")
+    if result is None:
+        if any(str(k).startswith("selling_price_") for k in payload):
+            result = payload
+            calc = calc or str(payload.get("calculation") or "")
+        else:
+            return None
+    if not isinstance(result, dict):
+        return None
+    if calc in _NOT_A_COST_CALC:
+        return None
+    has_selling = any(result.get(k) is not None for k, _u in _COST_SELLING_UNITS)
+    has_total = any(result.get(k) is not None for k in _COST_TOTAL_KEYS)
+    named = calc.startswith("cost_") or calc.startswith("cost")
+    if not (named or has_selling or has_total):
+        return None
+    return result
+
+
+def _last_cost_calc_payload(
+    messages: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Last successful cost-calculator tool payload after the operator ask.
+
+    A tool from an earlier turn is not this question's result.
+    """
+    msgs = messages or []
+    start = 0
+    for i, msg in enumerate(msgs):
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = str(msg.get("content") or "")
+        if _cg_is_platform_bubble(content):
+            continue
+        start = i
+    last: dict[str, Any] | None = None
+    for msg in msgs[start:]:
+        if not isinstance(msg, dict) or msg.get("role") != "tool":
+            continue
+        raw = msg.get("content")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        if not isinstance(raw, dict):
+            continue
+        if _cost_calc_result_dict(raw) is None:
+            continue
+        last = raw
+    return last
+
+
+def _ask_wants_this_cost_calc(user: str, payload: dict[str, Any]) -> bool:
+    """True when the operator asked for this calculator, not a document rate."""
+    if _CALC_DEFAULTS_ASK_RE.search(user or ""):
+        return True
+    name = str(payload.get("calculation") or "")
+    if not name:
+        return False
+    try:
+        from app.lib.construction_formulas import calculator_name_from_text
+        return calculator_name_from_text(user or "") == name
+    except Exception:  # noqa: BLE001 — name lookup must not break the gate
+        _LOG.debug("cost-calc name check failed", exc_info=True)
+        return False
+
+
+def _format_deterministic_cost_calc(payload: dict[str, Any]) -> str:
+    """Selling price and total from a cost-calculator result."""
+    result = _cost_calc_result_dict(payload)
+    if not result:
+        return ""
+    note = result.get("note")
+    if isinstance(note, str) and re.search(r"(?i)\b(?:selling|total)\b", note):
+        return note.strip()
+    selling = None
+    unit = "SAR"
+    for key, label in _COST_SELLING_UNITS:
+        if result.get(key) is not None:
+            selling = float(result[key])
+            unit = label
+            break
+    total = next(
+        (result[k] for k in _COST_TOTAL_KEYS if result.get(k) is not None),
+        None,
+    )
+    parts: list[str] = []
+    if selling is not None:
+        parts.append(f"Selling price {selling:,.2f} {unit}.")
+    if total is not None:
+        parts.append(f"Total {float(total):,.0f} SAR.")
+    return " ".join(parts)
+
+
+def _cost_calc_allowed_numbers(payload: dict[str, Any]) -> set[float]:
+    blob = json.dumps(payload, default=str)
+    out: set[float] = set()
+    for tok in _CG_NUM_RE.findall(blob):
+        val = _cg_to_number(tok)
+        if val is not None:
+            out.add(val)
+    return out
+
+
+def _part_states_foreign_cost(part: str, allowed: set[float]) -> bool:
+    """True when ``part`` states a money figure the calculator did not return."""
+    found: list[float] = []
+    for match in _DOC_COST_RE.finditer(part or ""):
+        raw = re.search(r"\d[\d,]*(?:\.\d+)?", match.group(0))
+        if raw is None:
+            continue
+        val = _cg_to_number(raw.group(0))
+        if val:
+            found.append(val)
+    for _frag, val in _cg_money_values(part or ""):
+        found.append(val)
+    if not found:
+        return False
+
+    def _near(val: float) -> bool:
+        tol = max(0.5, abs(val) * 0.005)
+        return any(abs(val - got) <= tol for got in allowed)
+
+    return any(not _near(val) for val in found)
+
+
+def _strip_foreign_cost_sentences(text: str, allowed: set[float]) -> str:
+    parts = [
+        p.strip()
+        for p in re.split(r"(?<=[.!;])\s+|\n+", text or "")
+        if p and p.strip()
+    ]
+    kept = [
+        p for p in parts
+        if not _answer_is_no_rate_refusal(p)
+        and not _part_states_foreign_cost(p, allowed)
+    ]
+    return " ".join(kept).strip()
+
+
+def _answer_states_cost_calc(text: str, payload: dict[str, Any]) -> bool:
+    result = _cost_calc_result_dict(payload) or {}
+    blob = (text or "").replace(",", "").replace(" ", "")
+    selling = next(
+        (result.get(k) for k, _u in _COST_SELLING_UNITS if result.get(k) is not None),
+        None,
+    )
+    total = next(
+        (result.get(k) for k in _COST_TOTAL_KEYS if result.get(k) is not None),
+        None,
+    )
+    if selling is not None:
+        token = f"{float(selling):.2f}".rstrip("0").rstrip(".")
+        if token not in blob and f"{float(selling):.2f}" not in (text or ""):
+            return False
+    if total is not None and str(int(round(float(total)))) not in blob:
+        return False
+    return selling is not None or total is not None
+
+
+def _graft_deterministic_cost_calc(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """State the calculator when the operator asked for its default rates.
+
+    A project-document cost is not that total. The no-rate refusal is not
+    an answer once a deterministic cost calculator has already succeeded.
+    Same shape for every cost build-up, not only concrete.
+    """
+    try:
+        payload = _last_cost_calc_payload(messages)
+        if not payload:
+            return text
+        user = _latest_operator_ask(messages)
+        if not _ask_wants_this_cost_calc(user, payload):
+            return text
+        line = _format_deterministic_cost_calc(payload)
+        if not line:
+            return text
+        raw = text or ""
+        if _answer_is_no_rate_refusal(raw) or not raw.strip():
+            return line
+        if not _CALC_DEFAULTS_ASK_RE.search(user or ""):
+            return text
+        cleaned = _strip_foreign_cost_sentences(
+            raw, _cost_calc_allowed_numbers(payload),
+        )
+        if _answer_states_cost_calc(cleaned, payload):
+            return cleaned
+        return line
+    except Exception:  # noqa: BLE001 — a graft must never break a turn
+        _LOG.exception("cost-calc graft failed; passing answer through")
+        return text
+
+
+def _rescue_deterministic_cost_calc(
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Calculator line when this ask's cost tool already succeeded."""
+    payload = _last_cost_calc_payload(messages)
+    if not payload:
+        return ""
+    user = _latest_operator_ask(messages)
+    if not _ask_wants_this_cost_calc(user, payload):
+        return ""
+    return _format_deterministic_cost_calc(payload)
+
+
 def _cost_grounding_gate(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -5727,6 +5991,13 @@ def _cost_grounding_gate(
             return text
         figs = _cg_money_values(text)
         if not figs:
+            # The no-rate sentence has no figure of its own. A successful
+            # cost calculator this turn is the figure — do not leave the
+            # refusal in its place.
+            if _answer_is_no_rate_refusal(text):
+                rescued = _rescue_deterministic_cost_calc(messages)
+                if rescued:
+                    return rescued
             return text  # not a cost/rate answer — leave it alone
         user = _latest_operator_ask(messages)
         if _is_document_deliverable_request(user):
@@ -5741,6 +6012,9 @@ def _cost_grounding_gate(
         grounded = _cg_grounded_numbers(rag_context, messages)
         if all(_cg_is_grounded(v, grounded) for _, v in figs):
             return text
+        rescued = _rescue_deterministic_cost_calc(messages)
+        if rescued:
+            return rescued
         _LOG.warning(
             "cost_grounding_gate: refused ungrounded cost figure(s) %s",
             [f for f, _ in figs],
@@ -6535,6 +6809,8 @@ def _graft_composed_percentage_of_aca(
             compose_percentage_of_aca_from_excerpts,
             format_percentage_of_aca_line,
             query_asks_percentage_particular_in_money,
+            strip_vat_inclusive_percentage_alternative,
+            vat_inclusive_alternative_amounts,
         )
         user = _latest_operator_ask(messages)
         if not query_asks_percentage_particular_in_money(user):
@@ -6584,16 +6860,25 @@ def _graft_composed_percentage_of_aca(
         ):
             messages.append({"role": "tool", "content": payload})
         raw = text or ""
-        if answer_states_money_amount(raw, float(composed["amount"])):
-            return text
-        if (
-            not raw.strip()
-            or raw.strip() == _CG_REFUSAL
-            or raw.strip() == _EMPTY_RESPONSE_FALLBACK
-            or _MISSING_PARTICULAR_RE.search(raw)
-            or _GENERIC_ACK_RE.search(raw)
-        ):
-            return line
+        product = float(composed["amount"])
+        base = float(composed["contract_amount"])
+        forbidden = [
+            amt for amt in vat_inclusive_alternative_amounts(
+                rag, float(composed["percent"]),
+            )
+            if abs(amt - product) > 1.0 and abs(amt - base) > 1.0
+        ]
+        # One amount. The excluding-VAT product is the answer. A
+        # VAT-inclusive alternative, including one the model already
+        # wrote next to the right figure, is not a second result.
+        cleaned = strip_vat_inclusive_percentage_alternative(
+            raw, keep_amount=product, forbidden_amounts=forbidden,
+        )
+        if answer_states_money_amount(cleaned, product):
+            same = re.sub(r"\s+", " ", cleaned.strip()) == re.sub(
+                r"\s+", " ", raw.strip(),
+            )
+            return raw if same else cleaned
         return line
     except Exception:  # noqa: BLE001 — compose must never break a turn
         _LOG.exception("percentage-of-ACA compose failed; passing answer through")
@@ -7818,6 +8103,9 @@ def _postprocess_answer(
     # F-BAT-D G3/G6: Contract Data "not required" / empty commencement
     # over Schedule 8 form % and commencement-pack dates.
     text = _graft_honest_contract_refusal(text, rag_sys_msg, messages)
+    # Default-rate cost build-up: the calculator result is the total.
+    # A project-document figure and the no-rate refusal are not.
+    text = _graft_deterministic_cost_calc(text, messages)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     # Citation provenance: an attribution no evidence record backs is removed
     # and the answer flagged. Sibling of the cost gate above -- that one

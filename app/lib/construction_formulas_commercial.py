@@ -890,6 +890,9 @@ def compose_delay_damages_daily_from_excerpts(
     """
     if not compose_delay_damages_daily_enabled():
         return None
+    # The cap is a percentage of the Accepted Contract Amount, not SAR/day.
+    if query_names_delay_damages_cap(query):
+        return None
     if not query_asks_delay_damages_daily_amount(query):
         return None
     found = rate_and_base_from_one_document(excerpts, query)
@@ -946,6 +949,18 @@ _PCT_PARTICULAR_SPECS = (
         "Limitation of Liability",
         re.compile(r"(?i)limitation\s+of\s+liability|limit(?:ation)?\s+of\s+liabilit"),
     ),
+    (
+        "retention money",
+        "Retention Money",
+        re.compile(r"(?i)retention\s+money|percentage\s+of\s+retention"),
+    ),
+    (
+        "maximum amount of delay damages",
+        "Maximum Amount of Delay Damages",
+        re.compile(
+            r"(?i)maximum\s+amount\s+of\s+(?:delay|liquidated)\s+damages"
+        ),
+    ),
 )
 _PCT_BOND_RE = re.compile(r"(?i)\bbond\b|\bguarantee\b|\bsecurity\b")
 _PCT_VALUE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
@@ -956,7 +971,10 @@ _COMPETING_PARTICULAR_RES = (
     re.compile(r"(?i)advance\s+payment"),
     re.compile(r"(?i)limitation\s+of\s+liability"),
     re.compile(r"(?i)(?:delay|liquidated)\s+damages"),
-    re.compile(r"(?i)percentage\s+of\s+retention"),
+    re.compile(r"(?i)percentage\s+of\s+retention|retention\s+money"),
+    re.compile(
+        r"(?i)maximum\s+amount\s+of\s+(?:delay|liquidated)\s+damages"
+    ),
 )
 _PER_DAY_AFTER_PCT_RE = re.compile(
     r"(?i)per\s+(?:calendar\s+|working\s+)?day\b",
@@ -1009,16 +1027,36 @@ def _asked_percentage_spec(query: str):
     return None
 
 
-def query_asks_named_percentage_particular(query: str) -> bool:
-    """True for Advance Payment / Limitation of Liability lookups.
+def query_names_delay_damages_cap(query: str) -> bool:
+    """True for the Maximum Amount of Delay Damages cap, not SAR/day.
 
-    Delay damages stay on their own composers. Definition questions
-    ("what does Advance Payment mean") are not this class.
+    The cap is a percentage of the Accepted Contract Amount. A per-day
+    rate and a "N days late" sum stay on the delay-damages composers.
+    """
+    q = query or ""
+    if not re.search(
+        r"(?i)maximum\s+amount\s+of\s+(?:delay|liquidated)\s+damages", q,
+    ):
+        return False
+    if query_applies_a_delay_duration(q):
+        return False
+    if re.search(r"(?i)\bper\s+(?:calendar\s+|working\s+)?day\b", q):
+        return False
+    return True
+
+
+def query_asks_named_percentage_particular(query: str) -> bool:
+    """True for a named percentage of the Accepted Contract Amount.
+
+    Advance Payment, Limitation of Liability, Retention Money, and the
+    Maximum Amount of Delay Damages cap. A daily delay-damages rate stays
+    on its own composer. Definition questions ("what does Advance Payment
+    mean") are not this class.
     """
     q = query or ""
     if not q:
         return False
-    if _DD_ASK_RE.search(q):
+    if _DD_ASK_RE.search(q) and not query_names_delay_damages_cap(q):
         return False
     if re.search(r"(?i)\bwhat\s+does\b.{0,40}\bmean\b", q):
         return False
@@ -1233,6 +1271,75 @@ def answer_states_money_amount(text: str, amount: float) -> bool:
         or formatted.replace(",", "") in blob
         or f"{amount:,.1f}" in text
     )
+
+
+# A percentage of the Accepted Contract Amount is one figure, on the
+# excluding-VAT base. "If calculated on the VAT-inclusive figure…" is a
+# second amount the Contract Data does not authorise.
+_VAT_ALT_RE = re.compile(
+    r"(?i)vat[-\s]?inclusive|\bincluding\s+vat\b|\bincl\.?\s*vat\b|"
+    r"which\s+base\s+applies|"
+    r"letter\s+of\s+award|"
+    r"(?:does|do)\s+not\s+state\s+which\s+base"
+)
+_VAT_ALT_SPLIT_RE = re.compile(r"(?<=[.!;])\s+|\n+|\s+[—–]\s+")
+
+
+def vat_inclusive_alternative_amounts(
+    excerpts: str, percent: float,
+) -> list[float]:
+    """Including-VAT ACA, and that base times ``percent``.
+
+    The excluding-VAT row is not an alternative. Empty when the excerpts
+    do not state an including-VAT Accepted Contract Amount.
+    """
+    out: list[float] = []
+    seen: set[float] = set()
+    for amt, _cur, kind, toy in _iter_aca_candidates(excerpts or ""):
+        if toy or kind != "incl":
+            continue
+        base = round(float(amt), 2)
+        product = round(base * (float(percent) / 100.0), 2)
+        for value in (base, product):
+            if value in seen:
+                continue
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def strip_vat_inclusive_percentage_alternative(
+    text: str,
+    *,
+    keep_amount: float,
+    forbidden_amounts: list[float],
+) -> str:
+    """Drop a VAT-inclusive alternative from a percentage-of-ACA answer.
+
+    Keeps a clause that states ``keep_amount`` and does not also state a
+    forbidden figure. A hedge that questions which base applies is not
+    kept unless that same clause states the composed amount and no
+    forbidden figure.
+    """
+    raw = text or ""
+    if not raw:
+        return raw
+    parts = [
+        p.strip() for p in _VAT_ALT_SPLIT_RE.split(raw) if p and p.strip()
+    ]
+    kept: list[str] = []
+    for part in parts:
+        if any(
+            answer_states_money_amount(part, amt) for amt in forbidden_amounts
+        ):
+            continue
+        if (
+            _VAT_ALT_RE.search(part)
+            and not answer_states_money_amount(part, keep_amount)
+        ):
+            continue
+        kept.append(part)
+    return " ".join(kept).strip()
 
 
 # ── Delay damages over a period (Set3 E3 / E2 class) ──────────────────────

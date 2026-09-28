@@ -79,7 +79,9 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # _aca_claim_amount. Same ValueError return — only the line moved.
     # Re-indexed 2026-09-27 with the look-ahead predispatch date pass,
     # then +5 for the drawdown guard.
-    "app/agents/runtime.py:5936": "baseline 2026-09-10",
+    # Re-indexed 2026-09-28: default-rate cost-calculator graft inserted
+    # above _aca_claim_amount. Same ValueError return — only the line moved.
+    "app/agents/runtime.py:6210": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
