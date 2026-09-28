@@ -417,7 +417,7 @@ def _pass_through_text(kind: str) -> str:
     """(A) First line already carries the committed figure and its source."""
     if kind == "p1a":
         return (
-            f"98% of maximum dry density is the compaction figure in "
+            f"98% of maximum dry density is the compaction figure (§8.4) in "
             f"{DOC_VOL5_4}.\n\n"
             "Storm water bedding is compacted to 90% of maximum dry "
             "density. Structural fill is 95% of maximum dry density.\n"

@@ -5,16 +5,19 @@ tells the model to open with the figure and the document that carries it.
 Live SET5 close-out on 209bc83 still scored the first line, and the model
 still opened with a narrative, a bare figure, or "properly compacted".
 
-This guard verifies the first line. It does not rewrite it. When the
-model's first line already carries a figure and a source, the answer
-passes through unchanged. Otherwise it may prepend only the figure the
-body commits to — the first figure the body states as the answer — and
-it never asks once that commitment exists. 98% backfill, 90% storm-water
-bedding, and 95% structural fill are different subjects. A question is
-prepended only when the body commits to no figure and the remaining
-figures share one subject. The filename class is a hint: when the body
-names the class ("Specification Section 9.1"), that naming governs, and
-the server does not emit "That document is not the specification".
+This guard verifies the first line. When that line already credits the
+figure the body commits to — including the clause and the document id
+the chunk carries for it — the answer passes through unchanged.
+Otherwise it may install only that figure. It never asks once that
+commitment exists, and it does not leave a different document's name
+on the opening line. 98% backfill, 90% storm-water bedding, and 95%
+structural fill are different subjects. A question is prepended only
+when the body commits to no figure and the remaining figures share one
+subject. The filename class is a hint: when the chunk or the body
+names the class ("Specification Section 9.1"), that naming governs,
+and the server does not emit "That document is not the specification".
+A report number that opens the chunk (RSM 15492) is the document id.
+The same number named as a laboratory reference is not.
 An optional higher compaction degree in the same clause ("could be
 compacted to … under the approval of the engineer") is not a second
 figure. A millimetre counts as concrete cover only when it is tied to
@@ -103,8 +106,9 @@ _COMPACTION_LOCATIONS = (
         r"(?i)\b(?:under|below|beneath)\s+(?:the\s+)?road\s+pavements?\b"
     )),
 )
-# "8.4 Backfill" at the start of a line. A bare report number such as
-# "RSM 15492" does not match: it is not a dotted clause at line start.
+# "8.4 Backfill" at the start of a line. A report number such as
+# "RSM 15492" is a document id, not a dotted clause, so it does not
+# match here.
 _CLAUSE_HEADING_RE = re.compile(
     r"(?i)^(?:clause[ \t]+|section[ \t]+|§[ \t]*)?"
     r"(\d+(?:\.\d+)+)\.?(?:[ \t]+(.*))?$"
@@ -133,6 +137,11 @@ _COVER_CONDITIONS = (
 _CLAUSE_RE = re.compile(
     r"(?i)(?:§|\bsection\b|\bclause\b)\s*(\d+(?:\.\d+)*)"
 )
+# "RSM 15492" and "RSM-15492-Rev0" identify the document. "RSM 15492 is
+# the laboratory reference" cites a different document and does not.
+_REPORT_ID_RE = re.compile(r"(?i)\b(RSM)\s*[-_]?\s*(\d{3,})\b")
+_LAB_ASIDE_RE = re.compile(r"(?i)\blaboratory\s+reference\b|\bcited\s+in\b")
+_REV_ONLY_RE = re.compile(r"(?i)^rev(?:ision)?\.?\s*\d*$")
 # Negation that governs the condition phrase, not a later "not" in the
 # same paragraph. "non-" is the prefix form ("non-structural").
 _NEGATION_RE = re.compile(
@@ -165,6 +174,8 @@ class _Hit:
     clause: str = ""
     calls_itself_spec: bool = False
     negated: bool = False
+    document_id: str = ""
+    spec_section: bool = False
 
 
 def first_line_hard_rule_enabled() -> bool:
@@ -216,14 +227,22 @@ def _apply(text: str, rag_sys_msg: dict | None, messages: list | None) -> str:
     if not hits:
         return text
     first = _first(text)
-    # (A) A first line that already names a figure and a source stands.
-    if _first_carries_figure_and_source(first, hits):
-        return text
     # (B) A figure the body states. Prefer the condition the question
-    # asks. A negated or mismatched condition is not promoted.
+    # asks. A negated or mismatched condition is not promoted. The
+    # opening line stands only when it credits that figure's own clause
+    # and document. A different document's name does not.
     committed = _committed_hit(text, hits, topic, ask)
     if committed is not None:
-        return _prepend(text, _state_line(topic, committed, class_name))
+        if _opening_credits(first, committed, hits, class_name):
+            return text
+        return _install_figure_line(
+            text,
+            _state_line(topic, committed, class_name),
+            _figure_in(first, committed.figure),
+        )
+    # (A) No committed figure. A line that already names one stays.
+    if _first_carries_figure_and_source(first, hits):
+        return text
     # (C) A question only when nothing was committed and the subject is one.
     conflict = _same_subject_conflict(topic, hits)
     if conflict is None:
@@ -322,6 +341,8 @@ def _figure_hits(
                 clause=clause,
                 calls_itself_spec=calls_spec or body_names,
                 negated=negated,
+                document_id=_document_id(raw, source),
+                spec_section=_names_spec_section(raw, clause),
             ))
     return hits
 
@@ -553,8 +574,8 @@ def _dot_is_sentence_end(text: str, index: int) -> bool:
     return True
 
 
-def _clause_window(text: str, start: int, end: int) -> str:
-    """The sentence that holds the figure. A neighbouring sentence does not."""
+def _sentence_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """Start and stop of the sentence that holds the figure."""
     body = text or ""
     begin = 0
     for i in range(min(start, len(body)) - 1, -1, -1):
@@ -566,13 +587,73 @@ def _clause_window(text: str, start: int, end: int) -> str:
         if _dot_is_sentence_end(body, i):
             stop = i + 1
             break
-    return body[begin:stop]
+    return begin, stop
+
+
+def _clause_window(text: str, start: int, end: int) -> str:
+    """The sentence that holds the figure. A neighbouring sentence does not."""
+    begin, stop = _sentence_bounds(text, start, end)
+    return (text or "")[begin:stop]
+
+
+def _clause_in(text: str) -> str:
+    found = list(_CLAUSE_RE.finditer(text or ""))
+    if not found:
+        return ""
+    return found[-1].group(1)
+
+
+def _names_spec_section(text: str, clause: str) -> bool:
+    """True when this chunk calls ``clause`` a Specification Section."""
+    if not clause:
+        return False
+    return bool(re.search(
+        rf"(?i)\bspecification\s+section\s+{re.escape(clause)}\b",
+        text or "",
+    ))
+
+
+def _opening_report_id(text: str) -> str:
+    """Document id that opens a line. A laboratory-reference aside is not one."""
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or _LAB_ASIDE_RE.search(line):
+            continue
+        match = _REPORT_ID_RE.search(line)
+        if not match or match.start() != 0:
+            continue
+        rest = line[match.end():].strip(" .:-_")
+        if rest and not _REV_ONLY_RE.match(rest):
+            continue
+        return f"{match.group(1).upper()} {match.group(2)}"
+    return ""
+
+
+def _document_id(text: str, source: str) -> str:
+    """Report id the chunk carries, else the same id in the filename."""
+    found = _opening_report_id(text)
+    if found:
+        return found
+    match = _REPORT_ID_RE.search(source or "")
+    if not match:
+        return ""
+    return f"{match.group(1).upper()} {match.group(2)}"
 
 
 def _labels_in(topic: str, text: str) -> str:
     """Material and location named in ``text``, or "" when negated or absent."""
     label, _negated = _condition_binding(topic, text)
     return label
+
+
+def _conditions_agree(topic: str, left: str, right: str) -> bool:
+    """True when the two labels are one condition, or one of them is empty."""
+    if not left or not right:
+        return True
+    return (
+        _condition_matches(topic, left, right)
+        or _condition_matches(topic, right, left)
+    )
 
 
 def _heading_binding(topic: str, text: str, figure_start: int) -> tuple[str, str, bool]:
@@ -584,47 +665,72 @@ def _heading_binding(topic: str, text: str, figure_start: int) -> tuple[str, str
     heading several lines above the figure, or at the chunk start, still
     binds. A closer heading that names a condition wins over a section
     title further up. A closer heading that negates the condition stops
-    the walk.
+    the walk. The figure's own line is not that heading: a material
+    named beside the percent does not hide the clause number on the
+    line above.
     """
+    prefix = (text or "")[:figure_start]
+    lines = prefix.splitlines()
+    # The last slice is the figure's line, cut off at the number.
+    on_figure = bool(prefix) and not prefix.endswith("\n") and bool(lines)
     clause = ""
-    for raw_line in reversed((text or "")[:figure_start].splitlines()):
+    carried = ""
+    for index, raw_line in enumerate(reversed(lines)):
         line = raw_line.strip()
         if not line:
             continue
+        figure_line = on_figure and index == 0
         numbered = _CLAUSE_HEADING_RE.match(line)
         if numbered:
             number = numbered.group(1)
             title = numbered.group(2) or ""
-            if not clause:
-                clause = number
             cond, neg = _condition_binding(topic, title or line)
             if not cond and title:
                 cond, neg = _condition_binding(topic, line)
+            if carried and not _conditions_agree(topic, carried, cond):
+                return carried, clause, False
+            if not clause:
+                clause = number
             if neg and not cond:
                 return "", number, True
             if cond:
                 return cond, number, False
+            if carried:
+                return carried, number, False
             continue
         section = _SECTION_TITLE_RE.match(line)
         if section:
             number = section.group(1) or ""
             title = section.group(2) or ""
-            if number and not clause:
-                clause = number
             cond, neg = _condition_binding(topic, title or line)
             if not cond and title:
                 cond, neg = _condition_binding(topic, line)
+            if carried and not _conditions_agree(topic, carried, cond):
+                return carried, clause, False
+            if number and not clause:
+                clause = number
             if neg and not cond:
                 return "", clause, True
             if cond:
                 return cond, clause, False
+            if carried:
+                return carried, clause, False
             continue
         if len(line) <= 80 and "." not in line:
             cond, neg = _condition_binding(topic, line)
             if neg and not cond:
+                if figure_line and carried:
+                    return carried, clause, False
                 return "", clause, True
             if cond:
+                # The words beside the percent are the sentence, not a
+                # heading. Keep them and still read a clause above.
+                if figure_line:
+                    carried = cond
+                    continue
                 return cond, clause, False
+    if carried:
+        return carried, clause, False
     return "", clause, False
 
 
@@ -645,11 +751,18 @@ def _bind_figure(
     heading or a title. Otherwise the nearest clause heading, then the
     section title, then the document title.
     """
-    window = _clause_window(text or "", start, end)
+    _begin, stop = _sentence_bounds(text or "", start, end)
+    window = (text or "")[_begin:stop]
     inline, inline_neg = _condition_binding(topic, window)
     heading_cond, heading_clause, heading_neg = _heading_binding(topic, text, start)
     calls = bool(_SELF_SPEC_RE.search(text or ""))
-    clause = heading_clause or _clause_before(text, end)
+    # "(§8.4)" after the percent is this figure's clause. A heading above
+    # the figure still binds when the sentence itself has no marker.
+    clause = (
+        _clause_in((text or "")[end:stop])
+        or heading_clause
+        or _clause_before(text, end)
+    )
     if inline:
         return inline, clause, calls, False
     if inline_neg or (heading_neg and not heading_cond):
@@ -753,20 +866,88 @@ def _first(text: str) -> str:
     return ""
 
 
+def _credit(hit: _Hit) -> str:
+    """Clause and document id the chunk carries for this figure."""
+    if hit.clause:
+        label = (
+            f"Specification Section {hit.clause}"
+            if hit.spec_section
+            else f"§{hit.clause}"
+        )
+    else:
+        label = ""
+    bits = [bit for bit in (label, hit.document_id) if bit]
+    if not bits:
+        return ""
+    return " (" + ", ".join(bits) + ")"
+
+
+def _clause_on_line(line: str, clause: str) -> bool:
+    if not clause:
+        return True
+    return bool(re.search(
+        rf"(?<!\d){re.escape(clause)}(?!\d)",
+        line or "",
+    ))
+
+
+def _doc_id_on_line(line: str, document_id: str) -> bool:
+    parts = (document_id or "").split()
+    if len(parts) != 2:
+        return (document_id or "").lower() in (line or "").lower()
+    return bool(re.search(
+        rf"(?i)\b{re.escape(parts[0])}\s*[-_]?\s*{re.escape(parts[1])}\b",
+        line or "",
+    ))
+
+
+def _opening_credits(
+    first: str, hit: _Hit, hits: list[_Hit], class_name: str,
+) -> bool:
+    """True when the opening line already credits this figure's own source.
+
+    The figure alone is not enough. A clause or document id the chunk
+    carries has to be on the line, and a different document's name
+    cannot be. A specification section is not labelled as something else.
+    """
+    if not first or not _figure_in(first, hit.figure):
+        return False
+    if not _clause_on_line(first, hit.clause):
+        return False
+    if hit.spec_section and "specification section" not in first.lower():
+        return False
+    if hit.document_id and not _doc_id_on_line(first, hit.document_id):
+        return False
+    credits_source = _source_in(first, hit.source) or (
+        bool(hit.document_id) and _doc_id_on_line(first, hit.document_id)
+    )
+    if not credits_source:
+        return False
+    for other in hits:
+        if other.source == hit.source:
+            continue
+        if _source_in(first, other.source):
+            return False
+    if not _emit_not_the_spec(hit, class_name):
+        if f"not the {class_name}" in (first or "").lower():
+            return False
+    return True
+
+
 def _state_line(topic: str, hit: _Hit, class_name: str) -> str:
     # The printed condition is the figure's own. A negated figure has none.
     condition = "" if hit.negated else (hit.condition or "")
     cond = f" for {condition}" if condition else ""
-    clause = f" (§{hit.clause})" if hit.clause else ""
+    credit = _credit(hit)
     if topic == "cover":
         line = (
-            f"{hit.figure} is the concrete-cover figure{cond}{clause} "
+            f"{hit.figure} is the concrete-cover figure{cond}{credit} "
             f"in {hit.source}."
         )
     else:
         line = (
             f"{hit.figure} of maximum dry density is the compaction figure"
-            f"{cond}{clause} in {hit.source}."
+            f"{cond}{credit} in {hit.source}."
         )
     if _emit_not_the_spec(hit, class_name):
         line += f" That document is not the {class_name}."
@@ -805,3 +986,23 @@ def _prepend(text: str, line: str) -> str:
     if not body:
         return line
     return f"{line}\n\n{body}"
+
+
+def _install_figure_line(text: str, line: str, replace_first: bool) -> str:
+    """Put ``line`` on the opening line.
+
+    A narrative stays underneath. An opening line that already states
+    the figure is replaced, so a wrong document and a false
+    "not the specification" do not remain the line the operator reads.
+    """
+    if not replace_first:
+        return _prepend(text, line)
+    body = (text or "").strip()
+    if not body:
+        return line
+    lines = body.splitlines()
+    for i, raw in enumerate(lines):
+        if raw.strip():
+            lines[i] = line
+            return "\n".join(lines).strip()
+    return line
