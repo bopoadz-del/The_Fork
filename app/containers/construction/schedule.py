@@ -220,8 +220,20 @@ def _spoken_date(token: str, year_hint: int | None = None) -> str | None:
     return f"{int(year):04d}-{month:02d}-{int(day):02d}"
 
 
+# "as of today, 21 September" — the optional "today" is not the date.
+# "from 21 September 2026, what is due" is a stated today. "from 15 Sep
+# to 25 Sep" is an activity span and is rejected below.
 _STATED_TODAY_CUE_RE = re.compile(
-    r"\b(?:today(?:'s)?(?:\s+date)?\s+is|current\s+date\s+is|as\s+of|as-of)\s+",
+    r"\b(?:today(?:'s)?(?:\s+date)?\s+is|current\s+date\s+is|"
+    r"as[\s-]of(?:\s+today)?|as[\s-]at|from)\b",
+    re.IGNORECASE,
+)
+_STATED_FILLER_RE = re.compile(
+    r"^(?:today|the|date|is|on)\b[\s,;:.\-]*",
+    re.IGNORECASE,
+)
+_SPAN_AFTER_DATE_RE = re.compile(
+    r"^\s*(?:to|until|through|—|–|-)\s+\d",
     re.IGNORECASE,
 )
 _STATED_ISO_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\b")
@@ -267,30 +279,52 @@ def _slash_date(day: str, month: str, year: str | None, year_hint: int | None) -
         return None
 
 
-def _stated_look_ahead_date(text: str) -> str | None:
-    """ISO date the operator stated as today, or None.
-
-    "Today is 21 September", "Today is 21/09", "as of 2026-09-21". Activity
-    spans ("15 Sep to 25 Sep") are not a stated today. Year comes from the
-    token, else a year already in the schedule text, else the clock year.
-    """
-    raw = text or ""
-    cue = _STATED_TODAY_CUE_RE.search(raw)
-    if not cue:
-        return None
-    rest = raw[cue.end():].lstrip()
-    hint = _schedule_year_hint(raw)
+def _parse_leading_stated_date(rest: str, hint: int | None) -> tuple[str | None, str]:
+    """``(iso, tail)`` for a date at the front of ``rest``, else ``(None, "")``."""
+    rest = rest.lstrip(" \t,;:")
+    for _ in range(4):
+        filler = _STATED_FILLER_RE.match(rest)
+        if not filler:
+            break
+        rest = rest[filler.end():]
     iso = _STATED_ISO_RE.match(rest)
     if iso:
-        return _coerce_date_safe(iso.group(1))
+        return _coerce_date_safe(iso.group(1)), rest[iso.end():]
     slash = _STATED_SLASH_RE.match(rest)
     if slash:
-        return _slash_date(slash.group(1), slash.group(2), slash.group(3), hint)
+        return (
+            _slash_date(slash.group(1), slash.group(2), slash.group(3), hint),
+            rest[slash.end():],
+        )
     spoken = _STATED_SPOKEN_RE.match(rest)
     if spoken:
         token = spoken.group(1)
         has_year = bool(re.search(r"\d{4}\s*$", token))
-        return _spoken_date(token, None if has_year else hint or _clock_year())
+        return (
+            _spoken_date(token, None if has_year else hint or _clock_year()),
+            rest[spoken.end():],
+        )
+    return None, ""
+
+
+def _stated_look_ahead_date(text: str) -> str | None:
+    """ISO date the operator stated as today, or None.
+
+    "Today is 21 September", "Today's date is 21 September",
+    "as of today, 21 September", "as at 21 September",
+    "from 21 September 2026". Activity spans ("15 Sep to 25 Sep",
+    "from 15 Sep to 25 Sep") are not a stated today. Year comes from the
+    token, else a year already in the schedule text, else the clock year.
+    """
+    raw = text or ""
+    hint = _schedule_year_hint(raw)
+    for cue in _STATED_TODAY_CUE_RE.finditer(raw):
+        value, tail = _parse_leading_stated_date(raw[cue.end():], hint)
+        if not value:
+            continue
+        if cue.group(0).lower() == "from" and _SPAN_AFTER_DATE_RE.match(tail or ""):
+            continue
+        return value
     return None
 
 
