@@ -547,7 +547,8 @@ def _file_head(file_path: str, n: int = _QUARANTINE_HEAD) -> tuple[int, bytes] |
     """Size plus the first ``n`` plaintext bytes. None when the path cannot be read."""
     try:
         size = os.path.getsize(file_path)
-    except OSError:
+    except OSError as exc:
+        logger.warning("quarantine head size unreadable: %s", type(exc).__name__)
         return None
     if size <= 0:
         return 0, b""
@@ -560,7 +561,8 @@ def _file_head(file_path: str, n: int = _QUARANTINE_HEAD) -> tuple[int, bytes] |
                     return size, fh.read(n)
         with open(file_path, "rb") as fh:
             return size, fh.read(n)
-    except OSError:
+    except OSError as exc:
+        logger.warning("quarantine head read failed: %s", type(exc).__name__)
         return None
 
 
