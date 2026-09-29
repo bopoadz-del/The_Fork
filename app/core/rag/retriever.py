@@ -6692,7 +6692,34 @@ def e1_compose_excerpts_from_loaded_cd_volume(
             _collect(chunk.text or "")
     if not rate_parts or not aca_parts:
         return ""
-    return "\n\n".join(rate_parts[:3] + aca_parts[:3])
+    # The joined excerpt carries NO [doc_id=] markers, so compose reads it as
+    # one document and its clause-1.1.1 price search cannot tell the filled
+    # base from a partial ACA. If partial excl-VAT rows fill aca_parts[:3] the
+    # real 1.1.1 base is dropped and compose elects the partial (live M3:
+    # 0.015% x SAR 39,098,392.98). Order the clause-1.1.1 base first so the
+    # cap can never drop it.
+    return "\n\n".join(
+        rate_parts[:3] + _aca_parts_clause_111_first(aca_parts)[:3]
+    )
+
+
+def _aca_parts_clause_111_first(parts: List[str]) -> List[str]:
+    """Stable-sort ACA excerpt texts so a clause-1.1.1 excl-VAT base leads.
+
+    A partial Accepted Contract Amount and the filled clause 1.1.1 both pass
+    ``_e1_has_standalone_excl_vat``; only the 1.1.1 row is the real base. The
+    rescue caps the joined excerpt at three ACA parts, so without this a run
+    of partials pushed the 1.1.1 row out of the window.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            text_states_clause_111_aca,
+        )
+    except Exception:  # noqa: BLE001 — ordering is best-effort
+        return parts
+    return sorted(
+        parts, key=lambda t: 0 if text_states_clause_111_aca(t) else 1,
+    )
 
 
 def _loaded_cd_chunk_texts(

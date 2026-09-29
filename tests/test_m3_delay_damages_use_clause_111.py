@@ -197,3 +197,67 @@ def test_graft_replaces_the_refusal_when_clause_111_is_in_the_excerpts():
     assert f"{DAILY:,.2f}" in first
     assert "contract data" in first.lower()
     assert "not in the retrieved" not in first
+
+
+# ── The live 0/6: the rescue joins chunks WITHOUT [doc_id=] markers, so
+# compose reads one document. When the real clause-1.1.1 base and a partial
+# ACA are BOTH in that one segment, the price search already prefers 1.1.1
+# (score 7) over the partial (score 3). The live defect was upstream: the
+# rescue capped aca_parts at [:3] and a run of partial rows pushed the 1.1.1
+# base out of the excerpt entirely, so compose only ever saw the partial.
+# The fix orders the clause-1.1.1 row first so the cap cannot drop it.
+
+UNMARKED_NO_111 = (
+    "CONTRACT DATA "
+    "8.8.1: Delay Damages: 0.015% of the Contract Price per calendar day "
+    "per Milestone "
+    "8.8 Delay Damages for the whole of the Works: 0.1% of the Contract "
+    "Price per calendar day "
+    f"Accepted Contract Amount excluding VAT SAR {PARTIAL:,.2f} "
+)
+UNMARKED_WITH_111 = (
+    UNMARKED_NO_111
+    + f"1.1.1 Accepted Contract Amount excluding VAT SAR {CONTRACT_PRICE:,.2f} "
+)
+
+
+def test_milestone_uses_clause_111_over_a_partial_in_one_unmarked_bundle():
+    """Same unmarked shape, but the clause 1.1.1 base is present: use it."""
+    out = cc.compose_delay_damages_daily_from_excerpts(
+        MILESTONE_ASKS[1], UNMARKED_WITH_111,
+    )
+    assert out is not None
+    assert out["rate_percent"] == pytest.approx(0.015)
+    assert out["contract_amount"] == pytest.approx(CONTRACT_PRICE)
+    assert out["daily_amount"] == pytest.approx(DAILY)
+    line = cc.format_delay_damages_daily_line(out)
+    assert f"{PARTIAL:,.2f}" not in line
+    assert "5,864.76" not in line
+
+
+def test_text_states_clause_111_aca_tells_the_base_from_the_partial():
+    assert not cc.text_states_clause_111_aca(
+        f"Accepted Contract Amount excluding VAT SAR {PARTIAL:,.2f}",
+    )
+    assert cc.text_states_clause_111_aca(
+        f"1.1.1 Accepted Contract Amount excluding VAT SAR {CONTRACT_PRICE:,.2f}",
+    )
+
+
+def test_the_rescue_orders_clause_111_ahead_of_the_partials():
+    """The rescue caps aca_parts at [:3]; three partial excl-VAT rows used to
+    push the real clause-1.1.1 base out of that window, so compose fell to a
+    partial. Clause 1.1.1 must sort first and survive the cap."""
+    from app.core.rag.retriever import _aca_parts_clause_111_first
+
+    junk = [
+        f"Accepted Contract Amount excluding VAT SAR {amt:,.2f}"
+        for amt in (PARTIAL, 12_345_678.90, PO_AMOUNT)
+    ]
+    real = (
+        "1.1.1 Accepted Contract Amount excluding VAT "
+        f"SAR {CONTRACT_PRICE:,.2f}"
+    )
+    ordered = _aca_parts_clause_111_first(junk + [real])
+    assert ordered[0] == real
+    assert real in ordered[:3]
