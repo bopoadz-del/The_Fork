@@ -3091,6 +3091,19 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         for key, val in extract_calculation_params_from_text(fn, text_blob).items():
             if params.get(key) in (None, ""):
                 params[key] = val
+    # Re-run the symbol alias AFTER both text extractors. The ask sentence rides
+    # along in ``text`` / ``query`` and both extractors above pull "E = 200",
+    # "I = 2.0e-4" (and a shortened ``c``) back out of it as bare keys — after
+    # the first alias at the top of this function had already run. Without this
+    # second pass those re-extracted symbols reach _partition_bound_params and
+    # are reported "Unknown argument(s): E, I" even when the caller sent perfect
+    # ec_mpa / i_mm4 (the live T2 0/6; #741 and #743 both missed it because the
+    # local tests attached no text). The alias is idempotent: a symbol whose
+    # canonical destination is already set is dropped, so ec_mpa still wins.
+    try:
+        params = _alias_physics_symbols(fn, params)
+    except _UnknownUnit as exc:
+        return {"status": "error", "calculation": str(name), "error": str(exc)}
     if _accepts_param(fn, "quantity"):
         conflict = _count_quantity_conflict(params)
         if conflict:
