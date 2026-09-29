@@ -161,3 +161,67 @@ def test_the_aci_form_is_recognised_however_it_is_spelled(code):
 def test_a_non_aci_code_still_gets_the_default_form():
     r = _run(MODULUS, {"fck_n_mm2": 35, "code": "BS 8110"})
     assert r["result"]["unit"] == "kg/cm2"
+
+
+# ── third attempt: live still 0/6 on 7dc1133 — the ask TEXT re-injects E/I ───
+#
+# #741 and #743 both assumed the model sends E/I in the params. It does not:
+# the live tool_call sent canonical keys (ec_mpa, i_mm4) and STILL got
+# "Unknown argument(s): E, I". The ask text rides along in ``text`` (and
+# ``query``), and run_calculation runs two extractors over it AFTER the symbol
+# alias -- _extract_calc_kwargs_from_ask and extract_calculation_params_from_text
+# both pull "E = 200" and "I = 2.0e-4" back out of the sentence as bare keys,
+# and _partition_bound_params then reports them unknown. The local tests above
+# attached no text, which is why every earlier fix was green and live failed.
+#
+# The alias must therefore run again AFTER both extractors. It is idempotent:
+# once ec_mpa is set (from the canonical key or the first pass) a re-extracted
+# E is dropped, not converted, so canonical still wins.
+
+ASK = ("What is the tip deflection of a 3 m cantilever carrying 10 kN/m, "
+       "E = 200 GPa, I = 2.0e-4 m4?")
+
+
+@pytest.mark.parametrize("carrier", ["text", "query", "message", "formula"])
+def test_canonical_params_survive_the_ask_text_riding_along(carrier):
+    # THE live failure: perfect canonical keys, plus the sentence in `carrier`.
+    out = _run(CANTILEVER, {"w_kn_m": 10, "span_m": 3,
+                            "ec_mpa": 200_000, "i_mm4": 2.0e8, carrier: ASK})
+    assert out["status"] == "success", out
+    val = out["result"]["value"] if isinstance(out["result"], dict) else out["result"]
+    assert val == pytest.approx(2.53, abs=0.01)
+
+
+@pytest.mark.parametrize("carrier", ["text", "query"])
+def test_symbol_params_survive_the_ask_text_riding_along(carrier):
+    # Symbols in the params AND the same sentence in the carrier: still 2.53.
+    out = _run(CANTILEVER, {"w_kn_m": 10, "span_m": 3,
+                            "E": 200, "I": 2.0e-4, carrier: ASK})
+    assert out["status"] == "success", out
+    val = out["result"]["value"] if isinstance(out["result"], dict) else out["result"]
+    assert val == pytest.approx(2.53, abs=0.01)
+
+
+def test_the_ask_text_alone_binds_when_no_numeric_params_given():
+    # Only the sentence: the extractor pulls E/I and the alias must convert them.
+    out = _run(CANTILEVER, {"w_kn_m": 10, "span_m": 3, "text": ASK})
+    assert out["status"] == "success", out
+    val = out["result"]["value"] if isinstance(out["result"], dict) else out["result"]
+    assert val == pytest.approx(2.53, abs=0.01)
+
+
+def test_a_shortened_code_survives_ask_text_the_c_class():
+    # The c/code member of _SYMBOL_DEST, same path: canonical code + ask text.
+    out = _run(MODULUS, {"fck_n_mm2": 35, "code": "ACI 318-19",
+                         "text": "modulus of elasticity of 35 MPa concrete to ACI 318"})
+    assert out["status"] == "success", out
+    assert out["result"]["unit"] == "MPa"
+    assert out["result"]["value"] == pytest.approx(27806.0, abs=1.0)
+
+
+def test_an_unknown_key_still_errors_even_with_ask_text_present():
+    # The re-alias must not swallow a genuinely unknown argument (#740 stands).
+    out = _run(CANTILEVER, {"w_kn_m": 10, "span_m": 3, "ec_mpa": 200_000,
+                            "i_mm4": 2.0e8, "bogus_param": 1, "text": ASK})
+    assert out["status"] != "success"
+    assert "bogus_param" in str(out)
