@@ -596,16 +596,52 @@ def _best_contract_price_figure(text: str) -> tuple[int, float, str] | None:
     return best
 
 
+def _figure_is_clause_111(text: str, amount: float) -> bool:
+    """True when ``amount`` is this text's clause 1.1.1 excluding VAT."""
+    blob = _collapse_ws(text)
+    for match in _MONEY_RE.finditer(blob):
+        got = float(match.group(2).replace(",", ""))
+        if abs(got - float(amount)) > 0.02:
+            continue
+        row = _row_around(blob, match.start(), match.end())
+        wide = blob[max(0, match.start() - 96): match.end() + 48]
+        label = row if re.search(
+            r"(?i)accepted\s+contract\s+amount", row,
+        ) else wide
+        if (
+            _CLAUSE_111_RE.search(label)
+            and _EXCL_VAT_RE.search(label)
+            and re.search(r"(?i)accepted\s+contract\s+amount", label)
+        ):
+            return True
+    return False
+
+
+def delay_damages_base_is_clause_111(excerpts: str, amount: float) -> bool:
+    """True when ``amount`` is clause 1.1.1 in its own retrieved segment.
+
+    Per document, so the next chunk's clause number cannot glue onto a
+    partial Accepted Contract Amount and make that partial look filled.
+    """
+    for _doc, seg in _excerpt_segments(excerpts or ""):
+        if _figure_is_clause_111(seg, amount):
+            return True
+    return False
+
+
 def _contract_price_beside_the_rate(
     text: str, rate: float, ask: str,
 ) -> tuple[float, str] | None:
-    """Contract Price from a document that actually states ``rate``.
+    """Contract Price for ``rate``.
 
-    A higher-ranked excerpt can carry another document's Accepted Contract
-    Amount (live: SAR 144,042,486.50 on a kickoff / executed cover) ahead
-    of clause 1.1.1. First-match then multiplies the per-Milestone rate
-    by that figure. The price has to sit with the rate, and a 1.1.1 excluding-VAT
-    row beats a smaller amount that merely shares the label.
+    Clause 1.1.1 excluding VAT in the document that states the rate
+    wins. The same clause retrieved under another doc id still beats a
+    partial Accepted Contract Amount that only shares the rate's chunk
+    (live M3: SAR 39,098,392.98 on the leading chunk, clause 1.1.1
+    later). A non-1.1.1 amount from another document is not the price.
+    The rate document's own clause 1.1.1 beats another document's
+    clause 1.1.1 (a purchase order of SAR 55,000,000.00 ahead of the
+    rate document).
     """
     grouped: dict[str, list[str]] = {}
     order: list[str] = []
@@ -614,27 +650,36 @@ def _contract_price_beside_the_rate(
             order.append(doc)
             grouped[doc] = []
         grouped[doc].append(seg)
-    best: tuple[int, float, str] | None = None
-    saw_rate_doc = False
+    rate_docs: set[str] = set()
     for doc in order:
         blob = "\n".join(grouped[doc])
         got = parse_delay_damages_rate_percent(blob, ask)
         if got is None or abs(float(got) - float(rate)) > 1e-9:
             continue
-        saw_rate_doc = True
+        rate_docs.add(doc)
+    # 100: clause 1.1.1 in the rate's document.
+    # 80: clause 1.1.1 retrieved under another doc id.
+    # 40: a non-1.1.1 excluding-VAT amount in the rate's document,
+    #     used only when no clause 1.1.1 was retrieved.
+    best: tuple[int, float, str] | None = None
+    for doc in order:
+        blob = "\n".join(grouped[doc])
         fig = _best_contract_price_figure(blob)
         if fig is None:
             continue
-        if best is None or fig[0] > best[0] or (
-            fig[0] == best[0] and fig[1] > best[1]
-        ):
-            best = fig
+        row_score, amount, currency = fig
+        is_111 = row_score >= 7 and _figure_is_clause_111(blob, amount)
+        if is_111 and doc in rate_docs:
+            score = 100
+        elif is_111:
+            score = 80
+        elif doc in rate_docs:
+            score = 40
+        else:
+            continue
+        if best is None or score > best[0]:
+            best = (score, amount, currency)
     if best is None:
-        # Unmarked text is one segment and was already searched. A marked
-        # bundle whose rate document has no Contract Price must not borrow
-        # another document's amount.
-        if saw_rate_doc:
-            return None
         return None
     return best[1], best[2]
 
@@ -677,14 +722,21 @@ def drop_whole_of_works_delay_claims(text: str) -> str:
     return " ".join(kept).strip()
 
 
+def _strip_excerpt_chrome(text: str) -> str:
+    """Drop ``[doc_id=…]`` markers and collapse the whitespace they leave."""
+    cleaned = re.sub(r"\[[^\]]*\]", " ", text or "")
+    return re.sub(r"\s+", " ", cleaned).strip(" ,;.")
+
+
 def _milestone_quote_without_whole_of_works(quote: str, percent: float) -> str:
     """The elected-rate fragment, without the neighbouring whole-of-Works label.
 
-    A 96-character row window reaches back into that label when the two
-    particulars are not separated. Quoting it would call a Milestone
-    answer the whole of the Works.
+    A row window reaches into that label when the two particulars are
+    not separated. Quoting it would call a Milestone answer the whole
+    of the Works, and the quote was then dropped entirely — the live
+    line stated the figure and credited no clause.
     """
-    raw = (quote or "").strip()
+    raw = _strip_excerpt_chrome(quote)
     if not raw or not _WHOLE_WORKS_RE.search(raw):
         return raw
     token = f"{float(percent):g}"
@@ -707,7 +759,16 @@ def _milestone_quote_without_whole_of_works(quote: str, percent: float) -> str:
             if idx >= 0:
                 end = min(end, idx)
         frag = raw[start:end].strip(" ,;.")
-        if frag and not _WHOLE_WORKS_RE.search(frag):
+        mile = re.search(r"(?i)per\s+milestone\b", frag)
+        pct_here = pct_re.search(frag)
+        if mile and pct_here and mile.end() > pct_here.start():
+            frag = frag[:mile.end()]
+        whole = _WHOLE_WORKS_RE.search(frag)
+        pct_here = pct_re.search(frag)
+        if whole and pct_here and whole.start() > pct_here.start():
+            frag = frag[:whole.start()]
+        frag = re.sub(r"\s+", " ", frag).strip(" ,;.")
+        if frag and not _WHOLE_WORKS_RE.search(frag) and pct_re.search(frag):
             return frag
     return ""
 
@@ -725,6 +786,7 @@ def format_delay_damages_daily_line(composed: dict) -> str:
     # the ask before this runs, so a section or Milestone ask does not
     # arrive here with basis missing. The missing-basis line below is
     # the whole-of-Works sentence.
+    source = (composed.get("source_label") or "").strip()
     if basis in ("milestone", "section"):
         line = (
             f"Delay damages per Milestone are "
@@ -733,13 +795,20 @@ def format_delay_damages_daily_line(composed: dict) -> str:
         )
         safe_quote = _milestone_quote_without_whole_of_works(quote, pct)
         if safe_quote:
+            if source and not re.search(r"(?i)\bcontract\s+data\b", safe_quote):
+                safe_quote = f"{source} {safe_quote}"
             line = f"{line} The contract states: {safe_quote}"
+        elif source:
+            line = f"{line} Source: {source}."
         return line
-    return (
+    line = (
         f"Delay damages for the whole of the Works are "
         f"{cur} {daily:,.2f} per calendar day "
         f"({pct:g}% of Accepted Contract Amount {cur} {base:,.2f})."
     )
+    if source:
+        line = f"{line} Source: {source}."
+    return line
 
 
 
@@ -795,17 +864,15 @@ def rate_and_base_from_one_document(
         contracts.update(m.group(1).upper() for m in _CONTRACT_ID_RE.finditer(seg))
     if len(contracts) > 1:
         return None
-    # The 8.8.1 rate (a Milestone question, or one that says Section) is
-    # "of the Contract Price". The first labelled amount in the bundle
-    # can be another document's figure (live M3: SAR 144,042,486.50).
-    # Whole-of-Works keeps first-match
-    # excl-VAT, which the E1 fixtures are tuned to.
-    if ask_is_about_a_milestone_or_section(ask):
-        base = _contract_price_beside_the_rate(text, rate, ask)
-    else:
-        # parse_accepted_contract_amount already requires a labelled Accepted
-        # Contract Amount and applies the excl-VAT / toy-example preferences, so
-        # the whole bundle is the right input once the contract check has passed.
+    # Both asks take the rate document's clause 1.1.1 when the bundle
+    # has it. Whole-of-Works used to keep the first excluding-VAT
+    # figure, which elected a purchase order's clause 1.1.1 ahead of
+    # the rate document. A Milestone ask does not fall back to that
+    # first match: another document's non-1.1.1 amount is the #701 leak.
+    # Whole-of-Works still falls back when no excluding-VAT price
+    # scored, so an unlabeled Accepted Contract Amount keeps composing.
+    base = _contract_price_beside_the_rate(text, rate, ask)
+    if base is None and not ask_is_about_a_milestone_or_section(ask):
         base = parse_accepted_contract_amount(text)
     if base is None:
         return None
@@ -823,6 +890,9 @@ def compose_delay_damages_daily_from_excerpts(
     """
     if not compose_delay_damages_daily_enabled():
         return None
+    # The cap is a percentage of the Accepted Contract Amount, not SAR/day.
+    if query_names_delay_damages_cap(query):
+        return None
     if not query_asks_delay_damages_daily_amount(query):
         return None
     found = rate_and_base_from_one_document(excerpts, query)
@@ -839,6 +909,8 @@ def compose_delay_damages_daily_from_excerpts(
         return None
     basis = delay_damages_daily_basis(query)
     out["basis"] = basis
+    if re.search(r"(?i)\bcontract\s+data\b", excerpts or ""):
+        out["source_label"] = "Contract Data"
     if basis != "whole":
         out["clause_quote"] = elected_delay_damages_clause(excerpts, query)
     return out
@@ -877,6 +949,18 @@ _PCT_PARTICULAR_SPECS = (
         "Limitation of Liability",
         re.compile(r"(?i)limitation\s+of\s+liability|limit(?:ation)?\s+of\s+liabilit"),
     ),
+    (
+        "retention money",
+        "Retention Money",
+        re.compile(r"(?i)retention\s+money|percentage\s+of\s+retention"),
+    ),
+    (
+        "maximum amount of delay damages",
+        "Maximum Amount of Delay Damages",
+        re.compile(
+            r"(?i)maximum\s+amount\s+of\s+(?:delay|liquidated)\s+damages"
+        ),
+    ),
 )
 _PCT_BOND_RE = re.compile(r"(?i)\bbond\b|\bguarantee\b|\bsecurity\b")
 _PCT_VALUE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
@@ -887,7 +971,10 @@ _COMPETING_PARTICULAR_RES = (
     re.compile(r"(?i)advance\s+payment"),
     re.compile(r"(?i)limitation\s+of\s+liability"),
     re.compile(r"(?i)(?:delay|liquidated)\s+damages"),
-    re.compile(r"(?i)percentage\s+of\s+retention"),
+    re.compile(r"(?i)percentage\s+of\s+retention|retention\s+money"),
+    re.compile(
+        r"(?i)maximum\s+amount\s+of\s+(?:delay|liquidated)\s+damages"
+    ),
 )
 _PER_DAY_AFTER_PCT_RE = re.compile(
     r"(?i)per\s+(?:calendar\s+|working\s+)?day\b",
@@ -940,16 +1027,36 @@ def _asked_percentage_spec(query: str):
     return None
 
 
-def query_asks_named_percentage_particular(query: str) -> bool:
-    """True for Advance Payment / Limitation of Liability lookups.
+def query_names_delay_damages_cap(query: str) -> bool:
+    """True for the Maximum Amount of Delay Damages cap, not SAR/day.
 
-    Delay damages stay on their own composers. Definition questions
-    ("what does Advance Payment mean") are not this class.
+    The cap is a percentage of the Accepted Contract Amount. A per-day
+    rate and a "N days late" sum stay on the delay-damages composers.
+    """
+    q = query or ""
+    if not re.search(
+        r"(?i)maximum\s+amount\s+of\s+(?:delay|liquidated)\s+damages", q,
+    ):
+        return False
+    if query_applies_a_delay_duration(q):
+        return False
+    if re.search(r"(?i)\bper\s+(?:calendar\s+|working\s+)?day\b", q):
+        return False
+    return True
+
+
+def query_asks_named_percentage_particular(query: str) -> bool:
+    """True for a named percentage of the Accepted Contract Amount.
+
+    Advance Payment, Limitation of Liability, Retention Money, and the
+    Maximum Amount of Delay Damages cap. A daily delay-damages rate stays
+    on its own composer. Definition questions ("what does Advance Payment
+    mean") are not this class.
     """
     q = query or ""
     if not q:
         return False
-    if _DD_ASK_RE.search(q):
+    if _DD_ASK_RE.search(q) and not query_names_delay_damages_cap(q):
         return False
     if re.search(r"(?i)\bwhat\s+does\b.{0,40}\bmean\b", q):
         return False
@@ -1164,6 +1271,75 @@ def answer_states_money_amount(text: str, amount: float) -> bool:
         or formatted.replace(",", "") in blob
         or f"{amount:,.1f}" in text
     )
+
+
+# A percentage of the Accepted Contract Amount is one figure, on the
+# excluding-VAT base. "If calculated on the VAT-inclusive figure…" is a
+# second amount the Contract Data does not authorise.
+_VAT_ALT_RE = re.compile(
+    r"(?i)vat[-\s]?inclusive|\bincluding\s+vat\b|\bincl\.?\s*vat\b|"
+    r"which\s+base\s+applies|"
+    r"letter\s+of\s+award|"
+    r"(?:does|do)\s+not\s+state\s+which\s+base"
+)
+_VAT_ALT_SPLIT_RE = re.compile(r"(?<=[.!;])\s+|\n+|\s+[—–]\s+")
+
+
+def vat_inclusive_alternative_amounts(
+    excerpts: str, percent: float,
+) -> list[float]:
+    """Including-VAT ACA, and that base times ``percent``.
+
+    The excluding-VAT row is not an alternative. Empty when the excerpts
+    do not state an including-VAT Accepted Contract Amount.
+    """
+    out: list[float] = []
+    seen: set[float] = set()
+    for amt, _cur, kind, toy in _iter_aca_candidates(excerpts or ""):
+        if toy or kind != "incl":
+            continue
+        base = round(float(amt), 2)
+        product = round(base * (float(percent) / 100.0), 2)
+        for value in (base, product):
+            if value in seen:
+                continue
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def strip_vat_inclusive_percentage_alternative(
+    text: str,
+    *,
+    keep_amount: float,
+    forbidden_amounts: list[float],
+) -> str:
+    """Drop a VAT-inclusive alternative from a percentage-of-ACA answer.
+
+    Keeps a clause that states ``keep_amount`` and does not also state a
+    forbidden figure. A hedge that questions which base applies is not
+    kept unless that same clause states the composed amount and no
+    forbidden figure.
+    """
+    raw = text or ""
+    if not raw:
+        return raw
+    parts = [
+        p.strip() for p in _VAT_ALT_SPLIT_RE.split(raw) if p and p.strip()
+    ]
+    kept: list[str] = []
+    for part in parts:
+        if any(
+            answer_states_money_amount(part, amt) for amt in forbidden_amounts
+        ):
+            continue
+        if (
+            _VAT_ALT_RE.search(part)
+            and not answer_states_money_amount(part, keep_amount)
+        ):
+            continue
+        kept.append(part)
+    return " ".join(kept).strip()
 
 
 # ── Delay damages over a period (Set3 E3 / E2 class) ──────────────────────

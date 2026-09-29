@@ -1,0 +1,86 @@
+{
+ "_about": "CYCLE2 S1 soil-contact cover retrieval fixture. Every chunk body is synthetic (FIXTURE-e-20260928), invented project Example Harbour Works; no text copied from a client document. Shape kept from the live trace (ids only): a specification clause that defers the cover to the drawings and states no cover millimetre; three footing-cover drawing chunks (100 mm bottom of footings) that share the question's words (concrete cover, cast, contact with soil); a high-cosine 50 mm 'not in contact' drawing note; and the two chunks that carry the 75 mm soil-contact figure in the document's OWN words (cover to reinforcement, in contact with soil) - a general note in a drawings volume and a sheet whose file name does not say drawing. The test adds synthetic filler chunks so the two 75 mm chunks sit outside both 50-deep hybrid legs, as on the live corpus.",
+ "docs": [
+  {
+   "doc_id": "FIXTURE-e-20260928-spec-vol2-part4",
+   "name": "FIXTURE-e-20260928 Specification Volume 2 part 4.pdf",
+   "chunks": [
+    {
+     "text": "3.1.25.8 Fixing of bars. Binding wire shall be 1.4 mm in diameter and the ends turned inward. Spacer blocks fixed to the reinforcement shall give the cover specified in this volume, on the Drawings or as the engineer directs. This clause states no cover millimetre."
+    }
+   ]
+  },
+  {
+   "doc_id": "FIXTURE-e-20260928-dwg-footing-a",
+   "name": "FIXTURE-e-20260928 Drawings Volume 3 part 6 footing sheet.pdf",
+   "chunks": [
+    {
+     "text": "FOOTING NOTES. MINIMUM CONCRETE COVER TO REINFORCEMENT FOR CONCRETE CAST IN CONTACT WITH SOIL: BOTTOM FACE OF FOOTINGS : 100mm. TOP OF FOOTINGS NOT IN CONTACT WITH SOIL : 50mm."
+    }
+   ]
+  },
+  {
+   "doc_id": "FIXTURE-e-20260928-dwg-footing-b",
+   "name": "FIXTURE-e-20260928 DWG-ST-200-0000007-04 footing details.pdf",
+   "chunks": [
+    {
+     "text": "GENERAL. THE MINIMUM CONCRETE COVER SHALL BE: FOOTINGS CAST IN CONTACT WITH SOIL, BOTTOM FACE : 100mm. COLUMNS NOT IN CONTACT WITH SOIL : 50mm. REFER TO THE SPECIFICATION FOR MATERIALS."
+    }
+   ]
+  },
+  {
+   "doc_id": "FIXTURE-e-20260928-dwg-footing-c",
+   "name": "FIXTURE-e-20260928 Drawings Volume 3 part 7 foundation layout.pdf",
+   "chunks": [
+    {
+     "text": "FOUNDATION LAYOUT NOTES. CONCRETE COVER: BOTTOM OF FOOTINGS CAST IN CONTACT WITH SOIL : 100mm. SLABS CAST NOT IN CONTACT WITH SOIL : 50mm. MINIMUM CONCRETE GRADE AS SPECIFIED."
+    }
+   ]
+  },
+  {
+   "doc_id": "FIXTURE-e-20260928-dwg-50mm",
+   "name": "FIXTURE-e-20260928 Drawings Volume 3 part 6 slab sheet.pdf",
+   "chunks": [
+    {
+     "text": "SLAB NOTES. MINIMUM CONCRETE COVER FOR CONCRETE CAST NOT IN CONTACT WITH SOIL : 50mm TO ALL FACES."
+    }
+   ]
+  },
+  {
+   "doc_id": "FIXTURE-e-20260928-dwg-note-5-5",
+   "name": "FIXTURE-e-20260928 Drawings Volume 3 part 6 general notes.pdf",
+   "chunks": [
+    {
+     "text": "5.4 ALL LAPS TO BE STAGGERED. 5.5 COVER TO REINFORCEMENT: STRUCTURE IN CONTACT WITH SOIL INCLUDING FOOTINGS 75mm, ELSEWHERE 50mm UNLESS NOTED. 5.6 BAR MARKS AS SCHEDULED."
+    }
+   ]
+  },
+  {
+   "doc_id": "FIXTURE-e-20260928-sheet-2000462",
+   "name": "FIXTURE-e-20260928 sheet 2000462 retaining structure.pdf",
+   "chunks": [
+    {
+     "text": "COVER TO REINFORCEMENT (MINIMUM): SURFACES IN CONTACT WITH SOIL 75mm. OTHER SURFACES 50mm. BACKFILL IN 200mm LAYERS."
+    }
+   ]
+  },
+  {
+   "doc_id": "FIXTURE-e-20260928-dwg-blinding",
+   "name": "FIXTURE-e-20260928 Drawings Volume 3 part 6 blinding sheet.pdf",
+   "chunks": [
+    {
+     "text": "BLINDING NOTES. NOMINAL COVER WHERE FOUNDATIONS ARE CAST AGAINST BLINDING : 50mm. BLINDING 75mm THICK GRADE C15."
+    }
+   ]
+  },
+  {
+   "doc_id": "FIXTURE-e-20260928-spec-earthworks",
+   "name": "FIXTURE-e-20260928 Specification Earthworks.pdf",
+   "chunks": [
+    {
+     "text": "Example Harbour Works earthworks. Road pavement sub-grade shall be compacted to 95% of maximum dry density and the minimum soaked CBR is 25."
+    }
+   ]
+  }
+ ]
+}

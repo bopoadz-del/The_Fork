@@ -960,8 +960,9 @@ def test_index_project_writes_file_and_returns_summary(fresh_db, tmp_path, monke
 def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
     """A genuinely unsupported document lands in 'skipped', not 'documents'.
 
-    Stream F: images are now OCR-able and SUPPORTED, so this uses .dwg — a
-    type that remains unsupported.
+    Stream F: images are now OCR-able and SUPPORTED. ``.ttf`` stays a
+    terminal unsupported type. ``.dwg`` is covered separately as a
+    recoverable skip.
     """
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
@@ -972,9 +973,9 @@ def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
     proj = projects_mod.create_project("Beta Project")
     pid = proj["id"]
 
-    img_path = str(tmp_path / "model.dwg")
-    file_crypto.write_document(img_path, b"AutoCAD DWG")
-    projects_mod.add_document(pid, "model.dwg", file_path=img_path, size=6)
+    img_path = str(tmp_path / "font.ttf")
+    file_crypto.write_document(img_path, b"not a font")
+    projects_mod.add_document(pid, "font.ttf", file_path=img_path, size=6)
 
     result = doc_index.index_project(pid)
 
@@ -1152,7 +1153,7 @@ def test_index_document_boq_total_hedged_when_pages_skipped(fresh_db, tmp_path, 
 
     proj = projects_mod.create_project("Partial BOQ")
     pid = proj["id"]
-    csv = b"Description,Amount\nExcavation,5000\n"
+    csv = b"%PDF-1.4\nDescription,Amount\nExcavation,5000\n"
     doc_path = _write_txt_doc(tmp_path, "scanned BOQ.pdf", csv)  # .pdf -> boq path
     doc = projects_mod.add_document(pid, "scanned BOQ.pdf", file_path=doc_path, size=len(csv))
 
@@ -1181,7 +1182,9 @@ def test_boq_named_pdf_without_computable_total_emits_guard(fresh_db, tmp_path, 
 
     proj = projects_mod.create_project("Scanned BOQ")
     pid = proj["id"]
-    doc_path = _write_txt_doc(tmp_path, "Demolition BOQ.pdf", b"scanned image content")
+    doc_path = _write_txt_doc(
+        tmp_path, "Demolition BOQ.pdf", b"%PDF-1.4\nscanned image content",
+    )
     doc = projects_mod.add_document(pid, "Demolition BOQ.pdf", file_path=doc_path, size=21)
 
     doc_index.index_document(pid, doc["id"])

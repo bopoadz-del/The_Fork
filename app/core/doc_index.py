@@ -512,6 +512,125 @@ def _is_memory_exhaustion(exc: BaseException) -> bool:
     return False
 
 
+_PDF_MAGIC = b"%PDF-"
+_ZIP_LOCAL_MAGIC = b"PK\x03\x04"
+_OFFICE_PACKAGE_EXTS = {".docx", ".xlsx", ".pptx"}
+_QUARANTINE_HEAD = 1024
+
+
+def _sniff_name(file_path: str, filename: str) -> str:
+    return filename or os.path.basename(file_path or "")
+
+
+def _size_bucket(size: int) -> str:
+    if size <= 0:
+        return "0 B"
+    if size <= 1024:
+        return "1 B-1 KB"
+    if size <= 100 * 1024:
+        return "1-100 KB"
+    if size <= 1024 * 1024:
+        return "100 KB-1 MB"
+    return ">1 MB"
+
+
+def _sniffed_kind(size: int, head: bytes) -> str:
+    if size <= 0 or not head:
+        return "empty"
+    sample = head.lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    if sample.startswith(b"<!doctype") or sample.startswith(b"<html"):
+        return "html"
+    return "other"
+
+
+def _file_head(file_path: str, n: int = _QUARANTINE_HEAD) -> tuple[int, bytes] | None:
+    """Size plus the first ``n`` plaintext bytes. None when the path cannot be read."""
+    try:
+        size = os.path.getsize(file_path)
+    except OSError as exc:
+        logger.warning("quarantine head size unreadable: %s", type(exc).__name__)
+        return None
+    if size <= 0:
+        return 0, b""
+    from app.core import file_crypto
+
+    try:
+        if file_crypto.encryption_enabled():
+            with file_crypto.open_plaintext(file_path) as readable:
+                with open(readable, "rb") as fh:
+                    return size, fh.read(n)
+        with open(file_path, "rb") as fh:
+            return size, fh.read(n)
+    except OSError as exc:
+        logger.warning("quarantine head read failed: %s", type(exc).__name__)
+        return None
+
+
+def _quarantine_meta(file_path: str, filename: str) -> dict[str, Any] | None:
+    """Metadata when this file must not be handed to a parser. None to proceed.
+
+    PDFs are quarantined when they are empty or the first 1024 bytes do not
+    contain ``%PDF-``. Office packages are quarantined when they do not open
+    with the zip local-file magic. Real PDFs, including ones with junk before
+    ``%PDF-`` inside that window, and real zip-based Office files, return None.
+    """
+    ext = os.path.splitext(_sniff_name(file_path, filename).lower())[1]
+    if ext == ".pdf":
+        reason = "QUARANTINED_NOT_PDF"
+    elif ext in _OFFICE_PACKAGE_EXTS:
+        reason = "QUARANTINED_NOT_OFFICE"
+    else:
+        return None
+    probed = _file_head(file_path)
+    if probed is None:
+        return None
+    size, head = probed
+    if ext == ".pdf":
+        blocked = size <= 0 or _PDF_MAGIC not in head
+    else:
+        blocked = size <= 0 or not head.startswith(_ZIP_LOCAL_MAGIC)
+    if not blocked:
+        return None
+    return {
+        "quarantine_reason": reason,
+        "size_bucket": _size_bucket(size),
+        "sniffed_kind": _sniffed_kind(size, head),
+    }
+
+
+def _quarantine_index_result(
+    project_id: str,
+    document_id: str,
+    filename: str,
+    meta: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Log one quarantine line and return the index error, or None to continue."""
+    reason = (meta or {}).get("quarantine_reason")
+    if not reason:
+        return None
+    bucket = (meta or {}).get("size_bucket") or ""
+    kind = (meta or {}).get("sniffed_kind") or ""
+    logging.getLogger(__name__).warning(
+        "%s doc_id=%s size_bucket=%s sniffed=%s",
+        reason, document_id, bucket, kind,
+    )
+    _stamp_index_ledger(
+        document_id, filename, 0,
+        extract_failed=True,
+        advance_extractor_version=False,
+    )
+    return {
+        "status": "error",
+        "error": reason,
+        "project_id": project_id,
+        "document_id": document_id,
+        "indexed": 0,
+        "total_chunks": 0,
+        "size_bucket": bucket,
+        "sniffed_kind": kind,
+    }
+
+
 def _extract_pdf(
     file_path: str,
     filename: str = "",
@@ -540,6 +659,9 @@ def _extract_pdf(
     plaintext file is under the whole-PDF ceiling, and uses the force page
     budget so a 370-page scanned BOQ is not capped at 160.
     """
+    blocked = _quarantine_meta(file_path, filename)
+    if blocked:
+        return "", blocked
     import fitz
 
     parts: list[str] = []
@@ -761,6 +883,10 @@ def _extract_pdf_batched(
     28 MB scan that had already OCR'd its first pages).
     """
     from app.core.extract_isolated import run_isolated
+
+    blocked = _quarantine_meta(file_path, filename)
+    if blocked:
+        return "", blocked
 
     size_mb = _document_size_mb(file_path)
     max_mb = pdf_max_size_mb()
@@ -1542,6 +1668,10 @@ def _extract_with_meta_impl(
         # ── DOC / DOCX ───────────────────────────────────────────────────────
         if ext == ".doc":
             return _extract_doc(file_path), {}
+        if ext in _OFFICE_PACKAGE_EXTS:
+            blocked = _quarantine_meta(file_path, filename)
+            if blocked:
+                return "", blocked
         if ext == ".docx":
             import docx
             with file_crypto.open_plaintext(file_path) as readable_path:
@@ -2182,6 +2312,19 @@ def _ext_of(filename: str) -> str:
     return ext
 
 
+def _unsupported_skip_reason(ext: str) -> str:
+    """Skip-list reason for an extension the text indexer does not parse.
+
+    ``.dwg`` / ``.dxf`` stay open work (``ingest_status`` recoverable). They
+    are not a zero-chunk failure and this path does not parse them.
+    """
+    from app.core.ingest_status import RECOVERABLE_EXTS
+
+    if ext in RECOVERABLE_EXTS:
+        return "skipped_recoverable"
+    return "unsupported_type"
+
+
 def index_project(project_id: str) -> dict[str, Any]:
     """Build (or rebuild) the full text index for ``project_id``.
 
@@ -2207,7 +2350,7 @@ def index_project(project_id: str) -> dict[str, Any]:
             skipped.append({
                 "document_id": doc["id"],
                 "filename": filename,
-                "reason": "unsupported_type",
+                "reason": _unsupported_skip_reason(ext),
                 "fingerprint": fingerprint,
             })
             continue
@@ -2601,33 +2744,38 @@ def _drawing_chunks_for_document(
         out: list[str] = []
         source = ""
         any_text = False
-        with fitz.open(file_path) as doc:
-            for page_num, page in enumerate(doc):
-                if page_num == 0:
-                    # The title block is on sheet 1 and names the drawing, so
-                    # every chunk below can be attributed to it.
-                    raw = page.get_text() or ""
-                    any_text = bool(raw.strip())
-                    title_block = container._extract_title_block({"raw_text": raw})
-                    source = title_block.get("drawing_number") or ""
-                    if title_block.get("fields_found"):
-                        named = ", ".join(
-                            f"{k.replace('_', ' ')}: {v}"
-                            for k, v in title_block.items()
-                            if k != "fields_found" and v
+        # The extractor already decrypted this file to a temp and deleted it.
+        # The stored path is Fernet ciphertext when DATA_ENCRYPTION_KEY is
+        # set, so opening it directly is FileDataError ("no objects found")
+        # even though the Drive PDF indexed. Re-open the plaintext bytes.
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            with fitz.open(readable_path) as doc:
+                for page_num, page in enumerate(doc):
+                    if page_num == 0:
+                        # The title block is on sheet 1 and names the drawing, so
+                        # every chunk below can be attributed to it.
+                        raw = page.get_text() or ""
+                        any_text = bool(raw.strip())
+                        title_block = container._extract_title_block({"raw_text": raw})
+                        source = title_block.get("drawing_number") or ""
+                        if title_block.get("fields_found"):
+                            named = ", ".join(
+                                f"{k.replace('_', ' ')}: {v}"
+                                for k, v in title_block.items()
+                                if k != "fields_found" and v
+                            )
+                            out.append(
+                                f"DRAWING TITLE BLOCK — {filename}. "
+                                f"Sheet identity: {named}."
+                            )
+                    elif not any_text and (page.get_text() or "").strip():
+                        any_text = True
+                    out.extend(
+                        _drawing_table_chunks(
+                            container._extract_tables_advanced(page),
+                            source or os.path.splitext(filename or "")[0],
                         )
-                        out.append(
-                            f"DRAWING TITLE BLOCK — {filename}. "
-                            f"Sheet identity: {named}."
-                        )
-                elif not any_text and (page.get_text() or "").strip():
-                    any_text = True
-                out.extend(
-                    _drawing_table_chunks(
-                        container._extract_tables_advanced(page),
-                        source or os.path.splitext(filename or "")[0],
                     )
-                )
         if out:
             return out
         # Named like a drawing, opened fine, produced nothing readable. If
@@ -2863,7 +3011,7 @@ def index_document(
         skipped_entry = {
             "document_id": document_id,
             "filename": filename,
-            "reason": "unsupported_type",
+            "reason": _unsupported_skip_reason(ext),
             "fingerprint": fingerprint,
         }
     else:
@@ -2871,6 +3019,11 @@ def index_document(
         text, meta = _extract_with_meta(
             file_path, filename, force_ocr=force_ocr
         )
+        quarantined = _quarantine_index_result(
+            project_id, document_id, filename, meta,
+        )
+        if quarantined is not None:
+            return quarantined
         chunks = chunk_extracted_document(
             text,
             chunker=_chunker_for_document(filename, chunker),
@@ -3057,13 +3210,19 @@ def index_document(
         _stamp_index_ledger(
             document_id, filename, 0, stamp_as_indexed=stamp_as_indexed,
         )
-        return {
+        skipped = {
             "status": "ok",
             "project_id": project_id,
             "indexed": 0,
             "skipped_unsupported": 1,
             "total_chunks": 0,
         }
+        if skipped_entry and skipped_entry.get("reason") == "skipped_recoverable":
+            # Visible to the Drive ingest tally so this is not booked as
+            # zero_chunk. The ledger row stays UNSUPPORTED_TYPE / recoverable
+            # and therefore open for a later retry. No DWG parse happens here.
+            skipped["skip_reason"] = "skipped_recoverable"
+        return skipped
     # Embed miss never advances. Thin TEXT_SPARSE advances only when the
     # prior stamp is the reopen sentinel (terminal-close). The ledger
     # helper enforces that even if this caller veto is too loose.
