@@ -32,7 +32,8 @@ import logging
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,88 @@ def is_downloadable(file_meta: Dict[str, Any]) -> bool:
 
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 
+# Basename classes dropped before a file is handed to an ingest assignment.
+# Logged as counts and extensions only — never the basename itself.
+_OS_METADATA_NAMES = frozenset({
+    "desktop.ini",
+    "thumbs.db",
+    ".ds_store",
+    "ehthumbs.db",
+})
+_WHATSAPP_MEDIA_RE = re.compile(
+    r"^(?:"
+    r"img-\d{8}-wa\d{4}\.(?:jpe?g)"
+    r"|vid-\d{8}-wa\d{4}\.mp4"
+    r"|(?:aud|ptt)-\d{8}-wa\d{4}\.(?:opus|m4a|aac)"
+    r")$",
+    re.IGNORECASE,
+)
+# Non-document support files. Denied by extension at the walk so they are
+# never assigned. Document types (.pdf .docx .xlsx .dwg .jpg .vsdx .rtf
+# .xls .zip and the rest of the extractor set) are not in these sets.
+_FONT_EXTS = frozenset({".ttf", ".otf", ".shx", ".fon"})
+_CAD_SUPPORT_EXTS = frozenset({
+    ".ctb", ".stb", ".pc3", ".pmp", ".bak", ".bax", ".dwl", ".dwl2",
+})
+_GIS_EXTS = frozenset({".lyr", ".lyrx", ".mxd", ".aprx", ".atbx"})
+_SCRATCH_EXTS = frozenset({".ini", ".log", ".tmp"})
+_EXT_JUNK = (
+    (_FONT_EXTS, "font"),
+    (_CAD_SUPPORT_EXTS, "cad_support"),
+    (_GIS_EXTS, "gis"),
+    (_SCRATCH_EXTS, "scratch"),
+)
+_JUNK_CLASSES = (
+    "os_metadata", "office_lock", "whatsapp",
+    "font", "cad_support", "gis", "scratch",
+)
+
+
+def walk_junk_class(filename: str) -> Optional[str]:
+    """Return a junk class for ``filename``, or None when it should be walked.
+
+    Folders are not classified here; callers skip this for folder mime types.
+    Matching is case-insensitive and uses the basename only.
+    """
+    base = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    folded = base.casefold()
+    if folded in _OS_METADATA_NAMES:
+        return "os_metadata"
+    if folded.startswith("~$") or folded.startswith(".~lock."):
+        return "office_lock"
+    if _WHATSAPP_MEDIA_RE.match(base):
+        return "whatsapp"
+    ext = Path(base).suffix.casefold()
+    for exts, cls in _EXT_JUNK:
+        if ext in exts:
+            return cls
+    return None
+
+
+def _junk_extension(filename: str) -> str:
+    """Extension token for the walk summary. Never the basename."""
+    base = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    trimmed = base[:-1] if base.endswith("#") else base
+    suffix = Path(trimmed).suffix.casefold()
+    if suffix:
+        return suffix
+    if trimmed.startswith("."):
+        return trimmed.casefold()
+    return "none"
+
+
+def _log_walk_junk(
+    counts: Dict[str, int],
+    extensions: Dict[str, Set[str]],
+) -> None:
+    if not any(counts.values()):
+        return
+    parts: List[str] = []
+    for cls in _JUNK_CLASSES:
+        ext = ",".join(sorted(extensions[cls])) if extensions[cls] else "-"
+        parts.append(f"{cls}={counts[cls]} extensions={ext}")
+    logger.info("WALK_JUNK %s", " ".join(parts))
+
 
 def walk_folder(
     root_folder_id: str,
@@ -291,6 +374,8 @@ def walk_folder(
     """
     files: List[Dict[str, Any]] = []
     errors: List[str] = []
+    junk_counts = {cls: 0 for cls in _JUNK_CLASSES}
+    junk_exts: Dict[str, Set[str]] = {cls: set() for cls in _JUNK_CLASSES}
     visited: set = set()  # folder_ids we've already entered (cycle guard)
     # path_prefix → count of subfolders skipped at the depth cap.
     # Aggregated so we emit ONE error per truncated branch with a tally.
@@ -319,6 +404,11 @@ def walk_folder(
             if mime == _FOLDER_MIME:
                 _walk(entry.get("id") or "", entry_path, depth + 1)
             else:
+                junk = walk_junk_class(name)
+                if junk:
+                    junk_counts[junk] += 1
+                    junk_exts[junk].add(_junk_extension(name))
+                    continue
                 # Annotate with the path so downstream code can attribute
                 # the file to its location in the SOP tree.
                 annotated = dict(entry)
@@ -337,6 +427,7 @@ def walk_folder(
             f"({suffix})"
         )
 
+    _log_walk_junk(junk_counts, junk_exts)
     return files, errors
 
 

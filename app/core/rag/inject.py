@@ -937,6 +937,33 @@ def _emit_retrieval_trace(
         _LOG.warning("retrieval trace line failed", exc_info=True)
 
 
+# CYCLE2 S1: a specification-scoped cover ask needs the specification's
+# own clause (it defers the cover to the drawings) AND the drawing notes it
+# points to, one per condition. Live on 0b1d13a three of the five slots went
+# to footing-cover chunks repeating the 100 mm figure, so the 75 mm
+# soil-contact note had no slot even once pooled. Two extra slots for this
+# ask only; every other question keeps RAG_K. ``0`` restores 0b1d13a.
+_SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT = 2
+
+
+def rag_retrieval_k(user_message: str, requested_k: int) -> int:
+    """How many chunks pre-injection retrieval asks for on this turn."""
+    try:
+        extra = int(os.getenv(
+            "RAG_SPEC_DEFERRED_COVER_EXTRA_K",
+            str(_SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT),
+        ))
+    except ValueError:
+        extra = _SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT
+    if extra <= 0:
+        return requested_k
+    from app.core.rag.retriever import query_asks_spec_deferred_cover
+
+    if query_asks_spec_deferred_cover(user_message or ""):
+        return requested_k + extra
+    return requested_k
+
+
 def rag_inject(
     user_message: str,
     project_id: Optional[str],
@@ -976,7 +1003,10 @@ def rag_inject(
     requested_k = int(os.getenv("RAG_K", "5"))
 
     budget_state = _budget.snapshot(day=today)
-    effective_k = 2 if budget_state["degraded"] else requested_k
+    effective_k = (
+        2 if budget_state["degraded"]
+        else rag_retrieval_k(user_message, requested_k)
+    )
 
     # A short follow-up ("layers thickness ?") cannot retrieve on its own —
     # see build_retrieval_query. Flag-gated; returns user_message untouched

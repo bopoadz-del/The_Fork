@@ -136,7 +136,10 @@ def test_calculate_evm_flatten_does_not_pass_envelope_as_kwargs():
     bound = bind_calculation_params(CALCULATORS["calculate_evm"], leaked)
     for key in ("text", "formula", "input", "project_id", "noise"):
         assert key not in bound, bound
-    _assert_evm(_ok("calculate_evm", leaked))
+    rejected = _err("calculate_evm", leaked)
+    assert "noise" in rejected["error"]
+    clean = {key: val for key, val in leaked.items() if key != "input"}
+    _assert_evm(_ok("calculate_evm", clean))
 
 
 # ── delay_damages_daily (unbound zeros were live wrong_number) ─────────────

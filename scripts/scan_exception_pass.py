@@ -63,23 +63,29 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # Re-indexed 2026-09-27: dewatering drawdown guard in
     # _message_wants_cash_flow added 5 lines. Same handlers below it.
     "app/agents/runtime.py:649": "baseline 2026-09-10",
-    "app/agents/runtime.py:973": "baseline 2026-09-10",
+    "app/agents/runtime.py:967": "baseline 2026-09-10",
     # Re-indexed 2026-09-27: stated look-ahead date passed in predispatch.
     # Same handlers — only the line numbers moved. No new silent returns.
     # Shifted again the same day: dewatering drawdown guard in
     # _message_wants_cash_flow added 5 lines below these handlers.
+    # Re-indexed 2026-09-28: duplicate look-ahead phrase tuple removed
+    # from runtime (the router owns the detector). Same handlers, -6 lines.
+    "app/agents/runtime.py:2213": "baseline 2026-09-10",
     "app/agents/runtime.py:2219": "baseline 2026-09-10",
-    "app/agents/runtime.py:2225": "baseline 2026-09-10",
+    "app/agents/runtime.py:2282": "baseline 2026-09-10",
     "app/agents/runtime.py:2288": "baseline 2026-09-10",
-    "app/agents/runtime.py:2294": "baseline 2026-09-10",
-    "app/agents/runtime.py:2978": "baseline 2026-09-10",
-    "app/agents/runtime.py:4002": "baseline 2026-09-10",
-    "app/agents/runtime.py:5358": "baseline 2026-09-10",
+    "app/agents/runtime.py:2972": "baseline 2026-09-10",
+    "app/agents/runtime.py:3996": "baseline 2026-09-10",
+    "app/agents/runtime.py:5352": "baseline 2026-09-10",
     # Re-indexed 2026-09-25: standards-note relevance helper inserted above
     # _aca_claim_amount. Same ValueError return — only the line moved.
     # Re-indexed 2026-09-27 with the look-ahead predispatch date pass,
     # then +5 for the drawdown guard.
-    "app/agents/runtime.py:5936": "baseline 2026-09-10",
+    # Re-indexed 2026-09-28 on the cycle-2 train: the default-rate
+    # cost-calculator graft (#737) sits above _aca_claim_amount, and the
+    # duplicate look-ahead phrase tuple removal (#731) shifts the same
+    # handler by -6. Same ValueError return — only the line moved.
+    "app/agents/runtime.py:6204": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
@@ -113,14 +119,20 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/core/doc_index.py:357": "baseline 2026-09-10",
     "app/core/doc_index.py:448": "baseline 2026-09-10",
     "app/core/doc_index.py:457": "baseline 2026-09-10",
-    "app/core/doc_index.py:938": "baseline 2026-09-10",
-    "app/core/doc_index.py:952": "baseline 2026-09-10",
-    "app/core/doc_index.py:974": "baseline 2026-09-10",
-    "app/core/doc_index.py:1063": "baseline 2026-09-10",
-    "app/core/doc_index.py:1106": "baseline 2026-09-10",
-    "app/core/doc_index.py:1114": "baseline 2026-09-10",
-    "app/core/doc_index.py:1212": "baseline 2026-09-10",
-    "app/core/doc_index.py:2670": "baseline 2026-09-10",
+    # Re-indexed 2026-09-28: quarantine head probe above _extract_pdf
+    # and the Office gate shifted these same handlers. No new silent returns.
+    "app/core/doc_index.py:1064": "baseline 2026-09-10",
+    "app/core/doc_index.py:1078": "baseline 2026-09-10",
+    "app/core/doc_index.py:1100": "baseline 2026-09-10",
+    "app/core/doc_index.py:1189": "baseline 2026-09-10",
+    "app/core/doc_index.py:1232": "baseline 2026-09-10",
+    "app/core/doc_index.py:1240": "baseline 2026-09-10",
+    "app/core/doc_index.py:1338": "baseline 2026-09-10",
+    # Re-indexed 2026-09-28: drawing wiring plaintext open added 5 lines
+    # above this handler. Same handler. No new silent return.
+    # Shifted again the same day: the recoverable-skip helper sits above
+    # _ifc_step_census_chunk. Same empty return. No new silent return.
+    "app/core/doc_index.py:2818": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:333": "baseline 2026-09-10",
     "app/core/rag/vector_store.py:1791": "baseline 2026-09-10",
     "app/infra/monitoring.py:320": "baseline 2026-09-10",
