@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-09-28).** Historical snapshot. Not a source of open items or current status. Current state lives in the fleet standing-order loop and the live measurements.
+
 # PILOT READINESS — The_Fork / The Shovel — 2026-07-12
 
 Autonomous completion run against **live prod** (`the-fork-jn3t.onrender.com` / `theshovel.ai`, srv-d8hdc6ek1jcs739rq5sg). Honesty rule in force: DONE = acceptance passed with evidence; otherwise PARKED with evidence. **Pilot go/no-go is Chadi's call (G4)** — this page is the input to it.

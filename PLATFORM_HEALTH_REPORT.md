@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-09-28).** Historical snapshot. Not a source of open items or current status. Current state lives in the fleet standing-order loop and the live measurements.
+
 # PLATFORM_HEALTH_REPORT — The_Fork sweep (2026-07-25)
 
 Sweep run under the audit doctrine (probe the path, never trust

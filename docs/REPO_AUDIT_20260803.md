@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-09-28).** Historical snapshot. Not a source of open items or current status. Current state lives in the fleet standing-order loop and the live measurements.
+
 # Repository audit — 2026-08-03
 
 Evidence-based sweep of the whole repo. Every claim below has a command or a

@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-09-28).** Historical snapshot. Not a source of open items or current status. Current state lives in the fleet standing-order loop and the live measurements.
+
 # Photo RAG — Status (2026-06-24)
 
 > **SUPERSEDED (2026-07-18).** The `photo_chunks` table and the photo-RAG BM25
