@@ -213,6 +213,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxcb-shape0 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=oda-donor /oda.tar /tmp/oda.tar
+# The library check below separates the converter and its core libraries
+# (must resolve) from Qt plugins under */plugins/* (reported only): Qt
+# loads plugins lazily and skips one whose library will not dlopen, and
+# DWG -> DXF never needs them. The bundle's qtiff image plugin links the
+# Ubuntu-20.04 libtiff.so.5 it was built against, which no Debian since
+# bookworm ships (deploy run 36601489610) -- a gap the .deb install had
+# too. A library the bundle carries in its own tree is not "missing".
 RUN set -e; \
     if [ -s /tmp/oda.tar ]; then \
         tar -xf /tmp/oda.tar -C / && echo "ODA File Converter restored: $(tar -tf /tmp/oda.tar | wc -l) entries"; \
@@ -222,18 +229,25 @@ RUN set -e; \
         if [ ! -e /usr/bin/ODAFileConverter ]; then \
             echo "ERROR: ODA_REQUIRED=1 but /usr/bin/ODAFileConverter is missing — the donor image did not supply it" >&2; exit 1; \
         fi; \
-        missing=""; \
+        missing=""; plugin_missing=""; \
         for f in $(find /usr/bin/ODAFileConverter* -type f); do \
             if head -c4 "$f" | grep -q ELF; then \
                 for lib in $(ldd "$f" 2>/dev/null | awk '/not found/{print $1}'); do \
-                    find /usr/bin/ODAFileConverter* -name "$lib" | grep -q . || missing="$missing $lib"; \
+                    if find /usr/bin/ODAFileConverter* -name "$lib" | grep -q .; then continue; fi; \
+                    case "$f" in \
+                        */plugins/*) plugin_missing="$plugin_missing ${f##*/}->$lib" ;; \
+                        *) missing="$missing ${f##*/}->$lib" ;; \
+                    esac; \
                 done; \
             fi; \
         done; \
+        if [ -n "$plugin_missing" ]; then \
+            echo "WARNING: optional Qt plugins with unresolved libraries (skipped at runtime):$plugin_missing"; \
+        fi; \
         if [ -n "$missing" ]; then \
             echo "ERROR: ODA File Converter needs system libraries this image lacks:$missing" >&2; exit 1; \
         fi; \
-        echo "ODA File Converter present; all system shared libraries resolve"; \
+        echo "ODA File Converter present; converter and core libraries resolve"; \
     fi
 
 ENV QT_QPA_PLATFORM=offscreen
