@@ -244,6 +244,102 @@ def test_text_states_clause_111_aca_tells_the_base_from_the_partial():
     )
 
 
+# ── Attempt 2 (live 0d6163d, still 0/6): the real row has NO VAT qualifier ──
+#
+# The Contract Data chunk 0 states, verbatim (doc 9f849c87):
+#     1.1.1: | | Accepted Contract Amount: SAR 1,754,504,456.25(One Billion …) |
+# and, in the SAME chunk, a separate particular:
+#     | | Accepted Contract Amount (including VAT): SAR 2,017,680,124.69 |
+# Every clause-1.1.1 test demanded the literal "excluding VAT", so the real
+# base scored 0 everywhere; the retriever ranked the chunk 0 (an including-VAT
+# sibling with no excluding-VAT text) and never collected it; and the only
+# "excluding VAT" figure left in the loaded volume — the partial — composed
+# unopposed. A second trap in the same row: the clause token sits in its own
+# table cell, so the pipe-clipped row never contains "1.1.1".
+#
+# Rule: a clause-1.1.1 Accepted Contract Amount is the net figure unless it
+# says INCLUDING VAT, and the clause token may be read from the wider window.
+
+LIVE_ACA_ROW = (
+    "1.1.1: | | Accepted Contract Amount: SAR 1,754,504,456.25(One Billion "
+    "Seven Hundred Fifty Four Million Five Hundred Four Thousand Four Hundred "
+    "Fifty Six Saudi Riyals and Twenty Five Halalas) |"
+)
+LIVE_INCL_ROW = "| | Accepted Contract Amount (including VAT): SAR 2,017,680,124.69 |"
+LIVE_CD_CHUNK0 = "CONTRACT DATA " + LIVE_ACA_ROW + " " + LIVE_INCL_ROW
+LIVE_RATE_ROWS = (
+    "CONTRACT DATA 8.8.1 | Delay Damages (for the whole of the Works): 0.1% of "
+    "the Contract Price per calendar day | Delay Damages (if applicable per "
+    "Milestone): Milestone 1 - 0.015% of the Contract Price per calendar day | "
+    "Maximum Amount of Delay Damages: 10% of the Contract Price"
+)
+PARTIAL_ROW = f"Accepted Contract Amount excluding VAT SAR {PARTIAL:,.2f}"
+GROSS_ACA = 2_017_680_124.69
+
+
+def test_the_live_clause_111_row_without_a_vat_qualifier_is_the_base():
+    assert cc.text_states_clause_111_aca(LIVE_CD_CHUNK0)
+    assert cc._figure_is_clause_111(LIVE_CD_CHUNK0, CONTRACT_PRICE)
+    # The including-VAT particular in the same chunk is still not the base.
+    assert not cc._figure_is_clause_111(LIVE_CD_CHUNK0, GROSS_ACA)
+    assert cc.delay_damages_base_is_clause_111(LIVE_CD_CHUNK0, CONTRACT_PRICE)
+
+
+def test_milestone_composes_off_the_live_row_over_a_partial_in_the_rescue_bundle():
+    # The rescue's shape: unmarked, the partial ahead of the real row.
+    bundle = "\n\n".join([LIVE_RATE_ROWS, PARTIAL_ROW, LIVE_CD_CHUNK0])
+    out = cc.compose_delay_damages_daily_from_excerpts(MILESTONE_ASKS[1], bundle)
+    assert out is not None
+    assert out["rate_percent"] == pytest.approx(0.015)
+    assert out["contract_amount"] == pytest.approx(CONTRACT_PRICE)
+    assert out["daily_amount"] == pytest.approx(DAILY)
+    line = cc.format_delay_damages_daily_line(out)
+    assert f"{PARTIAL:,.2f}" not in line
+    assert "5,864.76" not in line
+
+
+def test_the_rescue_collects_and_leads_with_the_live_clause_111_chunk():
+    from app.core.rag.retriever import (
+        _aca_parts_clause_111_first,
+        _e1_aca_preference,
+        _e1_has_standalone_excl_vat,
+    )
+    assert _e1_aca_preference(LIVE_CD_CHUNK0) >= 2
+    assert _e1_has_standalone_excl_vat(LIVE_CD_CHUNK0)
+    assert _aca_parts_clause_111_first([PARTIAL_ROW, LIVE_CD_CHUNK0])[0] == LIVE_CD_CHUNK0
+
+
+def test_graft_replaces_the_partial_from_the_live_volume(monkeypatch):
+    volume = "\n\n".join([LIVE_RATE_ROWS, PARTIAL_ROW, LIVE_CD_CHUNK0])
+    monkeypatch.setattr(
+        "app.core.rag.retriever.e1_compose_excerpts_from_loaded_cd_volume",
+        lambda *a, **k: volume,
+    )
+    rag = {"role": "system", "content": "Reference context:\n" + PARTIAL_ONLY}
+    msgs = [{"role": "user", "content": MILESTONE_ASKS[1]}]
+    out = _graft_composed_delay_damages_daily(
+        LIVE_PARTIAL_LINE, rag, msgs, project_id="p-fixture",
+    )
+    assert f"{DAILY:,.2f}" in out
+    assert "5,864.76" not in out
+    assert f"{PARTIAL:,.2f}" not in out
+
+
+def test_whole_of_works_also_composes_off_the_live_row():
+    bundle = "\n\n".join([LIVE_RATE_ROWS, LIVE_CD_CHUNK0])
+    out = cc.compose_delay_damages_daily_from_excerpts(WHOLE_ASK, bundle)
+    assert out is not None
+    assert out["rate_percent"] == pytest.approx(0.1)
+    assert out["contract_amount"] == pytest.approx(CONTRACT_PRICE)
+    assert out["daily_amount"] == pytest.approx(WHOLE_DAILY)
+
+
+def test_an_including_vat_only_row_is_still_not_the_base():
+    bundle = "\n\n".join([LIVE_RATE_ROWS, "CONTRACT DATA " + LIVE_INCL_ROW])
+    assert cc.compose_delay_damages_daily_from_excerpts(MILESTONE_ASKS[1], bundle) is None
+    assert not cc.text_states_clause_111_aca("CONTRACT DATA " + LIVE_INCL_ROW)
+
+
 def test_the_rescue_orders_clause_111_ahead_of_the_partials():
     """The rescue caps aca_parts at [:3]; three partial excl-VAT rows used to
     push the real clause-1.1.1 base out of that window, so compose fell to a

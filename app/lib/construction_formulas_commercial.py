@@ -567,10 +567,19 @@ def _contract_price_row_score(amount: float, row: str, wide: str) -> int:
         return 0
     if aca_amount_is_toy_example(amount, wide):
         return 0
-    if not _EXCL_VAT_RE.search(label_blob):
+    # The clause token may sit in its own table cell ahead of the "|" that
+    # clips ``row`` (live: "1.1.1: | | Accepted Contract Amount: SAR …").
+    clause = bool(_CLAUSE_111_RE.search(label_blob) or _CLAUSE_111_RE.search(wide))
+    excl = bool(_EXCL_VAT_RE.search(label_blob))
+    if _INCL_VAT_RE.search(label_blob) and not excl:
+        return 0
+    # A VAT-neutral figure is the base only as clause 1.1.1 (the net amount
+    # by definition). Any other unlabeled figure still needs "excluding VAT"
+    # — that is what keeps a partial or a section sum from being the price.
+    if not excl and not clause:
         return 0
     score = 3
-    if _CLAUSE_111_RE.search(label_blob):
+    if clause:
         score += 4
     return score
 
@@ -597,7 +606,18 @@ def _best_contract_price_figure(text: str) -> tuple[int, float, str] | None:
 
 
 def _figure_is_clause_111(text: str, amount: float) -> bool:
-    """True when ``amount`` is this text's clause 1.1.1 excluding VAT."""
+    """True when ``amount`` is this text's clause 1.1.1 net Accepted Contract Amount.
+
+    Live Contract Data states the clause as a table row —
+    ``1.1.1: | | Accepted Contract Amount: SAR 1,754,504,456.25(One Billion …) |``
+    — with NO VAT qualifier; the including-VAT figure is a separate
+    particular in the same chunk. Demanding the literal "excluding VAT"
+    scored the real base 0 and left a partial ACA to compose (live M3
+    0/6, twice). Clause 1.1.1 IS the net figure the rate applies to, so a
+    row is the base unless it says *including* VAT. The clause token sits
+    in its own cell ahead of the ``|``, so it is read from the wider
+    window, not the pipe-clipped row.
+    """
     blob = _collapse_ws(text)
     for match in _MONEY_RE.finditer(blob):
         got = float(match.group(2).replace(",", ""))
@@ -609,8 +629,8 @@ def _figure_is_clause_111(text: str, amount: float) -> bool:
             r"(?i)accepted\s+contract\s+amount", row,
         ) else wide
         if (
-            _CLAUSE_111_RE.search(label)
-            and _EXCL_VAT_RE.search(label)
+            (_CLAUSE_111_RE.search(label) or _CLAUSE_111_RE.search(wide))
+            and not _INCL_VAT_RE.search(label)
             and re.search(r"(?i)accepted\s+contract\s+amount", label)
         ):
             return True

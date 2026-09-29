@@ -5576,9 +5576,18 @@ def _e1_aca_preference(text: str) -> int:
         from app.lib.construction_formulas_commercial import (
             _EXCL_VAT_RE,
             _INCL_VAT_RE,
+            text_states_clause_111_aca,
         )
     except Exception:  # noqa: BLE001 — unlabeled ACA still ranks above none
         return 1
+    # Live M3: Contract Data chunk 0 states "1.1.1: | | Accepted Contract
+    # Amount: SAR 1,754,504,456.25 |" with no VAT qualifier, beside the
+    # "(including VAT)" particular. The VAT regexes below ranked that chunk
+    # 0 (incl matched, excl absent), so the rescue never collected the real
+    # base and composed the only excluding-VAT figure left — a partial. The
+    # clause is the net figure the rate applies to: rank it with excl-VAT.
+    if text_states_clause_111_aca(text or ""):
+        return 2
     blob = _normalize_retrieval_ws(text or "")
     if _EXCL_VAT_RE.search(blob) and not _INCL_VAT_RE.search(blob):
         return 2
