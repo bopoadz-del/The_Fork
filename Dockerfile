@@ -3,9 +3,19 @@
 # the image the oda-donor stage copies the ODA File Converter out of. See
 # that stage. CI and local builds keep the busybox default (no converter);
 # deploy-aws.yml passes the ECR image that still carries it.
-ARG ODA_DONOR_IMAGE=busybox:1.36
+ARG ODA_DONOR_IMAGE=busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
 
-FROM python:3.11-slim AS builder
+# ── Base images are pinned by digest ─────────────────────────────────────
+# A bare tag such as python:3.11-slim floats: Docker Hub re-points it to a
+# newer Debian whenever it likes, and the next build silently gets a
+# different operating system underneath the app with no commit in this
+# repo. These digests are exactly what built the image serving on
+# 2026-09-29 (main 2bd31a6, Debian 13 "trixie"); the tag after the colon
+# is a label for humans, the @sha256 is what Docker actually pulls.
+# To move to a newer base on purpose: `docker buildx imagetools inspect
+# python:3.11-slim` (or the tag's page on hub.docker.com) gives the current
+# digest -- change it here, in one commit, and deploy.
+FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e AS builder
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -112,7 +122,7 @@ RUN python /tmp/prefetch_embedder.py "${RAG_EMBEDDING_MODEL}" && rm /tmp/prefetc
 
 # Frontend stage: build the React SPA. VITE_API_BASE='' makes the app talk to
 # the same origin it was served from, so a single Render service is enough.
-FROM node:20-slim AS frontend
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS frontend
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -155,7 +165,8 @@ RUN set -e; \
         : > /oda.tar; echo "oda-donor: no converter in this image (CI / local build)"; \
     fi
 
-FROM python:3.11-slim
+# Same digest as the builder stage above -- keep the two in step.
+FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e
 WORKDIR /app
 
 # Ultralytics settings dir — home is not writable as the non-root app user.
