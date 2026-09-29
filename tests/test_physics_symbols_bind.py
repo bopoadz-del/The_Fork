@@ -107,3 +107,57 @@ def test_symbols_do_not_leak_into_calculators_without_those_params():
     out = _run("modulus_of_rupture", {"fck_n_mm2": 30, "E": 200})
     assert out["status"] != "success"
     assert "E" in str(out.get("unknown", [])) or "E" in str(out)
+
+
+# ── second attempt: live still failed on 533f08c ────────────────────────────
+#
+# The runtime log for the live T2 probe showed construction_calc dispatched
+# twelve times, each returning the unknown-argument envelope, until
+# MAX_TOOL_ITERATIONS forced a no-tools retry. The alias above was hooked
+# where ``fn`` is looked up from the ORIGINAL name; the live tool resolves the
+# calculator later, so at hook time ``fn`` was None and the alias was skipped.
+# Local calls passed the resolved name directly, which is why they passed.
+#
+# The alias now lives in the binder itself, so it holds for every entry point.
+
+def test_the_binder_itself_binds_the_symbols():
+    fn = cf.CALCULATORS["beam_deflection_cantilever_udl"]
+    bound = cf.bind_calculation_params(fn, {"w_kn_m": 10, "span_m": 3, "E": 200, "I": 2.0e-4})
+    bound = bound[0] if isinstance(bound, tuple) else bound
+    assert bound["ec_mpa"] == pytest.approx(200_000)
+    assert bound["i_mm4"] == pytest.approx(2.0e8)
+    assert "E" not in bound and "I" not in bound
+
+
+# ── unit-bearing strings: the model writes "200 GPa", not 200 ──────────────
+
+@pytest.mark.parametrize("e,i", [
+    ("200 GPa", "2.0e-4 m4"), ("200GPa", "2.0e-4 m^4"), ("200 gpa", "2.0e-4 m4"),
+    ("200000 MPa", "2.0e8 mm4"), ("200 GPa", "200000000 mm^4"),
+])
+def test_unit_bearing_strings_convert_to_the_right_figure(e, i):
+    assert _value(CANTILEVER, {"w_kn_m": 10, "span_m": 3, "E": e, "I": i}) == pytest.approx(2.53, abs=0.01)
+
+
+def test_a_string_with_an_unknown_unit_is_refused_not_guessed():
+    # 253,125,000,000 mm was the figure a pass-through produced. Never again.
+    out = _run(CANTILEVER, {"w_kn_m": 10, "span_m": 3, "E": "200 psi", "I": "2.0e-4 m4"})
+    assert out["status"] != "success"
+    assert "psi" in str(out).lower() or "unit" in str(out).lower()
+
+
+# ── the code the model actually writes ─────────────────────────────────────
+
+@pytest.mark.parametrize("code", ["ACI 318-19", "ACI318-19", "aci 318", "ACI 318-19 (SI)", "ACI"])
+def test_the_aci_form_is_recognised_however_it_is_spelled(code):
+    r = _run(MODULUS, {"fck_n_mm2": 35, "code": code})
+    assert r["status"] == "success", r
+    assert r["result"]["unit"] == "MPa", "the kg/cm2 form under an ACI label is a wrong figure"
+    assert r["result"]["value"] == pytest.approx(27806.0, abs=1.0)
+    rr = _run("modulus_of_rupture", {"fck_n_mm2": 30, "code": code})
+    assert rr["result"]["value"] == pytest.approx(3.396, abs=0.005)
+
+
+def test_a_non_aci_code_still_gets_the_default_form():
+    r = _run(MODULUS, {"fck_n_mm2": 35, "code": "BS 8110"})
+    assert r["result"]["unit"] == "kg/cm2"
