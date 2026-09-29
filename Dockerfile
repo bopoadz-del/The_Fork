@@ -1,4 +1,10 @@
 # Multi-stage build - slim, fast, multi-platform
+# Global ARG (declared before the first FROM so a FROM line can use it):
+# the image the oda-donor stage copies the ODA File Converter out of. See
+# that stage. CI and local builds keep the busybox default (no converter);
+# deploy-aws.yml passes the ECR image that still carries it.
+ARG ODA_DONOR_IMAGE=busybox:1.36
+
 FROM python:3.11-slim AS builder
 WORKDIR /app
 
@@ -114,6 +120,30 @@ COPY frontend/ ./
 ENV VITE_API_BASE=""
 RUN npm run build
 
+# ── ODA File Converter donor ──────────────────────────────────────────────
+# opendesign.com put its guest downloads behind a JS consent flow on
+# 2026-09-29: every guestfiles/get?filename=... URL (deb / rpm / AppImage,
+# every version) now returns a 404 consent page, and the deploy build died
+# at `curl -fSL ... oda.deb` (deploy run 36591593106). The only copy of the
+# converter we control is inside the last image built from the .deb, so a
+# production build takes it from there: deploy-aws.yml passes that ECR image
+# as ODA_DONOR_IMAGE. CI and local builds get busybox and no converter —
+# app.blocks.drawing_qto then tells the operator DWG needs the converter.
+# Self-describing: the file set is dpkg's own manifest for the package that
+# owns /usr/bin/ODAFileConverter (plus anything under that name), so no
+# install path is hard-coded here. If the vendor restores a direct link,
+# rebuild a donor from the .deb and repoint ODA_DONOR_IMAGE.
+FROM ${ODA_DONOR_IMAGE} AS oda-donor
+RUN set -e; \
+    if command -v dpkg >/dev/null 2>&1 && [ -e /usr/bin/ODAFileConverter ]; then \
+        pkg=$(dpkg -S /usr/bin/ODAFileConverter 2>/dev/null | cut -d: -f1); \
+        { [ -n "$pkg" ] && dpkg -L "$pkg"; find /usr/bin/ODAFileConverter* -print; } 2>/dev/null \
+            | sort -u | tar -cf /oda.tar --no-recursion -T -; \
+        echo "oda-donor: packaged $(tar -tf /oda.tar | wc -l) entries from ${pkg:-<unpackaged files>}"; \
+    else \
+        : > /oda.tar; echo "oda-donor: no converter in this image (CI / local build)"; \
+    fi
+
 FROM python:3.11-slim
 WORKDIR /app
 
@@ -155,9 +185,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # only the frontend BUILD stage and never reaches this image).
 
 # ODA File Converter — required by app.blocks.drawing_qto for DWG → DXF.
-# Override at build time if the upstream version changes:
-#   docker build --build-arg ODA_URL=https://.../ODAFileConverter_QT6_lnxX64_*.deb .
-ARG ODA_URL="https://www.opendesign.com/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_8.3dll_27.1.deb"
+# Supplied by the oda-donor stage above (the vendor's downloads are gated;
+# see there). ODA_REQUIRED=1 (deploy-aws.yml) turns a missing converter, or
+# a converter whose system shared libraries are absent, into a BUILD
+# FAILURE — a production image must never quietly lose DWG conversion.
+# CI and local builds leave it 0 and simply have no converter.
+ARG ODA_REQUIRED=0
 # xvfb: the ODA QT6 bundle ships ONLY the xcb platform plugin (no
 # offscreen), so headless conversion needs a virtual X display --
 # drawing_qto wraps the converter in `xvfb-run -a` when available.
@@ -167,10 +200,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxtst6 libnss3 xvfb xauth libxcb-cursor0 libxkbcommon-x11-0 \
         libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
         libxcb-shape0 \
-    && curl -fSL -A "Mozilla/5.0" -o /tmp/oda.deb "${ODA_URL}" \
-    && apt-get install -y --no-install-recommends /tmp/oda.deb \
-    && rm /tmp/oda.deb \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=oda-donor /oda.tar /tmp/oda.tar
+RUN set -e; \
+    if [ -s /tmp/oda.tar ]; then \
+        tar -xf /tmp/oda.tar -C / && echo "ODA File Converter restored: $(tar -tf /tmp/oda.tar | wc -l) entries"; \
+    fi; \
+    rm -f /tmp/oda.tar; \
+    if [ "$ODA_REQUIRED" = "1" ]; then \
+        if [ ! -e /usr/bin/ODAFileConverter ]; then \
+            echo "ERROR: ODA_REQUIRED=1 but /usr/bin/ODAFileConverter is missing — the donor image did not supply it" >&2; exit 1; \
+        fi; \
+        missing=""; \
+        for f in $(find /usr/bin/ODAFileConverter* -type f); do \
+            if head -c4 "$f" | grep -q ELF; then \
+                for lib in $(ldd "$f" 2>/dev/null | awk '/not found/{print $1}'); do \
+                    find /usr/bin/ODAFileConverter* -name "$lib" | grep -q . || missing="$missing $lib"; \
+                done; \
+            fi; \
+        done; \
+        if [ -n "$missing" ]; then \
+            echo "ERROR: ODA File Converter needs system libraries this image lacks:$missing" >&2; exit 1; \
+        fi; \
+        echo "ODA File Converter present; all system shared libraries resolve"; \
+    fi
 
 ENV QT_QPA_PLATFORM=offscreen
 
