@@ -134,11 +134,22 @@ RUN npm run build
 # install path is hard-coded here. If the vendor restores a direct link,
 # rebuild a donor from the .deb and repoint ODA_DONOR_IMAGE.
 FROM ${ODA_DONOR_IMAGE} AS oda-donor
+# The donor is our own production image, which ends on a non-root USER;
+# as that user tar cannot write /oda.tar (deploy run 36597134448:
+# "Cannot open: Permission denied"). Busybox runs as root, which is why CI
+# never saw it.
+USER root
+# dpkg's manifest can list files that were never written (python:slim
+# path-excludes docs and man pages), and GNU tar exits 2 on a missing
+# entry, so keep only paths that exist. Errors are NOT silenced: a broken
+# donor must fail this stage loudly, not ship an empty tar.
 RUN set -e; \
     if command -v dpkg >/dev/null 2>&1 && [ -e /usr/bin/ODAFileConverter ]; then \
         pkg=$(dpkg -S /usr/bin/ODAFileConverter 2>/dev/null | cut -d: -f1); \
-        { [ -n "$pkg" ] && dpkg -L "$pkg"; find /usr/bin/ODAFileConverter* -print; } 2>/dev/null \
-            | sort -u | tar -cf /oda.tar --no-recursion -T -; \
+        { [ -n "$pkg" ] && dpkg -L "$pkg"; find /usr/bin/ODAFileConverter* -print; } \
+            | sort -u \
+            | while IFS= read -r p; do [ -e "$p" ] && printf '%s\n' "$p"; done \
+            | tar -cf /oda.tar --no-recursion -T -; \
         echo "oda-donor: packaged $(tar -tf /oda.tar | wc -l) entries from ${pkg:-<unpackaged files>}"; \
     else \
         : > /oda.tar; echo "oda-donor: no converter in this image (CI / local build)"; \
