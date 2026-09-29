@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-09-28).** Historical snapshot. Not a source of open items or current status. Current state lives in the fleet standing-order loop and the live measurements.
+
 # LIVE CHAT TEST REPORT -- The_Fork Construction Brain
 
 > **This report covers TWO batteries:** (1) the 13-question live chat battery (Q1-Q13) against the running pilot, and (2) the 177-test offline discipline-agent layer verification added this session (DL1-DL5).
