@@ -276,9 +276,7 @@ def modulus_of_elasticity_concrete(
     # Not _norm_code: that helper defaults every unknown string to ACI,
     # which would silently change this function's default form.
     fck = float(fck_n_mm2)
-    if (code or "").strip().lower().replace("-", "_") in (
-        "aci", "aci318", "aci_318", "aci_318_19", "aci_si",
-    ):
+    if _is_aci_code(code):
         ec_mpa = round(4700 * math.sqrt(fck), 0)
         return {
             "value": ec_mpa,
@@ -382,9 +380,7 @@ def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict
     # Not _norm_code: it defaults every unknown string to ACI, which would
     # silently change this function's default form.
     fck = float(fck_n_mm2)
-    if (code or "").strip().lower().replace("-", "_") in (
-        "aci", "aci318", "aci_318", "aci_318_19", "aci_si",
-    ):
+    if _is_aci_code(code):
         fr_mpa = round(0.62 * math.sqrt(fck), 3)
         return {
             "fck_n_mm2": fck_n_mm2,
@@ -1319,14 +1315,77 @@ _E_GPA_CEILING = 1000.0      # below this, E is GPa
 _I_M4_CEILING = 1.0          # below this, I is m4
 
 
+# "200 GPa", "2.0e-4 m4", "2.0e8 mm^4": the model writes the unit it read.
+# The unit token must be allowed to CONTAIN digits ("m4", "mm^4", "cm4") but
+# not to START with one, or it would eat the tail of the number. The first
+# version had no digits in the class, so every I unit failed to match and the
+# raw string fell through to a 253,125,000 mm deflection.
+_SYMBOL_VALUE_RE = re.compile(
+    r"^\s*([-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?)\s*"
+    r"((?:[A-Za-z\u00b2\u00b3\u2074^/][A-Za-z0-9\u00b2\u00b3\u2074^/]*)?)\s*$"
+)
+_E_UNIT_TO_MPA: Dict[str, Optional[float]] = {
+    "": None, "mpa": 1.0, "n/mm2": 1.0, "n/mm^2": 1.0, "n/mm\u00b2": 1.0,
+    "gpa": 1e3, "kn/mm2": 1e3, "kn/mm^2": 1e3, "kn/mm\u00b2": 1e3,
+}
+_I_UNIT_TO_MM4: Dict[str, Optional[float]] = {
+    "": None, "mm4": 1.0, "mm^4": 1.0, "mm\u2074": 1.0,
+    "m4": 1e12, "m^4": 1e12, "m\u2074": 1e12,
+    "cm4": 1e4, "cm^4": 1e4, "cm\u2074": 1e4,
+}
+
+
+class _UnknownUnit(ValueError):
+    """A symbol carried a unit this binder cannot scale. Refuse, never guess."""
+
+
+def _is_aci_code(code: Any) -> bool:
+    """"ACI", "ACI 318-19", "aci318", "ACI 318-19 (SI)" all name the ACI form.
+
+    The previous exact-token match knew five spellings and none of them was
+    the one the model writes ("ACI 318-19"), so that spelling silently fell
+    to the metric-technical form -- 280,624 kg/cm2 under an ACI label.
+    """
+    return re.sub(r"[^a-z0-9]", "", str(code or "").lower()).startswith("aci")
+
+
 def _canonical_from_symbol(symbol: str, value: Any) -> Any:
-    """Scale a symbol's value onto its canonical parameter's unit."""
+    """Scale a symbol's value onto its canonical parameter's unit.
+
+    A bare number is scaled by magnitude (see the ceilings above). A string
+    with a unit token is scaled by that unit; a unit the table does not know
+    raises so the call errors instead of computing a figure that is wrong by
+    orders of magnitude and saying nothing -- live, "200 GPa" passed through
+    unconverted once and produced a 253,125,000,000 mm deflection.
+    """
     if symbol == "c":
         return value
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return value
+    table = _E_UNIT_TO_MPA if symbol == "e" else _I_UNIT_TO_MM4
+    if isinstance(value, str):
+        m = _SYMBOL_VALUE_RE.match(value)
+        if not m:
+            # A string with digits in it that does not parse is a value this
+            # binder cannot scale. Passing it through is how a wrong figure
+            # gets computed and reported without complaint; refuse instead.
+            if any(ch.isdigit() for ch in value):
+                raise _UnknownUnit(
+                    f"{symbol.upper()}={value!r}: cannot read a number and a unit from it")
+            return value
+        number = float(m.group(1).replace(",", "."))
+        unit = m.group(2).lower()
+        if unit not in table:
+            known = ", ".join(u for u in table if u)
+            raise _UnknownUnit(
+                f"{symbol.upper()}={value!r}: unit {unit!r} is not one this binder "
+                f"can scale ({known})")
+        factor = table[unit]
+        if factor is not None:
+            return number * factor
+    else:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return value
     if symbol == "e" and 0 < number < _E_GPA_CEILING:
         return number * 1e3      # GPa -> MPa
     if symbol == "i" and 0 < number < _I_M4_CEILING:
@@ -2216,6 +2275,12 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     small synonym table. Canonical names already present win.
     Shared with Agent C / #636 / #639 / #652.
     """
+    # E / I / c onto ec_mpa / i_mm4 / code, HERE rather than at a call site:
+    # the live tool resolves the calculator after run_calculation's early hook
+    # ran with fn=None, so the alias was skipped and construction_calc looped
+    # twelve times on the same unknown-argument envelope (T2, T12 on 533f08c).
+    # Every entry point passes through this function.
+    params = _alias_physics_symbols(fn, params or {})
     bound, _unknown = _partition_bound_params(fn, params)
     return bound
 
@@ -3007,7 +3072,10 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # E / I / c -> ec_mpa / i_mm4 / code, with the unit scaled onto the
     # destination. Runs before binding so a symbol is bound, not reported
     # unknown; a calculator without the destination is untouched.
-    params = _alias_physics_symbols(fn, params)
+    try:
+        params = _alias_physics_symbols(fn, params)
+    except _UnknownUnit as exc:
+        return {"status": "error", "calculation": str(name), "error": str(exc)}
     # Standing-exit B: model aliases / numbers live in ``text`` more often
     # than in kwargs. Fill holes only — never invent defaults.
     params = _extract_calc_kwargs_from_ask(str(name), params)
