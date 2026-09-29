@@ -629,6 +629,29 @@ def delay_damages_base_is_clause_111(excerpts: str, amount: float) -> bool:
     return False
 
 
+def text_states_clause_111_aca(text: str) -> bool:
+    """True when ``text`` carries a clause 1.1.1 excluding-VAT Accepted
+    Contract Amount money row — the real delay-damages base.
+
+    Amount-agnostic twin of ``_figure_is_clause_111``. The rescue that
+    joins loaded Contract Data chunks (retriever.py) uses this to keep the
+    1.1.1 base ahead of partial ACA rows before it caps the excerpt, so an
+    unmarked bundle still composes off the filled clause and not a partial
+    (live M3: 0.015% x SAR 39,098,392.98).
+    """
+    blob = _collapse_ws(text)
+    for m in _MONEY_RE.finditer(blob):
+        try:
+            amt = float(m.group(2).replace(",", ""))
+        except ValueError:
+            continue
+        if amt < 1000:
+            continue
+        if _figure_is_clause_111(text, amt):
+            return True
+    return False
+
+
 def _contract_price_beside_the_rate(
     text: str, rate: float, ask: str,
 ) -> tuple[float, str] | None:
