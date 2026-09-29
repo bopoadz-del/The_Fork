@@ -44,6 +44,7 @@ import logging as _logging
 import os
 import re
 import sqlite3
+import contextlib
 import tempfile
 import threading
 import zlib
@@ -242,6 +243,78 @@ def _run_sync(coro):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(_worker).result()
+
+
+_DEFAULT_IMAGE_OCR_MAX_PIXELS = 6_000_000
+
+
+def image_ocr_max_pixels() -> int:
+    """Pixel cap for a standalone image before OCR and detection.
+
+    Defaults to the same 6 MP the PDF page path has used since
+    ``PDF_OCR_MAX_PIXELS`` -- OCR on a site photo does not improve past it.
+    ``IMAGE_OCR_MAX_PIXELS`` overrides; anything unparseable keeps the default.
+    """
+    raw = (os.getenv("IMAGE_OCR_MAX_PIXELS") or "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_IMAGE_OCR_MAX_PIXELS
+    return value if value > 0 else _DEFAULT_IMAGE_OCR_MAX_PIXELS
+
+
+@contextlib.contextmanager
+def _bounded_image(file_path: str):
+    """Yield a path to ``file_path`` bounded to ``image_ocr_max_pixels()``.
+
+    Live ingest on 9e6fe98: the oom_kill counter went 3 -> 47 in seventy
+    files, and every burst landed on a 20-48 MP DJI aerial photograph. The
+    image branch ran the OCR block and the YOLO detector on each one at native
+    size; the OCR preprocessor only ever UPSCALES, so nothing on this path
+    bounded a bitmap the way the PDF page path already did. Raising task memory
+    only meant a bigger bitmap before the kernel killed the forked tesseract --
+    the Python RSS stayed near 1.1 GB against a 3.3 GB cgroup.
+
+    Decodes ONCE, at reduced scale where the codec allows it (``draft`` lets a
+    JPEG decode at 1/2, 1/4 or 1/8 without ever holding the full bitmap), and
+    yields one temp copy for both consumers. Under the cap, or on anything PIL
+    cannot open, the original path is yielded unchanged so a bad file stays a
+    bad file rather than becoming a crash here.
+    """
+    cap = image_ocr_max_pixels()
+    tmp_path = None
+    try:
+        from PIL import Image
+        with file_crypto.open_plaintext(file_path) as plain_path:
+            with Image.open(plain_path) as img:
+                if img.width * img.height > cap:
+                    scale = (cap / (img.width * img.height)) ** 0.5
+                    target = (max(1, int(img.width * scale)),
+                              max(1, int(img.height * scale)))
+                    # JPEG: the decoder picks the smallest 1/2^n scale that
+                    # still covers ``target`` -- the full bitmap is never built.
+                    img.draft(img.mode if img.mode in ("L", "RGB") else "RGB", target)
+                    img.thumbnail(target, Image.Resampling.LANCZOS)
+                    fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+                    os.close(fd)
+                    (img if img.mode in ("L", "RGB") else img.convert("RGB")).save(
+                        tmp_path, "JPEG", quality=85)
+    except Exception:
+        # Anything PIL cannot open stays the caller's problem, not a crash
+        # here: a bad file must still reach the OCR block as a bad file.
+        logger.debug("image bound skipped for %s", os.path.basename(file_path),
+                     exc_info=True)
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        tmp_path = None
+    try:
+        yield tmp_path or file_path
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                logger.debug("could not remove bounded image %s", tmp_path)
 
 
 def _ocr_extract(file_path: str) -> tuple[str, bool]:
@@ -1647,10 +1720,16 @@ def _extract_with_meta_impl(
 
         # ── images → OCR + YOLO-World fallback ───────────────────────────────
         if ext in _IMAGE_EXTS:
-            text, low_quality = _ocr_extract(file_path)
-            # Construction photos usually OCR blank; run the baked YOLO-World
-            # detector to produce a searchable summary of visible objects.
-            yolo_text = _safety_world_extract(file_path, filename or "")
+            # Bound the bitmap ONCE and hand the same copy to both consumers.
+            # A 40 MP drone photo at native size was forking tesseract and
+            # torch against ~120 MB bitmaps and taking the worker out
+            # (oom_kill 3 -> 47 on 9e6fe98). See _bounded_image.
+            with _bounded_image(file_path) as bounded_path:
+                text, low_quality = _ocr_extract(bounded_path)
+                # Construction photos usually OCR blank; run the baked
+                # YOLO-World detector to produce a searchable summary of
+                # visible objects.
+                yolo_text = _safety_world_extract(bounded_path, filename or "")
             if yolo_text:
                 text = f"{text}\n\n{yolo_text}".strip() if text else yolo_text
             meta: dict[str, Any] = {}
