@@ -1298,6 +1298,66 @@ _EVM_CALC_ALIASES: Dict[str, str] = {
 }
 
 
+# Symbols an engineer writes, and therefore what the model sends. Live on
+# 9e6fe98 both of these came back as tool errors instead of figures:
+#   "Unknown argument(s) for beam_deflection_cantilever_udl: E, I"
+#   "Unknown argument(s) for modulus_of_elasticity_concrete: c"
+#
+# A rename alone would be worse than the error it replaces: E is quoted in GPa
+# (200) where ``ec_mpa`` wants MPa (200 000), and I in m4 (2.0e-4) where
+# ``i_mm4`` wants mm4 (2.0e8), so a bare alias computes a deflection a thousand
+# times wrong and reports it with no complaint at all.
+#
+# The unit is therefore inferred from magnitude, and only across a gap that
+# cannot occur in practice: a modulus below 1000 is GPa (concrete 20-40, steel
+# 200 — nothing real sits between 1000 and 20 000 MPa), and a second moment
+# below 1.0 is m4 (a 10 mm square bar is 833 mm4). Outside those windows the
+# value is taken as already canonical, and ``_second_moment_mm4`` still refuses
+# anything that is neither.
+_SYMBOL_DEST: Dict[str, str] = {"e": "ec_mpa", "i": "i_mm4", "c": "code"}
+_E_GPA_CEILING = 1000.0      # below this, E is GPa
+_I_M4_CEILING = 1.0          # below this, I is m4
+
+
+def _canonical_from_symbol(symbol: str, value: Any) -> Any:
+    """Scale a symbol's value onto its canonical parameter's unit."""
+    if symbol == "c":
+        return value
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    if symbol == "e" and 0 < number < _E_GPA_CEILING:
+        return number * 1e3      # GPa -> MPa
+    if symbol == "i" and 0 < number < _I_M4_CEILING:
+        return number * 1e12     # m4 -> mm4
+    return number
+
+
+def _alias_physics_symbols(fn: Any, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Bind E / I / c onto the destination the calculator actually accepts.
+
+    Only when that calculator has the destination parameter, and only when the
+    canonical key is absent — an explicit ``ec_mpa`` is the instruction and a
+    symbol never overrides it. A symbol whose destination this calculator does
+    not accept is left alone, so it still surfaces as an unknown argument.
+    """
+    try:
+        accepted = set(_inspect.signature(fn).parameters)
+    except (TypeError, ValueError):
+        return params
+    out = dict(params)
+    for key in list(out):
+        dest = _SYMBOL_DEST.get(str(key).strip().lower())
+        if not dest or dest not in accepted or key == dest:
+            continue
+        if out.get(dest) not in (None, ""):
+            out.pop(key, None)       # canonical key already given; drop the symbol
+            continue
+        out[dest] = _canonical_from_symbol(str(key).strip().lower(), out.pop(key))
+    return out
+
+
 def _alias_calculate_evm_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """Bind case-insensitive PMI / PE names onto ``calculate_evm`` kwargs.
 
@@ -2944,6 +3004,10 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # name-specific filter here (Agent C / DIR7 share this path).
     if str(name or "").strip().lower() == "calculate_evm":
         params = _alias_calculate_evm_params(params)
+    # E / I / c -> ec_mpa / i_mm4 / code, with the unit scaled onto the
+    # destination. Runs before binding so a symbol is bound, not reported
+    # unknown; a calculator without the destination is untouched.
+    params = _alias_physics_symbols(fn, params)
     # Standing-exit B: model aliases / numbers live in ``text`` more often
     # than in kwargs. Fill holes only — never invent defaults.
     params = _extract_calc_kwargs_from_ask(str(name), params)
