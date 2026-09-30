@@ -143,3 +143,21 @@ def test_rescue_is_a_noop_for_an_unrelated_ask():
     )
     assert added == 0
     assert fused == {}
+
+
+def test_rescue_scans_master_corpus_source_pid_not_just_the_ui_pid(monkeypatch):
+    """Live 54d017c: attempt 1 found nothing because on master_corpus the table
+    chunk is owned by a SOURCE project id, not the UI project id the query runs
+    under — chunks_containing_all(ui_pid) returned nothing. The rescue must scan
+    the source pids (via _e1_scan_project_ids), like the E1 rescue does."""
+    UI = "master_corpus"
+    SRC = "src-corpus-1"
+    # the table lives under the SOURCE pid, never under the UI pid
+    table = _chunk("spec-661", WORK_ACTIVITY_TABLE, pid=SRC)
+    store = _FakeStore([table])
+    monkeypatch.setattr(ret, "_e1_scan_project_ids",
+                        lambda pid, *a, **k: [pid, SRC])
+    fused = {}
+    added = ret._rescue_illumination_table_chunks(R18, UI, fused, store)
+    assert added >= 1
+    assert "spec-661" in fused
