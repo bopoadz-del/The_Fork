@@ -33,6 +33,8 @@ rescue. Synthetic text throughout.
 """
 from __future__ import annotations
 
+import logging
+
 from app.core.rag import retriever as ret
 from app.core.rag.vector_store import Chunk
 
@@ -187,3 +189,57 @@ def test_rescue_reaches_a_general_knowledge_pid_only_via_extra_pids(monkeypatch)
     )
     assert added >= 1
     assert "spec-661" in f_with
+
+
+# ── observability: the diagnostic must reach CloudWatch, which carries only
+# WARNING+ from plain module loggers (prod root logger is at WARNING — the
+# setup_structured_logging NOTSET guard never fires). Attempts 1-3 logged at
+# INFO and were invisible; "no rescue log" proved nothing. These pin the level.
+#
+# The diagnostic must be logger.WARNING, not .info — prod's root logger is at
+# WARNING so a module INFO line never reaches CloudWatch (attempts 1-3 logged
+# at INFO and were invisible). We capture by spying ret.logger.warning: caplog
+# and even a per-logger handler both miss this line in the full suite once an
+# earlier test has replaced root handlers or raised logging.disable (the suite
+# does both — see test_walk_junk_filter / test_r2_archive_ingest_survives).
+# Spying the bound method is immune to handler, level, and global-disable state.
+
+def _spy_warning(monkeypatch):
+    lines: list[str] = []
+
+    def _w(msg, *args, **kwargs):
+        try:
+            lines.append(msg % args if args else str(msg))
+        except (TypeError, ValueError):
+            lines.append(str(msg))
+
+    monkeypatch.setattr(ret.logger, "warning", _w)
+    return lines
+
+
+def test_diagnostic_is_logged_at_warning_when_nothing_is_admitted(monkeypatch):
+    lines = _spy_warning(monkeypatch)
+    store = _FakeStore([])  # no table anywhere -> admitted 0
+    ret._rescue_illumination_table_chunks(R18, "P", {}, store)
+    hit = [m for m in lines if "illumination-table rescue:" in m]
+    assert hit, "the always-on diagnostic must log at WARNING (visible in prod)"
+    assert "admitted=0" in hit[0]
+    assert "needle_hits=" in hit[0]
+
+
+def test_diagnostic_is_not_logged_at_info():
+    # Guard the whole point: the line must NOT be an info() call (invisible in
+    # prod). If someone reverts it to logger.info, spying warning misses it.
+    import inspect
+    src = inspect.getsource(ret._rescue_illumination_table_chunks)
+    assert "logger.info(" not in src, "the rescue diagnostic must not use logger.info"
+    assert src.count("logger.warning(") >= 2
+
+
+def test_pooled_diagnostic_is_logged_at_warning(monkeypatch):
+    lines = _spy_warning(monkeypatch)
+    store = _FakeStore([_chunk("spec-661", WORK_ACTIVITY_TABLE)])
+    ret._rescue_illumination_table_chunks(R18, "P", {}, store)
+    msgs = " || ".join(lines)
+    assert "illumination-table rescue:" in msgs
+    assert "pooled 1 chunk" in msgs

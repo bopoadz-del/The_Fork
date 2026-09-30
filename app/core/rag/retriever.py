@@ -2511,9 +2511,11 @@ def _rescue_illumination_table_chunks(
                 admitted.append(chunk)
     # Always-on diagnostic (the query matched but production is unobservable
     # otherwise): which pids were scanned, raw needle-hit counts BEFORE the
-    # table predicate, and how many were admitted. Reads in CloudWatch
-    # /ecs/the-fork. This is what attempts 1-2 lacked.
-    logger.info(
+    # table predicate, and how many were admitted. WARNING, not INFO: prod's
+    # root logger sits at WARNING (the setup_structured_logging NOTSET guard
+    # never fires), so a module INFO line never reaches CloudWatch — which is
+    # exactly why attempts 1-3 saw "no rescue log" and learned nothing.
+    logger.warning(
         "illumination-table rescue: pids=%s needle_hits=%s admitted=%d",
         pids, needle_hits, len(admitted),
     )
@@ -2525,7 +2527,7 @@ def _rescue_illumination_table_chunks(
         chunk.score = round(sim, 6)
         fused[chunk.chunk_id] = (chunk, sim, 0.0)
     if admitted:
-        logger.info(
+        logger.warning(
             "illumination-table rescue pooled %d chunk(s) that state the "
             "work-activity illumination table", len(admitted),
         )
