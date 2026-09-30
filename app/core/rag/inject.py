@@ -944,23 +944,38 @@ def _emit_retrieval_trace(
 # soil-contact note had no slot even once pooled. Two extra slots for this
 # ask only; every other question keeps RAG_K. ``0`` restores 0b1d13a.
 _SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT = 2
+# R18/R19: the illumination-table rescue pools the work-activity table (live
+# admitted=4), but the pooled chunks lose the top-k cut — HSE-plan chunks hold
+# the default 5 slots and the table pools at a lower cosine, so the model still
+# refuses. Extra slots for this ask only, exactly like the spec-deferred cover
+# ask. ``0`` restores the pre-fix miss.
+_ILLUMINATION_EXTRA_K_DEFAULT = 2
 
 
 def rag_retrieval_k(user_message: str, requested_k: int) -> int:
     """How many chunks pre-injection retrieval asks for on this turn."""
+    msg = user_message or ""
+    from app.core.rag.retriever import (
+        query_asks_illumination_level,
+        query_asks_spec_deferred_cover,
+    )
     try:
-        extra = int(os.getenv(
+        cover_extra = int(os.getenv(
             "RAG_SPEC_DEFERRED_COVER_EXTRA_K",
             str(_SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT),
         ))
     except ValueError:
-        extra = _SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT
-    if extra <= 0:
-        return requested_k
-    from app.core.rag.retriever import query_asks_spec_deferred_cover
-
-    if query_asks_spec_deferred_cover(user_message or ""):
-        return requested_k + extra
+        cover_extra = _SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT
+    if cover_extra > 0 and query_asks_spec_deferred_cover(msg):
+        return requested_k + cover_extra
+    try:
+        illum_extra = int(os.getenv(
+            "RAG_ILLUMINATION_EXTRA_K", str(_ILLUMINATION_EXTRA_K_DEFAULT),
+        ))
+    except ValueError:
+        illum_extra = _ILLUMINATION_EXTRA_K_DEFAULT
+    if illum_extra > 0 and query_asks_illumination_level(msg):
+        return requested_k + illum_extra
     return requested_k
 
 

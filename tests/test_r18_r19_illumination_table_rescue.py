@@ -243,3 +243,16 @@ def test_pooled_diagnostic_is_logged_at_warning(monkeypatch):
     msgs = " || ".join(lines)
     assert "illumination-table rescue:" in msgs
     assert "pooled 1 chunk" in msgs
+
+
+# ── Task 1B: the pooled table chunks lose the k-cut (live: admitted=4, still
+# 0/6). Give the illumination ask extra retrieval slots, exactly like the
+# spec-deferred-cover ask does (RAG_SPEC_DEFERRED_COVER_EXTRA_K).
+
+def test_illumination_ask_gets_extra_retrieval_slots():
+    from app.core.rag.inject import rag_retrieval_k
+    assert rag_retrieval_k(R18, 5) == 7
+    assert rag_retrieval_k(R19, 5) == 7
+    # unrelated asks keep RAG_K
+    assert rag_retrieval_k("What is the site address?", 5) == 5
+    assert rag_retrieval_k("What is the Defects Notification Period?", 5) == 5
