@@ -134,7 +134,7 @@ ultralytics==8.4.66
     # via -r requirements-cv.in
 ultralytics-thop==2.0.20
     # via ultralytics
-urllib3==2.7.0
+urllib3==2.8.0
     # via requests
 
 # The following packages are considered to be unsafe in a requirements file:
