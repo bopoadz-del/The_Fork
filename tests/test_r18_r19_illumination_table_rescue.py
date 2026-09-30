@@ -1,0 +1,145 @@
+"""R18/R19: the work-activity illumination table reaches the model.
+
+Live on 4bbb632, both 0/6. R18 ("Per the project HSE lighting requirements,
+what minimum illumination is required for concrete placement during night
+work?" — 50 lux) and R19 ("… for bricklaying?" — 100 lux) refused: the query's
+"HSE lighting / night work" wording steered hybrid retrieval to the HSE plan
+and a pre-condition site-survey .docx, and the spec's illumination table never
+entered top-k — even though its BM25 tokens ("concrete placement",
+"bricklaying", "illumination", "lux") are right there.
+
+Corpus truth (made the product quote it, doc REDACTED chunk 661 / REDACTED
+chunk 73, REDACTED).pdf, DD-SWD-…-HS-000002 Rev01):
+
+    The following table indicates the minimum levels of area illumination
+    required for the type of work indicated.
+    | Work Activity | LUX | Foot Candle |
+    | Interior movement only | 10 | 1.0 |
+    | Handling material | 30 | 3.0 |
+    | Interior reinforcing | 50 | 5.0 |
+    | Concrete placement | 50 | 5.0 |
+    | Bricklaying | 100 | 10.0 |
+    | Office lighting | 100 | 10.0 |
+    | Bench work/plastering | 200 | 20.0 | …
+
+The MEP room table (chunks 435/437: "Service Luminance — Avg Lux",
+"Control Rooms 500", "Uo (uniformity)") is a DIFFERENT table and must not be
+mistaken for this one.
+
+Fix: a targeted retrieval rescue (RAG_ILLUMINATION_TABLE_RESCUE, default on)
+that pools the work-activity illumination table when an illumination-for-an-
+activity ask has no lux row in top-k — same shape as the soil-contact-cover
+rescue. Synthetic text throughout.
+"""
+from __future__ import annotations
+
+from app.core.rag import retriever as ret
+from app.core.rag.vector_store import Chunk
+
+WORK_ACTIVITY_TABLE = (
+    "The following table indicates the minimum levels of area illumination "
+    "required for the type of work indicated. "
+    "| Work Activity | LUX | Foot Candle | "
+    "| Interior movement only | 10 | 1.0 | "
+    "| Handling material | 30 | 3.0 | "
+    "| General rough work | 30 | 3.0 | "
+    "| Interior reinforcing | 50 | 5.0 | "
+    "| Concrete placement | 50 | 5.0 | "
+    "| Bricklaying | 100 | 10.0 | "
+    "| Office lighting | 100 | 10.0 | "
+    "| Bench work/plastering | 200 | 20.0 |"
+)
+# The MEP room table — same corpus, different table, room lux not activity lux.
+MEP_ROOM_TABLE = (
+    "Table 12-1: Lighting levels | Location | Service Luminance - Avg Lux | "
+    "Uo (uniformity) | Control Rooms | 500 | 0.4 | Plant rooms | 200 | 0.4 | "
+    "Corridors | 150 | 0.4 |"
+)
+HSE_PROSE = (
+    "The Contractor shall provide lighting installations giving minimum "
+    "illumination levels as per standard design, arranged so all areas "
+    "receive light from at least two directions to prevent shadows."
+)
+
+R18 = ("Per the project HSE lighting requirements, what minimum illumination "
+       "is required for concrete placement during night work?")
+R19 = ("Per the project HSE lighting requirements, what minimum illumination "
+       "is required for bricklaying?")
+
+
+# ── the ask is recognised, unrelated asks are not ──────────────────────────
+
+def test_r18_r19_are_recognised_as_illumination_level_asks():
+    assert ret.query_asks_illumination_level(R18)
+    assert ret.query_asks_illumination_level(R19)
+
+
+def test_unrelated_asks_do_not_trigger_the_rescue():
+    for q in (
+        "What is the Defects Notification Period under this contract?",
+        "How much concrete for 24 pile caps 2.5 x 2.5 x 1.2 m?",
+        "What is the Time for Completion for the whole of the Works?",
+    ):
+        assert not ret.query_asks_illumination_level(q), q
+
+
+# ── the table is recognised, the MEP room table and prose are not ──────────
+
+def test_the_work_activity_table_is_recognised():
+    assert ret.chunk_states_work_activity_illumination(WORK_ACTIVITY_TABLE)
+
+
+def test_the_mep_room_table_is_not_the_work_activity_table():
+    assert not ret.chunk_states_work_activity_illumination(MEP_ROOM_TABLE)
+
+
+def test_hse_prose_without_a_lux_figure_is_not_the_table():
+    assert not ret.chunk_states_work_activity_illumination(HSE_PROSE)
+
+
+# ── the rescue pools the table when top-k lacks it ─────────────────────────
+
+class _FakeStore:
+    """Only what the rescue calls: chunks_containing_all(pid, needles, k)."""
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    def chunks_containing_all(self, project_id, needles, k=20, doc_ids=None):
+        nl = [str(n).lower() for n in (needles or [])]
+        out = []
+        for c in self._chunks:
+            if c.project_id != project_id:
+                continue
+            t = (c.text or "").lower()
+            if nl and all(n in t for n in nl):
+                out.append(c)
+        return out[: max(1, int(k or 20))]
+
+
+def _chunk(cid, text, pid="P"):
+    return Chunk(chunk_id=cid, project_id=pid, doc_id=cid, chunk_index=0,
+                 text=text, score=0.0, source_name="")
+
+
+def test_rescue_pools_the_table_when_top_k_has_only_hse_prose():
+    table = _chunk("spec-661", WORK_ACTIVITY_TABLE)
+    store = _FakeStore([table, _chunk("mep-435", MEP_ROOM_TABLE)])
+    # top-k (fused) has only the HSE prose chunk — no lux row.
+    prose = _chunk("hse-1", HSE_PROSE)
+    fused = {"hse-1": (prose, 0.62, 0.0)}
+    added = ret._rescue_illumination_table_chunks(R18, "P", fused, store)
+    assert added >= 1
+    assert "spec-661" in fused
+    # the MEP room table is not pooled by this rescue
+    assert "mep-435" not in fused
+
+
+def test_rescue_is_a_noop_for_an_unrelated_ask():
+    store = _FakeStore([_chunk("spec-661", WORK_ACTIVITY_TABLE)])
+    fused = {}
+    added = ret._rescue_illumination_table_chunks(
+        "What is the Defects Notification Period?", "P", fused, store,
+    )
+    assert added == 0
+    assert fused == {}
