@@ -2454,6 +2454,7 @@ def _rescue_illumination_table_chunks(
     project_id: str,
     fused: Dict[str, Tuple],
     store,
+    extra_pids: Optional[List[str]] = None,
     *,
     embedder=None,
     query_vec=None,
@@ -2479,11 +2480,13 @@ def _rescue_illumination_table_chunks(
         if chunk_states_work_activity_illumination(chunk.text or ""):
             seen.add(chunk_id)
             admitted.append(chunk)
-    # Scan the UI pid AND the Master Corpus source pids: the table chunk is
-    # owned by a source project, not the UI project the query runs under, so
-    # chunks_containing_all(ui_pid) returns nothing (attempt 1, live 54d017c,
-    # 0/6 with no rescue log). Same reason the E1 rescue uses this helper.
-    pids = _e1_scan_project_ids(project_id, fused=fused)
+    # Scan the SAME pid set the semantic leg searches: the UI pid, the Master
+    # Corpus fallback/source, AND the general-knowledge pids (gk_ids), passed
+    # by the call site as extra_pids. Attempts 1-2 (0/6 live) omitted the GK
+    # layer, where the spec volume lives, so chunks_containing_all — which
+    # matches project_id EXACTLY — returned nothing for every pid it tried.
+    pids = _e1_scan_project_ids(project_id, extra_pids, fused)
+    needle_hits: Dict[str, int] = {}
     for pid in pids:
         for needles in _ILLUMINATION_NEEDLES:
             try:
@@ -2494,6 +2497,9 @@ def _rescue_illumination_table_chunks(
                     pid, needles, exc,
                 )
                 continue
+            needle_hits[" ".join(needles)] = (
+                needle_hits.get(" ".join(needles), 0) + len(hits or [])
+            )
             for chunk in hits or []:
                 if chunk.chunk_id in seen:
                     continue
@@ -2503,6 +2509,14 @@ def _rescue_illumination_table_chunks(
                 if not chunk_states_work_activity_illumination(chunk.text or ""):
                     continue
                 admitted.append(chunk)
+    # Always-on diagnostic (the query matched but production is unobservable
+    # otherwise): which pids were scanned, raw needle-hit counts BEFORE the
+    # table predicate, and how many were admitted. Reads in CloudWatch
+    # /ecs/the-fork. This is what attempts 1-2 lacked.
+    logger.info(
+        "illumination-table rescue: pids=%s needle_hits=%s admitted=%d",
+        pids, needle_hits, len(admitted),
+    )
     sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
     for chunk, sim in zip(admitted, sims):
         prior = fused.get(chunk.chunk_id)
@@ -10381,18 +10395,23 @@ def retrieve_with_filter(
         query, project_id, fused, store,
         embedder=embedder, query_vec=query_vec,
     )
+    # The general-knowledge pids the semantic leg searches, plus the empty-
+    # project master-corpus fallback. Computed here (was below) so the
+    # illumination rescue can fetch from the SAME corpora the semantic leg did
+    # — attempts 1-2 scanned only the UI + master-corpus source and missed the
+    # GK layer where the spec volume lives.
+    extra_rescue_pids = gk_ids + ([fb_id] if use_fallback and fb_id else [])
     # R18/R19: the work-activity illumination table ("Concrete placement 50
     # LUX", "Bricklaying 100 LUX") never enters top-k for an "HSE lighting /
     # night work" ask, which steers to the HSE plan. Pool it at its cosine.
     _rescue_illumination_table_chunks(
-        query, project_id, fused, store,
+        query, project_id, fused, store, extra_rescue_pids,
         embedder=embedder, query_vec=query_vec,
     )
 
     # Letter / named-party filename rescue (D1). Runs EVEN WHEN term rescue
     # already found place-name overlap in Volume 5 — that in-pool hit is
     # what used to skip the out-of-pool fetch of the actual letter.
-    extra_rescue_pids = gk_ids + ([fb_id] if use_fallback and fb_id else [])
     filename_names = _rescue_filename_matched_docs(
         query,
         project_id,
