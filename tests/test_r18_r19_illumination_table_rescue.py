@@ -161,3 +161,29 @@ def test_rescue_scans_master_corpus_source_pid_not_just_the_ui_pid(monkeypatch):
     added = ret._rescue_illumination_table_chunks(R18, UI, fused, store)
     assert added >= 1
     assert "spec-661" in fused
+
+
+def test_rescue_reaches_a_general_knowledge_pid_only_via_extra_pids(monkeypatch):
+    """Attempts 1-2 (0/6 live): _e1_scan_project_ids does NOT include the
+    general-knowledge pids (gk_ids) that the semantic leg searches and that
+    RAG_GENERAL_KNOWLEDGE_PROJECTS holds in prod (two projects). The spec table
+    lives under a GK pid; only extra_pids (= gk_ids + fb_id, passed by the call
+    site) reaches it. Stub _e1_scan_project_ids with its real contract: UI pid
+    plus whatever extra_pids the caller threads."""
+    monkeypatch.setattr(ret, "_e1_scan_project_ids",
+                        lambda pid, extra=None, fused=None: [pid] + list(extra or []))
+    UI = "master_corpus"
+    GK = "gk-project-1"
+    table = _chunk("spec-661", WORK_ACTIVITY_TABLE, pid=GK)
+    store = _FakeStore([table])
+    # Without extra_pids the GK pid is never scanned — the attempt-2 bug.
+    f_without = {}
+    ret._rescue_illumination_table_chunks(R18, UI, f_without, store)
+    assert "spec-661" not in f_without
+    # With extra_pids carrying the GK pid, the table is pooled.
+    f_with = {}
+    added = ret._rescue_illumination_table_chunks(
+        R18, UI, f_with, store, [GK],
+    )
+    assert added >= 1
+    assert "spec-661" in f_with
