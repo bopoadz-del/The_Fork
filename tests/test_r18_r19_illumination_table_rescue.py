@@ -33,6 +33,8 @@ rescue. Synthetic text throughout.
 """
 from __future__ import annotations
 
+import logging
+
 from app.core.rag import retriever as ret
 from app.core.rag.vector_store import Chunk
 
@@ -187,3 +189,28 @@ def test_rescue_reaches_a_general_knowledge_pid_only_via_extra_pids(monkeypatch)
     )
     assert added >= 1
     assert "spec-661" in f_with
+
+
+# ── observability: the diagnostic must reach CloudWatch, which carries only
+# WARNING+ from plain module loggers (prod root logger is at WARNING — the
+# setup_structured_logging NOTSET guard never fires). Attempts 1-3 logged at
+# INFO and were invisible; "no rescue log" proved nothing. These pin the level.
+
+def test_diagnostic_is_logged_at_warning_when_nothing_is_admitted(caplog):
+    store = _FakeStore([])  # no table anywhere -> admitted 0
+    with caplog.at_level(logging.WARNING, logger="app.core.rag.retriever"):
+        ret._rescue_illumination_table_chunks(R18, "P", {}, store)
+    line = [r.getMessage() for r in caplog.records
+            if "illumination-table rescue:" in r.getMessage()]
+    assert line, "the always-on diagnostic must log at WARNING (visible in prod)"
+    assert "admitted=0" in line[0]
+    assert "needle_hits=" in line[0]
+
+
+def test_pooled_diagnostic_is_logged_at_warning(caplog):
+    store = _FakeStore([_chunk("spec-661", WORK_ACTIVITY_TABLE)])
+    with caplog.at_level(logging.WARNING, logger="app.core.rag.retriever"):
+        ret._rescue_illumination_table_chunks(R18, "P", {}, store)
+    msgs = " || ".join(r.getMessage() for r in caplog.records)
+    assert "illumination-table rescue:" in msgs
+    assert "pooled 1 chunk" in msgs
