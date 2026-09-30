@@ -2369,6 +2369,148 @@ def _rescue_soil_contact_cover_chunks(
     return len(admitted)
 
 
+# ── R18/R19: work-activity illumination table rescue ──────────────────────
+# Live 4bbb632: "minimum illumination for concrete placement during night
+# work" (50 lux) and "… for bricklaying" (100 lux) both refused 0/6. The
+# spec's work-activity illumination table (doc e6e0702b chunk 661 / 9a56fb14
+# chunk 73, Vol 2 - Specification (6 of 9).pdf) states the figures, but the
+# "HSE lighting / night work" wording steers hybrid retrieval to the HSE plan
+# and a pre-condition site-survey doc, and the table never enters top-k even
+# though its BM25 tokens match. Same class and same shape as the soil-contact
+# cover rescue: pool the table at its own cosine when the ask has no lux row.
+# Kill-switch: RAG_ILLUMINATION_TABLE_RESCUE=0.
+_ILLUMINATION_TOKEN_RE = re.compile(r"(?i)\b(illuminat\w*|lighting|lux|lx)\b")
+# A construction WORK ACTIVITY (this table), not a room (that is the MEP
+# room-lux table, a different table with "Service Luminance" / "Uo").
+_ILLUMINATION_ACTIVITY_RE = re.compile(
+    r"(?i)\b(concrete\s+plac\w*|bricklay\w*|brick\s+lay\w*|reinforc\w*|"
+    r"plaster\w*|handling\s+material|rough\s+work|bench\s+work|"
+    r"drawing\s+board|interior\s+movement|night\s+work|work\s+activit\w*|"
+    r"(?:type|kind)\s+of\s+work)\b"
+)
+# The table's own introduction, unique enough to identify it on its own.
+_ILLUMINATION_TABLE_INTRO_RE = re.compile(
+    r"(?i)minimum\s+levels?\s+of\s+area\s+illuminat\w*"
+)
+_ILLUMINATION_FOOT_CANDLE_RE = re.compile(r"(?i)\bfoot\s*candle")
+_ILLUMINATION_ROW_RE = re.compile(
+    r"(?i)\b(concrete\s+plac\w*|bricklay\w*|interior\s+reinforc\w*|"
+    r"handling\s+material|general\s+rough\s+work|bench\s+work|"
+    r"interior\s+movement|drawing\s+board)\b"
+)
+_ILLUMINATION_LUX_RE = re.compile(r"(?i)\b(lux|lx)\b")
+_ILLUMINATION_NEEDLES = (
+    ("illumination", "lux", "foot candle"),
+    ("minimum levels of area illumination",),
+    ("concrete placement", "lux"),
+    ("bricklaying", "lux"),
+)
+_ILLUMINATION_FETCH_K = 60
+
+
+def illumination_table_rescue_enabled() -> bool:
+    """ON by default. ``RAG_ILLUMINATION_TABLE_RESCUE=0`` restores the miss."""
+    return (os.getenv("RAG_ILLUMINATION_TABLE_RESCUE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_illumination_level(query: str) -> bool:
+    """An ask for the minimum illumination/lux of a construction work activity.
+
+    Fires only when both an illumination token and a work-activity token are
+    present, so a room-lighting-design ask (the MEP room table) does not
+    trigger it.
+    """
+    if not illumination_table_rescue_enabled():
+        return False
+    q = query or ""
+    return bool(
+        _ILLUMINATION_TOKEN_RE.search(q) and _ILLUMINATION_ACTIVITY_RE.search(q)
+    )
+
+
+def chunk_states_work_activity_illumination(text: str) -> bool:
+    """The chunk carries the work-activity illumination table.
+
+    Identified by its unique intro, or by a lux figure alongside the
+    Foot-Candle column and at least one activity row. The MEP room-lux table
+    ("Service Luminance", "Uo", room names, no Foot Candle) is excluded, as is
+    HSE prose that names lighting but states no lux figure.
+    """
+    blob = text or ""
+    if not _ILLUMINATION_LUX_RE.search(blob):
+        return False
+    if _ILLUMINATION_TABLE_INTRO_RE.search(blob):
+        return True
+    return bool(
+        _ILLUMINATION_FOOT_CANDLE_RE.search(blob)
+        and _ILLUMINATION_ROW_RE.search(blob)
+    )
+
+
+def _rescue_illumination_table_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    *,
+    embedder=None,
+    query_vec=None,
+) -> int:
+    """Pool the work-activity illumination table when the ask lacks a lux row.
+
+    Mirrors ``_rescue_soil_contact_cover_chunks``: project corpus only, fetch
+    by lexical needles, keep only chunks that ARE the table, and pool each at
+    its own cosine (0.0 without an embedder) so it competes like any semantic
+    candidate. Returns the number added/re-scored. Failures leave the pool.
+    """
+    if not query_asks_illumination_level(query):
+        return 0
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return 0
+    admitted: List[Chunk] = []
+    seen: Set[str] = set()
+    for chunk_id, (chunk, _sem, bonus) in list(fused.items()):
+        if getattr(chunk, "project_id", project_id) != project_id or (bonus or 0.0):
+            continue
+        if chunk_states_work_activity_illumination(chunk.text or ""):
+            seen.add(chunk_id)
+            admitted.append(chunk)
+    for needles in _ILLUMINATION_NEEDLES:
+        try:
+            hits = fetch(project_id, list(needles), k=_ILLUMINATION_FETCH_K)
+        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
+            logger.warning(
+                "illumination-table rescue for %s (%r) failed: %s",
+                project_id, needles, exc,
+            )
+            continue
+        for chunk in hits or []:
+            if chunk.chunk_id in seen:
+                continue
+            seen.add(chunk.chunk_id)
+            if chunk.chunk_id in fused:
+                continue  # pooled: handled above (or carries a bonus)
+            if not chunk_states_work_activity_illumination(chunk.text or ""):
+                continue
+            admitted.append(chunk)
+    sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
+    for chunk, sim in zip(admitted, sims):
+        prior = fused.get(chunk.chunk_id)
+        if prior is not None:
+            sim = max(sim, prior[1] or 0.0) if (prior[1] or 0.0) > 0.0 else sim
+        chunk.score = round(sim, 6)
+        fused[chunk.chunk_id] = (chunk, sim, 0.0)
+    if admitted:
+        logger.info(
+            "illumination-table rescue pooled %d chunk(s) that state the "
+            "work-activity illumination table", len(admitted),
+        )
+    return len(admitted)
+
+
 _SOURCE_HEADER_RE = re.compile(r"(?i)^\[source:[^\]]*\]\s*")
 _COPY_KEY_MIN_CHARS = 80
 
@@ -10229,6 +10371,13 @@ def retrieve_with_filter(
     # and "in contact with soil", not the question's words, so no leg above
     # pools them. Pool them at their own cosine.
     _rescue_soil_contact_cover_chunks(
+        query, project_id, fused, store,
+        embedder=embedder, query_vec=query_vec,
+    )
+    # R18/R19: the work-activity illumination table ("Concrete placement 50
+    # LUX", "Bricklaying 100 LUX") never enters top-k for an "HSE lighting /
+    # night work" ask, which steers to the HSE plan. Pool it at its cosine.
+    _rescue_illumination_table_chunks(
         query, project_id, fused, store,
         embedder=embedder, query_vec=query_vec,
     )
