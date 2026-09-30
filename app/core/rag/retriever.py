@@ -2472,30 +2472,37 @@ def _rescue_illumination_table_chunks(
         return 0
     admitted: List[Chunk] = []
     seen: Set[str] = set()
+    # An already-pooled table chunk (any owner pid) is kept, not re-fetched.
     for chunk_id, (chunk, _sem, bonus) in list(fused.items()):
-        if getattr(chunk, "project_id", project_id) != project_id or (bonus or 0.0):
+        if bonus or 0.0:
             continue
         if chunk_states_work_activity_illumination(chunk.text or ""):
             seen.add(chunk_id)
             admitted.append(chunk)
-    for needles in _ILLUMINATION_NEEDLES:
-        try:
-            hits = fetch(project_id, list(needles), k=_ILLUMINATION_FETCH_K)
-        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-            logger.warning(
-                "illumination-table rescue for %s (%r) failed: %s",
-                project_id, needles, exc,
-            )
-            continue
-        for chunk in hits or []:
-            if chunk.chunk_id in seen:
+    # Scan the UI pid AND the Master Corpus source pids: the table chunk is
+    # owned by a source project, not the UI project the query runs under, so
+    # chunks_containing_all(ui_pid) returns nothing (attempt 1, live 54d017c,
+    # 0/6 with no rescue log). Same reason the E1 rescue uses this helper.
+    pids = _e1_scan_project_ids(project_id, fused=fused)
+    for pid in pids:
+        for needles in _ILLUMINATION_NEEDLES:
+            try:
+                hits = fetch(pid, list(needles), k=_ILLUMINATION_FETCH_K)
+            except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
+                logger.warning(
+                    "illumination-table rescue for %s (%r) failed: %s",
+                    pid, needles, exc,
+                )
                 continue
-            seen.add(chunk.chunk_id)
-            if chunk.chunk_id in fused:
-                continue  # pooled: handled above (or carries a bonus)
-            if not chunk_states_work_activity_illumination(chunk.text or ""):
-                continue
-            admitted.append(chunk)
+            for chunk in hits or []:
+                if chunk.chunk_id in seen:
+                    continue
+                seen.add(chunk.chunk_id)
+                if chunk.chunk_id in fused:
+                    continue  # pooled: handled above (or carries a bonus)
+                if not chunk_states_work_activity_illumination(chunk.text or ""):
+                    continue
+                admitted.append(chunk)
     sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
     for chunk, sim in zip(admitted, sims):
         prior = fused.get(chunk.chunk_id)
