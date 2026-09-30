@@ -195,22 +195,50 @@ def test_rescue_reaches_a_general_knowledge_pid_only_via_extra_pids(monkeypatch)
 # WARNING+ from plain module loggers (prod root logger is at WARNING — the
 # setup_structured_logging NOTSET guard never fires). Attempts 1-3 logged at
 # INFO and were invisible; "no rescue log" proved nothing. These pin the level.
+#
+# A handler attached DIRECTLY to the retriever logger, at WARNING — not caplog.
+# caplog captures through a handler on the root logger, and another test in the
+# full suite can call setup_structured_logging, which does `root.handlers =
+# [handler]` and silently wipes caplog's handler (order-dependent failure on
+# the CI virgin profile). A per-logger handler is immune to that.
 
-def test_diagnostic_is_logged_at_warning_when_nothing_is_admitted(caplog):
+class _CaptureAtWarning:
+    """Records emitted by ret.logger at WARNING+, independent of root/caplog."""
+
+    def __enter__(self):
+        self.records = []
+        self._h = logging.Handler()
+        self._h.setLevel(logging.WARNING)
+        self._h.emit = self.records.append  # capture the LogRecord
+        self._logger = logging.getLogger(ret.logger.name)
+        self._prev_level = self._logger.level
+        self._logger.addHandler(self._h)
+        self._logger.setLevel(logging.WARNING)
+        return self
+
+    def __exit__(self, *exc):
+        self._logger.removeHandler(self._h)
+        self._logger.setLevel(self._prev_level)
+        return False
+
+    def messages(self):
+        return [r.getMessage() for r in self.records if r.levelno >= logging.WARNING]
+
+
+def test_diagnostic_is_logged_at_warning_when_nothing_is_admitted():
     store = _FakeStore([])  # no table anywhere -> admitted 0
-    with caplog.at_level(logging.WARNING, logger="app.core.rag.retriever"):
+    with _CaptureAtWarning() as cap:
         ret._rescue_illumination_table_chunks(R18, "P", {}, store)
-    line = [r.getMessage() for r in caplog.records
-            if "illumination-table rescue:" in r.getMessage()]
+    line = [m for m in cap.messages() if "illumination-table rescue:" in m]
     assert line, "the always-on diagnostic must log at WARNING (visible in prod)"
     assert "admitted=0" in line[0]
     assert "needle_hits=" in line[0]
 
 
-def test_pooled_diagnostic_is_logged_at_warning(caplog):
+def test_pooled_diagnostic_is_logged_at_warning():
     store = _FakeStore([_chunk("spec-661", WORK_ACTIVITY_TABLE)])
-    with caplog.at_level(logging.WARNING, logger="app.core.rag.retriever"):
+    with _CaptureAtWarning() as cap:
         ret._rescue_illumination_table_chunks(R18, "P", {}, store)
-    msgs = " || ".join(r.getMessage() for r in caplog.records)
+    msgs = " || ".join(cap.messages())
     assert "illumination-table rescue:" in msgs
     assert "pooled 1 chunk" in msgs
