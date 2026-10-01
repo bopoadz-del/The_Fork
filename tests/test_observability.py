@@ -120,3 +120,43 @@ def test_metrics_endpoint_returns_block_snapshot(client: TestClient):
 def client():
     from app.main import app
     return TestClient(app, headers={"Authorization": "Bearer cb_dev_key"})
+
+
+def test_configure_structured_logging_sets_root_to_info_in_prod(monkeypatch):
+    """Prod root logger must end at INFO so module INFO reaches CloudWatch.
+
+    The old `if root.level == logging.NOTSET` guard never fired (root defaults
+    to WARNING), so the documented INFO intent never took effect and every
+    module INFO line was dropped in prod. Save/restore root state — logging is
+    process-global.
+    """
+    import logging as _logging
+    from app.infra import monitoring as _mon
+    root = _logging.getLogger()
+    saved_level, saved_handlers = root.level, root.handlers[:]
+    try:
+        monkeypatch.setenv("ENV", "production")
+        monkeypatch.setenv("STRUCTURED_LOGS", "true")
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        root.setLevel(_logging.WARNING)  # the real prod default
+        assert _mon.configure_structured_logging() is True
+        assert root.getEffectiveLevel() == _logging.INFO
+    finally:
+        root.handlers = saved_handlers
+        root.setLevel(saved_level)
+
+
+def test_configure_structured_logging_honors_log_level_env(monkeypatch):
+    import logging as _logging
+    from app.infra import monitoring as _mon
+    root = _logging.getLogger()
+    saved_level, saved_handlers = root.level, root.handlers[:]
+    try:
+        monkeypatch.setenv("STRUCTURED_LOGS", "true")
+        monkeypatch.setenv("LOG_LEVEL", "WARNING")
+        root.setLevel(_logging.NOTSET)
+        _mon.configure_structured_logging()
+        assert root.getEffectiveLevel() == _logging.WARNING  # dial-back knob
+    finally:
+        root.handlers = saved_handlers
+        root.setLevel(saved_level)
