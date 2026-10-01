@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from 'react'
+import { useState, useEffect, useRef, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { apiPost } from '../lib/api'
@@ -24,6 +24,15 @@ export default function Login() {
   const [displayName, setDisplayName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Browser password managers autofill the field's DOM value WITHOUT firing
+  // React's onChange, so the controlled `password` state stays '' — which
+  // disabled the Sign-in button and let the next re-render's value="" wipe the
+  // autofilled password (the "autofill clears on refresh" bug). Refs read the
+  // real DOM value: we sync it into state after mount so the controlled value
+  // matches the field, and read it as the source of truth at submit.
+  const emailRef = useRef<HTMLInputElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
   // The verification link lands back here as /?verified=success|invalid.
   // Computed in the initializer rather than an effect: it is derived from the
   // URL that rendered this page, so deriving it during render avoids both a
@@ -43,6 +52,21 @@ export default function Login() {
     params.delete('verified')
     const rest = params.toString()
     window.history.replaceState({}, '', window.location.pathname + (rest ? `?${rest}` : ''))
+  }, [])
+
+  // Pull autofilled values into state once the browser has written them (it can
+  // land a few frames after mount), so the controlled value matches the field
+  // and the Sign-in button enables. Functional updates keep this a mount effect.
+  useEffect(() => {
+    const sync = () => {
+      const e = emailRef.current?.value
+      const p = passwordRef.current?.value
+      if (e) setEmail((cur) => (cur === e ? cur : e))
+      if (p) setPassword((cur) => (cur === p ? cur : p))
+    }
+    const t1 = setTimeout(sync, 80)
+    const t2 = setTimeout(sync, 400)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [])
 
   // Redirect already-authenticated users away from /login
@@ -82,19 +106,31 @@ export default function Login() {
     e.preventDefault()
     setError(null)
     setNotice(null)
+
+    // Read the live DOM values — an autofilled credential may not have reached
+    // state yet — and sync them back so the UI reflects what we submit.
+    const emailVal = (emailRef.current?.value ?? email).trim()
+    const passwordVal = passwordRef.current?.value ?? password
+    if (emailVal !== email) setEmail(emailVal)
+    if (passwordVal !== password) setPassword(passwordVal)
+    if (!emailVal || !passwordVal) {
+      setError('Enter your email and password to sign in.')
+      return
+    }
+
     setSubmitting(true)
 
     try {
       if (mode === 'signin') {
-        await login(email, password, remember)
+        await login(emailVal, passwordVal, remember)
       } else {
-        const result = await register(email, password, displayName.trim() || undefined)
+        const result = await register(emailVal, passwordVal, displayName.trim() || undefined)
         if (result.verificationRequired) {
           // The account exists but has no session yet. Navigating to the app
           // would bounce off ProtectedRoute; tell them to check their mail.
           setNotice(
             result.verificationEmailSent
-              ? `Account created. We sent a confirmation link to ${email} - follow it to finish signing in.`
+              ? `Account created. We sent a confirmation link to ${emailVal} - follow it to finish signing in.`
               : `Account created, but the confirmation email could not be sent. Use "Resend confirmation email" below.`,
           )
           setMode('signin')
@@ -151,6 +187,7 @@ export default function Login() {
           <div className="auth-field">
             <label className="auth-label" htmlFor="email">Email</label>
             <input
+              ref={emailRef}
               id="email"
               className="auth-input"
               type="email"
@@ -166,6 +203,7 @@ export default function Login() {
           <div className="auth-field">
             <label className="auth-label" htmlFor="password">Password</label>
             <input
+              ref={passwordRef}
               id="password"
               className="auth-input"
               type="password"
@@ -215,7 +253,7 @@ export default function Login() {
           <button
             className="auth-submit"
             type="submit"
-            disabled={submitting || !email || !password}
+            disabled={submitting}
           >
             {submitting
               ? (mode === 'signin' ? 'Signing in…' : 'Creating account…')

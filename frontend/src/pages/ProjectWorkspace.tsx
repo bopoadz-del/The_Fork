@@ -836,6 +836,14 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
   // Abort controller — cancel in-flight stream on unmount or re-send
   const abortRef = useRef<AbortController | null>(null)
 
+  // Synchronous in-flight guard. The `streaming` STATE lags a render behind the
+  // send, so a second message fired in that window slipped past `if (streaming)`
+  // and ran handleSend again — whose abortRef.abort() KILLED the first turn,
+  // which then vanished with no answer (the "rapid-send drop"). A ref flips
+  // synchronously, so a racing second send is rejected before it can touch the
+  // in-flight stream.
+  const streamingRef = useRef(false)
+
   // S4: document_ids attached via the composer since the last send. The
   // upload response's real doc id is kept here and shipped alongside the
   // inline [attached: name] marker (which the backend also parses as a
@@ -950,7 +958,8 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
   // ── Send + stream ─────────────────────────────────────────────────────────
 
   const handleSend = useCallback(async (userText: string) => {
-    if (streaming) return
+    if (streamingRef.current || streaming) return
+    streamingRef.current = true
 
     // Snapshot complete prior turns for history (before this user turn)
     const priorMessages = messagesRef.current.filter((m) => !m.streaming && !m.error)
@@ -1279,6 +1288,7 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
       setLlmAvailable(true)
     } finally {
       clearReaderDeadline()
+      streamingRef.current = false
       setStreaming(false)
       // First message stamps the session title server-side — refresh the
       // sidebar CHAT HISTORY list so the new session appears named.
@@ -1555,7 +1565,14 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
             }}
           />
           <ChatComposer
-            onSend={(text) => void handleSend(text)}
+            onSend={(text) => {
+              // Reject synchronously while a stream is in flight: the composer
+              // then KEEPS the typed text (it clears only on accept) and the
+              // in-flight turn is never aborted by a racing second send.
+              if (streamingRef.current) return false
+              void handleSend(text)
+              return true
+            }}
             disabled={streaming || composerIsBlocked}
             disabledReason={composerBlockedReason}
             projectId={id ?? ''}

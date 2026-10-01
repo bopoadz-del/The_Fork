@@ -66,7 +66,9 @@ const AUTO_AGENT: AgentOption = {
 }
 
 interface Props {
-  onSend: (text: string) => void
+  /** Returns false if the send was rejected (e.g. a turn is still streaming),
+   *  in which case the composer keeps the typed text instead of clearing it. */
+  onSend: (text: string) => boolean
   disabled: boolean
   disabledReason?: string
   projectId: string
@@ -147,7 +149,10 @@ export default function ChatComposer({
   function submit() {
     const trimmed = text.trim()
     if (!trimmed || disabled) return
-    onSend(trimmed)
+    // Clear the box only if the parent ACCEPTED the send. A send rejected
+    // because a previous turn is still streaming must keep the user's text so
+    // the question isn't silently lost.
+    if (onSend(trimmed) === false) return
     setText('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
   }
