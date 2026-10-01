@@ -28,8 +28,12 @@ interface Props {
 
 // Memoised: every streamed token calls setMessages on the parent, which
 // re-renders the whole list. Without memo, each tick re-parses ReactMarkdown
-// for every prior bubble — janky in long sessions. Bubbles are immutable once
-// settled, so a shallow prop compare skips them.
+// for every prior bubble — janky in long sessions, and a hard main-thread
+// freeze once the conversation is large (render cost is O(messages) PER token).
+// Bubbles are immutable once settled, so we skip them — but see propsEqual: the
+// default shallow compare could NOT skip them, because ChatList builds a fresh
+// onDownload closure for every bubble on every render, so that prop always
+// "changed". We compare the fields a bubble actually renders instead.
 function ChatBubble({ message, onDownload, onExport }: Props) {
   const isUser = message.role === 'user'
   const exports = message.exports ?? []
@@ -119,4 +123,26 @@ function ChatBubble({ message, onDownload, onExport }: Props) {
   )
 }
 
-export default memo(ChatBubble)
+/* Re-render a bubble only when something it actually renders changed. The two
+ * handlers (onDownload, onExport) back buttons that appear ONLY on a settled
+ * assistant message, and that message re-renders when it settles (streaming
+ * flips false), so a fresh closure always lands before the button is clickable —
+ * their identity never changes render output. Ignoring it here is what lets the
+ * memo skip prior bubbles during streaming: O(1) work per token instead of
+ * O(messages), which is the long-conversation freeze fix. */
+function propsEqual(prev: Props, next: Props): boolean {
+  const a = prev.message
+  const b = next.message
+  return (
+    a.id === b.id &&
+    a.role === b.role &&
+    a.content === b.content &&
+    !!a.streaming === !!b.streaming &&
+    !!a.error === !!b.error &&
+    a.toolStatus === b.toolStatus &&
+    a.exports === b.exports &&
+    !!prev.onDownload === !!next.onDownload
+  )
+}
+
+export default memo(ChatBubble, propsEqual)
