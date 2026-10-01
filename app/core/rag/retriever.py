@@ -2406,6 +2406,14 @@ _ILLUMINATION_NEEDLES = (
     ("bricklaying", "lux"),
 )
 _ILLUMINATION_FETCH_K = 60
+# The pooled table loses the top-k cut: the cut sorts fused by sem + bonus
+# (see retrieve_with_filter), and the rescue pooled at bonus 0.0, so the table
+# competed on raw cosine and lost to the HSE-plan chunks (R18/R19 0/6; extra-k
+# alone lifted R19 to 1/6). A bonus on the table's two best copies lifts it in.
+# 2.0 matches the file's _DOC_IDENTITY_BONUS / spec-title bonus and dominates a
+# cosine (<= 1). RAG_ILLUMINATION_TABLE_BONUS overrides; 0 restores the miss.
+_ILLUMINATION_TABLE_BONUS = 2.0
+_ILLUMINATION_TABLE_BONUS_MAX_CHUNKS = 2
 
 
 def illumination_table_rescue_enabled() -> bool:
@@ -2515,17 +2523,39 @@ def _rescue_illumination_table_chunks(
     # root logger sits at WARNING (the setup_structured_logging NOTSET guard
     # never fires), so a module INFO line never reaches CloudWatch — which is
     # exactly why attempts 1-3 saw "no rescue log" and learned nothing.
-    logger.warning(
-        "illumination-table rescue: pids=%s needle_hits=%s admitted=%d",
-        pids, needle_hits, len(admitted),
-    )
     sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
-    for chunk, sim in zip(admitted, sims):
+    # Bonus the two highest-cosine copies of the table so they clear the top-k
+    # cut (the cut sorts fused by sem + bonus; pooling at 0.0 lost). The 4
+    # admitted chunks are copies of one table — two in the excerpts answer the
+    # ask without flooding it; the rest pool at their cosine as before.
+    try:
+        bonus_val = float(os.getenv(
+            "RAG_ILLUMINATION_TABLE_BONUS", str(_ILLUMINATION_TABLE_BONUS),
+        ))
+    except ValueError:
+        bonus_val = _ILLUMINATION_TABLE_BONUS
+    bonus_rank = sorted(range(len(admitted)), key=lambda i: -(sims[i] or 0.0))
+    bonus_idx = set(bonus_rank[:_ILLUMINATION_TABLE_BONUS_MAX_CHUNKS]) if bonus_val > 0 else set()
+    bonus_applied = 0
+    for i, (chunk, sim) in enumerate(zip(admitted, sims)):
         prior = fused.get(chunk.chunk_id)
         if prior is not None:
             sim = max(sim, prior[1] or 0.0) if (prior[1] or 0.0) > 0.0 else sim
+        this_bonus = bonus_val if i in bonus_idx else 0.0
+        if prior is not None:
+            this_bonus = max(this_bonus, prior[2] or 0.0)  # never lower an existing bonus
         chunk.score = round(sim, 6)
-        fused[chunk.chunk_id] = (chunk, sim, 0.0)
+        fused[chunk.chunk_id] = (chunk, sim, this_bonus)
+        if this_bonus > 0:
+            bonus_applied += 1
+    # Always-on diagnostic at WARNING (prod root logger is at WARNING, so a
+    # module INFO line never reaches CloudWatch — attempts 1-3 learned nothing
+    # from its absence). pids scanned, raw needle-hit counts BEFORE the table
+    # predicate, how many admitted, and how many got the top-k bonus.
+    logger.warning(
+        "illumination-table rescue: pids=%s needle_hits=%s admitted=%d bonus_applied=%d",
+        pids, needle_hits, len(admitted), bonus_applied,
+    )
     if admitted:
         logger.warning(
             "illumination-table rescue pooled %d chunk(s) that state the "
