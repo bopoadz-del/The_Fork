@@ -256,3 +256,79 @@ def test_illumination_ask_gets_extra_retrieval_slots():
     # unrelated asks keep RAG_K
     assert rag_retrieval_k("What is the site address?", 5) == 5
     assert rag_retrieval_k("What is the Defects Notification Period?", 5) == 5
+
+
+# ── Task 1 (bonus): the pooled table loses the k-cut because it pools at bonus
+# 0.0 and the cut sorts fused by sem+bonus. Give the two highest-cosine table
+# chunks a bonus so they enter top-k. (admitted=4 live, extra-k alone = R19 1/6.)
+
+def _cos_by_marker(_embedder, _qv, texts):
+    import re
+    out = []
+    for t in texts:
+        m = re.search(r"COSKEY (\d+)", t)
+        out.append((int(m.group(1)) / 10.0) if m else 0.0)
+    return out
+
+
+def _table(cid, cosmark):
+    return _chunk(cid, WORK_ACTIVITY_TABLE + f" COSKEY {cosmark}")
+
+
+def test_rescue_bonuses_the_two_highest_cosine_table_chunks(monkeypatch):
+    monkeypatch.setattr(ret, "_cosine_to_query", _cos_by_marker)
+    store = _FakeStore([_table("spec-0", 0), _table("spec-1", 1),
+                        _table("spec-2", 2), _table("spec-3", 3)])
+    fused = {}
+    ret._rescue_illumination_table_chunks(
+        R18, "P", fused, store, embedder=object(), query_vec=[1.0],
+    )
+    bonus = {cid: e[2] for cid, e in fused.items()}
+    bonused = sorted(c for c, b in bonus.items() if b >= 2.0)
+    assert bonused == ["spec-2", "spec-3"], bonus       # the two highest cosine
+    assert bonus["spec-0"] == 0.0 and bonus["spec-1"] == 0.0
+
+
+def test_rescue_never_lowers_an_existing_bonus(monkeypatch):
+    monkeypatch.setattr(ret, "_cosine_to_query", _cos_by_marker)
+    pre = _table("spec-0", 0)
+    fused = {"spec-0": (pre, 0.4, 3.0)}  # already pooled with a higher bonus
+    store = _FakeStore([pre, _table("spec-1", 1), _table("spec-2", 2)])
+    ret._rescue_illumination_table_chunks(
+        R18, "P", fused, store, embedder=object(), query_vec=[1.0],
+    )
+    assert fused["spec-0"][2] == 3.0  # untouched, not lowered to 2.0 or 0.0
+
+
+def test_bonus_kill_switch(monkeypatch):
+    monkeypatch.setenv("RAG_ILLUMINATION_TABLE_BONUS", "0")
+    monkeypatch.setattr(ret, "_cosine_to_query", _cos_by_marker)
+    store = _FakeStore([_table("spec-0", 0), _table("spec-1", 1)])
+    fused = {}
+    ret._rescue_illumination_table_chunks(
+        R18, "P", fused, store, embedder=object(), query_vec=[1.0],
+    )
+    assert all(e[2] == 0.0 for e in fused.values())
+
+
+def test_unrelated_ask_applies_no_bonus(monkeypatch):
+    monkeypatch.setattr(ret, "_cosine_to_query", _cos_by_marker)
+    store = _FakeStore([_table("spec-0", 0)])
+    fused = {}
+    ret._rescue_illumination_table_chunks(
+        "What is the Defects Notification Period?", "P", fused, store,
+        embedder=object(), query_vec=[1.0],
+    )
+    assert fused == {}
+
+
+def test_diagnostic_reports_bonus_applied(monkeypatch):
+    monkeypatch.setattr(ret, "_cosine_to_query", _cos_by_marker)
+    lines = _spy_warning(monkeypatch)
+    store = _FakeStore([_table("spec-0", 0), _table("spec-1", 1),
+                        _table("spec-2", 2), _table("spec-3", 3)])
+    ret._rescue_illumination_table_chunks(
+        R18, "P", {}, store, embedder=object(), query_vec=[1.0],
+    )
+    diag = [m for m in lines if "illumination-table rescue:" in m]
+    assert diag and "bonus_applied=2" in diag[0], diag
