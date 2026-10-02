@@ -194,6 +194,23 @@ jobs:
         # Stdlib only. Exit 1 with a file:line list.
         run: python scripts/scan_exception_pass.py
 
+      - name: "No new hardwiring (NO HARDWIRING doctrine)"
+        # Owner doctrine 2026-10-02: a failing case is never fixed by name.
+        # Rejects any diff that ADDS a per-case form to product code (app/):
+        # a `_rescue_*` function, a `*_NEEDLES` list, a `RAG_*_RESCUE` /
+        # `*_BONUS` / `*_EXTRA_K` knob, or a probe/test-case ID (R18, M3,
+        # E1, UI-PHYS ...). On the day it was written retriever.py held 43
+        # rescues, 7 needle lists, 28 knobs and E1 x64 -- each one a failed
+        # probe turned into a special case, none a retrieval improvement.
+        # Those are GRANDFATHERED in scripts/hardwiring_baseline.json, keyed
+        # by symbol (not line, so the surgery doesn't renumber it) and by
+        # probe-ID count per file. The baseline may only shrink; a test
+        # asserts its ceiling and refuses stale keys. Do not add to it to
+        # pass this check -- say "no general fix found" and stop instead.
+        #
+        # Stdlib only. Exit 1 with a list of new forms.
+        run: python scripts/scan_hardwiring.py
+
   eslint:
     # BLOCKING, unlike ruff above. This gate exists because of a specific
     # production incident: on 2026-08-03 a `useMemo` added below an early
