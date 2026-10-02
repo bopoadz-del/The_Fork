@@ -1,5 +1,25 @@
 # AGENTS.md
 
+## STANDING ORDER -- read before anything else (owner, 2026-10-02)
+
+> NO HARDWIRING. A failing case is never fixed by name. No per-case branches,
+> no literal document strings, no test-case IDs, no rescue functions, no
+> per-case switches. Find the general cause and fix the mechanism so every
+> case of that kind passes. If you cannot find a general fix, say so and stop
+> -- a pass patch is a failure, not progress.
+
+> A fix is accepted only if it raises the score on questions and corpora the
+> builder has never seen. CI rejects any diff that adds `_rescue_*`,
+> `*_NEEDLES`, `*_RESCUE` knobs, or a probe ID inside product code.
+
+This REPLACES "loop until every test passes" and "after every fix, record the
+case that would have caught it". Passing SEEN tests is not the target; working
+on UNSEEN ones is. The CI tripwire is `scripts/scan_hardwiring.py` (blocking,
+`lint.yml`); never add to `scripts/hardwiring_baseline.json` -- it may only
+shrink. The acceptance is the owner-sealed unseen set: do not ask for it, do
+not write it. The full order, the four tests, and the retriever surgery:
+`docs/ORDER-no-hardwiring.md`.
+
 ## Cursor Cloud specific instructions
 
 The Fork is a **FastAPI** backend (`app/`) plus a **React + Vite + TypeScript**
@@ -86,6 +106,14 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   warnings are allowed). Context files (`AuthContext`, `ThemeContext`) keep a
   file-level `react-refresh/only-export-components` disable because the hook
   lives next to the provider.
+- **GRANDFATHERED per-case behaviour -- surgery targets, NOT a pattern to copy.**
+  The items below (Leftover L1 / L6, Live UI pack E4 / F1, the `clash` keyword
+  switch, the named-calculator phrase override) describe switches and pins
+  that exist in code TODAY. They are documented so you do not break a live
+  kill-switch by accident. Under the STANDING ORDER at the top of this file,
+  every one of them is a candidate for the general fix that removes it. Never
+  add a new entry of this kind, and never cite one as justification for
+  another.
 - Leftover L1 named-file fetch: `_predispatch_file_tool` runs `fetch_document`
   for `.txt`/`.md`/`.docx`/`.doc` when the user names the file (full name or a
   ≥12-char stem, so `REDACTED` matches a timestamped upload).
