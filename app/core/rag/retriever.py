@@ -1167,9 +1167,12 @@ def _gk_lexical_bonus(query_terms: frozenset, chunk_text: str) -> float:
 # never enough to match, which is what keeps this from dragging in boilerplate —
 # the failure mode a naive OR-any-term search would have.
 #
-# It runs ONLY when the semantic pass has already failed to surface any chunk
-# carrying two or more of the query's distinctive terms, so on a healthy
-# retrieval it is a no-op and costs one cheap SQL query at most.
+# The out-of-pool lookup runs while any content constituent is still missing.
+# One co-occurring stem pair is not the query. A stem that only modifies a
+# head does not count as that head, so the query stays unmet until every
+# head is in the pool. When every head is already pooled the lookup is a
+# no-op. A pair already visible in the top-k still freezes scores, so a
+# healthy hit is not re-scored.
 _TERM_RESCUE_BONUS_MAX = 1.0   # below IDENTIFIER_BONUS_MAX: exact codes still win
 _TERM_RESCUE_MAX_TERMS = 5     # caps the pair expansion at C(5,2) = 10 clauses
 _TERM_RESCUE_MIN_TERMS = 2     # co-occurrence needs at least a pair
@@ -1245,153 +1248,86 @@ def build_rescue_phrases(terms: List[str]) -> List[str]:
     return [" ".join(pair) for pair in itertools.combinations(stems, 2)]
 
 
-# ── foundation-backfill degree (live P1a) ───────────────────────────────────
-#
-# Live SET5 P1a. "Per the project specification, to what degree must
-# structural backfill under foundations be compacted, and by which test?"
-# The specification states 98% of maximum dry density, Modified Proctor,
-# near-optimum moisture. Retrieval returned duct backfilling (50 mm sand,
-# BS 1377 Part 9) and the MOT embankment test instead.
-#
-# Term rescue did not correct it. The rescue stands down once ANY pair of
-# query stems co-occurs in the top-k, and "compact" + "backfill" co-occur
-# in the duct chunk. The degree clause, outside that pool, is never fetched.
-# On 7c0b255 the tool path also searches the operator's words, so that
-# distractor list is merged into every run and crowds out a model query
-# that had reached the clause.
-#
-# This rescue asks a narrower question: does the top-k already state a
-# backfill compaction degree (a percent of MDD, or Modified Proctor /
-# ASTM D1557)? Generic "properly compacted" does not count. When it does
-# not, chunks that do state the degree are fetched and lifted. Nothing is
-# invented when the corpus has no such chunk. A degree clause already in
-# the top-k is left alone, score included.
-#
-# Below IDENTIFIER_BONUS_MAX so an exact reference code still outranks it.
-# Kill-switch: RAG_FOUNDATION_BACKFILL_RESCUE=0.
-_FOUNDATION_BACKFILL_ASK_RE = re.compile(
-    r"(?i)\bstructural\s+backfill\b"
-    r"|\bbackfill\b(?:\s+\w+){0,5}\s+(?:under|beneath)\s+foundations?\b",
+# Content constituents of a query. A coordinated clause contributes its
+# head stems. A word that only modifies a head (adjective or participle
+# attached to that head) is not itself a constituent: matching the
+# modifier does not satisfy the head.
+_CLAUSE_SPLIT_RE = re.compile(r"[,;:?]|\b(?:and|or|but)\b", re.IGNORECASE)
+_MODIFIER_SUFFIXES = (
+    "ational", "ious", "ical", "able", "ible", "ous", "ive",
+    "ful", "less", "ing", "ed", "al", "ic", "en",
 )
-_FOUNDATION_BACKFILL_TOPIC_RE = re.compile(
-    r"(?i)\b(?:compact\w*|degree|proctor|density|mdd|test)\b",
-)
-_BACKFILL_WORD_RE = re.compile(r"(?i)\bbackfill")
-_BACKFILL_DEGREE_RE = re.compile(
-    r"(?i)(?:"
-    r"\b\d+(?:\.\d+)?\s*(?:%|percent\b)"
-    r"(?:\s+of)?(?:\s+the)?\s+(?:maximum\s+dry\s+density|\bmdd\b)"
-    r"|modified\s+proctor"
-    r"|astm\s*d\s*1557"
-    r")",
-)
-_STRUCTURAL_BACKFILL_RE = re.compile(
-    r"(?i)\bstructural\s+backfill\b"
-    r"|\bbackfill\s+(?:under|beneath)\s+foundations?\b"
-    r"|\bfoundation\s+backfill\b",
-)
-# AND-matched by identifier_search. Kept specific so a concrete clause that
-# merely says "maximum dry density" is not the whole candidate list.
-_FOUNDATION_BACKFILL_PHRASES = (
-    "structural backfill",
-    "foundation backfill",
-    "backfill modified proctor",
-    "backfill maximum dry density",
-    "backfill mdd",
-)
-_FOUNDATION_BACKFILL_DEGREE_BONUS = 1.15
-_FOUNDATION_BACKFILL_STRUCTURAL_EXTRA = 0.25
+# Closed-class words the content-word regex still keeps. They attach
+# heads; they are not constituents.
+_CLAUSE_FUNCTION_WORDS = frozenset({
+    "must", "shall", "will", "would", "could", "should", "might",
+    "been", "being", "were", "have", "does", "into", "onto", "upon",
+    "under", "over", "from", "with", "within", "without", "between",
+    "among", "during", "after", "before", "above", "below", "through",
+    "against", "across", "toward", "towards", "until", "about", "than",
+    "then", "such", "also", "only", "each", "both", "very", "just",
+})
 
 
-def foundation_backfill_rescue_enabled() -> bool:
-    """ON by default. ``RAG_FOUNDATION_BACKFILL_RESCUE=0`` restores the miss."""
-    return (os.getenv("RAG_FOUNDATION_BACKFILL_RESCUE", "1") or "").strip().lower() not in (
-        "0", "false", "no", "off",
-    )
+def _modifier_shaped(word: str) -> bool:
+    """True when ``word`` has adjective or participle shape."""
+    lowered = (word or "").lower()
+    for suffix in _MODIFIER_SUFFIXES:
+        if lowered.endswith(suffix) and len(lowered) - len(suffix) >= 3:
+            return True
+    return False
 
 
-def query_asks_foundation_backfill_degree(query: str) -> bool:
-    """True when the question asks how structural / foundation backfill is compacted."""
-    text = query or ""
-    return bool(
-        _FOUNDATION_BACKFILL_ASK_RE.search(text)
-        and _FOUNDATION_BACKFILL_TOPIC_RE.search(text)
-    )
+def content_constituent_heads(query: str) -> List[str]:
+    """Head stem of every content constituent in ``query``, in order.
 
-
-def chunk_states_backfill_compaction_degree(text: str) -> bool:
-    """True when ``text`` states a backfill compaction degree or Proctor test.
-
-    Duct sand cover, "properly compacted", and BS 1377 / MOT method lines
-    do not. They name neither a percent of maximum dry density nor
-    Modified Proctor.
+    Coordinated clauses are separate constituents. Within a clause, a
+    stem that only modifies the following head (or a clause-final
+    participle modifying the head already seen) is not returned. A pool
+    that matched the modifier has not matched that head.
     """
-    body = text or ""
-    return bool(_BACKFILL_WORD_RE.search(body) and _BACKFILL_DEGREE_RE.search(body))
+    heads: List[str] = []
+    seen: Set[str] = set()
+    for clause in _CLAUSE_SPLIT_RE.split(query or ""):
+        words: List[str] = []
+        for word in re.findall(r"[A-Za-z][A-Za-z0-9]{3,}", clause):
+            lowered = word.lower()
+            if (
+                lowered in _GK_STOPWORDS
+                or lowered in _STOPWORDS
+                or lowered in _CLAUSE_FUNCTION_WORDS
+            ):
+                continue
+            words.append(lowered)
+        clause_heads: List[str] = []
+        for index, word in enumerate(words):
+            nxt = words[index + 1] if index + 1 < len(words) else None
+            modifies = _modifier_shaped(word) and (
+                (nxt is not None and not _modifier_shaped(nxt))
+                or (nxt is None and bool(clause_heads))
+            )
+            if modifies:
+                continue
+            stem = stem_rescue_term(word)
+            clause_heads.append(stem)
+            if stem not in seen:
+                seen.add(stem)
+                heads.append(stem)
+    return heads
 
 
-def foundation_backfill_degree_bonus(text: str) -> float:
-    """Lift for a chunk that states the degree. 0 when it does not.
+def missing_constituent_heads(query: str, pool_text: str) -> List[str]:
+    """Constituent heads of ``query`` that ``pool_text`` still lacks.
 
-    A chunk that also says the backfill is structural or under foundations
-    ranks above a generic backfill-density sentence.
+    The same substring test as the stem-pair match. Modifier stems that
+    already occur in the pool are not read: a stem that only modifies a
+    head does not count as that head.
     """
-    if not chunk_states_backfill_compaction_degree(text):
-        return 0.0
-    bonus = _FOUNDATION_BACKFILL_DEGREE_BONUS
-    if _STRUCTURAL_BACKFILL_RE.search(text or ""):
-        bonus += _FOUNDATION_BACKFILL_STRUCTURAL_EXTRA
-    return bonus
-
-
-def _rescue_foundation_backfill_degree(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    k: int,
-) -> None:
-    """Pull the backfill degree clause into ``fused`` when the top-k lacks it.
-
-    Project corpus only: a general-knowledge note must not supply a figure
-    the project's specification does not. Failures leave the semantic pool
-    standing.
-    """
-    if not foundation_backfill_rescue_enabled():
-        return
-    if not query_asks_foundation_backfill_degree(query):
-        return
-    ranked = sorted(
-        fused.values(), key=lambda entry: -((entry[1] or 0.0) + (entry[2] or 0.0)),
-    )
-    if any(
-        chunk_states_backfill_compaction_degree(chunk.text or "")
-        for chunk, _sem, _bonus in ranked[: max(k, 1)]
-    ):
-        return
-
-    def _lift(chunk_id: str, chunk, sem: float, bonus: float) -> None:
-        add = foundation_backfill_degree_bonus(chunk.text or "")
-        if add <= 0.0:
-            return
-        fused[chunk_id] = (chunk, sem, max(bonus, add))
-
-    for chunk_id, (chunk, sem, bonus) in list(fused.items()):
-        _lift(chunk_id, chunk, sem, bonus)
-
-    try:
-        hits = store.identifier_search(
-            project_id, list(_FOUNDATION_BACKFILL_PHRASES), k=max(k * 8, 40),
-        )
-    except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-        logger.warning("foundation-backfill degree rescue failed: %s", exc)
-        return
-    for chunk in hits or []:
-        prev = fused.get(chunk.chunk_id)
-        if prev is None:
-            _lift(chunk.chunk_id, chunk, 0.0, 0.0)
-        else:
-            _lift(chunk.chunk_id, prev[0], prev[1], prev[2])
+    lowered = (pool_text or "").lower()
+    return [
+        head for head in content_constituent_heads(query)
+        if head not in lowered
+    ]
 
 
 # ── letter / named-party filename rescue (live D1) ──────────────────────────
@@ -10326,8 +10262,10 @@ def retrieve_with_filter(
     #
     #  (b) OUT-OF-POOL. The chunk was never fetched at all (the SBC 304 case:
     #      one document in 227, no semantic pull, k*4 candidates). Only a
-    #      lexical lookup can recover it, so that runs when — and only when —
-    #      pass (a) found nothing, keeping the extra SQL off the healthy path.
+    #      lexical lookup can recover it. It runs while any content
+    #      constituent is still missing from the pool. A stem pair already
+    #      pooled is not that test: the modifier in the pair does not
+    #      count as the head it only modifies.
     if term_rescue_enabled():
         rescue_terms = extract_rescue_terms(query)
         if len(rescue_terms) >= _TERM_RESCUE_MIN_TERMS:
@@ -10347,12 +10285,11 @@ def retrieve_with_filter(
                 )
                 return matched / len(pairs)
 
-            # Healthy-retrieval gate. If the top-K the user would ALREADY see
-            # carries the query's terms, retrieval is working and the rescue
-            # must be a strict no-op — scores included. Without this the bonus
-            # perturbs every ordinary query, inflating top_score and pushing
-            # marginal retrievals past RAG_CONFIDENCE_THRESHOLD, which trades a
-            # recall bug for an ungrounded-answer bug.
+            # Score freeze. If the top-K the user would already see carries a
+            # stem pair, do not add a bonus on top — that perturbs ordinary
+            # queries, inflates top_score, and pushes marginal retrievals
+            # past RAG_CONFIDENCE_THRESHOLD. The freeze is not the lookup
+            # gate: a visible pair does not mean every constituent is pooled.
             provisional_top = sorted(
                 fused.values(), key=lambda e: -((e[1] or 0.0) + (e[2] or 0.0)),
             )[:k]
@@ -10361,12 +10298,10 @@ def retrieve_with_filter(
             )
 
             # (a) bonus every candidate already in the pool.
-            found_in_pool = False
             for chunk_id, (chunk, sem_score, id_bonus) in list(fused.items()):
                 fraction = _pair_fraction(chunk.text)
                 if fraction <= 0.0:
                     continue
-                found_in_pool = True
                 if already_grounded:
                     continue
                 bonus = fraction * _TERM_RESCUE_BONUS_MAX
@@ -10374,8 +10309,14 @@ def retrieve_with_filter(
                 # match remains the strongest signal available.
                 fused[chunk_id] = (chunk, sem_score, max(id_bonus, bonus))
 
-            # (b) lexical fetch for chunks the semantic pass never saw.
-            if not found_in_pool and not already_grounded:
+            # (b) lexical fetch while a constituent head is still missing.
+            # One pooled stem pair used to stand this down. The pair's
+            # modifier does not cover the head it only modifies, and the
+            # other constituents of the query are not that pair.
+            pooled_text = "\n".join(
+                (chunk.text or "") for chunk, _sem, _bonus in fused.values()
+            )
+            if missing_constituent_heads(query, pooled_text):
                 rescue_pids = [project_id] + gk_ids
                 if use_fallback and fb_id:
                     rescue_pids.append(fb_id)
@@ -10403,15 +10344,9 @@ def retrieve_with_filter(
                 if recovered:
                     logger.info(
                         "term rescue recovered %d chunk(s) for terms %r that "
-                        "semantic retrieval missed entirely",
+                        "the pool had not covered",
                         recovered, rescue_terms,
                     )
-
-    # P1a: duct backfill co-occurring with "compacted" makes term rescue
-    # declare the top-k grounded, so the 98% MDD / Modified Proctor clause
-    # stays outside it. This fetch runs only when that degree is not already
-    # in the top-k, and only for this question.
-    _rescue_foundation_backfill_degree(query, project_id, fused, store, k)
 
     # FW4 S1: "per the specification" + a cover ask. The specification's own
     # clause says the cover is "as specified on the Drawings" and states no

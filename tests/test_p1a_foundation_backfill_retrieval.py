@@ -4,13 +4,10 @@ Live P1a on 209bc83: 2/6. The runs that passed quoted the earthworks clause
 (98% of maximum dry density, Modified Proctor). The runs that failed were
 handed duct backfilling in soft ground from Vol 2 parts 2 and 3.
 
-The term rescue treats that miss as a success. Its gate asks only whether
-the top-k already co-occurs some pair of query stems. "compacted" and
-"backfilling" co-occur in the duct chunk, so the gate never fetches the
-degree clause sitting outside the semantic pool.
-
-The figure is not invented. A corpus that does not hold the clause still
-does not state 98%.
+A distractor that already co-occurs one stem pair must not end the
+lookup. The degree clause sits outside that semantic pool and has to
+enter it. The figure is not invented. A corpus that does not hold the
+clause still does not state 98%.
 """
 from __future__ import annotations
 
@@ -73,10 +70,9 @@ def _install(monkeypatch, semantic, lexical):
             if chunk.project_id != project_id:
                 continue
             low = (chunk.text or "").lower()
-            # Whole tokens, matching VectorStore.identifier_search.
-            tokens = set(retriever.re.findall(r"[a-z0-9]+", low))
+            # Substring match, same as VectorStore.identifier_search (LIKE).
             if any(
-                all(tok in tokens for tok in ident.lower().split())
+                all(tok in low for tok in ident.lower().split())
                 for ident in identifiers
             ):
                 out.append(chunk)
@@ -163,30 +159,12 @@ def test_an_unrelated_question_does_not_pull_the_clause(monkeypatch):
 
 
 def test_a_clause_already_visible_is_not_lifted_again(monkeypatch):
-    """A degree clause already in the top-k must not take this rescue's bonus.
-
-    Other ranking (the S1/S2 numeric-requirement lift, source class) may
-    still move the score. This rescue's own switch must not.
-    """
+    """A clause already in the top-k keeps its score across a second pass."""
     clause = _chunk("clause", "notes", CLAUSE, 0.91)
     _install(monkeypatch, [clause], [clause])
 
-    on, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
-    monkeypatch.setenv("RAG_FOUNDATION_BACKFILL_RESCUE", "0")
-    off, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
-    assert [c.chunk_id for c in on] == ["clause"]
-    assert [c.chunk_id for c in off] == ["clause"]
-    assert on[0].score == pytest.approx(off[0].score, abs=1e-6)
-
-
-def test_the_kill_switch_leaves_the_distractors(monkeypatch):
-    monkeypatch.setenv("RAG_FOUNDATION_BACKFILL_RESCUE", "0")
-    semantic = [
-        _chunk("duct", "spec2", DUCT, 0.62),
-        _chunk("mot", "spec1", MOT, 0.57),
-    ]
-    clause = _chunk("clause", "spec4", CLAUSE, 0.0)
-    _install(monkeypatch, semantic, semantic + [clause])
-
-    chunks, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
-    assert all(c.chunk_id != "clause" for c in chunks)
+    first, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
+    second, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
+    assert [c.chunk_id for c in first] == ["clause"]
+    assert [c.chunk_id for c in second] == ["clause"]
+    assert first[0].score == pytest.approx(second[0].score, abs=1e-6)
