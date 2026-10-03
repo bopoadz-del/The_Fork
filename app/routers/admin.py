@@ -117,13 +117,22 @@ def admin_doc_extract(
         except Exception as exc:
             response["pdf_error"] = str(exc)
 
-    # Indexed chunks (what RAG sees today).
-    index = _doc_index._load_index(project_id)  # noqa: SLF001 — diagnostic only
+    # Indexed chunks (what RAG sees today) -- read from the vector store,
+    # the only place chunk text lives. The doc_index entry carries counts
+    # and flags only.
+    from app.core.rag import retriever as _rag
+    from app.core.rag.vector_store import get_store
+
     chunks: List[str] = []
+    if _rag.available():
+        store = get_store(dim=_rag.get_embedder().dim)
+        chunks = [
+            c.text for c in store.chunks_for_docs(project_id, [document_id], all_rows=True)
+        ]
+    index = _doc_index._load_index(project_id)  # noqa: SLF001 — diagnostic only
     if index and isinstance(index.get("documents"), list):
         for entry in index["documents"]:
             if entry.get("document_id") == document_id:
-                chunks = list(entry.get("chunks", []))
                 if entry.get("ocr_low_quality"):
                     response["ocr_low_quality"] = True
                 break

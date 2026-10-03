@@ -52,15 +52,14 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete, insert, select, text, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.core import file_crypto
 from app.core import projects as _projects
 from app.core.db import SessionLocal, engine, get_database_url, get_engine
-from app.core.models import DocIndex, Project
+from app.core.models import DocIndex, DocIndexEntry, Project
 from app.core.subprocess_env import scrubbed_env
 
 logger = logging.getLogger(__name__)
@@ -2110,11 +2109,222 @@ def chunk_extracted_document(
 
 # ── index persistence ─────────────────────────────────────────────────────────
 
-def _index_from_row(row: DocIndex | None) -> dict[str, Any] | None:
-    if row is None:
+# ── storage: one header row per project + one row per entry ──────────────────
+#
+# ``doc_index.index_json`` used to carry EVERY entry of a project, chunk text
+# included, as one blob -- 48 MB for a 3,191-document project -- and every
+# single-document update read and rewrote the whole blob. Live 2026-10-03:
+# a Drive resume re-touched 673 already-skipped files and produced 4,479 full
+# rewrites in 80 minutes (~430 GB over the wire, 1.1 TB of buffer traffic);
+# the same mechanism is where the Neon "history" came from. The blob now holds
+# only the header (``project_id``, ``built_at``); every document / skipped
+# entry is its own ``doc_index_entries`` row, so touching one document moves
+# one row and an unchanged entry moves nothing.
+#
+# ``_load_index`` still returns the historical dict shape
+# ``{project_id, built_at, documents: [...], skipped: [...]}``.
+
+_KIND_DOCUMENT = "document"
+_KIND_SKIPPED = "skipped"
+_ENTRY_LIST_KEYS = ("documents", "skipped")
+
+
+def _header_from(data: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in data.items() if k not in _ENTRY_LIST_KEYS}
+
+
+def _slim_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """The stored form of an entry: identity and counts, never chunk text.
+
+    ``chunks_v2`` is the only store of chunk text. An entry that still
+    carries a ``chunks`` list (a pre-0018 blob, a legacy on-disk index, a
+    caller that built the old shape) is reduced to ``chunk_count`` here, so
+    nothing that reaches a row can carry the text whatever the caller did.
+    """
+    if "chunks" not in entry:
+        return entry
+    out = {k: v for k, v in entry.items() if k != "chunks"}
+    chunks = entry.get("chunks")
+    if "chunk_count" not in out:
+        out["chunk_count"] = len(chunks) if isinstance(chunks, list) else 0
+    return out
+
+
+def _entries_of(data: dict[str, Any] | None) -> dict[str, tuple[str, dict[str, Any]]]:
+    """``document_id -> (kind, entry)`` for both lists of an index dict."""
+    out: dict[str, tuple[str, dict[str, Any]]] = {}
+    if not data:
+        return out
+    for kind, key in ((_KIND_DOCUMENT, "documents"), (_KIND_SKIPPED, "skipped")):
+        for i, entry in enumerate(data.get(key) or []):
+            if not isinstance(entry, dict):
+                continue
+            doc_id = str(entry.get("document_id") or "") or f"{kind}:{i}"
+            out[doc_id] = (kind, _slim_entry(entry))
+    return out
+
+
+def _assemble_index(conn: Connection, project_id: str) -> dict[str, Any] | None:
+    header = conn.execute(
+        select(DocIndex.index_json).where(DocIndex.project_id == project_id)
+    ).scalar_one_or_none()
+    if not isinstance(header, dict):
         return None
-    data = row.index_json
-    return data if isinstance(data, dict) else None
+    data = _header_from(header)
+    data.setdefault("project_id", project_id)
+    documents: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    rows = conn.execute(
+        select(DocIndexEntry.kind, DocIndexEntry.entry_json)
+        .where(DocIndexEntry.project_id == project_id)
+        .order_by(DocIndexEntry.seq, DocIndexEntry.document_id)
+    ).all()
+    for kind, entry in rows:
+        if isinstance(entry, dict):
+            (skipped if kind == _KIND_SKIPPED else documents).append(entry)
+    data["documents"] = documents
+    data["skipped"] = skipped
+    return data
+
+
+def _next_seq(conn: Connection, project_id: str) -> int:
+    cur = conn.execute(
+        select(func.max(DocIndexEntry.seq)).where(DocIndexEntry.project_id == project_id)
+    ).scalar()
+    return int(cur or 0) + 1
+
+
+def _write_index_diff(
+    conn: Connection,
+    project_id: str,
+    old: dict[str, Any] | None,
+    new: dict[str, Any],
+) -> bool:
+    """Persist ``new`` by writing only what differs from ``old``.
+
+    Returns True when any row was written. ``built_at`` alone never forces a
+    write: it is bookkeeping for "the index changed", so it moves only when
+    an entry or another header field did.
+    """
+    now = _now()
+    old_entries = _entries_of(old)
+    new_entries = _entries_of(new)
+    new_header = _header_from(new)
+    new_header.setdefault("project_id", project_id)
+    written = False
+    if old is None:
+        _ensure_project_row_on_conn(conn, project_id)
+        conn.execute(
+            insert(DocIndex).values(
+                project_id=project_id, index_json=new_header, updated_at=now
+            )
+        )
+        written = True
+    seq = _next_seq(conn, project_id)
+    for doc_id, (kind, entry) in new_entries.items():
+        prev = old_entries.get(doc_id)
+        if prev == (kind, entry):
+            continue
+        if prev is None:
+            conn.execute(
+                insert(DocIndexEntry).values(
+                    project_id=project_id, document_id=doc_id, kind=kind,
+                    seq=seq, entry_json=entry, updated_at=now,
+                )
+            )
+            seq += 1
+        else:
+            conn.execute(
+                update(DocIndexEntry)
+                .where(
+                    DocIndexEntry.project_id == project_id,
+                    DocIndexEntry.document_id == doc_id,
+                )
+                .values(kind=kind, entry_json=entry, updated_at=now)
+            )
+        written = True
+    for doc_id in old_entries.keys() - new_entries.keys():
+        conn.execute(
+            delete(DocIndexEntry).where(
+                DocIndexEntry.project_id == project_id,
+                DocIndexEntry.document_id == doc_id,
+            )
+        )
+        written = True
+    if old is not None:
+        settled = {k: v for k, v in new_header.items() if k != "built_at"}
+        settled_old = {k: v for k, v in _header_from(old).items() if k != "built_at"}
+        if written or settled != settled_old:
+            conn.execute(
+                update(DocIndex)
+                .where(DocIndex.project_id == project_id)
+                .values(index_json=new_header, updated_at=now)
+            )
+            written = True
+    return written
+
+
+def migrate_blob_entries(conn: Connection) -> int:
+    """Move entries out of pre-0018 ``doc_index`` blobs into rows. Idempotent.
+
+    For every header row that still carries ``documents`` / ``skipped``
+    lists: entries not yet present as rows are inserted (slimmed -- chunk
+    text never lands in a row), then the lists are removed from the blob.
+    Returns the number of project rows converted; a second run returns 0.
+    """
+    converted = 0
+    rows = conn.execute(select(DocIndex.project_id, DocIndex.index_json)).all()
+    for project_id, data in rows:
+        if not isinstance(data, dict) or not any(k in data for k in _ENTRY_LIST_KEYS):
+            continue
+        current = _assemble_index(conn, project_id) or {"documents": [], "skipped": []}
+        have = _entries_of(current)
+        merged = {
+            "documents": list(current.get("documents") or []),
+            "skipped": list(current.get("skipped") or []),
+        }
+        for doc_id, (kind, entry) in _entries_of(data).items():
+            if doc_id in have:
+                continue
+            merged["documents" if kind == _KIND_DOCUMENT else "skipped"].append(entry)
+        header = _header_from(data)
+        merged.update(header)
+        _write_index_diff(conn, project_id, current, merged)
+        conn.execute(
+            update(DocIndex)
+            .where(DocIndex.project_id == project_id)
+            .values(index_json=header)
+        )
+        converted += 1
+    return converted
+
+
+@contextlib.contextmanager
+def _index_txn(project_id: str):
+    """One serialised write transaction per project, safe across processes.
+
+    SQLite: ``BEGIN IMMEDIATE`` takes the write lock up front. PostgreSQL:
+    a per-project advisory lock serialises concurrent first-time inserts
+    (``FOR UPDATE`` cannot lock a row that does not exist yet).
+    """
+    with _INDEX_LOCK:
+        _ensure_db()
+        eng = get_engine()
+        if eng.dialect.name == "sqlite":
+            with eng.connect() as conn:
+                conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
+                try:
+                    yield conn
+                    conn.exec_driver_sql("COMMIT")
+                except BaseException:
+                    conn.exec_driver_sql("ROLLBACK")
+                    raise
+            return
+        with eng.begin() as conn:
+            lock_key = zlib.crc32(project_id.encode("utf-8")) & 0x7FFFFFFF
+            conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+            yield conn
 
 
 def _ensure_project_row(project_id: str, session: Session) -> None:
@@ -2175,10 +2385,7 @@ def _import_legacy_json_indexes(session: Session) -> None:
             continue
         if not isinstance(data, dict):
             continue
-        _ensure_project_row(pid, session)
-        session.add(
-            DocIndex(project_id=pid, index_json=data, updated_at=_now())
-        )
+        _write_index_diff(session.connection(), pid, None, data)
 
 
 def _import_legacy_sqlite_db(session: Session) -> None:
@@ -2200,14 +2407,7 @@ def _import_legacy_sqlite_db(session: Session) -> None:
                 continue
             if not isinstance(data, dict):
                 continue
-            _ensure_project_row(pid, session)
-            session.add(
-                DocIndex(
-                    project_id=pid,
-                    index_json=data,
-                    updated_at=updated_at or _now(),
-                )
-            )
+            _write_index_diff(session.connection(), pid, None, data)
 
 
 def init_db() -> None:
@@ -2230,6 +2430,7 @@ def init_db() -> None:
         init_projects_db()
         _ensure_sqlite_parent_dir()
         DocIndex.__table__.create(bind=engine, checkfirst=True)
+        DocIndexEntry.__table__.create(bind=engine, checkfirst=True)
         if _initialized_for_url != url:
             with SessionLocal() as session:
                 _import_legacy_json_indexes(session)
@@ -2263,88 +2464,33 @@ def _ensure_db() -> None:
 def _load_index(project_id: str) -> dict[str, Any] | None:
     """Read the stored index for ``project_id``. Returns None if absent."""
     _ensure_db()
-    with SessionLocal() as session:
-        return _index_from_row(session.get(DocIndex, project_id))
+    with get_engine().connect() as conn:
+        return _assemble_index(conn, project_id)
+
+
+def skipped_count(project_id: str) -> int:
+    """Number of skipped (unsupported) entries, without loading any entry."""
+    _ensure_db()
+    with get_engine().connect() as conn:
+        n = conn.execute(
+            select(func.count())
+            .select_from(DocIndexEntry)
+            .where(
+                DocIndexEntry.project_id == project_id,
+                DocIndexEntry.kind == _KIND_SKIPPED,
+            )
+        ).scalar()
+    return int(n or 0)
 
 
 def _write_index(project_id: str, data: dict[str, Any]) -> None:
     """Replace the stored index for ``project_id`` (a full-rebuild write).
 
     Reuses ``_update_index`` so the full-rebuild path gets the same
-    cross-process serialization as incremental updates:
-    - SQLite: BEGIN IMMEDIATE
-    - Postgres: pg_advisory_xact_lock + SELECT FOR UPDATE
+    cross-process serialization as incremental updates; only entries that
+    actually differ are written.
     """
     _update_index(project_id, lambda _current: data)
-
-
-def _apply_index_mutation(
-    session: Session,
-    project_id: str,
-    mutate: Callable[[dict[str, Any] | None], dict[str, Any]],
-    *,
-    lock_row: bool,
-) -> dict[str, Any]:
-    if lock_row:
-        row = session.scalar(
-            select(DocIndex)
-            .where(DocIndex.project_id == project_id)
-            .with_for_update()
-        )
-    else:
-        row = session.get(DocIndex, project_id)
-    current_raw = _index_from_row(row)
-    current = copy.deepcopy(current_raw) if current_raw is not None else None
-    updated = mutate(current)
-    now = _now()
-    _ensure_project_row(project_id, session)
-    if row is None:
-        session.add(
-            DocIndex(project_id=project_id, index_json=updated, updated_at=now)
-        )
-    else:
-        row.index_json = updated
-        row.updated_at = now
-        flag_modified(row, "index_json")
-    return updated
-
-
-def _load_index_json_from_conn(
-    conn: Connection, project_id: str
-) -> dict[str, Any] | None:
-    data = conn.execute(
-        select(DocIndex.index_json).where(DocIndex.project_id == project_id)
-    ).scalar_one_or_none()
-    return data if isinstance(data, dict) else None
-
-
-def _update_index_on_sqlite_conn(
-    conn: Connection,
-    project_id: str,
-    mutate: Callable[[dict[str, Any] | None], dict[str, Any]],
-) -> dict[str, Any]:
-    current = _load_index_json_from_conn(conn, project_id)
-    updated = mutate(current)
-    now = _now()
-    _ensure_project_row_on_conn(conn, project_id)
-    row_exists = conn.execute(
-        select(DocIndex.project_id).where(DocIndex.project_id == project_id)
-    ).scalar_one_or_none()
-    if row_exists is None:
-        conn.execute(
-            insert(DocIndex).values(
-                project_id=project_id,
-                index_json=updated,
-                updated_at=now,
-            )
-        )
-    else:
-        conn.execute(
-            update(DocIndex)
-            .where(DocIndex.project_id == project_id)
-            .values(index_json=updated, updated_at=now)
-        )
-    return updated
 
 
 def _update_index(
@@ -2353,37 +2499,76 @@ def _update_index(
 ) -> dict[str, Any]:
     """Atomic read-modify-write of a project's index.
 
-    Runs ``mutate(current_or_None) -> new_index`` inside a single write
-    transaction (BEGIN IMMEDIATE on SQLite), so two concurrent updates —
-    even from separate worker processes — serialise rather than overwrite
-    each other.
+    Runs ``mutate(current_or_None) -> new_index`` inside one serialised
+    write transaction (see ``_index_txn``), then persists only the entries
+    that changed. A mutate that changes nothing writes nothing.
     """
-    with _INDEX_LOCK:
-        _ensure_db()
-        eng = get_engine()
-        dialect = eng.dialect.name
-        if dialect == "sqlite":
-            with eng.connect() as conn:
-                conn = conn.execution_options(isolation_level="AUTOCOMMIT")
-                conn.exec_driver_sql("BEGIN IMMEDIATE")
-                try:
-                    updated = _update_index_on_sqlite_conn(conn, project_id, mutate)
-                    conn.exec_driver_sql("COMMIT")
-                except BaseException:
-                    conn.exec_driver_sql("ROLLBACK")
-                    raise
-            return updated
+    with _index_txn(project_id) as conn:
+        current_raw = _assemble_index(conn, project_id)
+        current = copy.deepcopy(current_raw) if current_raw is not None else None
+        updated = mutate(current)
+        _write_index_diff(conn, project_id, current_raw, updated)
+        return updated
 
-        with SessionLocal() as session, session.begin():
-            # FOR UPDATE does not lock missing rows; advisory lock serialises
-            # concurrent first-time inserts for the same project_id.
-            lock_key = zlib.crc32(project_id.encode("utf-8")) & 0x7FFFFFFF
-            session.execute(
-                text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key}
+
+def _upsert_index_entry(
+    project_id: str, document_id: str, kind: str, entry: dict[str, Any],
+) -> bool:
+    """Replace one document's entry without reading the project's others.
+
+    This is the per-document path ``index_document`` takes: one row read,
+    at most one row written, and nothing at all when the entry is identical
+    to what is stored (a re-run over an unchanged file is a no-op, not a
+    rewrite). Returns True when a row was written.
+    """
+    entry = _slim_entry(entry)
+    with _index_txn(project_id) as conn:
+        now = _now()
+        header = conn.execute(
+            select(DocIndex.index_json).where(DocIndex.project_id == project_id)
+        ).scalar_one_or_none()
+        existing = conn.execute(
+            select(DocIndexEntry.kind, DocIndexEntry.entry_json).where(
+                DocIndexEntry.project_id == project_id,
+                DocIndexEntry.document_id == document_id,
             )
-            return _apply_index_mutation(
-                session, project_id, mutate, lock_row=True
+        ).first()
+        if existing is not None and existing[0] == kind and existing[1] == entry:
+            return False
+        if header is None:
+            _ensure_project_row_on_conn(conn, project_id)
+            conn.execute(
+                insert(DocIndex).values(
+                    project_id=project_id,
+                    index_json={"project_id": project_id, "built_at": now},
+                    updated_at=now,
+                )
             )
+        else:
+            h = dict(header) if isinstance(header, dict) else {"project_id": project_id}
+            h["built_at"] = now
+            conn.execute(
+                update(DocIndex)
+                .where(DocIndex.project_id == project_id)
+                .values(index_json=h, updated_at=now)
+            )
+        if existing is None:
+            conn.execute(
+                insert(DocIndexEntry).values(
+                    project_id=project_id, document_id=document_id, kind=kind,
+                    seq=_next_seq(conn, project_id), entry_json=entry, updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(DocIndexEntry)
+                .where(
+                    DocIndexEntry.project_id == project_id,
+                    DocIndexEntry.document_id == document_id,
+                )
+                .values(kind=kind, entry_json=entry, updated_at=now)
+            )
+        return True
 
 
 def _ext_of(filename: str) -> str:
@@ -2462,7 +2647,7 @@ def index_project(project_id: str) -> dict[str, Any]:
             "document_id": doc["id"],
             "filename": filename,
             "fingerprint": fingerprint,
-            "chunks": chunks,
+            "chunk_count": len(chunks),
         }
         if meta.get("ocr_low_quality"):
             entry["ocr_low_quality"] = True
@@ -3202,7 +3387,7 @@ def index_document(
             "document_id": document_id,
             "filename": filename,
             "fingerprint": fingerprint,
-            "chunks": chunks,
+            "chunk_count": len(chunks),
         }
         if meta.get("ocr_low_quality"):
             entry["ocr_low_quality"] = True
@@ -3258,32 +3443,14 @@ def index_document(
                 project_id, document_id, filename, len(chunks), rag_error,
             )
 
-    # Load-modify-write inside one SQLite transaction — a concurrent
-    # index_document call for the same project (another BackgroundTask, or
-    # another worker process) cannot interleave and drop this entry.
-    def _mutate(current: dict[str, Any] | None) -> dict[str, Any]:
-        current = current or {
-            "project_id": project_id,
-            "built_at": _now(),
-            "documents": [],
-            "skipped": [],
-        }
-        current["documents"] = [
-            d for d in current.get("documents", [])
-            if d["document_id"] != document_id
-        ]
-        current["skipped"] = [
-            s for s in current.get("skipped", [])
-            if s["document_id"] != document_id
-        ]
-        if entry is not None:
-            current["documents"].append(entry)
-        else:
-            current["skipped"].append(skipped_entry)
-        current["built_at"] = _now()
-        return current
-
-    _update_index(project_id, _mutate)
+    # One row for this document, under the per-project write lock -- a
+    # concurrent index_document call for the same project (another
+    # BackgroundTask, or another worker process) cannot interleave and drop
+    # this entry, and the project's other entries are never read or rewritten.
+    if entry is not None:
+        _upsert_index_entry(project_id, document_id, _KIND_DOCUMENT, entry)
+    else:
+        _upsert_index_entry(project_id, document_id, _KIND_SKIPPED, skipped_entry or {})
 
     if entry is None:
         _stamp_index_ledger(
@@ -3320,6 +3487,9 @@ def index_document(
         "indexed": 1,
         "skipped_unsupported": 0,
         "total_chunks": len(chunks),
+        # The chunk texts go to the CALLER (worker tallies, tests, admin
+        # tooling); the stored index entry carries only their count.
+        "chunks": chunks,
         "rag_indexed": rag_indexed,
         "ocr_pages": int(meta.get("ocr_pages") or 0),
         "ocr_attempts": int(meta.get("ocr_attempts") or 0),
@@ -3372,6 +3542,9 @@ def purge_project_index(project_id: str) -> None:
         _ensure_db()
         with SessionLocal() as session:
             session.execute(
+                delete(DocIndexEntry).where(DocIndexEntry.project_id == project_id)
+            )
+            session.execute(
                 delete(DocIndex).where(DocIndex.project_id == project_id)
             )
             session.commit()
@@ -3415,6 +3588,11 @@ def _purge_spurious_master_corpus_row() -> None:
     # because that calls _ensure_db() and can recurse back into init_db while
     # tables are still being created. A spurious alias row never has legacy files.
     with SessionLocal() as session:
+        session.execute(
+            delete(DocIndexEntry).where(
+                DocIndexEntry.project_id == MASTER_CORPUS_PROJECT_ID
+            )
+        )
         session.execute(
             delete(DocIndex).where(DocIndex.project_id == MASTER_CORPUS_PROJECT_ID)
         )

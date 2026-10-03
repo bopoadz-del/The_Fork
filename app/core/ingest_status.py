@@ -38,7 +38,7 @@ in as INDEXED the way the evidence-beats-policy ordering was designed to let
 from __future__ import annotations
 
 import os
-from typing import Any, Mapping, NamedTuple
+from typing import Any, Collection, Mapping, NamedTuple
 
 # ── status vocabulary (mirrors the CHECK constraint in migration 0016) ────────
 
@@ -296,6 +296,8 @@ def is_open(
 def resume_is_already_indexed(
     doc: Mapping[str, Any],
     chunk_count: int,
+    *,
+    parseable_exts: Collection[str] | None = None,
 ) -> bool:
     """Route B / p1b resume skip: chunks > 0 is not enough for stale .docx.
 
@@ -304,10 +306,34 @@ def resume_is_already_indexed(
     left assigned so the existing in-place ``index_document`` path can
     replace chunks on the same row.
 
+    Zero chunks is not "work" by itself. A row whose ledger status is a
+    closed outcome (``jpg:terminal``, ``empty_file:terminal`` ...) is done;
+    re-running the indexer over it produces the same skip and, live
+    2026-10-03, 673 such re-runs rewrote a project's index for nothing.
+    A RECOVERABLE skip is work only when this build can parse the format
+    (``parseable_exts``); without a parser the retry cannot recover anything.
+    A row that was never classified (no ``ingest_status``) stays open.
+
     Fail closed: if this is a .docx and status / extractor_version cannot
     be read, do not count the row as already indexed.
     """
     if chunk_count <= 0:
+        status = doc.get("ingest_status")
+        if not status:
+            return False
+        ext = document_extension(doc)
+        reason = doc.get("ingest_status_reason")
+        if not is_open(
+            str(status), reason, extension=ext,
+            extractor_version=doc.get("extractor_version"),
+        ):
+            return True
+        if (
+            (reason or "").endswith(RECOVERABLE)
+            and parseable_exts is not None
+            and ext not in parseable_exts
+        ):
+            return True
         return False
     ext = document_extension(doc)
     if not _is_docx_ext(ext):

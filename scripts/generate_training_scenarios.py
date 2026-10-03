@@ -94,20 +94,21 @@ def iter_chunks_for_project(
     the doc_index recorded one, otherwise the document_id.
     """
     from app.core import doc_index
+    from app.core.rag.vector_store import get_store
 
     index = doc_index._load_index(project_id)
     if not index:
         return
-    docs = index.get("documents", [])
+    docs = [d for d in index.get("documents", []) if d.get("document_id")]
+    # The index ledger names the documents; chunk text lives only in the
+    # vector store (0018), read per document in index order.
+    store = get_store()
+    texts_by_doc = store.doc_chunk_texts(project_id, [d["document_id"] for d in docs])
     count = 0
     for doc in docs:
         filename = doc.get("filename") or doc.get("document_id") or "<unknown>"
-        for chunk in doc.get("chunks", []):
-            if isinstance(chunk, dict):
-                text = chunk.get("text") or ""
-            else:
-                text = str(chunk)
-            text = text.strip()
+        for chunk in texts_by_doc.get(doc["document_id"]) or []:
+            text = str(chunk or "").strip()
             if len(text) < min_chars:
                 continue
             yield {"text": text, "source": filename}

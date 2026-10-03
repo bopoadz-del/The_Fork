@@ -22,6 +22,11 @@ import pytest
 @pytest.fixture
 def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    # Chunk text is read from the vector store; the fake embedder lets the
+    # scenario tests seed it without a model download.
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
     from app.core import agent_memory as _am, projects as _proj
     if hasattr(_am, "_initialized"):
         _am._initialized = False
@@ -235,26 +240,22 @@ def test_walk_folder_handles_cycles(isolated_data_dir, monkeypatch):
 
 
 def _seed_doc_index(project_id: str, doc_id: str, filename: str, chunks: List[str]):
-    """Write an index entry directly so iter_chunks_for_project finds it."""
+    """Write an index entry (names the document) and its chunk text (the
+    vector store, its only home) so iter_chunks_for_project finds both."""
     from app.core import doc_index
+    from app.core.rag.embeddings import get_embedder
+    from app.core.rag.vector_store import get_store
 
-    def _mutate(current):
-        current = current or {
-            "project_id": project_id,
-            "built_at": "2026-01-01T00:00:00Z",
-            "documents": [],
-            "skipped": [],
-        }
-        current["documents"] = [
-            d for d in current["documents"] if d["document_id"] != doc_id
-        ] + [{
-            "document_id": doc_id,
-            "filename": filename,
-            "fingerprint": "test",
-            "chunks": chunks,
-        }]
-        return current
-    doc_index._update_index(project_id, _mutate)
+    doc_index._upsert_index_entry(project_id, doc_id, "document", {
+        "document_id": doc_id,
+        "filename": filename,
+        "fingerprint": "test",
+        "chunk_count": len(chunks),
+    })
+    embedder = get_embedder()
+    get_store(dim=embedder.dim).upsert_chunks(
+        project_id, doc_id, chunks, embedder.encode(chunks),
+    )
 
 
 def test_iter_chunks_filters_short_chunks(isolated_data_dir):

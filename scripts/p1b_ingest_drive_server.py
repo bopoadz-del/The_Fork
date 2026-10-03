@@ -1189,6 +1189,7 @@ def main() -> int:
                     or _is_geodatabase_internal(path)
                 )
 
+            from app.core import doc_index as _doc_index
             from app.core import ingest_status as ist
             from app.core.ingest_reconcile import should_skip_resume
 
@@ -1200,10 +1201,17 @@ def main() -> int:
                 if not fid:
                     continue
                 chunks = chunk_counts.get(doc["id"], 0)
+                # Settled rows are done at ANY chunk count: a terminal skip
+                # (jpg:terminal, empty_file:terminal) or a RECOVERABLE one
+                # this build has no parser for is not work, and re-running
+                # the indexer over it only rewrites the index (2026-10-03).
+                if should_skip_resume(
+                    doc, chunks, drive_by_id.get(fid),
+                    parseable_exts=_doc_index._SUPPORTED_EXTS,
+                ):
+                    already_indexed.add(fid)
+                    continue
                 if chunks > 0:
-                    if should_skip_resume(doc, chunks, drive_by_id.get(fid)):
-                        already_indexed.add(fid)
-                        continue
                     # Open due to stale/missing extractor on .docx, or
                     # unreadable status/version (fail closed). Leave the
                     # file assigned so ~401 re-indexes the same row.

@@ -339,8 +339,7 @@ def test_index_document_wires_contract_data_rows_into_rag(fresh_db, tmp_path, mo
     result = doc_index.index_document(pid, doc["id"])
     assert result.get("indexed"), result
 
-    saved = doc_index._load_index(pid)
-    chunks = saved["documents"][0]["chunks"]
+    chunks = result["chunks"]
     blob = "\n".join(chunks)
     assert "CONTRACT DATA particulars" in blob
     assert NORTH_SPUR_EXCL_VAT in blob

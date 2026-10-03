@@ -354,6 +354,46 @@ def test_resume_filter_stale_docx_with_chunks_is_not_already_indexed():
     assert ist.resume_is_already_indexed(stamped, 4)
 
 
+def test_resume_skips_terminal_status_with_zero_chunks():
+    """A closed ledger outcome is done at zero chunks; re-running it only
+    rewrites the index (live 2026-10-03: 673 such re-runs in one pass)."""
+    terminal = {
+        "original_name": "photo.jpg",
+        "ingest_status": ist.UNSUPPORTED_TYPE,
+        "ingest_status_reason": "jpg:terminal",
+    }
+    assert ist.resume_is_already_indexed(terminal, 0)
+    empty = {
+        "original_name": "placeholder.pdf",
+        "ingest_status": ist.UNSUPPORTED_TYPE,
+        "ingest_status_reason": "empty_file:terminal",
+    }
+    assert ist.resume_is_already_indexed(empty, 0)
+
+
+def test_resume_zero_chunk_open_rows_stay_open():
+    never_classified = {"original_name": "a.pdf"}
+    assert not ist.resume_is_already_indexed(never_classified, 0)
+    zero_chunk = {"original_name": "a.pdf", "ingest_status": ist.ZERO_CHUNK}
+    assert not ist.resume_is_already_indexed(zero_chunk, 0)
+    failed = {"original_name": "a.pdf", "ingest_status": ist.EXTRACT_FAILED}
+    assert not ist.resume_is_already_indexed(failed, 0)
+
+
+def test_resume_retries_recoverable_status():
+    dwg = {
+        "original_name": "sheet.dwg",
+        "ingest_status": ist.UNSUPPORTED_TYPE,
+        "ingest_status_reason": "dwg:recoverable",
+    }
+    # No parser list given: historical behaviour, stays open.
+    assert not ist.resume_is_already_indexed(dwg, 0)
+    # This build has no .dwg parser: nothing to recover, settled.
+    assert ist.resume_is_already_indexed(dwg, 0, parseable_exts={".pdf", ".txt"})
+    # A build that parses .dwg reopens it.
+    assert not ist.resume_is_already_indexed(dwg, 0, parseable_exts={".pdf", ".dwg"})
+
+
 def test_resume_filter_fail_closed_when_docx_fields_unreadable():
     bare_docx = {"original_name": "spec.docx"}
     assert not ist.resume_is_already_indexed(bare_docx, 4)
