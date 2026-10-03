@@ -110,29 +110,24 @@ def _add_docx(
 
 
 def _put_ledger(project_id: str, document_id: str, filename: str, **fields):
+    """Ledger entry (counts, flags) + the chunk text in the vector store --
+    its only home since 0018; the selector measures text length there."""
     from app.core import doc_index
+    from app.core.rag.embeddings import get_embedder
+    from app.core.rag.vector_store import get_store
 
-    def mutate(current):
-        current = current or {
-            "project_id": project_id,
-            "built_at": "",
-            "documents": [],
-            "skipped": [],
-        }
-        entry = {
-            "document_id": document_id,
-            "filename": filename,
-            "chunks": [THIN_PREVIEW],
-        }
-        entry.update(fields)
-        current["documents"] = [
-            d for d in current.get("documents", [])
-            if d.get("document_id") != document_id
-        ]
-        current["documents"].append(entry)
-        return current
-
-    doc_index._update_index(project_id, mutate)
+    chunks = list(fields.pop("chunks", [THIN_PREVIEW]))
+    entry = {
+        "document_id": document_id,
+        "filename": filename,
+        "chunk_count": len(chunks),
+    }
+    entry.update(fields)
+    doc_index._upsert_index_entry(project_id, document_id, "document", entry)
+    embedder = get_embedder()
+    get_store(dim=embedder.dim).upsert_chunks(
+        project_id, document_id, chunks, embedder.encode(chunks),
+    )
 
 
 def test_small_genuine_thin_excluded(monkeypatch, tmp_path):

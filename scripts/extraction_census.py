@@ -49,22 +49,9 @@ def stored_chars(project_id: str, doc_id: str) -> int:
         texts = by_doc.get(doc_id) or []
     except Exception:
         texts = []
-    if texts:
-        return sum(len(t or "") for t in texts)
-    try:
-        from app.core import doc_index as di
-
-        idx = di._load_index(project_id) or {}
-        for entry in idx.get("documents") or []:
-            if entry.get("document_id") == doc_id:
-                chunks = entry.get("chunks") or []
-                return sum(len(c or "") for c in chunks)
-    except Exception:
-        logger.debug(
-            "census stored_chars fallback via doc_index failed for %s",
-            doc_id, exc_info=True,
-        )
-    return 0
+    # The doc_index ledger holds counts, never chunk text (0018): the store
+    # is the only place characters can be measured.
+    return sum(len(t or "") for t in texts)
 
 
 def resolve_source_path(doc: Dict[str, Any]) -> tuple[Optional[str], str]:
