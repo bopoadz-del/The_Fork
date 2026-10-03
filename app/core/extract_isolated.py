@@ -183,6 +183,24 @@ def child_address_space_limit(budget_bytes: int) -> int | None:
     return parent + budget_bytes
 
 
+def _forget_inherited_db_pools() -> None:
+    """Drop the parent's pooled DB connections in the child WITHOUT closing them.
+
+    A forked child inherits the parent's connection sockets. If it checked one
+    out (a read inside the work, e.g. the BOQ block listing the project's
+    documents) both processes would speak on the same socket and corrupt the
+    parent's session. ``dispose(close=False)`` gives the child a fresh, empty
+    pool and leaves the parent's connections untouched -- SQLAlchemy's
+    documented fork recipe.
+    """
+    try:
+        from app.core.db import get_engine
+
+        get_engine().dispose(close=False)
+    except Exception:  # noqa: BLE001 - no DB configured is fine for a calculator
+        logger.debug("no DB engine to detach in isolated child", exc_info=True)
+
+
 def _child(conn, fn: Callable[..., Any], args: tuple, mem_bytes: int) -> None:
     """Child entry point: cap the address space, extract, ship the result.
 
@@ -192,6 +210,8 @@ def _child(conn, fn: Callable[..., Any], args: tuple, mem_bytes: int) -> None:
     """
     try:
         import resource
+
+        _forget_inherited_db_pools()
 
         limit = child_address_space_limit(mem_bytes)
         if limit is not None:
@@ -230,8 +250,13 @@ def run_isolated(
     *,
     fallback: Any,
     label: str = "extraction",
+    mem_mb: int | None = None,
+    timeout_s: float | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Run ``fn(*args)`` in a memory-capped child.
+
+    ``mem_mb`` / ``timeout_s`` override the module budget for one call; the
+    caller passes values it read from its own configuration.
 
     Returns ``(result, diag)``. ``diag`` is empty on success and otherwise
     carries the reason, which the caller folds into the document's metadata so
@@ -246,11 +271,13 @@ def run_isolated(
 
     import multiprocessing
 
+    budget_mb = int(mem_mb) if mem_mb else _MEM_MB
+    wait_s = float(timeout_s) if timeout_s else _TIMEOUT_S
     ctx = multiprocessing.get_context("fork")
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     proc = ctx.Process(
         target=_child,
-        args=(child_conn, fn, args, _MEM_MB * 1024 * 1024),
+        args=(child_conn, fn, args, budget_mb * 1024 * 1024),
         daemon=True,
     )
     proc.start()
@@ -258,7 +285,7 @@ def run_isolated(
 
     status, payload = "crash", None
     try:
-        if parent_conn.poll(_TIMEOUT_S):
+        if parent_conn.poll(wait_s):
             status, payload = parent_conn.recv()
         else:
             status = "timeout"
@@ -277,8 +304,8 @@ def run_isolated(
         return payload, {}
 
     reason = {
-        "memory": f"{label} exceeded the {_MEM_MB} MB child limit",
-        "timeout": f"{label} exceeded {_TIMEOUT_S:.0f}s",
+        "memory": f"{label} exceeded the {budget_mb} MB child limit",
+        "timeout": f"{label} exceeded {wait_s:.0f}s",
         "crash": f"{label} child died (exitcode={proc.exitcode})",
     }.get(status, f"{label} failed: {payload}")
 
