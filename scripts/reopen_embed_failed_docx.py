@@ -82,11 +82,6 @@ def _reason_is_single_window(reason: Optional[str]) -> bool:
     return (reason or "").startswith("single_window")
 
 
-def _ledger_preview_text_len(entry: Optional[Mapping[str, Any]]) -> Optional[int]:
-    """The index ledger holds counts, never chunk text (0018): no preview."""
-    return None
-
-
 def _store_text_len(project_id: str, document_id: str) -> Optional[int]:
     """Sum of chunk texts in the active store (chunks_v2 in prod)."""
     from app.core.rag.vector_store import get_store
@@ -101,14 +96,13 @@ def document_text_len(
     doc: Mapping[str, Any],
     entry: Optional[Mapping[str, Any]],
 ) -> Optional[int]:
-    """chunks_v2 first, then ledger preview. None if neither measured."""
+    """Sum of chunk text in chunks_v2 -- the only store of text since
+    0018 (the ledger ``entry`` carries counts). None if nothing stored."""
     pid = str(doc.get("project_id") or "")
     did = str(doc.get("id") or "")
-    if pid and did:
-        store_len = _store_text_len(pid, did)
-        if store_len is not None:
-            return store_len
-    return _ledger_preview_text_len(entry)
+    if not (pid and did):
+        return None
+    return _store_text_len(pid, did)
 
 
 def _ledger_by_doc_id() -> Dict[str, Dict[str, Any]]:
