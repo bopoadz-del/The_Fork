@@ -143,9 +143,23 @@ CREATE INDEX idx_agent_facts_agent_project ON agent_facts (agent_name, project_i
 CREATE TABLE doc_index (
     project_id TEXT PRIMARY KEY
                REFERENCES projects (id) ON DELETE CASCADE,
-    index_json JSONB NOT NULL,
+    index_json JSONB NOT NULL,   -- header only: project_id, built_at (0018)
     updated_at TEXT NOT NULL
 );
+
+-- One row per document / skipped entry of a project's index (alembic 0018).
+-- The entries left the doc_index blob so a single-document update moves one
+-- row instead of rewriting the whole project (48 MB, live 2026-10-03).
+CREATE TABLE doc_index_entries (
+    project_id  TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL,
+    kind        TEXT NOT NULL,          -- 'document' | 'skipped'
+    seq         INTEGER NOT NULL DEFAULT 0,
+    entry_json  JSONB NOT NULL,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (project_id, document_id)
+);
+CREATE INDEX idx_doc_index_entries_project ON doc_index_entries (project_id, seq);
 
 -- ── usage tracker (app/core/usage_tracker.py) ───────────────────────────────
 

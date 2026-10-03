@@ -54,12 +54,10 @@ async def search_documents(
     # Perform search against the resolved project id (lazy-builds index if needed)
     results = await doc_index.search_project_documents(search_project_id, q.strip(), top_k)
 
-    # Count skipped/unsupported docs from the resolved index
-    skipped_count = 0
+    # Count skipped/unsupported docs from the resolved index -- a COUNT over
+    # the entry rows, never a load of the entries themselves.
     try:
-        index = doc_index._load_index(search_project_id)
-        if index is not None:
-            skipped_count = len(index.get("skipped", []))
+        skipped_count = doc_index.skipped_count(search_project_id)
     except Exception:
         skipped_count = 0
 

@@ -65,6 +65,21 @@ def test_skip_resume_still_retries_zero_chunk():
     assert not should_skip_resume(doc, 0, {"md5Checksum": "aaa"})
 
 
+def test_skip_resume_settled_zero_chunk_unless_source_changed():
+    doc = {
+        "original_name": "photo.jpg", "drive_md5": "aaa",
+        "ingest_status": "UNSUPPORTED_TYPE", "ingest_status_reason": "jpg:terminal",
+    }
+    assert should_skip_resume(doc, 0, {"md5Checksum": "aaa"})
+    assert not should_skip_resume(doc, 0, {"md5Checksum": "bbb"})
+    dwg = {
+        "original_name": "sheet.dwg", "drive_md5": "aaa",
+        "ingest_status": "UNSUPPORTED_TYPE", "ingest_status_reason": "dwg:recoverable",
+    }
+    assert should_skip_resume(dwg, 0, {"md5Checksum": "aaa"}, parseable_exts={".pdf"})
+    assert not should_skip_resume(dwg, 0, {"md5Checksum": "aaa"}, parseable_exts={".dwg"})
+
+
 def test_plan_source_changed_and_tombstone():
     local = [
         {
