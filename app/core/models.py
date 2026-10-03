@@ -456,6 +456,30 @@ class DocIndex(Base):
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class DocIndexEntry(Base):
+    """doc_index_entries table — one row per document (or skipped file) of a
+    project's text index. ``index_json`` on ``doc_index`` is the header only;
+    see ``app/core/doc_index.py`` (storage section) for why the entries left
+    the blob."""
+
+    __tablename__ = "doc_index_entries"
+
+    project_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    document_id: Mapped[str] = mapped_column(String, primary_key=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    entry_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        Index("idx_doc_index_entries_project", "project_id", "seq"),
+    )
+
+
 class UsageRun(Base):
     """runs table — see the_fork_schema.sql (usage tracker)."""
 

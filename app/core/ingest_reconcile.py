@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Collection, Iterable, Mapping, Sequence
 
 from app.core.ingest_status import (
     ALL_STATUSES,
@@ -247,9 +247,11 @@ def should_skip_resume(
     doc: Mapping[str, Any],
     chunk_count: int,
     file_meta: Mapping[str, Any] | None = None,
+    *,
+    parseable_exts: Collection[str] | None = None,
 ) -> bool:
     """Combine chunk/extractor resume with source-token change detection."""
-    if not resume_is_already_indexed(doc, chunk_count):
+    if not resume_is_already_indexed(doc, chunk_count, parseable_exts=parseable_exts):
         return False
     if resume_source_changed(doc, file_meta):
         return False

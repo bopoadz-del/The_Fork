@@ -560,8 +560,7 @@ def test_index_document_scanned_boq_with_ocr_indexes_item_codes(
     result = doc_index.index_document(pid, doc["id"], chunker="finer")
     assert result["status"] == "ok", result
     assert result.get("ocr_pages") == 12
-    saved = doc_index._load_index(pid)
-    blob = "\n".join(saved["documents"][0]["chunks"])
+    blob = "\n".join(result["chunks"])
     assert "D599.5" in blob and "D549.2" in blob
     assert "340904" in blob or "340,904" in blob
     assert "31.00" in blob
@@ -920,6 +919,14 @@ def fresh_db(tmp_path, monkeypatch):
     return tmp_path
 
 
+def _chunk_texts_in_store(pid, doc_id):
+    """Chunk text lives only in chunks_v2 (the vector store), never in the index."""
+    from app.core.rag import retriever as _rag
+    from app.core.rag.vector_store import get_store
+    store = get_store(dim=_rag.get_embedder().dim)
+    return [c.text for c in store.chunks_for_docs(pid, [doc_id], all_rows=True)]
+
+
 def _write_txt_doc(tmp_path, filename, content_bytes):
     """Write a plaintext doc file under tmp_path, return its path."""
     p = str(tmp_path / filename)
@@ -930,6 +937,9 @@ def _write_txt_doc(tmp_path, filename, content_bytes):
 def test_index_project_writes_file_and_returns_summary(fresh_db, tmp_path, monkeypatch):
     """index_project indexes supported docs and writes the JSON index file."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    # Chunk text is observed in the vector store (its only home), so the
+    # test embedder must be on for index_project to land it there.
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     from app.core import doc_index
     importlib.reload(doc_index)
     from app.core.rag import vector_store as _vs
@@ -954,7 +964,9 @@ def test_index_project_writes_file_and_returns_summary(fresh_db, tmp_path, monke
     assert saved is not None
     assert saved["project_id"] == pid
     assert len(saved["documents"]) == 1
-    assert "subsidence" in saved["documents"][0]["chunks"][0]
+    assert saved["documents"][0]["chunk_count"] >= 1
+    assert "chunks" not in saved["documents"][0]
+    assert "subsidence" in _chunk_texts_in_store(pid, saved["documents"][0]["document_id"])[0]
 
 
 def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
@@ -1013,12 +1025,11 @@ def test_index_document_indexes_ifc_census_not_unsupported(
     result = doc_index.index_document(pid, doc["id"])
     assert result.get("error") != "ZERO_CHUNK", result
     assert result.get("indexed") == 1, result
-    saved = doc_index._load_index(pid)
-    assert saved is not None
-    chunks = saved["documents"][0]["chunks"]
+    chunks = result["chunks"]
     blob = "\n".join(chunks).lower()
     assert "ifc" in blob
     assert "wall" in blob
+    saved = doc_index._load_index(pid)
     skipped = saved.get("skipped") or []
     assert all(s.get("filename") != "sample_office.ifc" for s in skipped)
 
@@ -1053,10 +1064,9 @@ def test_index_document_wires_boq_total_into_rag(fresh_db, tmp_path, monkeypatch
     doc_path = _write_txt_doc(tmp_path, "Priced BOQ.csv", csv)
     doc = projects_mod.add_document(pid, "Priced BOQ.csv", file_path=doc_path, size=len(csv))
 
-    doc_index.index_document(pid, doc["id"])
+    result = doc_index.index_document(pid, doc["id"])
 
-    saved = doc_index._load_index(pid)
-    chunks = saved["documents"][0]["chunks"]
+    chunks = result["chunks"]
     blob = "\n".join(chunks).lower()
     assert "boq total" in blob, f"no BOQ summary chunk; chunks={chunks}"
     # 5000 + 60000 + 40000 = 105000 — appears only via the BOQ wiring.
@@ -1157,9 +1167,8 @@ def test_index_document_boq_total_hedged_when_pages_skipped(fresh_db, tmp_path, 
     doc_path = _write_txt_doc(tmp_path, "scanned BOQ.pdf", csv)  # .pdf -> boq path
     doc = projects_mod.add_document(pid, "scanned BOQ.pdf", file_path=doc_path, size=len(csv))
 
-    doc_index.index_document(pid, doc["id"])
-    saved = doc_index._load_index(pid)
-    blob = "\n".join(saved["documents"][0]["chunks"]).lower()
+    result = doc_index.index_document(pid, doc["id"])
+    blob = "\n".join(result["chunks"]).lower()
     assert "partial" in blob, f"pages_skipped>0 must hedge; chunks missing 'partial': {blob[:300]}"
 
 
@@ -1187,8 +1196,8 @@ def test_boq_named_pdf_without_computable_total_emits_guard(fresh_db, tmp_path, 
     )
     doc = projects_mod.add_document(pid, "Demolition BOQ.pdf", file_path=doc_path, size=21)
 
-    doc_index.index_document(pid, doc["id"])
-    blob = "\n".join(doc_index._load_index(pid)["documents"][0]["chunks"]).lower()
+    result = doc_index.index_document(pid, doc["id"])
+    blob = "\n".join(result["chunks"]).lower()
     assert "do not state a total" in blob, f"missing no-total guard; chunks={blob[:200]}"
 
 

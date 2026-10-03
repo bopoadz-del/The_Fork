@@ -195,6 +195,14 @@ async def test_image_document_is_indexed_and_searchable(fresh_db, tmp_path, monk
     assert doc["id"] in returned_ids
 
 
+def _chunk_texts_in_store(pid, doc_id):
+    """Chunk text lives only in chunks_v2 (the vector store), never in the index."""
+    from app.core.rag import retriever as _rag
+    from app.core.rag.vector_store import get_store
+    store = get_store(dim=_rag.get_embedder().dim)
+    return [c.text for c in store.chunks_for_docs(pid, [doc_id], all_rows=True)]
+
+
 def test_image_document_indexed_not_skipped(fresh_db, tmp_path, monkeypatch):
     """index_project treats images as supported — they go to documents, not skipped."""
     from app.blocks.ocr import OCRBlock
@@ -222,7 +230,9 @@ def test_image_document_indexed_not_skipped(fresh_db, tmp_path, monkeypatch):
     saved = doc_index._load_index(pid)
     assert [d["document_id"] for d in saved["documents"]] == [doc["id"]]
     assert saved["skipped"] == []
-    assert any("REBAR LAYOUT" in c for c in saved["documents"][0]["chunks"])
+    assert saved["documents"][0]["chunk_count"] >= 1
+    assert "chunks" not in saved["documents"][0]
+    assert any("REBAR LAYOUT" in c for c in _chunk_texts_in_store(pid, doc["id"]))
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -334,7 +344,7 @@ def test_ocr_error_status_is_graceful(fresh_db, tmp_path, monkeypatch):
     assert result["skipped_unsupported"] == 0
     saved = doc_index._load_index(pid)
     assert [d["document_id"] for d in saved["documents"]] == [doc["id"]]
-    assert saved["documents"][0]["chunks"] == []
+    assert saved["documents"][0]["chunk_count"] == 0
 
 
 # ────────────────────────────────────────────────────────────────────────────

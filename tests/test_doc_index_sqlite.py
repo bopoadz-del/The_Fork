@@ -68,7 +68,9 @@ def test_init_db_migrates_legacy_json_index(tmp_path, monkeypatch):
 
     loaded = doc_index._load_index("proj-legacy")
     assert loaded is not None
-    assert loaded["documents"][0]["chunks"] == ["hello world"]
+    # Legacy entries carried chunk text; rows never do (chunks_v2 holds it).
+    assert "chunks" not in loaded["documents"][0]
+    assert loaded["documents"][0]["chunk_count"] == 1
 
 
 def test_update_index_is_read_modify_write(tmp_path, monkeypatch):
