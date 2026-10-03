@@ -7,7 +7,9 @@
 # ONE image serves both the web service and the ingest worker — they are the
 # same application with a different command, exactly as on Render, where the
 # worker ran `python scripts/p1b_ingest_drive_server.py` against the same
-# build. Building once keeps them from drifting apart.
+# build. Building once keeps them from drifting apart. The ingest is a JOB:
+# it is started once by ingest-run-once.yml, never kept running as a service
+# (the service's desired count is pinned to 0 below).
 #
 # This does NOT touch DNS. theshovel.ai moves only when a human moves it.
 name: deploy-aws
@@ -65,9 +67,9 @@ jobs:
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
 
-      - name: Roll whichever services exist
+      - name: Roll the web service
         run: |
-          for svc in the-fork the-fork-ingest; do
+          for svc in the-fork; do
             count=$(aws ecs describe-services --cluster "$ECS_CLUSTER" \
               --services "$svc" \
               --query 'length(services[?status==`ACTIVE`])' --output text 2>/dev/null || echo 0)
@@ -79,3 +81,26 @@ jobs:
               echo "$svc: not created yet"
             fi
           done
+
+      - name: Keep the ingest service at zero (ingest is a job, not a service)
+        # Live 2026-10-03: this step used to roll `the-fork-ingest` too, and
+        # the service's desired count of 1 restarted the one-shot ingest
+        # script every time it finished -- ~95 min per lap, 50+ laps on
+        # record, each `--resume`ing over the same files and rewriting the
+        # project's doc_index blob per document (Neon: 876 GB egress in 3
+        # days). The service row stays (its network configuration is reused
+        # by ingest-run-once.yml); its desired count is pinned to 0 on every
+        # deploy; an ingest runs ONCE via ingest-run-once.yml. Nothing may
+        # raise this count.
+        run: |
+          svc=the-fork-ingest
+          count=$(aws ecs describe-services --cluster "$ECS_CLUSTER" \
+            --services "$svc" \
+            --query 'length(services[?status==`ACTIVE`])' --output text 2>/dev/null || echo 0)
+          if [ "$count" = "1" ]; then
+            aws ecs update-service --cluster "$ECS_CLUSTER" \
+              --service "$svc" --desired-count 0 >/dev/null
+            echo "$svc: desired count pinned to 0 (run it with ingest-run-once)"
+          else
+            echo "$svc: not created"
+          fi
