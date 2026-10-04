@@ -1162,6 +1162,36 @@ def _resolve_drive_id_by_filename(doc: Dict[str, Any]) -> Tuple[Optional[str], O
     return file_id, None
 
 
+def _resolve_drive_id_from_ledger(doc: Dict[str, Any]) -> Optional[str]:
+    """Fill a missing drive_file_id from the ledger itself.
+
+    The rag_backfill stubs carry the chunks a chat cites but no Drive id; the
+    same original was later ingested from Drive (P1B) into another row that
+    has one. When every other row with this exact ``original_name`` that
+    carries a Drive id carries the SAME id, that is the original. Two
+    different ids is ambiguous: no guess. Persisted like the filename resolve.
+    """
+    name = str(doc.get("original_name") or "").strip()
+    doc_id = str(doc.get("id") or "")
+    if not name:
+        return None
+    _ensure_db()
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(Document).where(Document.original_name == name, Document.id != doc_id)
+        ).all()
+        ids = {
+            extract_document_source_pointers(_document_as_dict(row))["drive_file_id"]
+            for row in rows
+        } - {""}
+    if len(ids) != 1:
+        return None
+    file_id = ids.pop()
+    _persist_resolved_drive_id(doc, file_id, "ledger_twin")
+    logger.info("resolved drive_file_id for doc %s from its ledger twin", doc_id)
+    return file_id
+
+
 def _persist_resolved_drive_id(
     doc: Dict[str, Any], file_id: str, source: str,
 ) -> None:
@@ -1197,13 +1227,17 @@ def _fetch_remote_document_bytes(
 
     if not drive_id:
         # rag_backfill_client_clean_all stubs: size=0, G:\ path, null
-        # drive_file_id. Resolve the live Drive file by
-        # exact original_name and persist the id so the next preview is cheap.
-        resolved_id, resolve_err = _resolve_drive_id_by_filename(doc)
-        if resolved_id:
-            drive_id = resolved_id
-        elif resolve_err:
-            drive_error = resolve_err
+        # drive_file_id. The ledger usually already knows the id (the same
+        # original ingested from Drive into another row); else resolve the
+        # live Drive file by exact original_name. Either way the id is
+        # persisted so the next preview is cheap.
+        drive_id = _resolve_drive_id_from_ledger(doc) or ""
+        if not drive_id:
+            resolved_id, resolve_err = _resolve_drive_id_by_filename(doc)
+            if resolved_id:
+                drive_id = resolved_id
+            elif resolve_err:
+                drive_error = resolve_err
 
     if drive_id:
         try:
