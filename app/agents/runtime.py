@@ -5972,6 +5972,115 @@ def _rescue_deterministic_cost_calc(
     return _format_deterministic_cost_calc(payload)
 
 
+# A number and the unit written right after it ("240 mm", "44 days").
+_CALC_FIGURE_RE = re.compile(
+    r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)\s*(mm|cm|m|km|m2|m²|m3|m³|kN/m|kN\.?m|kN|MPa|GPa|kPa|Pa|"
+    r"kg|t|days?|weeks?|months?|hours?|hrs?|%)(?![\w²³])"
+)
+
+
+def _calc_payload_numbers(messages: list[dict[str, Any]]) -> set | None:
+    """Numbers of this turn's successful construction_calc result, or None.
+
+    Read from the tool messages and the pre-dispatch bubble after the latest
+    operator ask. An error envelope is not a result.
+    """
+    msgs = messages or []
+    start = 0
+    for i, msg in enumerate(msgs):
+        if isinstance(msg, dict) and msg.get("role") == "user" and not _cg_is_platform_bubble(
+            str(msg.get("content") or "")
+        ):
+            start = i
+    numbers: set = set()
+    found = False
+    for msg in msgs[start:]:
+        if not isinstance(msg, dict):
+            continue
+        content = str(msg.get("content") or "")
+        is_calc = (
+            msg.get("role") == "tool" and msg.get("name") == "construction_calc"
+        ) or content.lstrip().startswith(f"{_PREDISPATCH_PREFIX} construction_calc")
+        if not is_calc or '"error"' in content:
+            continue
+        found = True
+        for tok in _CG_NUM_RE.findall(content):
+            v = _cg_to_number(tok)
+            if v is not None:
+                numbers.add(v)
+    return numbers if found else None
+
+
+def _calc_figure_grounding_gate(text: str, messages: list[dict[str, Any]]) -> str:
+    """A calculator answer states no figure the calculation did not produce.
+
+    When construction_calc produced this turn's result, a figure written in
+    the same unit as that result must come from the result, the operator's
+    own numbers, or a unit rescale of either (4.8 m -> 4800 mm). Anything
+    else -- an unrequested variant ("a 10% allowance -> 44 days"), a limit
+    recalled from memory ("absolute minimum of 125 mm") -- is a second answer
+    the operator did not ask for and nothing grounds. The clause carrying it
+    (its parenthetical, else its sentence) is removed; the result stays.
+    Kill switch: CALC_FIGURE_GATE=0. Never raises.
+    """
+    try:
+        if os.getenv("CALC_FIGURE_GATE", "1") == "0" or not text:
+            return text
+        payload = _calc_payload_numbers(messages)
+        if not payload:
+            return text
+        operator = set()
+        for tok in _CG_NUM_RE.findall(_latest_operator_ask(messages) or ""):
+            v = _cg_to_number(tok)
+            if v is not None:
+                operator.add(v)
+        base = payload | operator
+        scaled = base | {v * 1000 for v in base} | {v / 1000 for v in base}
+        # The answer's own working on those numbers is grounded too: pairwise
+        # + - x / (a bill extension, a unit back-out) and three-factor
+        # products (L x B x D). A recalled limit or an invented margin is not.
+        ordered = tuple(sorted(scaled))
+        triples = {a * b * c for a in operator for b in operator for c in operator}
+
+        def _is_grounded(v: float) -> bool:
+            tol = max(0.01, abs(v) * 0.005)
+            if any(abs(v - g) <= tol for g in scaled | triples):
+                return True
+            return _cg_pair_grounds(v, ordered, tol)
+
+        mentions = [
+            (m, _cg_to_number(m.group(1)), m.group(2).lower().rstrip("s"))
+            for m in _CALC_FIGURE_RE.finditer(text)
+        ]
+        result_units = {u for _m, v, u in mentions if v is not None and any(
+            abs(v - g) <= max(0.01, abs(v) * 0.005) for g in payload)}
+        bad = [m for m, v, u in mentions
+               if v is not None and u in result_units and not _is_grounded(v)]
+        if not bad:
+            return text
+        out = text
+        for m in reversed(bad):
+            start, end = _calc_clause_span(out, m.start(), m.end())
+            out = out[:start].rstrip(" ,;") + out[end:]
+        _LOG.info("calc_figure_gate: removed %d ungrounded figure(s)", len(bad))
+        return out
+    except Exception:  # noqa: BLE001
+        _LOG.exception("calc_figure_gate failed; passing answer through")
+        return text
+
+
+def _calc_clause_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """The parenthetical around [start, end), else the sentence around it."""
+    open_ = text.rfind("(", 0, start)
+    close = text.find(")", end)
+    if open_ != -1 and close != -1 and ")" not in text[open_:start] and "\n" not in text[open_:close]:
+        return open_, close + 1
+    left = max(text.rfind(". ", 0, start), text.rfind("\n", 0, start))
+    right_candidates = [i for i in (text.find(". ", end), text.find("\n", end)) if i != -1]
+    right = min(right_candidates) + 1 if right_candidates else len(text)
+    return (left + 1 if left != -1 else 0), right
+
+
 def _cost_grounding_gate(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -8101,6 +8210,7 @@ def _postprocess_answer(
     # A project-document figure and the no-rate refusal are not.
     text = _graft_deterministic_cost_calc(text, messages)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
+    text = _calc_figure_grounding_gate(text, messages)
     # Citation provenance: an attribution no evidence record backs is removed
     # and the answer flagged. Sibling of the cost gate above -- that one
     # grounds the FIGURES, this one grounds the claim about where they came
@@ -15116,6 +15226,27 @@ def _formula_calculator_name_from_message(text: str) -> str | None:
         return None
 
 
+def _formula_predispatch_instruction(calc_name: str | None, result: Any) -> str:
+    """What the model is told after the formula pre-dispatch.
+
+    A real result is the answer. When no unique registry calculator matched
+    (``calc_name`` None) the tool returns an "Unknown calculation" envelope,
+    and "answer from that result" left the model nothing to answer from: it
+    filled the gap with free-form variants that changed run to run ("a 10%
+    allowance -> 44 days"). Say what actually happened and what to do.
+    """
+    ok = bool(isinstance(result, dict) and result.get("ok"))
+    if calc_name and ok:
+        return ("construction_calc has already been run. Answer from that "
+                "result. Do not answer from Master Corpus excerpts.")
+    return ("No registry calculator matched this question, so there is no "
+            "calculator result. If one of the listed calculators fits, call "
+            "construction_calc with that name. Otherwise compute the answer "
+            "once from the operator's own figures, show the working, and state "
+            "a single result: no alternative scenarios, allowances or figures "
+            "the operator did not give. Do not answer from Master Corpus excerpts.")
+
+
 async def _predispatch_formula_calc(
     agent: "Agent",
     messages: list,
@@ -15169,8 +15300,7 @@ async def _predispatch_formula_calc(
             messages,
             "construction_calc",
             rendered,
-            "construction_calc has already been run. Answer from that "
-            "result. Do not answer from Master Corpus excerpts.",
+            _formula_predispatch_instruction(calc_name, result),
         )
         return {
             "name": "construction_calc",
