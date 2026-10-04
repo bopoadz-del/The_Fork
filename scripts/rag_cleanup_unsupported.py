@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Render-side RAG cleanup: remove unsupported zero-chunk document rows.
 
-Reads a JSON list of target doc_ids from R2 (or local path), deletes matching
+Reads a JSON list of target doc_ids from a local path, deletes matching
 documents from the documents table for the given project, and reports counts.
 No chunks are deleted because the targets are zero-chunk docs.
 
 Usage (on Render worker):
     python scripts/rag_cleanup_unsupported.py \
         --project-id client_infra_pack_1 \
-        --targets-r2-key projects/<pid>/cleanup/rag_cleanup_targets.json
+        --targets rag_cleanup_targets.json
 """
 from __future__ import annotations
 
@@ -22,24 +22,14 @@ from typing import Any, Dict, List
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import app.core.r2_storage as r2_storage  # noqa: E402
 from app.core.db import get_engine  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 
-def load_targets(path_or_r2: str) -> List[Dict[str, Any]]:
-    if path_or_r2.startswith("projects/") or path_or_r2.startswith("rag_"):
-        # Treat as R2 key
-        s3 = r2_storage._client()
-        bucket = r2_storage._bucket_name()
-        if not s3 or not bucket:
-            raise RuntimeError("R2 not configured")
-        resp = s3.get_object(Bucket=bucket, Key=path_or_r2)
-        raw = resp["Body"].read().decode("utf-8")
-    else:
-        with open(path_or_r2, "r", encoding="utf-8") as f:
-            raw = f.read()
-    return json.loads(raw)
+def load_targets(path: str) -> List[Dict[str, Any]]:
+    """Target doc_ids from a local JSON file (there is no object store)."""
+    with open(path, "r", encoding="utf-8") as f:
+        return json.loads(f.read())
 
 
 def cleanup(project_id: str, targets: List[Dict[str, Any]], dry_run: bool = False) -> Dict[str, int]:
@@ -91,7 +81,7 @@ def cleanup(project_id: str, targets: List[Dict[str, Any]], dry_run: bool = Fals
 def main() -> int:
     parser = argparse.ArgumentParser(description="Remove unsupported zero-chunk documents from RAG")
     parser.add_argument("--project-id", required=True)
-    parser.add_argument("--targets", required=True, help="Path or R2 key to cleanup_targets.json")
+    parser.add_argument("--targets", required=True, help="Local path to cleanup_targets.json")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 

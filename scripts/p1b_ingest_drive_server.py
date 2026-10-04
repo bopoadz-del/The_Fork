@@ -9,10 +9,17 @@ filtered at discovery -- never assigned, downloaded, stored or archived, only
 counted in ``accounting.unsupported_by_format``. When a file breaks a run,
 ask "should it be here at all?" first. See docs/INGEST_EXCLUSION_RULE.md.
 
-Runs on Render (or any server with the prod DB attached). Files are fetched
-via the platform's Google Drive service-account path, written to DATA_DIR,
-and indexed through the normal doc_index pipeline into the configured vector
-namespace.
+NO ARCHIVE. The platform keeps no copy of an original file. Google Drive is
+the source of truth for admin-added project documents; the extracted chunks
+are everything the RAG needs. Each download is written to ONE transient copy
+on this task's own disk, indexed, and deleted -- never stored on the data
+volume, never uploaded anywhere. A cited source opens from the ledger row's
+``drive_file_id``. See docs/INGEST_EXCLUSION_RULE.md ("No archive") and
+docs/RAG_GAPS_REVIEW_2026-09-12.md section E.
+
+Runs as one ECS RunTask (or any server with the prod DB attached). Files are
+fetched via the platform's Google Drive service-account path and indexed
+through the normal doc_index pipeline into the configured vector namespace.
 
 Differences from the local p1b script:
 - Source is Google Drive API, not a laptop Drive mount.
@@ -226,8 +233,8 @@ def future_result_or_error(
 ) -> Tuple[str, Dict[str, Any]]:
     """Drain a worker future without letting the exception escape.
 
-    #477 caught archive_document / _ingest_file, but ``fut.result()`` in the
-    main thread was still bare. A leaked botocore AccessDenied there aborts
+    #477 caught exceptions inside _ingest_file, but ``fut.result()`` in the
+    main thread was still bare. A leaked worker exception there aborts
     the whole TIER-1 run (de6a06b7542c died at 323/1380 after 'ingest
     continues' plus a leftover traceback).
     """
@@ -311,6 +318,30 @@ def _safe_stored_name(original: str) -> str:
     return f"{safe}{ext}"
 
 
+def _transient_copy(raw_bytes: bytes, stored_name: str) -> Path:
+    """Write the one copy the extractors read, on this task's ephemeral disk.
+
+    Plaintext, because it is never stored: it lives for one file's indexing
+    and is then deleted (``_discard_transient_copy``). The decrypted-temp
+    prefix makes the plaintext sweeper reap it if the process dies first.
+    """
+    import tempfile
+
+    from app.core import file_crypto
+
+    fd, path = tempfile.mkstemp(prefix=file_crypto.DECRYPTED_TEMP_PREFIX, suffix="_" + stored_name)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(raw_bytes)
+    return Path(path)
+
+
+def _discard_transient_copy(path: Path) -> None:
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError as exc:
+        log(f"could not delete transient copy {Path(path).name}: {exc}")
+
+
 def _drive_reports_empty(file_meta: Dict[str, Any]) -> bool:
     """True when Drive states the file's size and it is zero bytes."""
     raw = str(file_meta.get("size", "")).strip()
@@ -334,7 +365,7 @@ def _ingest_file(
     deterministic path and re-indexed into the SAME document row instead of
     creating a duplicate.
     """
-    from app.core import doc_index, file_crypto, projects as projects_mod, r2_storage
+    from app.core import doc_index, projects as projects_mod
 
     rel = file_meta.get("_drive_path") or file_meta.get("name", "")
     mime = file_meta.get("mimeType", "")
@@ -384,9 +415,7 @@ def _ingest_file(
     from app.core.ingest_reconcile import source_content_token
 
     refusal = extract_isolated.admission_refusal(
-        size,
-        encrypted=file_crypto.encryption_enabled(),
-        child_budget_mb=doc_index._file_budget()[0],
+        size, child_budget_mb=doc_index._file_budget()[0],
     )
     if refusal:
         token = source_content_token(file_meta)
@@ -452,43 +481,18 @@ def _ingest_file(
             "content_sha256": content_sha,
         }
     stored_name = f"{hashlib.sha256(rel.encode()).hexdigest()[:8]}_{_safe_stored_name(Path(rel).name)}"
-    dest = data_dir / stored_name
-    file_crypto.write_document(str(dest), raw_bytes)
-
-    # Archive raw bytes to R2 before indexing. The local copy is only needed
-    # for the extractors/indexers and is deleted afterwards.
-    # R2 failure (AccessDenied, timeouts, client construction) must not abort
-    # this file: the Neon document row + index still happen with r2_archived=False.
-    try:
-        archive = r2_storage.archive_document(
-            project_id=project_id,
-            drive_file_id=file_meta["id"],
-            original_name=Path(rel).name,
-            raw_bytes=raw_bytes,
-            content_sha256=content_sha,
-        )
-    except Exception as exc:  # noqa: BLE001 — belt-and-suspenders if archive_document leaks
-        log(
-            f"R2 archive raised {type(exc).__name__}: {exc}; "
-            f"continuing ingest for {rel!r} (r2_archived=False)"
-        )
-        archive = {
-            "archived": False,
-            "r2_object_key": None,
-            "r2_bucket": None,
-            "r2_endpoint": None,
-            "r2_account_id": None,
-            "error": f"R2_UPLOAD_FAILED: {type(exc).__name__}: {exc}",
-        }
+    # NO ARCHIVE (owner ruling, docs/INGEST_EXCLUSION_RULE.md): the platform
+    # keeps no copy of an original. Google Drive is the source of truth and the
+    # chunks are what the RAG needs. The extractors read one TRANSIENT copy on
+    # this task's own ephemeral disk (never the shared data volume), deleted
+    # as soon as the file is indexed. It carries the decrypted-temp prefix, so
+    # the plaintext sweeper reaps it if the process dies first.
+    dest = _transient_copy(raw_bytes, stored_name)
 
     # Release the payload BEFORE indexing. Extraction is the memory peak on
     # this box (app/core/extract_isolated measured one 4.4 MB PDF taking the
-    # live instance from 790 MB to 3.9 GB of 4 GB), and until now the whole
-    # downloaded file stayed resident through it for no reason: the bytes were
-    # already written to ``dest`` and already uploaded to R2, and every reader
-    # from here on works off the path. With P1B_MAX_FILE_SIZE_MB defaulting to
-    # 0 (no cap) and P1B_PARALLELISM=2, this was up to two multi-hundred-MB
-    # buffers held for the duration of the two heaviest extractions.
+    # live instance from 790 MB to 3.9 GB of 4 GB); every reader from here on
+    # works off the path.
     downloaded_bytes = len(raw_bytes)
     del raw_bytes
 
@@ -505,19 +509,15 @@ def _ingest_file(
     }
     if drive_token:
         common_meta["drive_md5"] = drive_token
-    if archive.get("r2_object_key"):
-        common_meta["r2_object_key"] = archive["r2_object_key"]
-        common_meta["r2_bucket"] = archive.get("r2_bucket")
-        common_meta["r2_endpoint"] = archive.get("r2_endpoint")
-        common_meta["r2_account_id"] = archive.get("r2_account_id")
-    if archive.get("error"):
-        common_meta["r2_archive_error"] = archive["error"]
 
     if existing_doc is not None and not reingest_of:
         # In-place retry: the row exists from a prior pass (zero-chunk, or a
         # TEXT_SPARSE .docx stamped by an older extractor). Re-index the SAME
         # document id so chunks are replaced. No new row, no supersede.
         projects_mod.update_document_metadata(existing_doc["id"], common_meta)
+        # Index THIS download: the row's old file_path is a deleted (or stale)
+        # copy from an earlier pass.
+        projects_mod.set_document_file_path(existing_doc["id"], str(dest))
         if drive_token:
             projects_mod.set_document_drive_md5(existing_doc["id"], drive_token)
         result = doc_index.index_document(
@@ -529,16 +529,12 @@ def _ingest_file(
             result["ingest_status"] = _ingest_status_from_index_result(
                 result, existing_doc,
             )
-        r2_storage.delete_local_archive(str(dest))
-        result["r2_archive"] = archive
+        _discard_transient_copy(dest)
         log(
             f"VERIFICATION doc_id={existing_doc['id']} "
             f"drive_file_id={file_meta['id']} drive_path={rel!r} "
             f"mime={mime!r} drive_size={size} downloaded_bytes={downloaded_bytes} "
             f"rag_indexed={result.get('rag_indexed', 0)} "
-            f"r2_archived={archive.get('archived')} "
-            f"r2_object_key={archive.get('r2_object_key')} "
-            f"r2_error={archive.get('error')} "
             f"index_status={result.get('status')} "
             f"index_error={result.get('error')}"
         )
@@ -557,6 +553,7 @@ def _ingest_file(
             drive_md5=drive_token,
         )
     except projects_mod.DuplicateContentError as exc:
+        _discard_transient_copy(dest)
         projects_mod.record_source_alias(exc.existing_id, file_meta["id"], drive_token)
         return rel, {
             "status": "error",
@@ -570,16 +567,12 @@ def _ingest_file(
     if reingest_of:
         result["reingest_of"] = reingest_of
         result["superseded"] = True
-    r2_storage.delete_local_archive(str(dest))
-    result["r2_archive"] = archive
+    _discard_transient_copy(dest)
     log(
         f"VERIFICATION doc_id={doc['id']} "
         f"drive_file_id={file_meta['id']} drive_path={rel!r} "
         f"mime={mime!r} drive_size={size} downloaded_bytes={downloaded_bytes} "
         f"rag_indexed={result.get('rag_indexed', 0)} "
-        f"r2_archived={archive.get('archived')} "
-        f"r2_object_key={archive.get('r2_object_key')} "
-        f"r2_error={archive.get('error')} "
         f"index_status={result.get('status')} "
         f"index_error={result.get('error')}"
     )

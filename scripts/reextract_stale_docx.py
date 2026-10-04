@@ -7,11 +7,11 @@ Usage (Render worker the-fork-ingest, from /app):
     python scripts/reextract_stale_docx.py [--dry-run] [--limit N] [--allow-unavailable]
 
 Selects retrieval_visible rows where
-``ingest_status.docx_stale_extractor_open`` is true, fetches bytes from R2
-then one Drive file id, writes the existing ``file_path``, and re-indexes
+``ingest_status.docx_stale_extractor_open`` is true, fetches bytes from
+the row's one Drive file id, writes the existing ``file_path``, and re-indexes
 with ``stamp_as_indexed=False``.
 
-``--limit N`` caps rows that successfully fetch bytes (source r2/drive) and
+``--limit N`` caps rows that successfully fetch bytes (source drive) and
 are written. Rows with no bytes (source=none) are counted as
 ``source_unavailable`` and do not consume the cap. Dry-run still prints
 every open row (annotate ``would_write=`` when a limit is set).
@@ -76,31 +76,26 @@ def select_stale_docx_rows() -> List[Dict[str, Any]]:
 def fetch_row_bytes(
     doc: Dict[str, Any],
 ) -> Tuple[Optional[bytes], str, Optional[str], Optional[str]]:
-    """R2 first, then one Drive file id. Never a folder walk.
+    """One Drive file id -- the only source of an original. Never a folder walk.
 
     Returns ``(bytes, source, drive_file_id, err)`` where source is
-    ``r2`` / ``drive`` / ``none``.
+    ``drive`` / ``none``.
     """
-    from app.core import gdrive_service, r2_storage
+    from app.core import gdrive_service
     from app.core.projects import extract_document_source_pointers
 
     pointers = extract_document_source_pointers(doc)
     meta = doc.get("metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
-    r2_key = pointers.get("r2_object_key") or meta.get("r2_object_key") or ""
-    r2_bucket = pointers.get("r2_bucket") or meta.get("r2_bucket")
     drive_id = pointers.get("drive_file_id") or meta.get("drive_file_id") or ""
 
-    raw = r2_storage.fetch_object_bytes(r2_key, r2_bucket)
-    if raw is not None:
-        return raw, "r2", drive_id or None, None
     if drive_id:
         raw, err = gdrive_service.download_file_bytes(drive_id)
         if raw:
             return raw, "drive", drive_id, None
         return None, "none", drive_id, err
-    return None, "none", None, "no r2_object_key or drive_file_id"
+    return None, "none", None, "no drive_file_id"
 
 
 def _tally_ended(status: Optional[str], index_status: Optional[str]) -> str:
@@ -122,7 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print id / drive_file_id / source (r2|drive|none). No writes.",
+        help="Print id / drive_file_id / source (drive|none). No writes.",
     )
     ap.add_argument(
         "--limit",
@@ -146,7 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    from app.core import doc_index, file_crypto, r2_storage
+    from app.core import doc_index, file_crypto
     from app.core import ingest_status as ist
     from app.core import projects as projects_mod
 
@@ -217,7 +212,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             result = doc_index.index_document(
                 row["project_id"], row["id"], stamp_as_indexed=False,
             )
-            r2_storage.delete_local_archive(dest)
+            Path(dest).unlink(missing_ok=True)
             after = projects_mod.get_document(row["id"]) or before
             if after.get("ingest_status") not in ist.ALL_STATUSES:
                 n = int(result.get("rag_indexed") or result.get("total_chunks") or 0)
@@ -236,7 +231,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Exception as exc:  # noqa: BLE001 — one row must not kill the run
             tally["error"] += 1
             if wrote and dest:
-                r2_storage.delete_local_archive(dest)
+                Path(dest).unlink(missing_ok=True)
             after = projects_mod.get_document(row["id"]) or before
             print(
                 f"ERROR doc_id={row['id']} {type(exc).__name__}: {exc}",

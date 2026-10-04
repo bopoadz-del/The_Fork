@@ -86,7 +86,7 @@ def _add_docx(
         file_path=str(dest),
         size=len(raw),
         content_sha256=hashlib.sha256(name.encode()).hexdigest(),
-        metadata={"r2_object_key": f"projects/p/{name}", "r2_bucket": "corpus"},
+        metadata={"drive_file_id": f"drive-{name}"},
     )
     projects.stamp_document_index(
         doc["id"],
