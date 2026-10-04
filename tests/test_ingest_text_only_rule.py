@@ -52,8 +52,9 @@ def test_the_indexer_derives_its_formats_from_the_single_declaration():
     from app.core import doc_index
     from app.routers import projects
 
-    assert doc_index._SUPPORTED_EXTS is ist.TEXT_BEARING_EXTS
-    assert projects.ALLOWED_DOC_EXTENSIONS is ist.TEXT_BEARING_EXTS
+    # Equality, not identity: other tests reload these modules.
+    assert set(doc_index._SUPPORTED_EXTS) == set(ist.TEXT_BEARING_EXTS)
+    assert set(projects.ALLOWED_DOC_EXTENSIONS) == set(ist.TEXT_BEARING_EXTS)
 
 
 @pytest.mark.parametrize("name", ["drone.mp4", "plan.dwg", "site.jpg", "earth.kmz", "font.ttf"])

@@ -57,7 +57,7 @@ def test_both_upload_routes_share_one_allowlist():
     from app.routers import projects as projects_router
     from app.routers import upload as upload_router
 
-    assert projects_router.ALLOWED_DOC_EXTENSIONS is TEXT_BEARING_EXTS
+    assert set(projects_router.ALLOWED_DOC_EXTENSIONS) == set(TEXT_BEARING_EXTS)
     assert set(upload_router.ALLOWED_UPLOAD_EXTENSIONS) == set(upload_limits.ALLOWED_UPLOAD_EXTENSIONS)
 
 

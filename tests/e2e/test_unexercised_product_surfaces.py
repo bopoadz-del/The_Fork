@@ -331,9 +331,19 @@ def test_right_panel_preview_redline_photo_and_attach(client, session):
     assert r.status_code == 201, r.text
     txt_id = r.json()["document"]["id"]
 
+    # A drawing reaches a project as a PDF; a bare image is not a project
+    # document (text formats only, docs/INGEST_EXCLUSION_RULE.md).
     r = client.post(
         f"/v1/projects/{pid}/documents",
         files={"file": ("markup.png", _png_bytes(), "image/png")},
+        headers=h,
+    )
+    assert r.status_code == 415, r.text
+    _pdf = io.BytesIO()
+    Image.open(io.BytesIO(_png_bytes())).convert("RGB").save(_pdf, format="PDF")
+    r = client.post(
+        f"/v1/projects/{pid}/documents",
+        files={"file": ("markup.pdf", _pdf.getvalue(), "application/pdf")},
         headers=h,
     )
     assert r.status_code == 201, r.text
@@ -342,7 +352,7 @@ def test_right_panel_preview_redline_photo_and_attach(client, session):
     r = client.get(f"/v1/projects/{pid}/documents", headers=h)
     assert r.status_code == 200, r.text
     names = {d["original_name"] for d in r.json()["documents"]}
-    assert {"cover_sheet.xlsx", "cover_note.txt", "markup.png"} <= names
+    assert {"cover_sheet.xlsx", "cover_note.txt", "markup.pdf"} <= names
 
     r = client.get(f"/v1/projects/{pid}/documents/{xlsx_id}/preview", headers=h)
     assert r.status_code == 200, r.text
