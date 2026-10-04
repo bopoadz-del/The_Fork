@@ -1484,6 +1484,10 @@ def main() -> int:
                 )
             except Exception as exc:  # noqa: BLE001 — one file must not kill the run
                 result = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+            finally:
+                # The next file's memory admission must see real headroom,
+                # not this file's freed-but-retained heap.
+                lifecycle.release_freed_memory()
             return rel, result
 
         # Parallel ingestion: downloads are network-bound and extraction

@@ -468,7 +468,7 @@ def test_memory_demand_counts_the_whole_file_copies_fernet_needs():
 
     mb = 1024 * 1024
     parent, child = memory_demand(300 * mb, encrypted=True)
-    assert parent == pytest.approx(300 * mb * (4 + 4 / 3), rel=1e-6)
+    assert parent == pytest.approx(300 * mb * 7, rel=1e-6)  # measured default
     assert child == pytest.approx(300 * mb * (1 + 4 / 3), rel=1e-6)
     assert memory_demand(300 * mb, encrypted=False) == (300 * mb, 300 * mb)
 
@@ -492,6 +492,59 @@ def test_admission_refuses_over_the_parent_headroom(monkeypatch):
     monkeypatch.setattr(ingest_lifecycle, "memory_numbers", lambda: (1 * gb, 4 * gb))
     mb = 1024 * 1024
     # headroom 4 GB x 0.85 - 1 GB = 2539 MB; 500 MB x (4 + 4/3) = 2667 MB does not fit
+    monkeypatch.setenv("P1B_PARENT_MEMORY_FACTOR", str(4 + 4 / 3))
     reason = extract_isolated.admission_refusal(500 * mb, encrypted=True, child_budget_mb=4096)
     assert reason and "container headroom" in reason
     assert extract_isolated.admission_refusal(200 * mb, encrypted=True, child_budget_mb=4096) is None
+
+
+def test_parent_factor_is_configurable(monkeypatch):
+    from app.core.extract_isolated import memory_demand
+
+    monkeypatch.setenv("P1B_PARENT_MEMORY_FACTOR", "3")
+    assert memory_demand(100, encrypted=True)[0] == 300
+
+
+def test_memory_limit_is_the_tightest_one_stated(monkeypatch, tmp_path):
+    """Fargate: cgroup says 'max', MemTotal is the micro-VM, the task declares
+    less -- the task's declared limit wins."""
+    from app.core import ingest_lifecycle as il
+
+    proc, cg = tmp_path / "proc", tmp_path / "cg"
+    (proc / "self").mkdir(parents=True)
+    (proc / "self" / "cgroup").write_text("0::/\n")
+    (proc / "meminfo").write_text("MemTotal: 8388608 kB\nMemAvailable: 7340032 kB\n")
+    cg.mkdir()
+    (cg / "memory.max").write_text("max\n")
+    monkeypatch.setattr(il, "ecs_task_memory_limit_bytes", lambda: 4096 * 1024 * 1024)
+    used, limit = il.memory_numbers(proc_root=proc, cgroup_root=cg)
+    assert limit == 4096 * 1024 * 1024
+    assert used == 1024 * 1024 * 1024
+
+
+def test_ecs_task_memory_limit_reads_the_metadata_endpoint(monkeypatch):
+    import io
+    import json
+    import urllib.request
+
+    from app.core import ingest_lifecycle as il
+
+    il._ECS_LIMIT_CACHE.clear()
+    monkeypatch.setenv("ECS_CONTAINER_METADATA_URI_V4", "http://meta.invalid/v4/x")
+    seen = []
+
+    def _open(url, timeout=0):
+        seen.append(url)
+        return io.BytesIO(json.dumps({"Limits": {"CPU": 1, "Memory": 4096}}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", _open)
+    assert il.ecs_task_memory_limit_bytes() == 4096 * 1024 * 1024
+    assert seen == ["http://meta.invalid/v4/x/task"]
+    monkeypatch.delenv("ECS_CONTAINER_METADATA_URI_V4")
+    assert il.ecs_task_memory_limit_bytes() is None
+
+
+def test_release_freed_memory_is_safe_everywhere():
+    from app.core.ingest_lifecycle import release_freed_memory
+
+    release_freed_memory()
