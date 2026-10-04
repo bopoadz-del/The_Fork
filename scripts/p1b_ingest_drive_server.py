@@ -65,12 +65,10 @@ _UNSUPPORTED_MIMES = {
     "application/vnd.google-apps.folder",
 }
 
-# .kmz/.kml (geospatial containers) are excluded here on purpose: a 2026-09
-# RAG data-quality incident found 260 .kmz documents had produced 11,630
-# chunks that were GIS attribute dumps and raw CAD entity handles ("Polyline
-# [9CA0]"), not retrievable prose. See app/core/ingest_status.py for the full
-# incident writeup and the matching UNSUPPORTED_TYPE guard.
-_UNSUPPORTED_EXTS = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar", ".kmz", ".kml"}
+# Which formats are ingestible is decided by the extractor registry alone
+# (ingest_status.is_ingestible <- app/core/text_extractors.py); geospatial
+# containers, compressed folders and Google-native shortcuts have no
+# extractor, so they are excluded and counted at discovery.
 
 # Sidecar heartbeat. Lives next to the report because it answers the question
 # the report cannot when the run is killed: where was it, and what was the box
@@ -369,12 +367,13 @@ def _ingest_file(
 
     rel = file_meta.get("_drive_path") or file_meta.get("name", "")
     mime = file_meta.get("mimeType", "")
-    ext = Path(rel).suffix.lower()
 
-    # Skip Google-native, known-unsupported, and geodatabase internal files.
+    # Skip Google-native, non-ingestible, and geodatabase internal files.
+    from app.core import ingest_status as _ist_gate
+
     if (
         mime in _UNSUPPORTED_MIMES
-        or ext in _UNSUPPORTED_EXTS
+        or not _ist_gate.is_ingestible(rel)
         or _is_geodatabase_internal(rel)
     ):
         return rel, {
@@ -1239,10 +1238,11 @@ def main() -> int:
                 meta = doc.get("metadata") or {}
                 path = meta.get("drive_path") or ""
                 mime = meta.get("mimeType", "")
-                ext = Path(path).suffix.lower()
+                from app.core import ingest_status as _ist_gate
+
                 return (
                     mime in _UNSUPPORTED_MIMES
-                    or ext in _UNSUPPORTED_EXTS
+                    or not _ist_gate.is_ingestible(path)
                     or _is_geodatabase_internal(path)
                 )
 
@@ -1315,10 +1315,8 @@ def main() -> int:
 
             path = fm.get("_drive_path") or fm.get("name") or ""
             mime = fm.get("mimeType", "")
-            ext = Path(path).suffix.lower()
             return (
                 mime in _UNSUPPORTED_MIMES
-                or ext in _UNSUPPORTED_EXTS
                 or _is_geodatabase_internal(path)
                 # The RAG ingests text formats only (TEXT_BEARING_EXTS, see
                 # the module docstring): anything else is never assigned,

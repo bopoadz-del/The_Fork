@@ -3,11 +3,11 @@
 POST /v1/projects/{project_id}/documents/{document_id}/redlines
 
 Tests:
-  - Marked-up image → has_markup true, total_regions >= 1, red region detected
-  - Clean all-white image → has_markup false
+  - Marked-up drawing PDF → has_markup true, total_regions >= 1, red region detected
+  - Clean all-white drawing PDF → has_markup false
   - Nonexistent document id → 404
   - Cross-tenant: user B calls user A's project/document → 404
-  - Non-image/non-PDF document (.txt) → 400
+  - Non-PDF document (.txt, or a pre-rule image row) → 400
 """
 
 import io
@@ -204,9 +204,10 @@ def test_a_bare_image_is_not_a_project_document(client):
     assert r.status_code == 415, r.text
 
 
-def test_redline_still_reads_a_pre_rule_image_document(client, tmp_path):
-    """Images can no longer be added to a project, but a pre-rule image row
-    still opens in redline (redline.py's image branch). Guard it."""
+def test_redline_does_not_analyse_an_image_document(client, tmp_path):
+    """Images are never project documents, so redline has no image branch:
+    a pre-rule image row gets a clear 400 and is not analysed. Redline runs
+    on the PDF drawing; a photo is chat question context."""
     import os
 
     from app.core import file_crypto, projects as store
@@ -218,5 +219,5 @@ def test_redline_still_reads_a_pre_rule_image_document(client, tmp_path):
         200, 200, patch_color=(255, 0, 0), patch_rect=(10, 10, 40, 40)))
     doc = store.add_document(pid, "marked.png", file_path=p, size=os.path.getsize(p))
     r = client.post(f"/v1/projects/{pid}/documents/{doc['id']}/redlines", headers=h)
-    assert r.status_code == 200, r.text
-    assert r.json()["has_markup"] is True
+    assert r.status_code == 400, r.text
+    assert "needs a PDF drawing" in r.json()["detail"]
