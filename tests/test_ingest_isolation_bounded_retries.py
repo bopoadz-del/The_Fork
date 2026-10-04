@@ -230,6 +230,23 @@ def test_bound_applies_uniformly_to_every_recoverable_class(monkeypatch):
         assert not ist.is_open(status, closed), (status, closed)
 
 
+def test_recoverable_class_keeps_its_reason_but_resume_bounds_it(monkeypatch):
+    """A recoverable skip stays named as recoverable work on the ledger; the
+    retry bound is applied by resume from the attempt count."""
+    from app.core import ingest_status as ist
+
+    monkeypatch.setenv("INGEST_MAX_ATTEMPTS", "1")
+    dwg = {
+        "original_name": "sheet.dwg", "ingest_status": ist.UNSUPPORTED_TYPE,
+        "ingest_status_reason": "dwg:recoverable", "content_sha256": "abc",
+    }
+    parsers = {".pdf", ".dwg"}  # a build that can parse it: work, until tried
+    assert not ist.resume_is_already_indexed(dwg, 0, parseable_exts=parsers)
+    tried = {**dwg, "metadata": {"ingest_attempts": {"n": 1, "key": ist.attempt_key("abc")}}}
+    assert ist.resume_is_already_indexed(tried, 0, parseable_exts=parsers)
+    assert tried["ingest_status_reason"] == "dwg:recoverable"
+
+
 def test_a_killed_attempt_still_counts_toward_the_bound(monkeypatch):
     """No outcome was stamped (the process died) -- the count alone bounds it."""
     from app.core import ingest_status as ist

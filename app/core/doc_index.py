@@ -3208,13 +3208,17 @@ def _stamp_index_ledger(
     if ocr_degraded:
         reason = ist.with_ocr_degraded(reason)
     existing = projects_mod.get_document(document_id) or {}
-    # Bounded retries: an outcome that is still open after the configured
-    # number of attempts on these bytes with this extractor is closed.
+    # Bounded retries: an open-status outcome (UNVERIFIED / ZERO_CHUNK /
+    # EXTRACT_FAILED) still open after the configured number of attempts on
+    # these bytes with this extractor is closed on the ledger. RECOVERABLE
+    # qualifiers keep their reason -- they name work a richer source or a
+    # new parser can still do -- and are bounded where retries are decided:
+    # resume reads the attempt count for every class alike.
     attempts = projects_mod.ingest_attempts(
         existing,
         ist.attempt_key(existing.get("content_sha256") or existing.get("drive_md5")),
     )
-    if attempts >= ist.max_attempts() and ist.is_open(
+    if attempts >= ist.max_attempts() and status in ist.OPEN_STATUSES and ist.is_open(
         status, reason,
         extension=ext,
         extractor_version=existing.get("extractor_version"),
