@@ -58,7 +58,7 @@ def office_kind(doc: Mapping[str, Any]) -> str | None:
 
 
 def _office_source_present(doc: Mapping[str, Any]) -> bool:
-    """True when local bytes or an R2/Drive pointer exist. Does not fetch."""
+    """True when local bytes or a Drive pointer exist. Does not fetch."""
     if doc.get("has_file") is True:
         return True
     if doc.get("has_file") is False:
@@ -69,7 +69,7 @@ def _office_source_present(doc: Mapping[str, Any]) -> bool:
     from app.core.projects import extract_document_source_pointers
 
     pointers = extract_document_source_pointers(dict(doc))
-    return bool(pointers["r2_object_key"] or pointers["drive_file_id"])
+    return bool(pointers["drive_file_id"])
 
 
 def _empty_kind_bucket(ext: str) -> dict[str, Any]:
@@ -94,7 +94,7 @@ def tally_office_docs(docs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     ``thin`` is TEXT_SPARSE **or** ``chunk_count == 1`` so a
     ``stamp_as_indexed`` INDEXED single-window row still counts as thin.
     ``indexed_zero_chunk`` is the silent-INDEXED-on-empty lie.
-    ``missing_source`` is no local bytes and no R2/Drive pointer — this
+    ``missing_source`` is no local bytes and no Drive pointer — this
     function never hydrates remote objects.
     """
     by_kind = {ext: _empty_kind_bucket(ext) for ext in OFFICE_CENSUS_EXTS}

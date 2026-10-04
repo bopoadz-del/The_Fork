@@ -2,7 +2,7 @@
 """Local chunk generator for RAG backfill.
 
 Reads a batch JSON, extracts text from local files using the platform's own
-doc_index pipeline, chunks, and writes a JSONL of chunks. No DB, no R2, no
+doc_index pipeline, chunks, and writes a JSONL of chunks. No DB, no object store, no
 embeddings — just chunks.
 
 Usage:

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""One-file end-to-end R2 ingestion test.
+"""One-file end-to-end Drive ingestion test.
 
 Usage (inside the Render worker container, from /app):
     python scripts/p1b_one_file_test.py <drive_file_id> <project_id> [drive_path]
 
 Reports every stage so a human can verify:
-    Drive -> R2 -> document row -> parsed text -> chunks -> embeddings -> rag_indexed
+    Drive -> document row -> parsed text -> chunks -> embeddings -> rag_indexed
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("RAG_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 os.environ.setdefault("RAG_VECTOR_NAMESPACE", "v2")
 
-from app.core import doc_index, file_crypto, gdrive_service, projects as projects_mod, r2_storage
+from app.core import doc_index, file_crypto, gdrive_service, projects as projects_mod
 
 
 def main() -> int:
@@ -81,17 +81,6 @@ def main() -> int:
     file_crypto.write_document(str(dest), raw_bytes)
     print(f"[one-file-test] local_temp={dest}")
 
-    # 4. Archive to R2.
-    archive = r2_storage.archive_document(
-        project_id=project_id,
-        drive_file_id=drive_file_id,
-        original_name=file_name,
-        raw_bytes=raw_bytes,
-        content_sha256=content_sha,
-    )
-    r2_object_key = archive.get("r2_object_key")
-    print(f"[one-file-test] r2_archived={archive.get('archived')} r2_object_key={r2_object_key} r2_error={archive.get('error')}")
-
     # 5. Create document row.
     common_meta = {
         "drive_file_id": drive_file_id,
@@ -100,13 +89,6 @@ def main() -> int:
         "mimeType": mime,
         "content_sha256": content_sha,
     }
-    if r2_object_key:
-        common_meta["r2_object_key"] = r2_object_key
-        common_meta["r2_bucket"] = archive.get("r2_bucket")
-        common_meta["r2_endpoint"] = archive.get("r2_endpoint")
-        common_meta["r2_account_id"] = archive.get("r2_account_id")
-    if archive.get("error"):
-        common_meta["r2_archive_error"] = archive["error"]
 
     doc = projects_mod.add_document(
         project_id=project_id,
@@ -125,7 +107,7 @@ def main() -> int:
     print(f"[one-file-test] index_status={result.get('status')} index_error={result.get('error')} rag_indexed={result.get('rag_indexed', 0)}")
 
     # 7. Cleanup local temp.
-    r2_storage.delete_local_archive(str(dest))
+    Path(dest).unlink(missing_ok=True)  # no archive: originals stay in Drive
 
     # 8. Best-effort introspection of parsed text / chunk count.
     try:
@@ -148,7 +130,6 @@ def main() -> int:
             "drive_size": drive_size,
             "mime_type": mime,
             "command": " ".join(sys.argv),
-            "r2_object_key": r2_object_key,
             "document_id": doc_id,
             "downloaded_bytes": downloaded_bytes,
             "extracted_text_length": text_len,

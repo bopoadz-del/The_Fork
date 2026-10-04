@@ -9,7 +9,7 @@ Columns: doc id, filename, sha, chars stored, chars fixed extractor,
 delta, source available Y/N. Filenames are ``stored_as`` (opaque) so a
 committed fixture run cannot leak client names.
 
-Source resolution order: local ``file_path``, preview cache / R2, Drive
+Source resolution order: local ``file_path``, preview cache, Drive
 file id. When bytes are gone: NEEDS_SOURCE. Drive has no sha256 search;
 a row with only ``content_sha256`` and no pointer stays NEEDS_SOURCE.
 

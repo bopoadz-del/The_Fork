@@ -463,14 +463,13 @@ def test_container_guard_off_at_zero(monkeypatch):
 # ── memory admission ───────────────────────────────────────────────────────
 
 
-def test_memory_demand_counts_the_whole_file_copies_fernet_needs():
+def test_memory_demand_is_one_plaintext_copy_each_side():
+    """No archive and no encryption on the ingest path: one copy of the file."""
     from app.core.extract_isolated import memory_demand
 
     mb = 1024 * 1024
-    parent, child = memory_demand(300 * mb, encrypted=True)
-    assert parent == pytest.approx(300 * mb * 7, rel=1e-6)  # measured default
-    assert child == pytest.approx(300 * mb * (1 + 4 / 3), rel=1e-6)
-    assert memory_demand(300 * mb, encrypted=False) == (300 * mb, 300 * mb)
+    assert memory_demand(300 * mb) == (300 * mb, 300 * mb)
+    assert memory_demand(0) == (0, 0)
 
 
 def test_admission_refuses_over_the_child_budget(monkeypatch):
@@ -478,10 +477,10 @@ def test_admission_refuses_over_the_child_budget(monkeypatch):
 
     monkeypatch.setattr(ingest_lifecycle, "memory_numbers", lambda: (None, None))
     mb = 1024 * 1024
-    # 700 MB x (1 + 4/3) = 1633 MB > 1536 MB; 600 MB -> 1400 MB fits
-    assert extract_isolated.admission_refusal(700 * mb, encrypted=True, child_budget_mb=1536)
-    assert extract_isolated.admission_refusal(600 * mb, encrypted=True, child_budget_mb=1536) is None
-    assert extract_isolated.admission_refusal(100 * mb, encrypted=True, child_budget_mb=1536) is None
+    reason = extract_isolated.admission_refusal(1600 * mb, child_budget_mb=1536)
+    assert reason and "child budget" in reason
+    assert extract_isolated.admission_refusal(1500 * mb, child_budget_mb=1536) is None
+    assert extract_isolated.admission_refusal(100 * mb, child_budget_mb=1536) is None
 
 
 def test_admission_refuses_over_the_parent_headroom(monkeypatch):
@@ -491,18 +490,10 @@ def test_admission_refuses_over_the_parent_headroom(monkeypatch):
     monkeypatch.setenv("DOC_ISOLATE_MEM_GUARD_FRACTION", "0.85")
     monkeypatch.setattr(ingest_lifecycle, "memory_numbers", lambda: (1 * gb, 4 * gb))
     mb = 1024 * 1024
-    # headroom 4 GB x 0.85 - 1 GB = 2539 MB; 500 MB x (4 + 4/3) = 2667 MB does not fit
-    monkeypatch.setenv("P1B_PARENT_MEMORY_FACTOR", str(4 + 4 / 3))
-    reason = extract_isolated.admission_refusal(500 * mb, encrypted=True, child_budget_mb=4096)
+    # headroom 4 GB x 0.85 - 1 GB = 2457 MB
+    reason = extract_isolated.admission_refusal(2500 * mb, child_budget_mb=4096)
     assert reason and "container headroom" in reason
-    assert extract_isolated.admission_refusal(200 * mb, encrypted=True, child_budget_mb=4096) is None
-
-
-def test_parent_factor_is_configurable(monkeypatch):
-    from app.core.extract_isolated import memory_demand
-
-    monkeypatch.setenv("P1B_PARENT_MEMORY_FACTOR", "3")
-    assert memory_demand(100, encrypted=True)[0] == 300
+    assert extract_isolated.admission_refusal(2400 * mb, child_budget_mb=4096) is None
 
 
 def test_memory_limit_is_the_tightest_one_stated(monkeypatch, tmp_path):

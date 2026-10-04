@@ -159,12 +159,12 @@ def test_preview_foreign_private_doc_still_404(client):
     assert r.status_code == 404
 
 
-def test_preview_r2_backed_corpus_doc_missing_local_file(
+def test_preview_drive_backed_corpus_doc_missing_local_file(
     client, monkeypatch, tmp_path,
 ):
-    """Citeable Master Corpus / GK docs are archived to R2 then the local
-    file is deleted (P1B). Preview must follow ``r2_object_key``, not 404
-    on a stale ``file_path`` / size 0."""
+    """Citeable Master Corpus / GK docs keep no local copy (P1B deletes its
+    transient copy after indexing). Preview must follow the row's
+    ``drive_file_id``, not 404 on a stale ``file_path`` / size 0."""
     from app.core import projects as store
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -174,9 +174,9 @@ def test_preview_r2_backed_corpus_doc_missing_local_file(
     doc = store.add_document(
         project_id=corpus["id"],
         original_name="REDACTED - Infrastructure Package 1- vol 1-Executed.pdf",
-        file_path=str(tmp_path / "gone-after-r2-archive.pdf"),
+        file_path=str(tmp_path / "gone-after-index.pdf"),
         size=0,
-        metadata={"r2_object_key": "projects/corpus/drive/abc/deadbeef.pdf"},
+        metadata={"drive_file_id": "drive-deadbeef"},
     )
     assert doc["size"] == 0
     assert not os.path.exists(doc["file_path"] or "")
@@ -185,13 +185,13 @@ def test_preview_r2_backed_corpus_doc_missing_local_file(
         "app.routers.projects._preview_citeable_owner_ids",
         lambda pid: {pid, corpus["id"]},
     )
-    r2_calls: list[str] = []
+    drive_calls: list[str] = []
 
-    def _fake_fetch(key: str):
-        r2_calls.append(key)
-        return pdf if key.endswith("deadbeef.pdf") else None
+    def _fake_download(fid: str):
+        drive_calls.append(fid)
+        return (pdf, None) if fid == "drive-deadbeef" else (None, "nope")
 
-    monkeypatch.setattr("app.core.r2_storage.fetch_object_bytes", _fake_fetch)
+    monkeypatch.setattr("app.core.gdrive_service.download_file_bytes", _fake_download)
 
     r = client.get(
         f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
@@ -199,7 +199,7 @@ def test_preview_r2_backed_corpus_doc_missing_local_file(
     )
     assert r.status_code == 200, r.text
     assert r.json()["kind"] == "pdf"
-    assert r2_calls
+    assert drive_calls == ["drive-deadbeef"]
 
     raw = client.get(
         f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview/raw",
@@ -215,7 +215,7 @@ def test_preview_r2_backed_corpus_doc_missing_local_file(
     assert r.json()["size"] == len(pdf)
 
 
-def test_preview_foreign_private_doc_does_not_fetch_r2(
+def test_preview_foreign_private_doc_does_not_fetch_drive(
     client, monkeypatch, tmp_path,
 ):
     """Ownership fails closed before any remote hydrate — no blob leak."""
@@ -229,12 +229,12 @@ def test_preview_foreign_private_doc_does_not_fetch_r2(
         original_name="secret.pdf",
         file_path=str(tmp_path / "secret-missing.pdf"),
         size=0,
-        metadata={"r2_object_key": "projects/other/drive/zzz/secret.pdf"},
+        metadata={"drive_file_id": "drive-secret"},
     )
     called: list[str] = []
     monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key: called.append(key) or b"%PDF-1.4 secret",
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: called.append(fid) or (b"%PDF-1.4 secret", None),
     )
     r = client.get(
         f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
@@ -267,7 +267,7 @@ def test_preview_zero_byte_file_clear_404(client, tmp_path):
 
 
 def test_preview_missing_blob_clear_404(client, tmp_path):
-    """No local file and no R2/Drive pointer — honest unavailable, not 500."""
+    """No local file and no Drive pointer — honest unavailable, not 500."""
     from app.core import projects as store
 
     proj = _new_project(client)
@@ -285,11 +285,11 @@ def test_preview_missing_blob_clear_404(client, tmp_path):
     assert "not available" in r.json()["detail"].lower()
 
 
-def test_preview_drive_fallback_when_r2_missing(
+def test_preview_drive_source_when_local_copy_gone(
     client, monkeypatch, tmp_path,
 ):
-    """P1B deletes the local copy even when R2 archive failed — Drive id
-    is the remaining source."""
+    """P1B deletes its transient copy after indexing — the Drive id is the
+    source of the original."""
     from app.core import projects as store
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -335,48 +335,41 @@ def _p1b_meta(**extra):
         "ingestion_run_id": "run-test",
         "mimeType": "application/pdf",
         "content_sha256": "abc123",
-        "r2_object_key": "projects/corpus/drive/11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI/deadbeef.pdf",
-        "r2_bucket": "theshovel-raw-docs",
-        "r2_endpoint": "https://example.r2.cloudflarestorage.com",
-        "r2_account_id": "acct",
     }
     meta.update(extra)
     return meta
 
 
 def test_extract_p1b_keys_including_string_and_aliases():
-    """#445 assumed a dict with r2_object_key. Live audit already parses
-    string JSON and driveFileId — preview must do the same."""
+    """Live rows carry the Drive id as a dict key, inside JSONB-as-string,
+    or under the camelCase alias — preview must read all three. The Drive id
+    is the only pointer: the platform keeps no archive of originals."""
     from app.core.projects import extract_document_source_pointers
 
     p1b = extract_document_source_pointers({"metadata": _p1b_meta()})
-    assert p1b["r2_object_key"].endswith("deadbeef.pdf")
-    assert p1b["drive_file_id"] == "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"
-    assert p1b["r2_bucket"] == "theshovel-raw-docs"
+    assert p1b == {"drive_file_id": "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"}
 
     as_string = extract_document_source_pointers(
         {"metadata": json.dumps(_p1b_meta())},
     )
-    assert as_string["r2_object_key"] == p1b["r2_object_key"]
-    assert as_string["drive_file_id"] == p1b["drive_file_id"]
+    assert as_string == p1b
 
     camel = extract_document_source_pointers(
-        {"metadata": {"driveFileId": "drive-camel", "r2ObjectKey": "proj/k.pdf"}},
+        {"metadata": {"driveFileId": "drive-camel"}},
     )
-    assert camel["drive_file_id"] == "drive-camel"
-    assert camel["r2_object_key"] == "proj/k.pdf"
+    assert camel == {"drive_file_id": "drive-camel"}
 
-    nested = extract_document_source_pointers(
-        {"metadata": {"r2_archive": {"r2_object_key": "nested/key.pdf"}}},
+    legacy = extract_document_source_pointers(
+        {"metadata": {"r2_object_key": "proj/k.pdf", "r2_bucket": "b"}},
     )
-    assert nested["r2_object_key"] == "nested/key.pdf"
+    assert legacy == {"drive_file_id": ""}
 
 
-def test_preview_p1b_string_metadata_r2_hydrate(
+def test_preview_p1b_string_metadata_drive_hydrate(
     client, monkeypatch, tmp_path,
 ):
     """JSONB-as-string metadata (the audit script already special-cases this)
-    must still find r2_object_key and return 200."""
+    must still find drive_file_id and return 200."""
     from app.core import projects as store
     from app.core.db import SessionLocal
     from app.core.models import Document
@@ -388,7 +381,7 @@ def test_preview_p1b_string_metadata_r2_hydrate(
     doc = store.add_document(
         project_id=corpus["id"],
         original_name="REDACTED - Infrastructure Package 1- vol 1-Executed.pdf",
-        file_path=str(tmp_path / "gone-after-r2-archive.pdf"),
+        file_path=str(tmp_path / "gone-after-index.pdf"),
         size=0,
         metadata=_p1b_meta(),
     )
@@ -403,8 +396,8 @@ def test_preview_p1b_string_metadata_r2_hydrate(
         lambda pid: {pid, corpus["id"]},
     )
     monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: pdf if key.endswith("deadbeef.pdf") else None,
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (pdf, None) if fid == _p1b_meta()["drive_file_id"] else (None, "nope"),
     )
 
     r = client.get(
@@ -427,21 +420,19 @@ def test_preview_p1b_string_metadata_r2_hydrate(
     assert listed["size"] == len(pdf)
 
 
-def test_preview_reconstructed_p1b_r2_key_when_metadata_omits_it(
+def test_preview_rag_render_row_opens_from_its_drive_id(
     client, monkeypatch, tmp_path,
 ):
-    """rag_render bulk ingest stores drive_file_id + size=0 and no
-    r2_object_key. Reconstruct the deterministic P1B key before Drive."""
+    """rag_render bulk ingest stores drive_file_id + size=0 and a stale
+    Windows path. The Drive id is used directly — one download, that id."""
     from app.core import projects as store
-    from app.core import r2_storage
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     workspace = _new_project(client, "Preview Workspace")
     corpus = _new_project(client, "Citeable Corpus")
     drive_id = "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"
     name = "REDACTED - Infrastructure Package 1- vol 1-Executed.pdf"
-    expected = r2_storage.object_key_for(corpus["id"], drive_id, name)
-    pdf = b"%PDF-1.4 reconstructed\n"
+    pdf = b"%PDF-1.4 from the Drive id\n"
     doc = store.add_document(
         project_id=corpus["id"],
         original_name=name,
@@ -459,25 +450,25 @@ def test_preview_reconstructed_p1b_r2_key_when_metadata_omits_it(
     )
     seen: list[str] = []
 
-    def _fake_fetch(key: str, bucket=None):
-        seen.append(key)
-        return pdf if key == expected else None
+    def _fake_download(fid: str):
+        seen.append(fid)
+        return (pdf, None) if fid == drive_id else (None, "nope")
 
-    monkeypatch.setattr("app.core.r2_storage.fetch_object_bytes", _fake_fetch)
+    monkeypatch.setattr("app.core.gdrive_service.download_file_bytes", _fake_download)
 
     r = client.get(
         f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
         headers=H,
     )
     assert r.status_code == 200, r.text
-    assert expected in seen
+    assert seen == [drive_id]
     assert r.json()["kind"] == "pdf"
 
 
-def test_preview_r2_not_configured_clear_404(
+def test_preview_drive_not_configured_clear_404(
     client, monkeypatch, tmp_path,
 ):
-    """R2 env missing must not look like a missing document."""
+    """Drive credentials missing must not look like a missing document."""
     from app.core import projects as store
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -488,11 +479,6 @@ def test_preview_r2_not_configured_clear_404(
         file_path=str(tmp_path / "deleted-local.pdf"),
         size=0,
         metadata=_p1b_meta(),
-    )
-    monkeypatch.setattr("app.core.r2_storage.fetch_object_bytes", lambda key, bucket=None: None)
-    monkeypatch.setattr(
-        "app.core.r2_storage.fetch_failure_reason",
-        lambda key, bucket=None: "R2 is not configured on this service",
     )
     monkeypatch.setattr(
         "app.core.gdrive_service.download_file_bytes",
@@ -513,14 +499,13 @@ def test_preview_r2_not_configured_clear_404(
     assert r.status_code != 500
     detail = r.json()["detail"].lower()
     assert "not available" in detail
-    assert "r2 is not configured" in detail
     assert "service account unavailable" in detail
 
 
-def test_preview_r2_fetch_failed_clear_404(
+def test_preview_drive_fetch_failed_clear_404(
     client, monkeypatch, tmp_path,
 ):
-    """Key present, GET failed — say so, do not hide behind generic missing."""
+    """Drive id present, download failed — say so, do not hide behind generic missing."""
     from app.core import projects as store
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -531,11 +516,6 @@ def test_preview_r2_fetch_failed_clear_404(
         file_path=str(tmp_path / "gone.pdf"),
         size=0,
         metadata=_p1b_meta(),
-    )
-    monkeypatch.setattr("app.core.r2_storage.fetch_object_bytes", lambda key, bucket=None: None)
-    monkeypatch.setattr(
-        "app.core.r2_storage.fetch_failure_reason",
-        lambda key, bucket=None: "R2 object missing or fetch failed",
     )
     monkeypatch.setattr(
         "app.core.gdrive_service.download_file_bytes",
@@ -555,11 +535,11 @@ def test_preview_r2_fetch_failed_clear_404(
     assert r.status_code == 404
     detail = r.json()["detail"]
     assert "not available" in detail.lower()
-    assert "R2 object missing" in detail or "fetch failed" in detail.lower()
+    assert "returned 404" in detail
 
 
 def test_list_documents_has_file_for_remote_pointer(client, tmp_path):
-    """Nav must not treat size=0 + R2/Drive pointer as 'no file' forever."""
+    """Nav must not treat size=0 + Drive pointer as 'no file' forever."""
     from app.core import projects as store
 
     proj = _new_project(client)
@@ -582,7 +562,7 @@ def test_preview_rag_backfill_stub_resolves_drive_by_filename(
     client, monkeypatch, tmp_path,
 ):
     """Live REDACTED shape: size=0, G:\\ path, source=rag_backfill_client_clean_all,
-    drive_file_id null, no r2_object_key. Filename lookup + download must
+    drive_file_id null. Filename lookup + download must
     200 and persist the Drive id."""
     from app.core import projects as store
 
@@ -673,7 +653,7 @@ def test_preview_rag_backfill_stub_unresolved_clear_404(
     assert r.status_code != 500
     detail = r.json()["detail"]
     assert "not available" in detail.lower()
-    assert "no R2 object key or Drive file id" in detail
+    assert "no Google Drive file id" in detail
     assert name in detail
 
 

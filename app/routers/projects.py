@@ -467,8 +467,9 @@ def _resolve_preview_document(
     open stays 404.
 
     File bytes: P1B / Master Corpus rows often have a stale ``file_path``
-    (local copy deleted after R2 archive) and ``size=0``. After the
-    ownership check, hydrate from R2 / Drive rather than 404-ing on disk.
+    (the platform keeps no copy of an original) and ``size=0``. After the
+    ownership check, hydrate from the row's Google Drive file id rather
+    than 404-ing on disk.
     A truly missing or 0-byte blob stays a clear 404 — never a 500.
     """
     _owned_or_404(
