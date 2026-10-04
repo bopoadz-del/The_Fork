@@ -106,12 +106,6 @@ def test_p1b_ingest_file_refuses_duplicate_sha(monkeypatch, tmp_path):
         def download_file_bytes(self, _fid):
             return body, None
 
-    monkeypatch.setattr(
-        "app.core.r2_storage.archive_document",
-        lambda **_k: {"archived": False, "r2_object_key": None},
-    )
-    monkeypatch.setattr("app.core.r2_storage.delete_local_archive", lambda *_a: None)
-    monkeypatch.setattr("app.core.file_crypto.write_document", lambda *_a, **_k: None)
 
     _rel, result = _ingest_file(
         {"id": "drive1", "name": "letter.docx", "mimeType": "x", "size": str(len(body))},

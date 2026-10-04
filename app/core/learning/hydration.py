@@ -10,22 +10,22 @@ through that block.
 What one pass does, per project that had activity yesterday (UTC by default):
 
 1. Read every conversation message in the window from ``agent_memory.db``.
-2. Discover new files from three sources — dropbox convention, arbitrary
-   ``LOCAL_PROJECT_FOLDERS``, Google Drive via service account — and attach
-   them via ``store.add_document`` so the upload-path flow applies.
-3. Re-run ``doc_index.index_document`` for every known document so the index
-   stays current (cheap when fingerprints are unchanged).
-4. Summarize the day with ChatBlock, four-section markdown. If no LLM is
+2. Summarize the day with ChatBlock, four-section markdown. If no LLM is
    reachable, ``_heuristic_project_summary`` produces the same shape from
    real signals (top keywords, friction patterns).
-5. **Close the loop**: write recurring topics + friction signals back to
+3. **Close the loop**: write recurring topics + friction signals back to
    ``projects.set_fact`` (read by the chat router via
    ``project_memory.build_memory_context``) AND ``agent_memory.set_agent_fact``
    (read by the runtime agent path at ``app/agents/runtime.py:548``), and
    record each friction signal as a pattern on the learning engine so it
    accumulates a corpus over time. This is what makes hydration "learning"
    instead of just an operator daily report.
-6. Persist the row to ``hydration.db`` for the operator-facing endpoints.
+4. Persist the row to ``hydration.db`` for the operator-facing endpoints.
+
+Hydration reads conversations only. It never discovers, attaches, downloads
+or re-indexes documents: the app reads an original only when a person asks
+(an admin runs the ingest, or a user opens a cited document), and only the
+admin path adds to a project's knowledge base (docs/INGEST_EXCLUSION_RULE.md).
 
 Failures inside one project must not abort the whole run — each project is
 isolated, errors are captured per-project in the row's ``facts`` payload.
@@ -34,7 +34,6 @@ isolated, errors are captured per-project in the row's ``facts`` payload.
 from __future__ import annotations
 
 import logging
-import os
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -77,21 +76,18 @@ async def run(
     pids = _filter_existing_projects(pids)
 
     results_per_project: List[Dict[str, Any]] = []
-    total_files_indexed = 0
     global_errors: List[str] = []
 
     for pid in pids:
         try:
             row = await _hydrate_project(pid, target_date, window_start, window_end)
             results_per_project.append(row)
-            total_files_indexed += row.get("files_indexed", 0)
         except Exception as exc:  # noqa: BLE001 — never abort the whole pass
             logger.exception("hydration: project %s failed", pid)
             global_errors.append(f"{pid}: {type(exc).__name__}: {exc}")
 
     global_facts = {
         "projects_processed": len(results_per_project),
-        "total_files_indexed": total_files_indexed,
         "project_ids": [r["project_id"] for r in results_per_project],
         "per_project_message_counts": {
             r["project_id"]: r.get("messages_seen", 0)
@@ -104,7 +100,7 @@ async def run(
     )
     if global_provider in ("offline_template", "unavailable", "error"):
         global_summary_md = _heuristic_global_summary(
-            target_date, results_per_project, total_files_indexed, global_errors
+            target_date, results_per_project, global_errors
         )
     hydration_store.record_run(
         run_date=target_date,
@@ -119,7 +115,6 @@ async def run(
         "status": "success",
         "run_date": target_date,
         "projects_processed": len(results_per_project),
-        "files_indexed": total_files_indexed,
         "errors": global_errors,
         "summary_md": global_summary_md,
     }
@@ -165,23 +160,9 @@ async def _hydrate_project(
     if len(messages) > _MAX_MESSAGES_PER_PROJECT:
         messages = messages[-_MAX_MESSAGES_PER_PROJECT:]
 
-    new_files_attached, attach_errors = _discover_local_drive_files(project_id)
-    local_attached, local_errors = _discover_arbitrary_local_folders(project_id)
-    new_files_attached += local_attached
-    attach_errors.extend(local_errors)
-    gdrive_attached, gdrive_errors = _discover_gdrive_files(project_id)
-    new_files_attached += gdrive_attached
-    attach_errors.extend(gdrive_errors)
-
-    files_indexed, files_skipped, file_errors = await _reindex_project_drives(project_id)
-
-    summary_md, provider = await _summarize_project(
-        project_id, messages, run_date, files_indexed
-    )
+    summary_md, provider = await _summarize_project(project_id, messages, run_date)
     if provider in ("offline_template", "unavailable", "error"):
-        summary_md = _heuristic_project_summary(
-            project_id, run_date, messages, files_indexed, new_files_attached
-        )
+        summary_md = _heuristic_project_summary(project_id, run_date, messages)
 
     # ── Close the loop: write back to surfaces the next chat will read.
     # Failures here are non-fatal — the operator-facing row is still useful
@@ -197,11 +178,6 @@ async def _hydrate_project(
 
     facts = {
         "messages_seen": len(messages),
-        "files_indexed": files_indexed,
-        "files_skipped": files_skipped,
-        "file_errors": file_errors,
-        "new_files_attached": new_files_attached,
-        "attach_errors": attach_errors,
         "writeback": writeback_summary,
     }
     hydration_store.record_run(
@@ -215,8 +191,6 @@ async def _hydrate_project(
     return {
         "project_id": project_id,
         "messages_seen": len(messages),
-        "files_indexed": files_indexed,
-        "new_files_attached": new_files_attached,
         "summary_md": summary_md,
     }
 
@@ -341,9 +315,8 @@ async def _summarize_project(
     project_id: str,
     messages: List[Dict[str, Any]],
     run_date: str,
-    files_indexed: int,
 ) -> tuple[str, str]:
-    prompt = _build_project_summary_prompt(project_id, run_date, messages, files_indexed)
+    prompt = _build_project_summary_prompt(project_id, run_date, messages)
     return await _call_chat(prompt, max_tokens=_SUMMARY_MAX_TOKENS)
 
 
@@ -443,47 +416,10 @@ def _collect_project_messages(
     return out
 
 
-async def _reindex_project_drives(project_id: str) -> tuple[int, int, List[str]]:
-    """Walk available drive connectors and reindex any documents discovered
-    for the project. Returns (indexed_count, skipped_count, error_messages).
-
-    The doc indexer is keyed by ``project_id`` + ``document_id`` — drives
-    don't natively expose a project_id concept, so we treat each project_id
-    that already has indexed documents as a known project, and refresh those
-    documents' content from disk. New uploads land via the upload router and
-    are auto-indexed there; this pass is for "files changed on disk since the
-    upload" — i.e., a corrected drawing replacing the previous version.
-    """
-    from app.core import doc_index
-
-    indexed = 0
-    skipped = 0
-    errors: List[str] = []
-
-    existing = doc_index._load_index(project_id) or {}
-    for doc in existing.get("documents", []) or []:
-        doc_id = doc.get("document_id")
-        if not doc_id:
-            continue
-        try:
-            result = doc_index.index_document(project_id, doc_id)
-            if result.get("status") == "indexed":
-                indexed += 1
-            elif result.get("status") == "unchanged":
-                skipped += 1
-            else:
-                # treat any other terminal status as a skip rather than error
-                skipped += 1
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{doc_id}: {type(exc).__name__}: {exc}")
-    return indexed, skipped, errors
-
-
 def _build_project_summary_prompt(
     project_id: str,
     run_date: str,
     messages: List[Dict[str, Any]],
-    files_indexed: int,
 ) -> str:
     transcript = "\n".join(
         f"[{m['role']}] {m['content']}"[:600] for m in messages
@@ -499,7 +435,6 @@ def _build_project_summary_prompt(
         "Be terse. Bullet points. Quote short user phrases when illustrative. "
         "Do NOT invent activity that is not in the transcript. If the transcript "
         "is empty, say 'No user activity in window' under each section.\n\n"
-        f"Files re-indexed today: {files_indexed}\n\n"
         "TRANSCRIPT:\n"
         f"{transcript}\n"
     )
@@ -511,7 +446,6 @@ def _build_global_summary_prompt(
     rollup = "\n\n".join(
         f"### Project {p['project_id']}\n"
         f"- Messages: {p.get('messages_seen', 0)}\n"
-        f"- Files indexed: {p.get('files_indexed', 0)}\n"
         f"{p.get('summary_md', '')[:1500]}"
         for p in per_project
     ) or "(no projects had activity)"
@@ -527,399 +461,6 @@ def _build_global_summary_prompt(
         "PER-PROJECT SUMMARIES:\n"
         f"{rollup}\n"
     )
-
-
-def _local_drive_root() -> str:
-    """Same convention as ``app/blocks/local_drive.py``: confined drive root."""
-    root = os.path.realpath(
-        os.getenv("LOCAL_DRIVE_ROOT") or os.getenv("DATA_DIR", "./data")
-    )
-    return root
-
-
-def _project_dropbox(project_id: str) -> str:
-    """Per-project drop folder. Files placed here outside of the upload flow
-    get auto-attached overnight. Kept under the same root LocalDriveBlock
-    sandboxes to, so path-escape rules already apply."""
-    return os.path.join(_local_drive_root(), "projects", project_id, "dropbox")
-
-
-# Same allowlist the upload router enforces — keep them in lockstep so a file
-# the hydration job auto-attaches would also have been accepted by the UI.
-_ATTACH_ALLOWED_EXTS = {
-    ".pdf", ".docx", ".xlsx", ".csv", ".txt", ".md",
-    ".jpg", ".jpeg", ".png", ".tif", ".tiff",
-    ".dwg", ".dxf", ".ifc", ".xer", ".mpp",
-}
-
-
-def _discover_local_drive_files(project_id: str) -> Tuple[int, List[str]]:
-    """Walk the project's drop folder and attach any file that isn't already
-    a registered document. Returns (attached_count, errors).
-
-    The walk is bounded by the LocalDriveBlock's sandbox root — anything that
-    would escape it (a symlink pointing out, etc.) is silently skipped. Files
-    with disallowed extensions are skipped. Hidden files (dotfiles) are
-    skipped. Files larger than ``HYDRATION_MAX_ATTACH_SIZE`` (default 50 MB)
-    are skipped to avoid pulling in giant artifacts unintentionally.
-    """
-    from app.core import projects as projects_store
-
-    dropbox = _project_dropbox(project_id)
-    if not os.path.isdir(dropbox):
-        return 0, []
-
-    drive_root = _local_drive_root()
-    try:
-        max_bytes = int(os.getenv("HYDRATION_MAX_ATTACH_SIZE", "52428800"))
-    except ValueError:
-        max_bytes = 52428800  # 50 MB
-
-    # Build a set of paths already attached to this project so we don't
-    # re-register a file. Compare by realpath to handle symlink shenanigans.
-    existing = projects_store.list_documents(project_id)
-    existing_paths = {
-        os.path.realpath(d.get("file_path"))
-        for d in existing
-        if d.get("file_path")
-    }
-
-    attached = 0
-    errors: List[str] = []
-    for dirpath, dirnames, filenames in os.walk(dropbox, followlinks=False):
-        # Skip hidden subdirs in-place so os.walk doesn't descend into them.
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        for name in filenames:
-            if name.startswith("."):
-                continue
-            full = os.path.join(dirpath, name)
-            try:
-                real = os.path.realpath(full)
-                # Sandbox check: the realpath must stay under the drive root.
-                if not (real == drive_root or real.startswith(drive_root + os.sep)):
-                    continue
-                _, ext = os.path.splitext(name.lower())
-                if ext not in _ATTACH_ALLOWED_EXTS:
-                    continue
-                if real in existing_paths:
-                    continue
-                size = os.path.getsize(real)
-                if size > max_bytes:
-                    errors.append(f"{name}: oversize ({size} > {max_bytes})")
-                    continue
-                doc = projects_store.add_document(
-                    project_id=project_id,
-                    original_name=name,
-                    stored_as=os.path.relpath(real, drive_root),
-                    file_path=real,
-                    size=size,
-                )
-                attached += 1
-                existing_paths.add(real)
-                logger.info(
-                    "hydration: attached %s to project %s as %s",
-                    name, project_id, doc.get("id"),
-                )
-            except Exception as exc:  # noqa: BLE001 — never abort the walk
-                errors.append(f"{name}: {type(exc).__name__}: {exc}")
-    return attached, errors
-
-
-# ── Arbitrary local folders (LOCAL_PROJECT_FOLDERS) ───────────────────────
-
-
-def _parse_local_project_folders() -> Dict[str, str]:
-    """Parse ``LOCAL_PROJECT_FOLDERS`` into ``{project_id: absolute_path}``.
-
-    Format: ``proj_id:/abs/path[,proj_id2:/another/path,...]``. Only the
-    first colon is split on so Windows paths like ``proj:C:\\Users\\me\\X``
-    survive. Relative paths are resolved against the process CWD and a
-    warning is logged so the operator notices."""
-    raw = (os.getenv("LOCAL_PROJECT_FOLDERS") or "").strip()
-    if not raw:
-        return {}
-    out: Dict[str, str] = {}
-    for chunk in raw.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        if ":" not in chunk:
-            logger.warning("LOCAL_PROJECT_FOLDERS: ignoring malformed entry %r", chunk)
-            continue
-        pid, path = chunk.split(":", 1)
-        pid, path = pid.strip(), path.strip()
-        if not pid or not path:
-            continue
-        if not os.path.isabs(path):
-            logger.warning(
-                "LOCAL_PROJECT_FOLDERS: %r is not absolute; resolving against cwd",
-                path,
-            )
-            path = os.path.abspath(path)
-        out[pid] = path
-    return out
-
-
-def _discover_arbitrary_local_folders(project_id: str) -> Tuple[int, List[str]]:
-    """Walk the folder mapped to ``project_id`` in ``LOCAL_PROJECT_FOLDERS``
-    and attach any file not already registered. Returns (count, errors).
-
-    Differences from ``_discover_local_drive_files``:
-    * No sandbox check — the operator pointed us at this path on purpose.
-      They opt into the full filesystem read, but only inside the configured
-      folder (the walker doesn't follow symlinks out of it).
-    * Recursive, dotfile-skipping, allowlist-filtered, size-capped — same
-      as the dropbox path so behavior is consistent across sources.
-    * Idempotent against the documents table: a file whose realpath already
-      appears in ``documents.file_path`` for this project is skipped on
-      every subsequent pass.
-    """
-    from app.core import projects as projects_store
-
-    mapping = _parse_local_project_folders()
-    folder = mapping.get(project_id)
-    if not folder:
-        return 0, []
-    if not os.path.isdir(folder):
-        return 0, [f"local: folder not found or not a directory: {folder}"]
-
-    try:
-        max_bytes = int(os.getenv("HYDRATION_MAX_ATTACH_SIZE", "52428800"))
-    except ValueError:
-        max_bytes = 52428800
-
-    existing = projects_store.list_documents(project_id)
-    existing_paths = {
-        os.path.realpath(d.get("file_path"))
-        for d in existing
-        if d.get("file_path")
-    }
-
-    folder_real = os.path.realpath(folder)
-    attached = 0
-    errors: List[str] = []
-
-    for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        for name in filenames:
-            if name.startswith("."):
-                continue
-            full = os.path.join(dirpath, name)
-            try:
-                real = os.path.realpath(full)
-                # Defensive: a symlink inside the folder could point OUT of it.
-                # We chose followlinks=False on walk, so we'd never recurse
-                # outward, but a symlinked file (not directory) still resolves.
-                # Confine the attach to paths that stay under the configured
-                # folder's realpath so we never grab `/etc/shadow` via a
-                # cleverly-named symlink.
-                if not (real == folder_real or real.startswith(folder_real + os.sep)):
-                    continue
-                _, ext = os.path.splitext(name.lower())
-                if ext not in _ATTACH_ALLOWED_EXTS:
-                    continue
-                if real in existing_paths:
-                    continue
-                size = os.path.getsize(real)
-                if size > max_bytes:
-                    errors.append(f"local {name}: oversize ({size} > {max_bytes})")
-                    continue
-                doc = projects_store.add_document(
-                    project_id=project_id,
-                    original_name=name,
-                    stored_as=os.path.basename(real),
-                    file_path=real,
-                    size=size,
-                )
-                attached += 1
-                existing_paths.add(real)
-                logger.info(
-                    "hydration: attached local file %s to project %s as %s",
-                    name, project_id, doc.get("id"),
-                )
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"local {name}: {type(exc).__name__}: {exc}")
-    return attached, errors
-
-
-# ── Google Drive discovery (service-account path) ─────────────────────────
-
-
-def _gdrive_seen_path() -> str:
-    """Sidecar JSON tracking which Drive file IDs we've already attached
-    per project. Lives next to hydration.db. A sidecar is enough — adding
-    a column to the documents table would force a migration just to record
-    one external identifier."""
-    return os.path.join(os.getenv("DATA_DIR", "./data"), "hydration_gdrive_seen.json")
-
-
-def _load_gdrive_seen() -> Dict[str, List[str]]:
-    path = _gdrive_seen_path()
-    if not os.path.isfile(path):
-        return {}
-    try:
-        import json as _json
-        with open(path, "r") as f:
-            data = _json.load(f)
-        if not isinstance(data, dict):
-            return {}
-        # Coerce values to list[str] defensively
-        out: Dict[str, List[str]] = {}
-        for k, v in data.items():
-            if isinstance(v, list):
-                out[str(k)] = [str(x) for x in v]
-        return out
-    except Exception:  # noqa: BLE001 — corrupt sidecar shouldn't kill hydration
-        logger.warning("corrupt hydration gdrive-seen sidecar at %s", path, exc_info=True)
-        return {}
-
-
-def _save_gdrive_seen(seen: Dict[str, List[str]]) -> None:
-    import json as _json
-    path = _gdrive_seen_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        _json.dump(seen, f, ensure_ascii=False)
-    os.replace(tmp, path)
-
-
-def _discover_gdrive_files(project_id: str) -> Tuple[int, List[str]]:
-    """Walk the configured Drive folder for ``project_id`` and attach any
-    file we haven't seen before. Returns (attached_count, errors).
-
-    Behavior matches the local-drive discovery as closely as possible:
-    same extension allowlist, same per-file size cap, same idempotency
-    guarantee (a re-run attaches zero). Google-native Docs/Sheets are
-    skipped — those need an ``export`` call rather than a binary download,
-    which is a separate piece of plumbing.
-
-    The path stays cleanly disabled when nothing is configured: no key →
-    no mapping → no calls → no errors. The function returns ``(0, [])``
-    in that case so hydration doesn't even log noise.
-    """
-    from app.core import gdrive_service, projects as projects_store
-
-    mapping = gdrive_service.parse_project_folder_map()
-    folder_id = mapping.get(project_id)
-    if not folder_id:
-        return 0, []  # not configured for this project — fine
-
-    if not gdrive_service.is_configured():
-        return 0, [
-            "gdrive: GDRIVE_PROJECT_FOLDERS set but GDRIVE_SERVICE_ACCOUNT_JSON is missing"
-        ]
-
-    # walk_folder traverses subfolders (SOP-style structures like
-    # 100-Master / 200-Project Controls / ... have several levels of
-    # nesting). The annotation `_drive_path` on each file lets downstream
-    # consumers attribute documents to their location in the tree. The
-    # previous single-level list_folder_files silently ignored everything
-    # below the root, missing the bulk of operator corpora.
-    files, walk_errors = gdrive_service.walk_folder(folder_id)
-    if walk_errors and not files:
-        return 0, [f"gdrive walk({folder_id}): {e}" for e in walk_errors]
-
-    seen_all = _load_gdrive_seen()
-    seen_for_project = set(seen_all.get(project_id, []))
-
-    try:
-        max_bytes = int(os.getenv("HYDRATION_MAX_ATTACH_SIZE", "52428800"))
-    except ValueError:
-        max_bytes = 52428800
-
-    attached = 0
-    errors: List[str] = []
-    data_dir = os.getenv("DATA_DIR", "./data")
-    os.makedirs(data_dir, exist_ok=True)
-
-    # file_crypto is the same module the upload router uses — write through
-    # it so encryption-at-rest (when DATA_ENCRYPTION_KEY is set) applies to
-    # Drive-pulled files identically to uploaded ones.
-    try:
-        from app.core import file_crypto
-    except ImportError:
-        file_crypto = None  # type: ignore[assignment]
-
-    for f_meta in files:
-        fid = f_meta.get("id")
-        name = (f_meta.get("name") or "").strip()
-        if not fid or not name:
-            continue
-        if fid in seen_for_project:
-            continue
-        if not gdrive_service.is_downloadable(f_meta):
-            # Google-native doc — skip (would need export endpoint)
-            seen_for_project.add(fid)
-            continue
-        _, ext = os.path.splitext(name.lower())
-        if ext not in _ATTACH_ALLOWED_EXTS:
-            errors.append(f"gdrive {name}: disallowed extension {ext}")
-            seen_for_project.add(fid)
-            continue
-        # Drive returns size as a string in the JSON metadata
-        try:
-            advertised_size = int(f_meta.get("size") or "0")
-        except (TypeError, ValueError):
-            advertised_size = 0
-        if advertised_size and advertised_size > max_bytes:
-            errors.append(f"gdrive {name}: oversize ({advertised_size} > {max_bytes})")
-            seen_for_project.add(fid)
-            continue
-
-        blob, dl_err = gdrive_service.download_file_bytes(fid)
-        if blob is None:
-            errors.append(f"gdrive {name}: {dl_err}")
-            continue
-        if len(blob) > max_bytes:
-            errors.append(f"gdrive {name}: post-download oversize ({len(blob)} > {max_bytes})")
-            seen_for_project.add(fid)
-            continue
-
-        try:
-            import uuid as _uuid
-            stored_as = f"{_uuid.uuid4().hex[:8]}_{name}"
-            filepath = os.path.join(data_dir, stored_as)
-            if file_crypto is not None:
-                file_crypto.write_document(filepath, blob)
-            else:
-                with open(filepath, "wb") as out:
-                    out.write(blob)
-            doc = projects_store.add_document(
-                project_id=project_id,
-                original_name=name,
-                stored_as=stored_as,
-                file_path=filepath,
-                size=len(blob),
-                metadata={
-                    "drive_file_id": fid,
-                    "drive_path": f_meta.get("_drive_path", ""),
-                    "source": "gdrive_hydration",
-                },
-            )
-            attached += 1
-            seen_for_project.add(fid)
-            logger.info(
-                "hydration: attached Drive file %s (%s) to project %s as %s",
-                name, fid, project_id, doc.get("id"),
-            )
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"gdrive {name}: attach failed: {type(exc).__name__}: {exc}")
-
-    seen_all[project_id] = sorted(seen_for_project)
-    try:
-        _save_gdrive_seen(seen_all)
-    except Exception as exc:  # noqa: BLE001 — sidecar write failure is recoverable
-        errors.append(f"gdrive: sidecar save failed: {exc}")
-
-    # Surface subtree walk errors alongside per-file errors. A 403 on one
-    # subtree shouldn't make the whole run look clean. The walker already
-    # prefixes each error with "gdrive walk(...)" — pass through verbatim
-    # rather than double-prefixing (PR #25 review #1).
-    if walk_errors:
-        errors.extend(walk_errors)
-
-    return attached, errors
 
 
 # ── Heuristic summaries (used when ChatBlock has no model to call) ─────────
@@ -983,8 +524,6 @@ def _heuristic_project_summary(
     project_id: str,
     run_date: str,
     messages: List[Dict[str, Any]],
-    files_indexed: int,
-    new_files_attached: int,
 ) -> str:
     """Structured non-LLM summary. Reads real signals from the day's data so
     the row is useful even when no model was reachable."""
@@ -1022,13 +561,6 @@ def _heuristic_project_summary(
     lessons: List[str] = []
     if not messages:
         lessons.append("Project was idle today — nothing to learn.")
-    if new_files_attached:
-        lessons.append(
-            f"{new_files_attached} new file(s) appeared on the drive without going "
-            f"through the upload flow — operators are using the drop folder."
-        )
-    if files_indexed and files_indexed > 0:
-        lessons.append(f"{files_indexed} document(s) re-indexed; index is current.")
     if friction:
         lessons.append("Friction signals detected — review the asks above for retry patterns.")
     if not lessons:
@@ -1036,8 +568,7 @@ def _heuristic_project_summary(
 
     return (
         f"# {project_id} — {run_date} (heuristic; no LLM reached)\n\n"
-        f"_Stats: {len(user_msgs)} user msg, {len(asst_msgs)} assistant msg, "
-        f"{files_indexed} files re-indexed, {new_files_attached} new files attached._\n\n"
+        f"_Stats: {len(user_msgs)} user msg, {len(asst_msgs)} assistant msg._\n\n"
         f"## What users asked for\n{asks_section}\n\n"
         f"## Where they hit friction\n{friction_section}\n\n"
         f"## Recurring patterns or themes\n{themes_section}\n\n"
@@ -1050,7 +581,6 @@ def _heuristic_project_summary(
 def _heuristic_global_summary(
     run_date: str,
     per_project: List[Dict[str, Any]],
-    total_files_indexed: int,
     errors: List[str],
 ) -> str:
     if not per_project:
@@ -1065,9 +595,7 @@ def _heuristic_global_summary(
         per_project, key=lambda p: p.get("messages_seen", 0), reverse=True
     )[:5]
     activity_lines = [
-        f"- **{p['project_id']}**: {p.get('messages_seen', 0)} msg, "
-        f"{p.get('files_indexed', 0)} files re-indexed, "
-        f"{p.get('new_files_attached', 0)} new files attached"
+        f"- **{p['project_id']}**: {p.get('messages_seen', 0)} msg"
         for p in busiest
     ]
     err_section = (
@@ -1077,7 +605,7 @@ def _heuristic_global_summary(
     return (
         f"# Global hydration — {run_date} (heuristic; no LLM reached)\n\n"
         f"_Totals: {len(per_project)} projects active, "
-        f"{total_files_indexed} files re-indexed, {len(errors)} project errors._\n\n"
+        f"{len(errors)} project errors._\n\n"
         f"## Activity at a glance\n" + "\n".join(activity_lines) + "\n\n"
         f"## Cross-project lessons learned\n"
         f"- Per-project detail lives in the project-scoped rows; this rollup is "

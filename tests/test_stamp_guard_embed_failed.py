@@ -82,7 +82,6 @@ def _add_docx(
     chunk_count: int,
     raw: bytes | None = None,
     drive_file_id: str = DRIVE_STALE_ID,
-    r2_object_key: str | None = "projects/p/stale.docx",
 ):
     dest = tmp_path / name
     payload = raw if raw is not None else _thin_docx_bytes()
@@ -96,8 +95,6 @@ def _add_docx(
         content_sha256=hashlib.sha256(name.encode()).hexdigest(),
         metadata={
             "drive_file_id": drive_file_id,
-            "r2_object_key": r2_object_key,
-            "r2_bucket": "corpus",
         },
     )
     projects.stamp_document_index(
@@ -135,8 +132,8 @@ def test_reextract_embed_fail_stays_stale_and_does_not_advance_version(
     )
     thin = _thin_docx_bytes()
     monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: thin if key == "projects/p/stale.docx" else None,
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (thin, None) if fid == DRIVE_STALE_ID else (None, "missing"),
     )
     from app.core.rag import retriever as _rag
 
@@ -214,8 +211,8 @@ def test_embed_success_advances_version_and_indexes(monkeypatch, tmp_path):
         raw=rich,
     )
     monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: rich if key == "projects/p/stale.docx" else None,
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (rich, None) if fid == DRIVE_STALE_ID else (None, "missing"),
     )
 
     from scripts.reextract_stale_docx import main
@@ -257,8 +254,8 @@ def test_reextract_sentinel_thin_embed_ok_terminal_closes(
     )
     thin = _thin_docx_bytes()
     monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: thin if key == "projects/p/stale.docx" else None,
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (thin, None) if fid == DRIVE_STALE_ID else (None, "missing"),
     )
 
     from scripts.reextract_stale_docx import main
@@ -295,8 +292,8 @@ def test_reextract_sentinel_rag_error_does_not_advance(monkeypatch, tmp_path):
     )
     thin = _thin_docx_bytes()
     monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: thin if key == "projects/p/stale.docx" else None,
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (thin, None) if fid == DRIVE_STALE_ID else (None, "missing"),
     )
     from app.core.rag import retriever as _rag
 

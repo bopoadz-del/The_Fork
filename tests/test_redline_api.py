@@ -202,3 +202,21 @@ def test_a_bare_image_is_not_a_project_document(client):
                     files={"file": ("marked.png", _make_png_bytes(20, 20), "image/png")},
                     headers=h)
     assert r.status_code == 415, r.text
+
+
+def test_redline_still_reads_a_pre_rule_image_document(client, tmp_path):
+    """Images can no longer be added to a project, but a pre-rule image row
+    still opens in redline (redline.py's image branch). Guard it."""
+    import os
+
+    from app.core import file_crypto, projects as store
+
+    h = _headers(_user_token(client, f"redline-legacy-{_RUN}@x.com"))
+    pid = _create_project(client, h, "Legacy Image Project")
+    p = str(tmp_path / "marked.png")
+    file_crypto.write_document(p, _make_png_bytes(
+        200, 200, patch_color=(255, 0, 0), patch_rect=(10, 10, 40, 40)))
+    doc = store.add_document(pid, "marked.png", file_path=p, size=os.path.getsize(p))
+    r = client.post(f"/v1/projects/{pid}/documents/{doc['id']}/redlines", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["has_markup"] is True

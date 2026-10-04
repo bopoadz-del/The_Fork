@@ -102,7 +102,7 @@ async def test_upload_indexes_inline_when_no_worker_is_declared(monkeypatch):
     with ctx:
         resp = await upload_v1(
             UploadFile(filename="spec.txt", file=io.BytesIO(b"torque 337 N.m")),
-            PID, spy, {"user_id": "u1"},
+            PID, spy, {"user_id": "u1", "role": "admin"},
         )
 
     # The document must be handed to something that will actually index it.
@@ -130,7 +130,7 @@ async def test_upload_uses_the_queue_when_a_worker_is_declared(monkeypatch):
     with ctx:
         resp = await upload_v1(
             UploadFile(filename="spec.txt", file=io.BytesIO(b"torque 337 N.m")),
-            PID, spy, {"user_id": "u1"},
+            PID, spy, {"user_id": "u1", "role": "admin"},
         )
 
     pool.enqueue_job.assert_awaited_once()

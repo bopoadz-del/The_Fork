@@ -17,7 +17,6 @@ DRIVE_STALE_ID = "driveStale01"
 FORBIDDEN_CALLS = frozenset({
     "add_document",
     "supersede_document",
-    "archive_document",
 })
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "reextract_stale_docx.py"
 
@@ -78,7 +77,6 @@ def _add_docx(
     extractor_version: str | None,
     chunk_count: int,
     drive_file_id: str = "",
-    r2_object_key: str | None = "projects/p/stale.docx",
     retrieval_visible: bool = True,
 ):
     dest = tmp_path / name
@@ -87,9 +85,6 @@ def _add_docx(
     metadata: dict = {}
     if drive_file_id:
         metadata["drive_file_id"] = drive_file_id
-    if r2_object_key:
-        metadata["r2_object_key"] = r2_object_key
-        metadata["r2_bucket"] = "corpus"
     doc = projects.add_document(
         project_id=project_id,
         original_name=name,
@@ -159,7 +154,6 @@ def test_selection_picks_exactly_the_stale_docx(monkeypatch, tmp_path):
         extractor_version=EXTRACTOR_VERSION,
         chunk_count=1,
         drive_file_id="driveCurre01",
-        r2_object_key="projects/p/current.docx",
     )
     _add_docx(
         projects, proj["id"], tmp_path,
@@ -168,7 +162,6 @@ def test_selection_picks_exactly_the_stale_docx(monkeypatch, tmp_path):
         extractor_version="pre-sdt",
         chunk_count=1,
         drive_file_id="driveHidde01",
-        r2_object_key="projects/p/hidden.docx",
         retrieval_visible=False,
     )
     pdf = projects.add_document(
@@ -212,19 +205,16 @@ def test_reextract_same_id_indexed_row_count_unchanged(monkeypatch, tmp_path, ca
         extractor_version=EXTRACTOR_VERSION,
         chunk_count=5,
         drive_file_id="driveCurre01",
-        r2_object_key="projects/p/current.docx",
     )
     before_count = _document_count()
     rich = _rich_docx_bytes()
 
-    monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: rich if key == "projects/p/stale.docx" else None,
-    )
     drive_calls: list[str] = []
     monkeypatch.setattr(
         "app.core.gdrive_service.download_file_bytes",
-        lambda fid: drive_calls.append(fid) or (None, "unused"),
+        lambda fid: drive_calls.append(fid) or (
+            (rich, None) if fid == DRIVE_STALE_ID else (None, "missing")
+        ),
     )
 
     from scripts.reextract_stale_docx import main
@@ -241,10 +231,10 @@ def test_reextract_same_id_indexed_row_count_unchanged(monkeypatch, tmp_path, ca
     assert f"VERIFICATION doc_id={stale['id']}" in out
     assert "before=TEXT_SPARSE/pre-sdt/1" in out
     assert f"after={INDEXED}/{EXTRACTOR_VERSION}/" in out
-    assert drive_calls == []
+    assert drive_calls == [DRIVE_STALE_ID]
 
 
-def test_r2_none_falls_back_to_one_drive_file_never_folder(
+def test_source_is_one_drive_file_never_a_folder_walk(
     monkeypatch, tmp_path, capsys,
 ):
     projects, users = _reload(monkeypatch, tmp_path)
@@ -261,10 +251,6 @@ def test_r2_none_falls_back_to_one_drive_file_never_folder(
     drive_calls: list[str] = []
     folder_calls: list[str] = []
 
-    monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: None,
-    )
     monkeypatch.setattr(
         "app.core.gdrive_service.download_file_bytes",
         lambda fid: drive_calls.append(fid) or (rich, None),
@@ -291,7 +277,7 @@ def test_r2_none_falls_back_to_one_drive_file_never_folder(
     assert "SOURCE_UNAVAILABLE" not in capsys.readouterr().out
 
 
-def test_both_sources_none_source_unavailable_row_untouched_exit_1(
+def test_drive_missing_source_unavailable_row_untouched_exit_1(
     monkeypatch, tmp_path, capsys,
 ):
     projects, users = _reload(monkeypatch, tmp_path)
@@ -311,15 +297,10 @@ def test_both_sources_none_source_unavailable_row_untouched_exit_1(
         extractor_version=EXTRACTOR_VERSION,
         chunk_count=5,
         drive_file_id="driveCurre01",
-        r2_object_key="projects/p/current.docx",
     )
     original = Path(stale["file_path"]).read_bytes()
     before_count = _document_count()
 
-    monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: None,
-    )
     monkeypatch.setattr(
         "app.core.gdrive_service.download_file_bytes",
         lambda fid: (None, "missing"),
@@ -357,8 +338,8 @@ def test_dry_run_prints_resolved_source_and_writes_nothing(monkeypatch, tmp_path
     indexes: list[str] = []
 
     monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: b"docx-bytes",
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (b"docx-bytes", None),
     )
     monkeypatch.setattr(
         "app.core.file_crypto.write_document",
@@ -381,13 +362,13 @@ def test_dry_run_prints_resolved_source_and_writes_nothing(monkeypatch, tmp_path
     assert indexes == []
     assert f"doc_id={stale['id']}" in out
     assert f"drive_file_id={DRIVE_STALE_ID}" in out
-    assert "source=r2" in out
+    assert "source=drive" in out
     assert "source_unavailable=0" in out
     assert "would_write=" not in out
 
 
 def _seed_leading_none_then_fetchable(projects, users, tmp_path):
-    """Two pointer-less open rows, then three R2-backed stale rows."""
+    """Two pointer-less open rows, then three Drive-backed stale rows."""
     proj = _seed_project(projects, users)
     none_rows = []
     for name in ("none_a.docx", "none_b.docx"):
@@ -399,15 +380,10 @@ def _seed_leading_none_then_fetchable(projects, users, tmp_path):
                 extractor_version="pre-sdt",
                 chunk_count=1,
                 drive_file_id="",
-                r2_object_key=None,
             )
         )
     fetchable = []
-    for name, key in (
-        ("fetch_a.docx", "projects/p/fetch_a.docx"),
-        ("fetch_b.docx", "projects/p/fetch_b.docx"),
-        ("fetch_c.docx", "projects/p/fetch_c.docx"),
-    ):
+    for name in ("fetch_a.docx", "fetch_b.docx", "fetch_c.docx"):
         fetchable.append(
             _add_docx(
                 projects, proj["id"], tmp_path,
@@ -415,8 +391,7 @@ def _seed_leading_none_then_fetchable(projects, users, tmp_path):
                 ingest_status=TEXT_SPARSE,
                 extractor_version="pre-sdt",
                 chunk_count=1,
-                drive_file_id=f"drive{name[:6]}01",
-                r2_object_key=key,
+                drive_file_id=f"drive_{name}",
             )
         )
     return none_rows, fetchable
@@ -431,19 +406,10 @@ def test_limit_skips_source_none_and_retries_fetchable(
     )
     rich = _rich_docx_bytes()
 
-    monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: (
-            rich if key in {
-                "projects/p/fetch_a.docx",
-                "projects/p/fetch_b.docx",
-                "projects/p/fetch_c.docx",
-            } else None
-        ),
-    )
+    fetchable_ids = {f"drive_{n}" for n in ("fetch_a.docx", "fetch_b.docx", "fetch_c.docx")}
     monkeypatch.setattr(
         "app.core.gdrive_service.download_file_bytes",
-        lambda fid: (None, "unused"),
+        lambda fid: (rich, None) if fid in fetchable_ids else (None, "missing"),
     )
 
     from scripts.reextract_stale_docx import main, select_stale_docx_rows
@@ -486,15 +452,10 @@ def test_dry_run_limit_prints_all_open_and_counts_unavailable(
     )
     writes: list[str] = []
     indexes: list[str] = []
+    fetchable_ids = {f"drive_{n}" for n in ("fetch_a.docx", "fetch_b.docx", "fetch_c.docx")}
     monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: (
-            b"docx-bytes" if key in {
-                "projects/p/fetch_a.docx",
-                "projects/p/fetch_b.docx",
-                "projects/p/fetch_c.docx",
-            } else None
-        ),
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (b"docx-bytes", None) if fid in fetchable_ids else (None, "missing"),
     )
     monkeypatch.setattr(
         "app.core.file_crypto.write_document",
@@ -517,7 +478,7 @@ def test_dry_run_limit_prints_all_open_and_counts_unavailable(
         assert f"DRY-RUN doc_id={row['id']}" in out
     assert f"DRY-RUN doc_id={none_rows[0]['id']}" in out
     assert "source=none would_write=0" in out
-    assert "source=r2 would_write=1" in out
+    assert "source=drive would_write=1" in out
     assert out.count("would_write=1") == 2
     assert out.count("would_write=0") == 3
     assert "open=5" in out
@@ -533,19 +494,10 @@ def test_allow_unavailable_exits_0_when_only_none_remain(
         projects, users, tmp_path,
     )
     rich = _rich_docx_bytes()
-    monkeypatch.setattr(
-        "app.core.r2_storage.fetch_object_bytes",
-        lambda key, bucket=None: (
-            rich if key in {
-                "projects/p/fetch_a.docx",
-                "projects/p/fetch_b.docx",
-                "projects/p/fetch_c.docx",
-            } else None
-        ),
-    )
+    fetchable_ids = {f"drive_{n}" for n in ("fetch_a.docx", "fetch_b.docx", "fetch_c.docx")}
     monkeypatch.setattr(
         "app.core.gdrive_service.download_file_bytes",
-        lambda fid: (None, "unused"),
+        lambda fid: (rich, None) if fid in fetchable_ids else (None, "missing"),
     )
 
     from scripts.reextract_stale_docx import main, select_stale_docx_rows
@@ -565,3 +517,25 @@ def test_allow_unavailable_exits_0_when_only_none_remain(
     assert projects.get_document(none_rows[0]["id"])["ingest_status"] == TEXT_SPARSE
     assert "retried=2" in out
     assert "source_unavailable=2" in out
+
+
+def test_set_document_file_path_points_the_row_at_a_new_copy(monkeypatch, tmp_path):
+    """The ingest's in-place retry re-points a row at its fresh transient copy."""
+    projects, users = _reload(monkeypatch, tmp_path)
+    proj = _seed_project(projects, users)
+    doc = _add_docx(
+        projects, proj["id"], tmp_path,
+        name="retry.docx",
+        ingest_status=TEXT_SPARSE,
+        extractor_version="pre-sdt",
+        chunk_count=1,
+        drive_file_id=DRIVE_STALE_ID,
+    )
+    fresh = tmp_path / "fresh_copy.docx"
+
+    updated = projects.set_document_file_path(doc["id"], str(fresh))
+
+    assert updated["file_path"] == str(fresh)
+    assert projects.get_document(doc["id"])["file_path"] == str(fresh)
+    assert projects.set_document_file_path("no-such-doc", str(fresh)) is None
+    assert projects.set_document_file_path("", str(fresh)) is None

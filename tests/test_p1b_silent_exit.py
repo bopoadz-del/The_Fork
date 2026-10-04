@@ -485,7 +485,7 @@ def test_a_killed_run_is_diagnosed_on_the_next_start(tmp_path):
 
 @POSIX_ONLY
 def test_fatal_exception_still_writes_a_report_and_prints_the_traceback(tmp_path):
-    """A leaked exception (the #477/#480 R2 AccessDenied shape) must produce a
+    """A leaked exception (the #477/#480 shape) must produce a
     tally AND a traceback, never a truncated log."""
     body = (
         "def _ingest(fm, *a, **k):\n"
@@ -603,7 +603,7 @@ class _WeakPayload(bytearray):
     """A byte payload that can be weak-referenced, so a test can prove the
     ingest really let go of it. ``bytes`` subclasses cannot hold a weakref;
     ``bytearray`` ones can, and every consumer in ``_ingest_file`` (sha256,
-    the file write, the archive call, ``len``) takes either."""
+    the transient-copy write, ``len``) takes either."""
 
 
 def test_ingest_releases_the_downloaded_payload_before_indexing(tmp_path, monkeypatch):
@@ -619,16 +619,6 @@ def test_ingest_releases_the_downloaded_payload_before_indexing(tmp_path, monkey
     ref = weakref.ref(box[0])
     alive_during_index: List[bool] = []
 
-    monkeypatch.setattr(
-        "app.core.file_crypto.write_document",
-        lambda path, data: Path(path).write_bytes(data),
-    )
-    monkeypatch.setattr(
-        "app.core.r2_storage.archive_document",
-        lambda **_k: {"archived": True, "r2_object_key": "k", "r2_bucket": "b",
-                      "r2_endpoint": "e", "r2_account_id": "a", "error": None},
-    )
-    monkeypatch.setattr("app.core.r2_storage.delete_local_archive", lambda _p: None)
     monkeypatch.setattr(
         "app.core.projects.add_document", lambda **_k: {"id": "doc-1"},
     )
@@ -660,18 +650,10 @@ def test_verification_line_still_reports_the_downloaded_size(tmp_path, monkeypat
     from scripts.p1b_ingest_drive_server import _ingest_file
 
     monkeypatch.setattr(
-        "app.core.file_crypto.write_document",
-        lambda path, data: Path(path).write_bytes(data),
-    )
-    monkeypatch.setattr(
-        "app.core.r2_storage.archive_document",
-        lambda **_k: {"archived": False, "r2_object_key": None, "r2_bucket": None,
-                      "r2_endpoint": None, "r2_account_id": None,
-                      "error": "R2_NOT_CONFIGURED"},
-    )
-    monkeypatch.setattr("app.core.r2_storage.delete_local_archive", lambda _p: None)
-    monkeypatch.setattr(
         "app.core.projects.update_document_metadata", lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "app.core.projects.set_document_file_path", lambda *_a, **_k: None,
     )
     monkeypatch.setattr(
         "app.core.doc_index.index_document",

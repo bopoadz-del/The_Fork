@@ -130,7 +130,12 @@ class AconexBlock(UniversalBlock):
                         "status": "error",
                         "error": "project_id is required to cache CDE documents",
                     }
-                result = await sync_cde_documents(fork_project_id, cde_project_id)
+                from app.core import privileges
+
+                result = await sync_cde_documents(
+                    fork_project_id, cde_project_id,
+                    eager_index=privileges.caller_may_add_to_project_rag(),
+                )
                 return {"status": "success", "operation": "sync", **result}
             if operation in ("post_rfi", "post_mail"):
                 posted = await post_rfi_draft(cde_project_id, {**data, **params})

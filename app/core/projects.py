@@ -162,17 +162,13 @@ def _project_as_dict(project: Project) -> Dict[str, Any]:
     }
 
 
-# Pointer aliases actually written by P1B / rag_render / Drive OAuth / audit.
-# #445 only read ``r2_object_key`` + ``drive_file_id`` on a dict. Live rows
-# also use camelCase, a JSON *string* in the JSONB column, and rag_render
-# keys (drive_file_id without an R2 key).
-_R2_KEY_ALIASES = (
-    "r2_object_key", "r2_key", "object_key", "r2ObjectKey", "r2Key",
-)
+# Drive file id aliases actually written by P1B / rag_render / Drive OAuth /
+# audit. Live rows also use camelCase and a JSON *string* in the JSONB column.
+# The platform keeps no copy of an original file (docs/INGEST_EXCLUSION_RULE.md):
+# Google Drive is the source of truth, so the Drive id is the only pointer.
 _DRIVE_ID_ALIASES = (
     "drive_file_id", "driveFileId", "drive_id", "driveId",
 )
-_R2_NEST_KEYS = ("r2_archive", "archive", "r2")
 
 
 def coerce_document_metadata(meta: Any) -> Dict[str, Any]:
@@ -212,39 +208,18 @@ def _first_nonempty_str(*values: Any) -> str:
 
 
 def extract_document_source_pointers(doc: Dict[str, Any]) -> Dict[str, str]:
-    """Resolve R2 / Drive pointers from a document row.
+    """Resolve where a document's original lives: its Google Drive file id.
 
-    Reads the same keys P1B Drive ingest writes
-    (``scripts/p1b_ingest_drive_server.py`` ``common_meta``):
-    ``drive_file_id``, ``r2_object_key``, ``r2_bucket``, ``r2_endpoint``.
-    Also accepts rag_render / audit aliases so a RAG-citable row without
-    the exact #445 names still hydrates.
+    Reads the key P1B Drive ingest writes (``drive_file_id``) and the
+    rag_render / audit aliases, so a RAG-citable row without the exact name
+    still resolves.
     """
     meta = coerce_document_metadata(doc.get("metadata"))
-    nested: Dict[str, Any] = {}
-    for nest_key in _R2_NEST_KEYS:
-        raw = meta.get(nest_key)
-        if isinstance(raw, dict):
-            nested.update(raw)
-
-    r2_key = _first_nonempty_str(
-        doc.get("r2_object_key"),
-        *[meta.get(alias) for alias in _R2_KEY_ALIASES],
-        *[nested.get(alias) for alias in _R2_KEY_ALIASES],
-    )
     drive_id = _first_nonempty_str(
         doc.get("drive_file_id"),
         *[meta.get(alias) for alias in _DRIVE_ID_ALIASES],
-        *[nested.get(alias) for alias in _DRIVE_ID_ALIASES],
     )
-    r2_bucket = _first_nonempty_str(
-        doc.get("r2_bucket"), meta.get("r2_bucket"), nested.get("r2_bucket"),
-    )
-    return {
-        "r2_object_key": r2_key,
-        "drive_file_id": drive_id,
-        "r2_bucket": r2_bucket,
-    }
+    return {"drive_file_id": drive_id}
 
 
 def _path_looks_present(path: str) -> bool:
@@ -279,9 +254,7 @@ def _document_as_dict(document: Document) -> Dict[str, Any]:
     out["drive_md5"] = getattr(document, "drive_md5", None)
     pointers = extract_document_source_pointers(out)
     local = _path_looks_present(out.get("file_path") or "")
-    out["has_remote_source"] = bool(
-        pointers["r2_object_key"] or pointers["drive_file_id"]
-    )
+    out["has_remote_source"] = bool(pointers["drive_file_id"])
     out["has_file"] = local or out["has_remote_source"]
     return out
 
@@ -1208,66 +1181,29 @@ def _persist_resolved_drive_id(
         )
 
 
-def _reconstruct_r2_key(doc: Dict[str, Any], drive_id: str) -> str:
-    """P1B key layout when the row recorded Drive id but not the object key."""
-    if not drive_id:
-        return ""
-    from app.core import r2_storage
-
-    project_id = str(doc.get("project_id") or "").strip()
-    name = str(doc.get("original_name") or "").strip()
-    if not project_id or not name:
-        return ""
-    return r2_storage.object_key_for(project_id, drive_id, name)
-
-
 def _fetch_remote_document_bytes(
     doc: Dict[str, Any],
 ) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
-    """R2 first (P1B source of truth), then Drive if a file id is recorded.
+    """Fetch a document's original from Google Drive, its source of truth.
 
+    The platform keeps no copy of originals (docs/INGEST_EXCLUSION_RULE.md):
+    the ledger row's Drive file id is the only way back to the file.
     Returns ``(bytes, source, error)``. ``error`` is a logging-safe reason
     when bytes are missing — never a secret.
     """
-    from app.core import r2_storage
-
     pointers = extract_document_source_pointers(doc)
-    key = pointers["r2_object_key"]
     drive_id = pointers["drive_file_id"]
-    bucket = pointers["r2_bucket"] or None
-    r2_error: Optional[str] = None
     drive_error: Optional[str] = None
 
-    keys_to_try: List[str] = []
-    if key:
-        keys_to_try.append(key)
     if not drive_id:
         # rag_backfill_client_clean_all stubs: size=0, G:\ path, null
-        # drive_file_id, no r2_object_key. Resolve the live Drive file by
+        # drive_file_id. Resolve the live Drive file by
         # exact original_name and persist the id so the next preview is cheap.
         resolved_id, resolve_err = _resolve_drive_id_by_filename(doc)
         if resolved_id:
             drive_id = resolved_id
         elif resolve_err:
             drive_error = resolve_err
-
-    reconstructed = _reconstruct_r2_key(doc, drive_id)
-    if reconstructed and reconstructed not in keys_to_try:
-        keys_to_try.append(reconstructed)
-
-    for candidate in keys_to_try:
-        try:
-            blob = r2_storage.fetch_object_bytes(candidate, bucket=bucket)
-        except TypeError:
-            # Tests / older mocks only accept the key.
-            blob = r2_storage.fetch_object_bytes(candidate)
-        if blob:
-            return blob, "r2", None
-        r2_error = r2_storage.fetch_failure_reason(candidate, bucket=bucket)
-        logger.info(
-            "R2 hydrate miss for doc %s key_tail=%s reason=%s",
-            doc.get("id"), candidate.rsplit("/", 1)[-1], r2_error,
-        )
 
     if drive_id:
         try:
@@ -1306,31 +1242,23 @@ def _fetch_remote_document_bytes(
                 "Drive fallback skipped for doc %s: %s", doc.get("id"), drive_error,
             )
 
-    if not key and not drive_id:
+    if not drive_id:
         extra = f"; {drive_error}" if drive_error else ""
-        return None, None, (
-            "no R2 object key or Drive file id on this document" + extra
-        )
-    parts = [p for p in (r2_error, drive_error) if p]
-    if parts:
-        return None, None, "; ".join(parts)
-    if drive_id:
-        return None, None, "Drive fallback failed"
-    return None, None, "R2 object missing or fetch failed"
+        return None, None, "no Google Drive file id on this document" + extra
+    return None, None, drive_error or "Drive download failed"
 
 
 def materialize_document_file(doc: Dict[str, Any]) -> Tuple[Optional[str], str]:
     """Resolve bytes for a document row onto a readable local path.
 
-    Master Corpus / P1B ingest archives to R2 and deletes the local file, so
-    ``file_path`` is often a stale path and ``size`` is 0 even though the
-    object exists. Order:
+    The platform keeps no copy of originals: P1B ingest deletes its transient
+    copy after indexing, so ``file_path`` is often a stale path and Google
+    Drive is the source of truth. Order:
 
-    1. Existing local ``file_path`` with plaintext length > 0
+    1. Existing local ``file_path`` with plaintext length > 0 (user uploads)
     2. On-demand preview cache from a prior hydrate
-    3. R2 key (row, metadata aliases, or reconstructed P1B layout)
-    4. Drive ``drive_file_id`` / ``driveFileId`` (R2 miss / archive failed)
-    5. Public Drive uc/download when the id is anyone-with-link and SA media fails
+    3. Drive ``drive_file_id`` / ``driveFileId`` on the ledger row
+    4. Public Drive uc/download when the id is anyone-with-link and SA media fails
 
     Returns ``(path, "ok")`` or ``(None, "empty"|reason)``. Reason is a
     logging-safe phrase the router appends to the 404 — never a 500.
@@ -1375,6 +1303,21 @@ def set_document_drive_md5(doc_id: str, token: Optional[str]) -> Optional[Dict[s
             if document is None:
                 return None
             document.drive_md5 = (token or "").strip() or None
+            session.commit()
+    return get_document(doc_id)
+
+
+def set_document_file_path(doc_id: str, file_path: str) -> Optional[Dict[str, Any]]:
+    """Point a row at the copy its next index run reads (a re-ingest's fresh download)."""
+    if not doc_id:
+        return None
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document is None:
+                return None
+            document.file_path = file_path
             session.commit()
     return get_document(doc_id)
 

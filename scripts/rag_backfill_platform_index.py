@@ -13,8 +13,7 @@ Usage (inside Render worker container, from /app):
 
 Required env:
     DATABASE_URL, DATA_DIR,
-    GDRIVE_SERVICE_ACCOUNT_JSON (for Drive-sourced docs),
-    R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME (for R2-sourced docs),
+    GDRIVE_SERVICE_ACCOUNT_JSON (Google Drive is the only source of an original),
     RAG_EMBEDDING_MODEL, RAG_VECTOR_NAMESPACE
 """
 from __future__ import annotations
@@ -25,7 +24,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -33,9 +32,7 @@ sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("RAG_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 os.environ.setdefault("RAG_VECTOR_NAMESPACE", "v2")
 
-from app.core import doc_index, file_crypto, gdrive_service, projects as projects_mod, r2_storage
-from app.core.db import SessionLocal
-from app.core.models import Document
+from app.core import doc_index, file_crypto, gdrive_service, projects as projects_mod
 
 
 def _safe_stored_name(original: str) -> str:
@@ -45,41 +42,8 @@ def _safe_stored_name(original: str) -> str:
     return f"{safe}{ext}"
 
 
-def _update_file_path(doc_id: str, file_path: str) -> None:
-    with SessionLocal() as session:
-        document = session.get(Document, doc_id)
-        if document is None:
-            raise RuntimeError(f"document {doc_id} not found")
-        document.file_path = file_path
-        session.commit()
 
 
-def _resolve_source(doc: Dict[str, Any]) -> Tuple[str, Optional[str], Optional[str]]:
-    """Return (source_type, r2_object_key, drive_file_id)."""
-    meta = doc.get("metadata") or {}
-    r2_key = doc.get("r2_object_key") or meta.get("r2_object_key")
-    drive_id = meta.get("drive_file_id")
-    return ("r2" if r2_key else "drive" if drive_id else "unknown", r2_key, drive_id)
-
-
-def _download_bytes(
-    source_type: str,
-    r2_key: Optional[str],
-    drive_id: Optional[str],
-) -> Tuple[Optional[bytes], Optional[str]]:
-    if source_type == "r2" and r2_key:
-        try:
-            s3 = r2_storage._client()
-            bucket = r2_storage._bucket_name()
-            if not s3 or not bucket:
-                return None, "R2 not configured"
-            resp = s3.get_object(Bucket=bucket, Key=r2_key)
-            return resp["Body"].read(), None
-        except Exception as exc:  # noqa: BLE001
-            return None, f"R2 download failed: {exc}"
-    if source_type == "drive" and drive_id:
-        return gdrive_service.download_file_bytes(drive_id)
-    return None, "no resolvable source"
 
 
 def _index_one(
@@ -107,13 +71,14 @@ def _index_one(
     original_name = doc.get("original_name") or (candidate or {}).get("original_name", "unknown")
     result["original_name"] = original_name
 
-    source_type, r2_key, drive_id = _resolve_source(doc)
-    if source_type == "unknown":
+    # Google Drive is the only source of an original (no archive).
+    drive_id = projects_mod.extract_document_source_pointers(doc)["drive_file_id"]
+    if not drive_id:
         result["status"] = "ERROR"
-        result["error"] = "no source pointer (r2_object_key or drive_file_id)"
+        result["error"] = "no drive_file_id on this document"
         return result
 
-    raw_bytes, err = _download_bytes(source_type, r2_key, drive_id)
+    raw_bytes, err = gdrive_service.download_file_bytes(drive_id)
     if err or raw_bytes is None:
         result["status"] = "ERROR"
         result["error"] = err or "download returned no bytes"
@@ -123,29 +88,10 @@ def _index_one(
     stored_name = _safe_stored_name(original_name)
     dest = data_dir / f"{content_sha[:16]}_{stored_name}"
     file_crypto.write_document(str(dest), raw_bytes)
+    del raw_bytes
 
-    # Ensure file_path is fresh so index_document can read it.
-    _update_file_path(doc_id, str(dest))
-
-    # Best-effort R2 archive update if missing.
-    if not r2_key:
-        try:
-            archive = r2_storage.archive_document(
-                project_id=project_id,
-                drive_file_id=drive_id or doc_id,
-                original_name=original_name,
-                raw_bytes=raw_bytes,
-                content_sha256=content_sha,
-            )
-            if archive.get("r2_object_key"):
-                projects_mod.update_document_metadata(doc_id, {
-                    "r2_object_key": archive["r2_object_key"],
-                    "r2_bucket": archive.get("r2_bucket"),
-                    "r2_endpoint": archive.get("r2_endpoint"),
-                    "r2_account_id": archive.get("r2_account_id"),
-                })
-        except Exception as exc:  # noqa: BLE001
-            print(f"[platform-index] {doc_id}: R2 archive warning: {exc}", file=sys.stderr)
+    # Point the row at this download so index_document reads it.
+    projects_mod.set_document_file_path(doc_id, str(dest))
 
     # Index through platform pipeline.
     idx_result = doc_index.index_document(project_id, doc_id)
@@ -165,6 +111,9 @@ def _index_one(
             result["ocr_truncated"] = True
     except Exception as exc:  # noqa: BLE001
         result["introspection_error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        # The platform keeps no copy of an original: Drive is the source.
+        dest.unlink(missing_ok=True)
 
     return result
 
@@ -184,7 +133,6 @@ def main() -> int:
     with open(args.manifest, "r", encoding="utf-8") as f:
         data = json.load(f)
     batches = data["batches"]
-    candidates = {c["doc_id"]: c for c in data.get("candidates", [])}
 
     if args.batch_index < 1 or args.batch_index > len(batches):
         print(f"Invalid batch index {args.batch_index}; {len(batches)} batches available", file=sys.stderr)

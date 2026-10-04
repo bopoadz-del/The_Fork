@@ -212,3 +212,50 @@ async def test_run_sync_works_inside_a_running_loop():
         return "running-loop result"
 
     assert doc_index._run_sync(_work()) == "running-loop result"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Scanned-PDF OCR: guards that went with the image tests in #773
+# ────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("low", [True, False])
+async def test_pdf_ocr_quality_flag_reaches_entry_and_hit(fresh_db, tmp_path, monkeypatch, low):
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    text = "blurry steel beam connection detail drawing scan " * 4
+    meta = {"ocr_low_quality": True} if low else {}
+    monkeypatch.setattr(doc_index, "_extract_with_meta", lambda fp, fn, *a, **k: (text, dict(meta)))
+    monkeypatch.setenv("DOC_EXTRACT_ISOLATE_MIN_MB", "1000000")
+
+    pid = projects_mod.create_project("PDF OCR quality")["id"]
+    p = str(tmp_path / "scan.pdf")
+    file_crypto.write_document(p, b"%PDF-1.4 scan")
+    doc = projects_mod.add_document(pid, "scan.pdf", file_path=p, size=13)
+    doc_index.index_project(pid)
+
+    entry = next(d for d in doc_index._load_index(pid)["documents"] if d["document_id"] == doc["id"])
+    assert bool(entry.get("ocr_low_quality", False)) is low
+    hits = await doc_index.search_project_documents(pid, "steel beam connection")
+    hit = next(h for h in hits if h["document_id"] == doc["id"])
+    assert bool(hit.get("ocr_low_quality", False)) is low
+
+
+def test_pdf_page_ocr_never_raises():
+    from app.core import doc_index
+    assert doc_index._ocr_pdf_page(object()) == ""
+
+
+def test_scanned_pdf_with_failed_ocr_is_indexed_not_skipped(fresh_db, tmp_path, monkeypatch):
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    monkeypatch.setattr(doc_index, "_extract_with_meta", lambda fp, fn, *a, **k: ("", {}))
+    monkeypatch.setenv("DOC_EXTRACT_ISOLATE_MIN_MB", "1000000")
+
+    pid = projects_mod.create_project("OCR fail PDF")["id"]
+    p = str(tmp_path / "fail.pdf")
+    file_crypto.write_document(p, b"%PDF-1.4 x")
+    projects_mod.add_document(pid, "fail.pdf", file_path=p, size=10)
+    result = doc_index.index_project(pid)
+
+    assert result["skipped_unsupported"] == 0

@@ -53,6 +53,12 @@ class DecryptionError(Exception):
     ciphertext, which would corrupt the document."""
 
 
+#: Prefix of every short-lived plaintext copy in the temp dir (decrypt-to-read
+#: and the ingest's transient extraction copy). ``sweep_stale_plaintext`` reaps
+#: anything left behind under it.
+DECRYPTED_TEMP_PREFIX = "fork_dec_"
+
+
 def _load_fernet() -> Optional[Fernet]:
     """Build a Fernet instance from the env var, or None if unset/invalid."""
     raw = os.getenv(_ENV_KEY)
@@ -258,7 +264,7 @@ def open_plaintext(path: str):
     plaintext = decrypt_bytes(raw)
     # Preserve the suffix so downstream code that sniffs by extension still works.
     suffix = os.path.splitext(path)[1] or ""
-    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="fork_dec_")
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix=DECRYPTED_TEMP_PREFIX)
     try:
         with os.fdopen(fd, "wb") as tmp:
             tmp.write(plaintext)
@@ -327,7 +333,7 @@ def sweep_stale_plaintext(
     cutoff = _time.time() - max_age_seconds
     scanned = reaped = shredded = 0
     failed: list[str] = []
-    for path in glob.glob(os.path.join(tmp_dir, "fork_dec_*")):
+    for path in glob.glob(os.path.join(tmp_dir, DECRYPTED_TEMP_PREFIX + "*")):
         scanned += 1
         try:
             if os.path.getmtime(path) > cutoff:

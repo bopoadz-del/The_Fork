@@ -101,51 +101,29 @@ def _memory_pressure() -> float | None:
     return memory_pressure()
 
 
-# MEMORY ADMISSION. Fernet (file_crypto) has no streaming mode, so with
-# encryption on a stored file is held WHOLE several times over: the parent
-# keeps the downloaded bytes, the PKCS7-padded copy, the AES ciphertext, the
-# framed token and its base64 form at once; an indexing child reads the
-# base64 token and decrypts it to plaintext. Live 2026-10-04 the parent
-# reached 3.6 GB of a 4 GB task on files of 350-400 MB and was OOM-killed on
-# the next, larger one. A file whose demand cannot fit is refused BEFORE it
+# MEMORY ADMISSION. The ingest holds one whole copy of a file: the parent
+# the downloaded bytes until its transient copy is written, an indexing child
+# the plaintext it reads back. (Until 2026-10-04 the parent also Fernet-
+# encrypted the copy and uploaded it to an archive, ~7x the file size, which
+# OOM-killed 4 GB tasks on 350-400 MB files; the platform keeps no copy of
+# an original any more.) A file whose demand cannot fit is refused BEFORE it
 # is downloaded and recorded as such, instead of killing the whole run.
-_FERNET_B64 = 4 / 3  # base64 expansion of a Fernet token
-_CHILD_COPIES_ENCRYPTED = 1 + _FERNET_B64   # base64 token on read + plaintext
 
 
-def _parent_factor() -> float:
-    """Parent peak as a multiple of file size (``P1B_PARENT_MEMORY_FACTOR``).
-
-    Counting Fernet's own copies gives ~5.3x, but the parent also joins the
-    download's buffered chunks into one bytes object and hands the whole
-    payload to the R2 client, which checksums and buffers it. Measured live
-    2026-10-04: 3,567 MB peak on ~398 MB files over an ~800 MB baseline,
-    i.e. ~7x. The default is that measurement.
-    """
-    try:
-        return max(1.0, float(os.getenv("P1B_PARENT_MEMORY_FACTOR", "7")))
-    except ValueError:
-        return 7.0
-
-
-def memory_demand(size_bytes: int, *, encrypted: bool) -> tuple[int, int]:
+def memory_demand(size_bytes: int) -> tuple[int, int]:
     """Peak bytes ``(parent, child)`` to store and to index one file of this size."""
     size = max(0, int(size_bytes or 0))
-    if encrypted:
-        return int(size * _parent_factor()), int(size * _CHILD_COPIES_ENCRYPTED)
     return size, size
 
 
-def admission_refusal(
-    size_bytes: int, *, encrypted: bool, child_budget_mb: int,
-) -> str | None:
+def admission_refusal(size_bytes: int, *, child_budget_mb: int) -> str | None:
     """Why a file of this size cannot be processed in the memory available, or None.
 
     The child side compares the demand with the configured child budget; the
     parent side with the container's headroom under the memory guard, read
     now (unknown headroom refuses nothing on that side).
     """
-    parent_need, child_need = memory_demand(size_bytes, encrypted=encrypted)
+    parent_need, child_need = memory_demand(size_bytes)
     mb = 1024 * 1024
     if child_need > child_budget_mb * mb:
         return (

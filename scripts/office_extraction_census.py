@@ -3,7 +3,7 @@
 
 Read-only. Tallies INDEXED / TEXT_SPARSE / UNVERIFIED / ZERO_CHUNK /
 EXTRACT_FAILED, thin and single-chunk rates, missing source (no local
-bytes and no R2/Drive pointer), and extractor_version.
+bytes and no Drive pointer), and extractor_version.
 
 Does not re-extract, fetch Drive, run p1b, or --apply-reingest.
 The docx content-control walker is scripts/extraction_census.py.
