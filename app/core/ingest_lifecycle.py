@@ -398,10 +398,18 @@ def memory_numbers(
     """
     dirs = cgroup_candidate_dirs(proc_root=proc_root, cgroup_root=cgroup_root)
     info = _meminfo_bytes(proc_root)
-    limit = _first_int(dirs, "memory.max", "memory.limit_in_bytes")
+    # The tightest limit anyone states: a finite cgroup limit, the ECS task's
+    # declared memory (Fargate hides the cgroup limit, and its micro-VM can
+    # report more MemTotal than the task is allowed), the box's MemTotal.
+    known = [
+        v for v in (
+            _first_int(dirs, "memory.max", "memory.limit_in_bytes"),
+            ecs_task_memory_limit_bytes(),
+            info.get("MemTotal"),
+        ) if v
+    ]
+    limit = min(known) if known else None
     total = info.get("MemTotal")
-    if limit is None or (total is not None and limit > total):
-        limit = total
     stat = _first_kv(dirs, "memory.stat")
     used = stat.get("anon", stat.get("total_rss"))
     if used is None and total is not None and info.get("MemAvailable") is not None:
@@ -409,6 +417,60 @@ def memory_numbers(
     if not limit or used is None:
         return None, None
     return used, limit
+
+
+_ECS_LIMIT_CACHE: Dict[str, Optional[int]] = {}
+
+
+def ecs_task_memory_limit_bytes() -> Optional[int]:
+    """The ECS task's declared memory limit, from the task metadata endpoint.
+
+    ``$ECS_CONTAINER_METADATA_URI_V4/task`` -> ``Limits.Memory`` (MiB), the
+    container's own ``Limits.Memory`` when the task has none. Read once per
+    process; ``None`` off ECS or when the endpoint does not answer.
+    """
+    base = os.getenv("ECS_CONTAINER_METADATA_URI_V4", "").strip()
+    if not base:
+        return None
+    if base in _ECS_LIMIT_CACHE:
+        return _ECS_LIMIT_CACHE[base]
+    import urllib.request
+
+    found: Optional[int] = None
+    for suffix in ("/task", ""):
+        try:
+            with urllib.request.urlopen(base + suffix, timeout=2) as resp:
+                data = json.load(resp)
+        except (OSError, ValueError):
+            logger.debug("ECS metadata %s%s unreadable", base, suffix, exc_info=True)
+            continue
+        mib = (data.get("Limits") or {}).get("Memory")
+        if isinstance(mib, (int, float)) and mib > 0:
+            found = int(mib) * _MB
+            break
+    _ECS_LIMIT_CACHE[base] = found
+    return found
+
+
+def release_freed_memory() -> None:
+    """Hand freed heap back to the OS between files.
+
+    CPython frees a file's buffers, but glibc keeps the pages in its arenas,
+    so resident memory stays at the high-water mark and the next file's
+    admission sees headroom that is not really there. ``malloc_trim`` (glibc
+    only) returns them; elsewhere this is just a collection.
+    """
+    import gc
+
+    gc.collect()
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        logger.debug("malloc_trim unavailable", exc_info=True)
 
 
 def memory_pressure(
