@@ -116,26 +116,25 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # Re-indexed 2026-10-03: doc_index storage moved to one row per entry
     # (0018); the same handlers, only the line numbers moved. No new silent
     # returns.
-    "app/core/doc_index.py:196": "baseline 2026-09-10",
-    "app/core/doc_index.py:376": "baseline 2026-09-10",
-    "app/core/doc_index.py:413": "baseline 2026-09-10",
-    "app/core/doc_index.py:429": "baseline 2026-09-10",
-    "app/core/doc_index.py:520": "baseline 2026-09-10",
-    "app/core/doc_index.py:529": "baseline 2026-09-10",
+    "app/core/doc_index.py:193": "baseline 2026-09-10",
+    "app/core/doc_index.py:288": "baseline 2026-09-10",
+    "app/core/doc_index.py:304": "baseline 2026-09-10",
+    "app/core/doc_index.py:395": "baseline 2026-09-10",
+    "app/core/doc_index.py:404": "baseline 2026-09-10",
     # Re-indexed 2026-09-28: quarantine head probe above _extract_pdf
     # and the Office gate shifted these same handlers. No new silent returns.
+    "app/core/doc_index.py:1011": "baseline 2026-09-10",
+    "app/core/doc_index.py:1025": "baseline 2026-09-10",
+    "app/core/doc_index.py:1047": "baseline 2026-09-10",
     "app/core/doc_index.py:1136": "baseline 2026-09-10",
-    "app/core/doc_index.py:1150": "baseline 2026-09-10",
-    "app/core/doc_index.py:1172": "baseline 2026-09-10",
-    "app/core/doc_index.py:1261": "baseline 2026-09-10",
-    "app/core/doc_index.py:1304": "baseline 2026-09-10",
-    "app/core/doc_index.py:1312": "baseline 2026-09-10",
-    "app/core/doc_index.py:1410": "baseline 2026-09-10",
+    "app/core/doc_index.py:1179": "baseline 2026-09-10",
+    "app/core/doc_index.py:1187": "baseline 2026-09-10",
+    "app/core/doc_index.py:1283": "baseline 2026-09-10",
     # Re-indexed 2026-09-28: drawing wiring plaintext open added 5 lines
     # above this handler. Same handler. No new silent return.
     # Shifted again the same day: the recoverable-skip helper sits above
     # _ifc_step_census_chunk. Same empty return. No new silent return.
-    "app/core/doc_index.py:3082": "baseline 2026-09-10",
+    "app/core/doc_index.py:2948": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:333": "baseline 2026-09-10",
     "app/core/rag/vector_store.py:1806": "baseline 2026-09-10",
     "app/infra/monitoring.py:324": "baseline 2026-09-10",

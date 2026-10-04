@@ -56,7 +56,9 @@ except PermissionError:
     import tempfile
     DATA_DIR = tempfile.gettempdir()
 
-ALLOWED_DOC_EXTENSIONS = upload_limits.ALLOWED_UPLOAD_EXTENSIONS
+# A project document is persisted and indexed: the RAG takes text formats
+# only (ingest_status.TEXT_BEARING_EXTS, docs/INGEST_EXCLUSION_RULE.md).
+from app.core.ingest_status import TEXT_BEARING_EXTS as ALLOWED_DOC_EXTENSIONS  # noqa: E402
 
 
 def _owned_or_404(
@@ -803,7 +805,12 @@ async def add_document(
     original_name = os.path.basename(original_name.replace("\\", "/"))
     _, ext = os.path.splitext(original_name.lower())
     if ext not in ALLOWED_DOC_EXTENSIONS:
-        raise HTTPException(400, f"File type '{ext}' not allowed")
+        raise HTTPException(
+            415,
+            f"File type '{ext}' is not ingestible: the knowledge base takes text "
+            f"formats only (docs/INGEST_EXCLUSION_RULE.md). Drawings, photos, "
+            f"video and CAD can still be attached to a chat for the session.",
+        )
 
     max_size = _max_doc_upload_size()
     # Reject oversize uploads BEFORE materialising the file — this used to read
@@ -1074,45 +1081,10 @@ async def delete_document(
         raise HTTPException(
             404, f"Document '{document_id}' not found in project '{project_id}'"
         )
-    fp = doc.get("file_path")
-    file_removed = False
-    if fp and os.path.exists(fp):
-        try:
-            os.remove(fp)
-            file_removed = True
-        except OSError:
-            logger.warning(
-                "swallowed %s in delete_document() — continuing",
-                "OSError", exc_info=True,
-            )
-    store.delete_document(document_id)
-    # Drop the deleted doc from the project's doc_index too — otherwise its
-    # stale chunks keep surfacing in RAG retrieval (verified failure mode on
-    # the the client project where a deleted duplicate kept appearing as a
-    # Sources-footer entry).
-    index_pruned = False
-    try:
-        from app.core import doc_index as _doc_index
-
-        def _drop(current):
-            current = current or {"project_id": project_id, "documents": [], "skipped": []}
-            current["documents"] = [
-                d for d in (current.get("documents") or [])
-                if d.get("document_id") != document_id
-            ]
-            current["skipped"] = [
-                s for s in (current.get("skipped") or [])
-                if s.get("document_id") != document_id
-            ]
-            return current
-
-        _doc_index._update_index(project_id, _drop)  # noqa: SLF001
-        index_pruned = True
-    except Exception:  # noqa: BLE001 — never block delete on index cleanup
-        logger.warning(
-            "swallowed %s in delete_document() — continuing",
-            "Exception", exc_info=True,
-        )
+    # Stored file + row + chunks + index entry, in one place (projects.purge_document).
+    purged = store.purge_document(document_id)
+    file_removed = purged["file_removed"]
+    index_pruned = purged["index_pruned"]
     audit.record("document.deleted", project_id=project_id,
                  document_id=document_id, file_removed=file_removed,
                  index_pruned=index_pruned, user_id=auth["user_id"])

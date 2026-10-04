@@ -149,31 +149,26 @@ def test_search_401_no_auth(client):
 
 
 def test_search_reports_skipped(client):
-    """A .dwg document (allowed to upload, unsupported for indexing) → skipped_unsupported >= 1.
-
-    Note: images (.png/.jpg/...) are now OCR-indexed (Stream F), so they no
-    longer land in 'skipped'. A CAD .dwg file remains genuinely unsupported.
-    """
+    """A non-text file never becomes a project document (text formats only,
+    docs/INGEST_EXCLUSION_RULE.md): the upload is refused, so the index holds
+    nothing to skip and search reports skipped_unsupported == 0."""
     tok = _user_token(client, f"search-skipped-{_RUN}@x.com")
     h = _headers(tok)
     pid = _create_project(client, h, "Skipped Unsupported Project")
 
-    # Upload a supported .txt file
     _upload_txt(client, h, pid, "notes.txt",
                 b"Project notes for the skipped unsupported test document content.")
 
-    # Upload a .dwg (in ALLOWED_DOC_EXTENSIONS but not in _SUPPORTED_EXTS)
     files = {"file": ("model.dwg", b"AutoCAD DWG binary" + b"\x00" * 20,
                       "application/octet-stream")}
     r = client.post(f"/v1/projects/{pid}/documents", files=files, headers=h)
-    assert r.status_code == 201, r.text
+    assert r.status_code == 415, r.text
 
-    # Search — this lazy-builds the index for unsupported docs too
     r = client.get(f"/v1/projects/{pid}/documents/search",
                    params={"q": "notes project"}, headers=h)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["skipped_unsupported"] >= 1
+    assert body["skipped_unsupported"] == 0
 
 
 # ── Task 2 tests ─────────────────────────────────────────────────────────────

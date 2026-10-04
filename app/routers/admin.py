@@ -1689,10 +1689,15 @@ def admin_corpus_delete_docs(
     # mode == "delete"
     deleted: List[str] = []
     failed: List[Dict[str, str]] = []
+    files_removed = 0
+    index_pruned = 0
     for d in in_scope:
         try:
-            _projects.delete_document(d["id"])
+            # Stored file + row + chunks + index entry (projects.purge_document).
+            out = _projects.purge_document(d["id"])
             deleted.append(d["id"])
+            files_removed += int(out["file_removed"])
+            index_pruned += int(out["index_pruned"])
         except Exception as exc:  # noqa: BLE001
             failed.append({"id": d["id"], "error": str(exc)})
     return {
@@ -1700,6 +1705,8 @@ def admin_corpus_delete_docs(
         "project_id": req.project_id,
         "requested": len(req.doc_ids),
         "deleted": len(deleted),
+        "files_removed": files_removed,
+        "index_pruned": index_pruned,
         "failed": failed,
         "not_found": not_found,
         "wrong_project": wrong_project,

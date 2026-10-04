@@ -67,8 +67,17 @@ def _make_png_bytes(width: int, height: int, bg=(255, 255, 255),
     return buf.getvalue()
 
 
+def _as_drawing_pdf(png_bytes: bytes) -> bytes:
+    """The same image as a one-page PDF -- how a scanned or exported drawing
+    reaches a project. Images are not project documents (text formats only,
+    docs/INGEST_EXCLUSION_RULE.md); redline runs on the drawing PDF."""
+    buf = io.BytesIO()
+    Image.open(io.BytesIO(png_bytes)).convert("RGB").save(buf, format="PDF")
+    return buf.getvalue()
+
+
 def _upload_file(client, headers, project_id: str, filename: str,
-                 file_bytes: bytes, content_type: str = "image/png") -> str:
+                 file_bytes: bytes, content_type: str = "application/pdf") -> str:
     """Upload a file to a project; return the document id."""
     files = {"file": (filename, file_bytes, content_type)}
     r = client.post(f"/v1/projects/{project_id}/documents",
@@ -93,7 +102,7 @@ def test_redline_on_marked_image(client):
         patch_color=(255, 0, 0),
         patch_rect=(10, 10, 40, 40),
     )
-    doc_id = _upload_file(client, h, pid, "marked.png", img_bytes)
+    doc_id = _upload_file(client, h, pid, "marked.pdf", _as_drawing_pdf(img_bytes))
 
     r = client.post(f"/v1/projects/{pid}/documents/{doc_id}/redlines",
                     headers=h)
@@ -103,7 +112,7 @@ def test_redline_on_marked_image(client):
     # Top-level shape
     assert body["project_id"] == pid
     assert body["document_id"] == doc_id
-    assert body["filename"] == "marked.png"
+    assert body["filename"] == "marked.pdf"
     assert body["has_markup"] is True
     assert body["total_regions"] >= 1
 
@@ -127,7 +136,7 @@ def test_redline_on_clean_image(client):
     pid = _create_project(client, h, "Clean Image Project")
 
     img_bytes = _make_png_bytes(200, 200, bg=(255, 255, 255))
-    doc_id = _upload_file(client, h, pid, "clean.png", img_bytes)
+    doc_id = _upload_file(client, h, pid, "clean.pdf", _as_drawing_pdf(img_bytes))
 
     r = client.post(f"/v1/projects/{pid}/documents/{doc_id}/redlines",
                     headers=h)
@@ -160,7 +169,7 @@ def test_redline_cross_tenant_404(client):
 
     pid = _create_project(client, h_a, "Alice Redline Project")
     img_bytes = _make_png_bytes(200, 200)
-    doc_id = _upload_file(client, h_a, pid, "alice.png", img_bytes)
+    doc_id = _upload_file(client, h_a, pid, "alice.pdf", _as_drawing_pdf(img_bytes))
 
     # User B tries to access user A's project/document
     r = client.post(f"/v1/projects/{pid}/documents/{doc_id}/redlines",
@@ -182,3 +191,14 @@ def test_redline_rejects_non_image(client):
     r = client.post(f"/v1/projects/{pid}/documents/{doc_id}/redlines",
                     headers=h)
     assert r.status_code == 400
+
+
+def test_a_bare_image_is_not_a_project_document(client):
+    """Redline input is a drawing PDF; a bare image is refused at upload."""
+    tok = _user_token(client, f"redline-png-{_RUN}@x.com")
+    h = _headers(tok)
+    pid = _create_project(client, h, "Bare Image Project")
+    r = client.post(f"/v1/projects/{pid}/documents",
+                    files={"file": ("marked.png", _make_png_bytes(20, 20), "image/png")},
+                    headers=h)
+    assert r.status_code == 415, r.text
