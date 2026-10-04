@@ -805,6 +805,10 @@ async def add_document(
         raise HTTPException(400, "Invalid filename")
     original_name = os.path.basename(original_name.replace("\\", "/"))
     _, ext = os.path.splitext(original_name.lower())
+    from app.core import compressed
+
+    if compressed.is_compressed(original_name, compressed.head_of(file.file)):
+        raise HTTPException(415, compressed.COMPRESSED_UPLOAD_DETAIL)
     if ext not in ALLOWED_DOC_EXTENSIONS:
         raise HTTPException(
             415,

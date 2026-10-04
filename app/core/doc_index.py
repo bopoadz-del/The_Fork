@@ -78,6 +78,7 @@ logger = logging.getLogger(__name__)
 # UNSUPPORTED_TYPE guard in app/core/ingest_status.py.
 # Derived, never declared here: the RAG ingests text formats only (see
 # ingest_status.TEXT_BEARING_EXTS and docs/INGEST_EXCLUSION_RULE.md).
+from app.core import text_extractors as _text_extractors  # noqa: E402
 from app.core.ingest_status import TEXT_BEARING_EXTS as _TEXT_BEARING_EXTS  # noqa: E402
 
 _SUPPORTED_EXTS = _TEXT_BEARING_EXTS
@@ -461,7 +462,6 @@ def _is_memory_exhaustion(exc: BaseException) -> bool:
 
 _PDF_MAGIC = b"%PDF-"
 _ZIP_LOCAL_MAGIC = b"PK\x03\x04"
-_OFFICE_PACKAGE_EXTS = {".docx", ".xlsx", ".pptx"}
 _QUARANTINE_HEAD = 1024
 
 
@@ -524,7 +524,7 @@ def _quarantine_meta(file_path: str, filename: str) -> dict[str, Any] | None:
     ext = os.path.splitext(_sniff_name(file_path, filename).lower())[1]
     if ext == ".pdf":
         reason = "QUARANTINED_NOT_PDF"
-    elif ext in _OFFICE_PACKAGE_EXTS:
+    elif getattr(_text_extractors.extractor_for(ext), "office_package", False):
         reason = "QUARANTINED_NOT_OFFICE"
     else:
         return None
@@ -972,46 +972,6 @@ def _extract_pptx(file_path: str) -> str:
     return text
 
 
-def _extract_kmz(file_path: str) -> str:
-    """Extract text from a KMZ file (ZIP containing KML).
-
-    Reads the first .kml entry, strips XML tags, and returns the plain text.
-    KMZ may contain images/models; we only index the KML narrative so the
-    file is locatable by its name and any embedded labels. Never raises.
-    """
-    try:
-        import re
-        import zipfile
-
-        with file_crypto.open_plaintext(file_path) as readable_path:
-            with zipfile.ZipFile(readable_path, "r") as zf:
-                kml_names = [n for n in zf.namelist() if n.lower().endswith(".kml")]
-                if not kml_names:
-                    return ""
-                kml_bytes = zf.read(kml_names[0])
-        kml_text = kml_bytes.decode("utf-8", errors="replace")
-        # Metadata-only: index the human-meaningful <name>/<description> labels,
-        # NOT the raw <coordinates> dump. A large KMZ otherwise explodes into
-        # hundreds of coordinate-noise chunks (one file produced 810) that
-        # pollute retrieval. Keeps the file locatable by its placemark names.
-        labels = re.findall(r"<(?:name|description)>(.*?)</(?:name|description)>",
-                            kml_text, flags=re.IGNORECASE | re.DOTALL)
-        cleaned = []
-        for lab in labels:
-            lab = re.sub(r"<[^>]+>", " ", lab)  # strip any nested CDATA/markup
-            lab = re.sub(r"\s+", " ", lab).strip()
-            if lab and not re.fullmatch(r"[-\d.,\s]+", lab):  # drop pure coord strings
-                cleaned.append(lab)
-        # De-dup while preserving order; cap to keep the doc metadata-sized.
-        seen, out = set(), []
-        for lab in cleaned:
-            if lab not in seen:
-                seen.add(lab); out.append(lab)
-        return " | ".join(out[:500])
-    except Exception:
-        return ""
-
-
 def _extract_msg(file_path: str) -> str:
     """Extract text from an Outlook .msg file (OLE compound document).
 
@@ -1137,160 +1097,6 @@ def _extract_doc(file_path: str) -> str:
         return ""
 
     return ""
-
-
-# Archive extraction guards (zip-bomb / runaway-nest protection).
-_ARCHIVE_MAX_DEPTH = int(os.getenv("ARCHIVE_MAX_DEPTH", "3"))
-_ARCHIVE_MAX_FILES = int(os.getenv("ARCHIVE_MAX_FILES", "100"))
-_ARCHIVE_MAX_TOTAL_BYTES = int(os.getenv("ARCHIVE_MAX_TOTAL_BYTES", str(50 * 1024 * 1024)))
-# Skip archives whose own compressed size exceeds this — extracting multi-GB
-# archives on the 2 GB Render worker is a timeout/OOM risk.
-_ARCHIVE_MAX_FILE_SIZE = int(os.getenv("ARCHIVE_MAX_FILE_SIZE", str(50 * 1024 * 1024)))
-
-
-def _extract_archive(
-    file_path: str,
-    filename: str,
-    opener,
-    depth: int = 0,
-    counters: dict[str, int] | None = None,
-) -> str:
-    """Recursively extract text from an archive (ZIP or RAR).
-
-    ``opener`` must be a callable that takes a path and returns an object
-    with ``namelist()`` and ``read(name)`` methods (``zipfile.ZipFile`` or
-    ``rarfile.RarFile``).
-
-    Guards against zip bombs and infinitely nested archives:
-    * max depth ``_ARCHIVE_MAX_DEPTH``
-    * max total files ``_ARCHIVE_MAX_FILES``
-    * max total uncompressed bytes ``_ARCHIVE_MAX_TOTAL_BYTES``
-
-    Nested archive contents are flattened into the same document's text,
-    prefixed with their archive-internal path for provenance. Never raises.
-    """
-    if depth > _ARCHIVE_MAX_DEPTH:
-        return ""
-    if counters is None:
-        counters = {"files": 0, "bytes": 0}
-    try:
-        if os.path.getsize(file_path) > _ARCHIVE_MAX_FILE_SIZE:
-            return ""
-    except Exception:
-        return ""
-
-    parts: list[str] = []
-    try:
-        with file_crypto.open_plaintext(file_path) as readable_path:
-            with opener(readable_path) as archive:
-                names = archive.namelist()
-    except Exception:
-        return ""
-
-    for name in names:
-        if counters["files"] >= _ARCHIVE_MAX_FILES:
-            break
-        lower = name.lower()
-        ext = os.path.splitext(lower)[1]
-
-        # Skip directories and macOS resource forks.
-        if name.endswith("/") or "__macosx" in lower:
-            continue
-        # The archive is held to the same rule as any file: a member that is
-        # not a text format is never read into memory or written to disk.
-        if ext not in _SUPPORTED_EXTS:
-            continue
-
-        try:
-            with file_crypto.open_plaintext(file_path) as readable_path:
-                with opener(readable_path) as archive:
-                    info = archive.getinfo(name)
-                    member_size = getattr(info, "file_size", getattr(info, "compress_size", 0)) or 0
-                    if member_size > _ARCHIVE_MAX_TOTAL_BYTES:
-                        continue
-                    if counters["bytes"] + member_size > _ARCHIVE_MAX_TOTAL_BYTES:
-                        break
-                    data = archive.read(name)
-        except Exception:
-            continue
-
-        counters["files"] += 1
-        counters["bytes"] += len(data)
-        if counters["bytes"] >= _ARCHIVE_MAX_TOTAL_BYTES:
-            break
-
-        # Write the member to a temp file so existing extractors can run.
-        tmp_path: str | None = None
-        try:
-            fd, tmp_path = tempfile.mkstemp(suffix=ext or ".bin", prefix="fork_arc_")
-            os.close(fd)
-            with open(tmp_path, "wb") as fh:
-                fh.write(data)
-
-            # Nested archive: recurse.
-            if ext in {".zip", ".rar"}:
-                nested_opener = _zip_opener if ext == ".zip" else _rar_opener
-                nested_text = _extract_archive(
-                    tmp_path, name, nested_opener, depth=depth + 1, counters=counters
-                )
-                if nested_text:
-                    parts.append(f"[archive:{name}]\n{nested_text}")
-                continue
-
-            # Supported file: route through the same extraction pipeline.
-            if ext in _SUPPORTED_EXTS:
-                member_text, _ = _extract_with_meta(tmp_path, name)
-                if member_text:
-                    parts.append(f"[file:{name}]\n{member_text}")
-        except Exception:
-            continue
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    logger.warning(
-                        "swallowed %s in _extract_archive() — continuing",
-                        "OSError", exc_info=True,
-                    )
-
-    return "\n\n".join(parts)
-
-
-def _zip_opener(path: str):
-    import zipfile
-
-    return zipfile.ZipFile(path, "r")
-
-
-def _rar_opener(path: str):
-    import rarfile
-
-    return rarfile.RarFile(path)
-
-
-def _extract_zip(file_path: str, filename: str) -> str:
-    """Recursively extract text from a ZIP archive. Never raises."""
-    return _extract_archive(file_path, filename, _zip_opener)
-
-
-def _rar_available() -> bool:
-    """Check whether rarfile can locate an unrar binary."""
-    try:
-        import rarfile
-        rarfile.tool_setup()
-        return bool(rarfile.UNRAR_TOOL)
-    except Exception:
-        return False
-
-
-def _extract_rar(file_path: str, filename: str) -> str:
-    """Recursively extract text from a RAR archive. Degrades to "" if no
-    unrar binary is available (expected on Windows dev boxes). Never raises.
-    """
-    if not _rar_available():
-        return ""
-    return _extract_archive(file_path, filename, _rar_opener)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -1585,75 +1391,15 @@ def _extract_with_meta_impl(
         if ext not in _SUPPORTED_EXTS:
             return "", {}
 
-        # ── plain-text-like formats ──────────────────────────────────────────
-        if ext in {".txt", ".md", ".csv", ".json", ".xml"}:
-            raw = file_crypto.read_document(file_path)
-            return raw.decode("utf-8", errors="replace"), {}
-
-        # ── PDF ──────────────────────────────────────────────────────────────
-        # Per-page: keep each page's text layer, OCR image-only pages, add
-        # table rows. Fixes the cover-page bug (a digital cover page no longer
-        # suppresses OCR of image-only body pages). Memory-bounded.
-        if ext == ".pdf":
-            return _extract_pdf(file_path, filename, force_ocr=force_ocr)
-
-        # ── DOC / DOCX ───────────────────────────────────────────────────────
-        if ext == ".doc":
-            return _extract_doc(file_path), {}
-        if ext in _OFFICE_PACKAGE_EXTS:
+        # One registry decides what is read and how (app/core/text_extractors).
+        extractor = _text_extractors.extractor_for(ext)
+        if extractor is None:
+            return "", {}
+        if extractor.office_package:
             blocked = _quarantine_meta(file_path, filename)
             if blocked:
                 return "", blocked
-        if ext == ".docx":
-            import docx
-            with file_crypto.open_plaintext(file_path) as readable_path:
-                document = docx.Document(readable_path)
-                # python-docx `.paragraphs` excludes table cells; `.tables`
-                # is top-level only and ignores nested w:tbl. Text-boxes
-                # (w:txbxContent / a:txBody) are invisible to both. Letter
-                # signature blocks live in those structures — walk them.
-                return _docx_plain_text(document), {}
-
-        # ── XLSX ─────────────────────────────────────────────────────────────
-        if ext == ".xlsx":
-            import openpyxl
-            with file_crypto.open_plaintext(file_path) as readable_path:
-                wb = openpyxl.load_workbook(readable_path, data_only=True)
-                parts: list[str] = []
-                for sheet_name in wb.sheetnames:
-                    ws = wb[sheet_name]
-                    # Row-wise, not cell-wise: keep each row's cells together so
-                    # a priced-BOQ line stays intact ("<desc> | <qty> | <unit> |
-                    # <rate> | <total>"). Flattening every cell into one
-                    # space-joined blob separates a rate from its item
-                    # description and makes company unit rates unretrievable.
-                    for row in ws:
-                        cells = [
-                            str(cell.value).strip()
-                            for cell in row
-                            if cell.value is not None and str(cell.value).strip()
-                        ]
-                        if cells:
-                            parts.append(" | ".join(cells))
-                return "\n".join(parts), {}
-
-        # ── PPTX ─────────────────────────────────────────────────────────────
-        if ext == ".pptx":
-            return _extract_pptx_with_meta(file_path)
-
-        # ── KMZ ──────────────────────────────────────────────────────────────
-        if ext == ".kmz":
-            return _extract_kmz(file_path), {}
-
-        # ── MSG (Outlook email) ──────────────────────────────────────────────
-        if ext == ".msg":
-            return _extract_msg(file_path), {}
-
-        # ── ZIP / RAR ────────────────────────────────────────────────────────
-        if ext == ".zip":
-            return _extract_zip(file_path, filename), {}
-        if ext == ".rar":
-            return _extract_rar(file_path, filename), {}
+        return extractor.read(file_path, filename, force_ocr)
 
     except MemoryError:
         # See _extract_pdf: a memory failure must never masquerade as an empty
@@ -2470,6 +2216,7 @@ def index_project(project_id: str) -> dict[str, Any]:
     documents: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     total_chunks = 0
+    zero_chunk = 0
 
     for doc in docs:
         filename = doc.get("original_name", "")
@@ -2503,10 +2250,17 @@ def index_project(project_id: str) -> dict[str, Any]:
         drawing_chunks = _drawing_chunks_for_document(file_path, filename, ext, project_id)
         if drawing_chunks:
             chunks = chunks + drawing_chunks
-        ifc_chunks = _ifc_chunks_for_document(file_path, filename, ext, project_id)
-        if ifc_chunks:
-            chunks = chunks + ifc_chunks
         chunks = _normalize_cesmm_in_chunks(chunks)
+
+        if not chunks:
+            # A file that yields no text is never recorded as indexed: the
+            # ledger gets the ZERO_CHUNK class (or EXTRACT_FAILED), which
+            # resume bounds like any open outcome, and it is not an entry.
+            zero_chunk += 1
+            _stamp_index_ledger(
+                doc["id"], filename, 0, extract_failed=bool(meta.get("extract_failed")),
+            )
+            continue
 
         fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
         entry: dict[str, Any] = {
@@ -2546,16 +2300,17 @@ def index_project(project_id: str) -> dict[str, Any]:
 
     indexed = len(documents)
     skipped_unsupported = len(skipped)
-    if indexed > 0 and total_chunks == 0:
+    if zero_chunk and indexed == 0:
         return {
             "status": "error",
             "error": "ZERO_CHUNK",
             "banner": (
-                f"ERROR: re-index produced 0 chunks across {indexed} documents — "
+                f"ERROR: re-index produced 0 chunks across {zero_chunk} documents — "
                 "check extractor/OCR logs."
             ),
             "project_id": project_id,
-            "indexed": indexed,
+            "indexed": 0,
+            "zero_chunk": zero_chunk,
             "skipped_unsupported": skipped_unsupported,
             "total_chunks": 0,
         }
@@ -2564,6 +2319,7 @@ def index_project(project_id: str) -> dict[str, Any]:
         "status": "ok",
         "project_id": project_id,
         "indexed": indexed,
+        "zero_chunk": zero_chunk,
         "skipped_unsupported": skipped_unsupported,
         "total_chunks": total_chunks,
     }
@@ -2960,17 +2716,14 @@ def _ifc_step_census_chunk(file_path: str, filename: str) -> list[str]:
     ]
 
 
-def _ifc_chunks_for_document(
-    file_path: str, filename: str, ext: str, project_id: str
-) -> list[str]:
+def _ifc_census(file_path: str, filename: str) -> list[str]:
     """Return a BIM census chunk for an IFC so it is not left 'Not indexed'.
 
     Leftover live UI: ``sample_office.ifc`` sat at chunk_count=0 because IFC
     was an unsupported extractor type. Clash stays off — leftover L2.
     Never raises.
     """
-    del project_id  # signature matches the BOQ/drawing hooks
-    if (ext or "").lower() != ".ifc" or not file_path:
+    if not file_path:
         return []
     log = _logging.getLogger(__name__)
     try:
@@ -3136,7 +2889,6 @@ def _produce_chunks(
     # Drawing → RAG: mirrors index_project above. A drawing's schedules
     # live in its tables, and the raw text layer loses their structure.
     chunks = chunks + _drawing_chunks_for_document(file_path, filename, ext, project_id)
-    chunks = chunks + _ifc_chunks_for_document(file_path, filename, ext, project_id)
     return _normalize_cesmm_in_chunks(chunks), meta
 
 

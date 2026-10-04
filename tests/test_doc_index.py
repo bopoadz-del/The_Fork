@@ -514,7 +514,6 @@ def test_index_document_scanned_boq_without_ocr_is_not_ok(
     )
     monkeypatch.setattr(doc_index, "_boq_chunks_for_document", lambda *a, **k: [])
     monkeypatch.setattr(doc_index, "_drawing_chunks_for_document", lambda *a, **k: [])
-    monkeypatch.setattr(doc_index, "_ifc_chunks_for_document", lambda *a, **k: [])
 
     result = doc_index.index_document(pid, doc["id"], chunker="finer")
     assert result["status"] != "ok", result
@@ -555,7 +554,6 @@ def test_index_document_scanned_boq_with_ocr_indexes_item_codes(
     )
     monkeypatch.setattr(doc_index, "_boq_chunks_for_document", lambda *a, **k: [])
     monkeypatch.setattr(doc_index, "_drawing_chunks_for_document", lambda *a, **k: [])
-    monkeypatch.setattr(doc_index, "_ifc_chunks_for_document", lambda *a, **k: [])
 
     result = doc_index.index_document(pid, doc["id"], chunker="finer")
     assert result["status"] == "ok", result

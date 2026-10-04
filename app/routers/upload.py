@@ -73,8 +73,12 @@ async def upload_v1(
         # POST /v1/projects/{id}/documents, and it is refused before anything
         # is written. Without a project it is a session/sandbox upload and
         # the sandbox list decides.
+        from app.core import compressed
         from app.core.ingest_status import is_ingestible
 
+        # Never opened, unpacked or indexed -- with or without a project.
+        if compressed.is_compressed(original_name, compressed.head_of(file.file)):
+            raise HTTPException(status_code=415, detail=compressed.COMPRESSED_UPLOAD_DETAIL)
         with_project = bool(project_id and project_id.strip())
         if not with_project and ext not in ALLOWED_UPLOAD_EXTENSIONS:
             raise HTTPException(status_code=400, detail=f"File type '{ext}' not allowed")
