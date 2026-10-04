@@ -869,3 +869,46 @@ def test_file_over_the_memory_budget_is_recorded_not_downloaded_then_skipped(har
     assert downloads.get(big["id"], 0) == 0
     acc = harness.report()["accounting"]
     assert acc["already_indexed"] >= harness.preindexed_count + 1
+
+
+# ── the RAG takes text formats only (docs/INGEST_EXCLUSION_RULE.md) ────────
+
+
+def test_excluded_formats_are_never_assigned_downloaded_or_recorded(harness, monkeypatch):
+    """Video, CAD and photos in the Drive folder: zero downloads, zero rows,
+    never assigned on this run or on resume -- only counted by format."""
+    from app.core import gdrive_service
+    from app.core import projects as projects_mod
+
+    excluded = [
+        {"id": "vid001", "name": "drone.mp4", "_drive_path": f"{FOLDER_NAME}/media/drone.mp4",
+         "mimeType": "video/mp4", "size": 400_000_000},
+        {"id": "cad001", "name": "plan.dwg", "_drive_path": f"{FOLDER_NAME}/cad/plan.dwg",
+         "mimeType": "application/acad", "size": 9_000_000},
+        {"id": "img001", "name": "site.jpg", "_drive_path": f"{FOLDER_NAME}/photos/site.jpg",
+         "mimeType": "image/jpeg", "size": 6_000_000},
+    ]
+    harness.files.extend(excluded)
+    downloads: Dict[str, int] = {}
+    rows: List[str] = []
+
+    def _download(fid):
+        downloads[fid] = downloads.get(fid, 0) + 1
+        return b"x" * 256, None
+
+    def _add_document(**kw):
+        rows.append((kw.get("metadata") or {}).get("drive_file_id"))
+        return {"id": f"new-{len(rows):03d}"}
+
+    monkeypatch.setattr(gdrive_service, "download_file_bytes", _download)
+    monkeypatch.setattr(projects_mod, "add_document", _add_document)
+
+    for _ in range(2):  # the run, then a resume
+        assert harness.run() == 0
+        acc = harness.report()["accounting"]
+        assert acc["assigned"] == harness.expected_assigned, acc
+        assert acc["unsupported_by_format"].get(".mp4") == 1
+        assert acc["unsupported_by_format"].get(".dwg") == 1
+        assert acc["unsupported_by_format"].get(".jpg") == 1
+    assert all(downloads.get(f["id"], 0) == 0 for f in excluded), downloads
+    assert not {f["id"] for f in excluded} & set(rows), rows

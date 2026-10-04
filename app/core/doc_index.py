@@ -80,10 +80,11 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
 # The owner's ruling was NO kmz in the RAG at all. Reuse this constant rather
 # than adding a parallel kmz/kml check elsewhere -- see the matching
 # UNSUPPORTED_TYPE guard in app/core/ingest_status.py.
-_SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".doc", ".docx", ".xlsx", ".pptx", ".zip", ".rar", ".msg", ".ifc"}
-    | _IMAGE_EXTS
-)
+# Derived, never declared here: the RAG ingests text formats only (see
+# ingest_status.TEXT_BEARING_EXTS and docs/INGEST_EXCLUSION_RULE.md).
+from app.core.ingest_status import TEXT_BEARING_EXTS as _TEXT_BEARING_EXTS  # noqa: E402
+
+_SUPPORTED_EXTS = _TEXT_BEARING_EXTS
 
 # A PDF whose recovered text-layer is shorter than this is treated as a
 # scanned / image-only PDF and re-extracted via OCR.
@@ -1321,6 +1322,10 @@ def _extract_archive(
         # Skip directories and macOS resource forks.
         if name.endswith("/") or "__macosx" in lower:
             continue
+        # The archive is held to the same rule as any file: a member that is
+        # not a text format is never read into memory or written to disk.
+        if ext not in _SUPPORTED_EXTS:
+            continue
 
         try:
             with file_crypto.open_plaintext(file_path) as readable_path:
@@ -2481,6 +2486,18 @@ def skipped_count(project_id: str) -> int:
             )
         ).scalar()
     return int(n or 0)
+
+
+def drop_index_entry(project_id: str, document_id: str) -> bool:
+    """Remove one document's index entry (one row). True when a row went."""
+    with _index_txn(project_id) as conn:
+        result = conn.execute(
+            delete(DocIndexEntry).where(
+                DocIndexEntry.project_id == project_id,
+                DocIndexEntry.document_id == document_id,
+            )
+        )
+        return bool(result.rowcount)
 
 
 def _write_index(project_id: str, data: dict[str, Any]) -> None:

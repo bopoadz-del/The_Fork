@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """P1b — server-side Drive ingestion for the clean rebuild.
 
+READ FIRST -- THE RAG TAKES TEXT FORMATS ONLY. Video, images, CAD
+(.dwg/.dxf), Google Earth (.kmz/.kml), GIS internals and fonts are excluded
+BY DESIGN (docs/RAG_GAPS_REVIEW_2026-09-12.md section E). The single
+declaration is ``ingest_status.TEXT_BEARING_EXTS``: a file not in it is
+filtered at discovery -- never assigned, downloaded, stored or archived, only
+counted in ``accounting.unsupported_by_format``. When a file breaks a run,
+ask "should it be here at all?" first. See docs/INGEST_EXCLUSION_RULE.md.
+
 Runs on Render (or any server with the prod DB attached). Files are fetched
 via the platform's Google Drive service-account path, written to DATA_DIR,
 and indexed through the normal doc_index pipeline into the configured vector
@@ -1304,6 +1312,8 @@ def main() -> int:
         # Drop unsupported before sharding so every worker sees the same
         # supported universe and sha256 assignment stays partition-complete.
         def _is_unsupported(fm: Dict[str, Any]) -> bool:
+            from app.core import ingest_status as ist
+
             path = fm.get("_drive_path") or fm.get("name") or ""
             mime = fm.get("mimeType", "")
             ext = Path(path).suffix.lower()
@@ -1311,10 +1321,18 @@ def main() -> int:
                 mime in _UNSUPPORTED_MIMES
                 or ext in _UNSUPPORTED_EXTS
                 or _is_geodatabase_internal(path)
+                # The RAG ingests text formats only (TEXT_BEARING_EXTS, see
+                # the module docstring): anything else is never assigned,
+                # downloaded, stored or archived -- only counted.
+                or not ist.is_ingestible(path)
             )
 
         unsupported_files = [f for f in files if _is_unsupported(f)]
         supported_files = [f for f in files if not _is_unsupported(f)]
+        for fm in unsupported_files:
+            fmt = Path(fm.get("_drive_path") or fm.get("name") or "").suffix.lower() or "(none)"
+            by_format = accounting.setdefault("unsupported_by_format", {})
+            by_format[fmt] = by_format.get(fmt, 0) + 1
         filtered_files = [f for f in supported_files if f["id"] not in already_indexed]
         skipped_already = len(supported_files) - len(filtered_files)
 

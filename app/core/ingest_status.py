@@ -97,6 +97,15 @@ RECOVERABLE = "recoverable"  # a richer source for this document exists
 ATTEMPTS_MARK = "attempts_exhausted@"
 
 
+def is_ingestible(name_or_ext: str | None) -> bool:
+    """True when a file name (or bare extension) is a text format the RAG ingests."""
+    import os
+
+    raw = (name_or_ext or "").strip().lower()
+    ext = os.path.splitext(raw)[1] or (raw if raw.startswith(".") else "")
+    return ext in TEXT_BEARING_EXTS
+
+
 def max_attempts() -> int:
     """Configured retry bound (``INGEST_MAX_ATTEMPTS``, default 1, minimum 1)."""
     import os
@@ -157,6 +166,13 @@ def attempt_count(prior: Mapping[str, Any]) -> int:
 # .kmz/.kml are DELIBERATELY ABSENT -- see the reversal note above and the
 # ``_GEOSPATIAL_EXTS`` guard in ``classify``. They used to sit here on the
 # strength of "produces chunks"; that was the wrong test.
+#: THE SINGLE DECLARATION OF WHAT IS INGESTIBLE. The RAG is text-only by
+#: design (docs/RAG_GAPS_REVIEW_2026-09-12.md section E: CAD, images,
+#: Google Earth, video, GIS internals and fonts are never ingested). Every
+#: ingest entry point -- Drive ingest, the Drive walker and import, CDE,
+#: project document upload, archive members, the indexer -- derives from
+#: this set; no other list may decide ingestibility. See
+#: ``is_ingestible`` and docs/INGEST_EXCLUSION_RULE.md.
 TEXT_BEARING_EXTS = frozenset(
     {
         ".pdf", ".txt", ".md", ".csv", ".json", ".xml",

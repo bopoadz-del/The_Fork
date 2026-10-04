@@ -2031,6 +2031,39 @@ def delete_document(doc_id: str) -> Optional[Dict[str, Any]]:
     return doc
 
 
+def purge_document(doc_id: str) -> Dict[str, Any]:
+    """Remove a document completely: its stored file, its row and chunks, and
+    its index entry. Returns ``{deleted, file_removed, index_pruned}``.
+
+    ``delete_document`` removes only the row and chunks; every caller that
+    stopped there left the file on the shared data volume and the entry in
+    the index. One function, so the delete route and the admin purge cannot
+    drift apart.
+    """
+    doc = get_document(doc_id)
+    if not doc:
+        return {"deleted": False, "file_removed": False, "index_pruned": False}
+    fp = doc.get("file_path")
+    file_removed = False
+    if fp and os.path.exists(fp):
+        try:
+            os.remove(fp)
+            file_removed = True
+        except OSError:
+            logger.warning("could not remove stored file for %s", doc_id, exc_info=True)
+    delete_document(doc_id)
+    index_pruned = False
+    project_id = doc.get("project_id")
+    if project_id:
+        try:
+            from app.core import doc_index as _doc_index
+
+            index_pruned = _doc_index.drop_index_entry(project_id, doc_id)
+        except Exception:  # noqa: BLE001 - never block a delete on index cleanup
+            logger.warning("index entry cleanup failed for %s", doc_id, exc_info=True)
+    return {"deleted": True, "file_removed": file_removed, "index_pruned": index_pruned}
+
+
 def purge_documents_older_than(days: int) -> List[Dict[str, Any]]:
     """Delete document rows older than `days`. Returns the purged rows
     (Roadmap V2 · Epic 6 — data retention)."""

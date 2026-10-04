@@ -730,7 +730,12 @@ async def drive_import(project_id: str, req: DriveImportRequest,
     # add_document) — applied after the name is known, before writing.
     _, ext = os.path.splitext(original_name.lower())
     if ext not in ALLOWED_DOC_EXTENSIONS:
-        raise HTTPException(400, f"File type '{ext}' not allowed")
+        raise HTTPException(
+            415,
+            f"File type '{ext}' is not ingestible: the knowledge base takes text "
+            f"formats only (docs/INGEST_EXCLUSION_RULE.md). Drawings, photos, "
+            f"video and CAD can still be attached to a chat for the session.",
+        )
 
     # Reuse the upload storage scheme: UUID-prefixed stored filename, written
     # via file_crypto.write_document (encrypted at rest iff DATA_ENCRYPTION_KEY
