@@ -58,7 +58,7 @@ jobs:
               | xargs -r sudo rm -f
             sudo apt-get update -qq
           fi
-          sudo apt-get install -y -qq tesseract-ocr poppler-utils
+          sudo apt-get install -y -qq tesseract-ocr poppler-utils antiword catdoc
 
       - name: Install Python deps
         run: |
@@ -223,7 +223,7 @@ jobs:
               | xargs -r sudo rm -f
             sudo apt-get update -qq
           fi
-          sudo apt-get install -y -qq tesseract-ocr poppler-utils
+          sudo apt-get install -y -qq tesseract-ocr poppler-utils antiword catdoc
 
       - name: Install Python deps
         run: |

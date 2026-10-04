@@ -4,7 +4,7 @@ Roadmap V2 · Stream D — Part 2 (redline detection wiring).
 
 POST /v1/projects/{project_id}/documents/{document_id}/redlines
 
-Renders each page of a PDF (or the image itself) and runs the colour-channel
+Renders each page of a PDF and runs the colour-channel
 redline detector (`app.core.redline.detect_redlines`) on it. Returns a
 per-page breakdown and an aggregated has_markup verdict.
 
@@ -28,11 +28,6 @@ router = APIRouter()
 # PDF page cap — bound the work for very large documents.
 _MAX_PAGES = 20
 
-# Extensions treated as images (not PDF).
-_IMAGE_EXTS = {
-    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
-}
-
 
 @router.post("/v1/projects/{project_id}/documents/{document_id}/redlines")
 async def detect_document_redlines(
@@ -42,8 +37,10 @@ async def detect_document_redlines(
 ) -> Dict[str, Any]:
     """Detect coloured markup / redlines on a project document.
 
-    Supports PDF (each page rendered to a raster image) and common image
-    formats. Returns a per-page breakdown and an aggregate verdict.
+    Runs on a PDF drawing (each page rendered to a raster image). Images are
+    never project documents (docs/INGEST_EXCLUSION_RULE.md); a photo is
+    attached in chat as question context instead. Returns a per-page
+    breakdown and an aggregate verdict.
 
     Response shape::
 
@@ -85,17 +82,12 @@ async def detect_document_redlines(
     _, ext = os.path.splitext(original_name.lower())
 
     # ── dispatch by extension ────────────────────────────────────────────────
-    if ext == ".pdf":
-        page_results = _analyse_pdf(file_path)
-    elif ext in _IMAGE_EXTS:
-        page_results = _analyse_image(file_path)
-    else:
+    if ext != ".pdf":
         raise HTTPException(
             400,
-            "Redline detection needs a PDF or image document "
-            f"(got '{ext or 'unknown'}'); "
-            "supported: .pdf, .jpg, .jpeg, .png, .webp, .gif, .bmp, .tif, .tiff",
+            f"Redline detection needs a PDF drawing (got '{ext or 'unknown'}').",
         )
+    page_results = _analyse_pdf(file_path)
 
     # ── aggregate across pages ───────────────────────────────────────────────
     has_markup_any = any(p["has_markup"] for p in page_results)
@@ -187,31 +179,3 @@ def _analyse_pdf(file_path: str) -> List[Dict]:
             doc.close()
 
     return results
-
-
-def _analyse_image(file_path: str) -> List[Dict]:
-    """Open a single image file and run detect_redlines on it."""
-    try:
-        from PIL import Image
-    except ImportError as exc:
-        raise HTTPException(
-            500, f"Image processing unavailable — Pillow is not installed: {exc}"
-        ) from exc
-
-    with file_crypto.open_plaintext(file_path) as readable_path:
-        try:
-            pil_img = Image.open(readable_path)
-            # Force-load before the context manager closes the decrypted tmp file.
-            pil_img.load()
-        except Exception as exc:
-            raise HTTPException(500, f"Failed to open image: {exc}") from exc
-
-    redline_result = detect_redlines(pil_img)
-    return [
-        {
-            "page": 1,
-            "has_markup": redline_result["has_markup"],
-            "coverage": redline_result["coverage"],
-            "regions": redline_result["regions"],
-        }
-    ]
