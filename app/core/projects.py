@@ -1423,6 +1423,74 @@ def update_document_metadata(doc_id: str, metadata: Dict[str, Any]) -> Optional[
     return _document_as_dict(document)
 
 
+def record_ingest_attempt(doc_id: str, key: str) -> int:
+    """Count one indexing attempt on the ledger row; return the new count.
+
+    Stored in ``metadata.ingest_attempts`` as ``{"n": int, "key": str}``. A
+    different ``key`` (new source bytes or a new extractor) restarts the
+    count at 1. Written BEFORE the work, so an attempt that kills the process
+    is still counted.
+    """
+    if not doc_id:
+        return 0
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document is None:
+                return 0
+            current = dict(coerce_document_metadata(document.metadata_))
+            prior = current.get("ingest_attempts")
+            n = 0
+            if isinstance(prior, dict) and prior.get("key") == key:
+                from app.core.ingest_status import attempt_count
+
+                n = attempt_count(prior)
+            n += 1
+            current["ingest_attempts"] = {"n": n, "key": key}
+            document.metadata_ = current
+            session.commit()
+    return n
+
+
+def ingest_attempts(doc: Optional[Dict[str, Any]], key: str) -> int:
+    """Attempts recorded on ``doc`` for ``key`` (0 when none or a stale key)."""
+    from app.core.ingest_status import attempt_count
+
+    meta = (doc or {}).get("metadata") or {}
+    prior = meta.get("ingest_attempts") if isinstance(meta, dict) else None
+    if not isinstance(prior, dict) or prior.get("key") != key:
+        return 0
+    return attempt_count(prior)
+
+
+def record_source_alias(doc_id: str, source_file_id: str, token: Optional[str]) -> None:
+    """Remember that ``source_file_id`` holds the same bytes as ``doc_id``.
+
+    A duplicate-content source file never gets a row of its own, so without
+    this its id is unknown to resume and the file is downloaded, hashed and
+    dropped again on every pass (live 2026-10-03: 50 per pass). Stored in
+    ``metadata.source_aliases`` as ``{source_file_id: token}``; resume treats
+    an alias as done while the source's content token is unchanged.
+    """
+    if not doc_id or not source_file_id:
+        return
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document is None:
+                return
+            current = dict(coerce_document_metadata(document.metadata_))
+            aliases = dict(current.get("source_aliases") or {})
+            if aliases.get(source_file_id) == (token or ""):
+                return
+            aliases[source_file_id] = token or ""
+            current["source_aliases"] = aliases
+            document.metadata_ = current
+            session.commit()
+
+
 def find_document_by_sha(
     project_id: str, content_sha256: str,
 ) -> Optional[Dict[str, Any]]:

@@ -3208,6 +3208,22 @@ def _stamp_index_ledger(
     if ocr_degraded:
         reason = ist.with_ocr_degraded(reason)
     existing = projects_mod.get_document(document_id) or {}
+    # Bounded retries: an open-status outcome (UNVERIFIED / ZERO_CHUNK /
+    # EXTRACT_FAILED) still open after the configured number of attempts on
+    # these bytes with this extractor is closed on the ledger. RECOVERABLE
+    # qualifiers keep their reason -- they name work a richer source or a
+    # new parser can still do -- and are bounded where retries are decided:
+    # resume reads the attempt count for every class alike.
+    attempts = projects_mod.ingest_attempts(
+        existing,
+        ist.attempt_key(existing.get("content_sha256") or existing.get("drive_md5")),
+    )
+    if attempts >= ist.max_attempts() and status in ist.OPEN_STATUSES and ist.is_open(
+        status, reason,
+        extension=ext,
+        extractor_version=existing.get("extractor_version"),
+    ):
+        reason = ist.exhausted_reason(reason, attempts)
     advance = bool(advance_extractor_version) and ist.should_advance_extractor_version(
         ingest_status=status,
         rag_indexed=rag_indexed,
@@ -3228,6 +3244,93 @@ def _stamp_index_ledger(
         logging.getLogger(__name__).warning(
             "stamp_document_index failed for %s", document_id, exc_info=True,
         )
+
+
+def _produce_chunks(
+    file_path: str,
+    filename: str,
+    ext: str,
+    project_id: str,
+    chunker: str,
+    force_ocr: bool,
+) -> tuple[list[str], dict[str, Any]]:
+    """Everything that turns ONE file into chunk texts. Writes nothing.
+
+    Text extraction (with its OCR fallback), chunking, and the structured
+    stages -- BOQ totals, drawing tables, IFC census -- are all here, because
+    each of them parses the same file with the same libraries and any of them
+    can be the one that blows up. Returns ``(chunks, meta)``; ``meta`` is the
+    extraction metadata (quarantine and ledger decisions read it).
+    """
+    text, meta = _extract_with_meta(file_path, filename, force_ocr=force_ocr)
+    chunks = chunk_extracted_document(text, chunker=chunker, filename=filename)
+    # BOQ → RAG: append the computed total + line items so the package
+    # value is answerable from the corpus (the raw text never holds the sum).
+    chunks = chunks + _boq_chunks_for_document(file_path, filename, ext, project_id)
+    # Drawing → RAG: mirrors index_project above. A drawing's schedules
+    # live in its tables, and the raw text layer loses their structure.
+    chunks = chunks + _drawing_chunks_for_document(file_path, filename, ext, project_id)
+    chunks = chunks + _ifc_chunks_for_document(file_path, filename, ext, project_id)
+    return _normalize_cesmm_in_chunks(chunks), meta
+
+
+def _file_budget() -> tuple[int, float]:
+    """``(mem_mb, timeout_s)`` for one file's isolated chunk production.
+
+    Read at call time from ``DOC_INDEX_FILE_MEM_MB`` / ``DOC_INDEX_FILE_TIMEOUT_S``.
+    The memory default is the extraction child's own ceiling
+    (``DOC_EXTRACT_MEM_MB``); the timeout default covers a whole file --
+    text, OCR and the table stages -- not one extraction pass.
+    """
+    from app.core import extract_isolated as _iso
+
+    mem = os.getenv("DOC_INDEX_FILE_MEM_MB", "").strip()
+    wait = os.getenv("DOC_INDEX_FILE_TIMEOUT_S", "").strip()
+    try:
+        mem_mb = int(mem) if mem else _iso._MEM_MB  # noqa: SLF001
+    except ValueError:
+        mem_mb = _iso._MEM_MB  # noqa: SLF001
+    try:
+        timeout_s = float(wait) if wait else 1800.0
+    except ValueError:
+        timeout_s = 1800.0
+    return mem_mb, timeout_s
+
+
+def _produce_chunks_isolated(
+    file_path: str,
+    filename: str,
+    ext: str,
+    project_id: str,
+    chunker: str,
+    force_ocr: bool,
+) -> tuple[list[str], dict[str, Any]]:
+    """``_produce_chunks`` in its own memory-capped, time-limited child.
+
+    Live 2026-10-03: one drawing PDF OOM-killed the whole ingest container
+    on every pass. Text extraction was already isolated; the table stages
+    ran in the parent. Now a file that exhausts memory, runs past its time,
+    or crashes kills only its child: the parent gets ``([], meta)`` with
+    ``extract_failed`` set, the ledger records EXTRACT_FAILED, and the next
+    file proceeds. Files below the isolation threshold (and platforms
+    without fork) run in-process exactly as before.
+    """
+    from app.core.extract_isolated import run_isolated, worth_isolating
+
+    if not worth_isolating(file_path):
+        return _produce_chunks(file_path, filename, ext, project_id, chunker, force_ocr)
+    mem_mb, timeout_s = _file_budget()
+    (chunks, meta), diag = run_isolated(
+        _produce_chunks,
+        (file_path, filename, ext, project_id, chunker, force_ocr),
+        fallback=([], {}),
+        label=f"indexing of {filename}",
+        mem_mb=mem_mb,
+        timeout_s=timeout_s,
+    )
+    if diag:
+        return [], {**(meta or {}), **diag}
+    return chunks, meta
 
 
 def index_document(
@@ -3266,6 +3369,15 @@ def index_document(
     ext = _ext_of(filename)
     fingerprint = f"{doc.get('uploaded_at', '')}:{doc.get('size', 0)}"
 
+    # Bounded retries: count this attempt on the ledger row BEFORE the work,
+    # so an attempt that kills the process still counts (see ingest_status).
+    from app.core import ingest_status as _ist
+
+    _projects.record_ingest_attempt(
+        document_id,
+        _ist.attempt_key(doc.get("content_sha256") or doc.get("drive_md5")),
+    )
+
     # Slow work (text extraction, OCR, chunking) runs OUTSIDE the lock so it
     # does not serialise all indexing — only the load-modify-write below does.
     entry: dict[str, Any] | None = None
@@ -3280,33 +3392,15 @@ def index_document(
         }
     else:
         file_path = doc.get("file_path") or ""
-        text, meta = _extract_with_meta(
-            file_path, filename, force_ocr=force_ocr
+        chunks, meta = _produce_chunks_isolated(
+            file_path, filename, ext, project_id,
+            _chunker_for_document(filename, chunker), force_ocr,
         )
         quarantined = _quarantine_index_result(
             project_id, document_id, filename, meta,
         )
         if quarantined is not None:
             return quarantined
-        chunks = chunk_extracted_document(
-            text,
-            chunker=_chunker_for_document(filename, chunker),
-            filename=filename,
-        )
-        # BOQ → RAG: append the computed total + line items so the package
-        # value is answerable from the corpus (the raw text never holds the sum).
-        boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
-        if boq_chunks:
-            chunks = chunks + boq_chunks
-        # Drawing → RAG: mirrors index_project above. A drawing's schedules
-        # live in its tables, and the raw text layer loses their structure.
-        drawing_chunks = _drawing_chunks_for_document(file_path, filename, ext, project_id)
-        if drawing_chunks:
-            chunks = chunks + drawing_chunks
-        ifc_chunks = _ifc_chunks_for_document(file_path, filename, ext, project_id)
-        if ifc_chunks:
-            chunks = chunks + ifc_chunks
-        chunks = _normalize_cesmm_in_chunks(chunks)
         if _scanned_pdf_missing_ocr(ext, meta):
             # Cover-page text + VERIFIED-TOTAL GUARD still produce chunks.
             # That must not look like a successful body index.

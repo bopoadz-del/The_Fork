@@ -84,6 +84,69 @@ OPEN_STATUSES = frozenset({UNVERIFIED, ZERO_CHUNK, EXTRACT_FAILED})
 TERMINAL = "terminal"        # nothing left to recover, anywhere
 RECOVERABLE = "recoverable"  # a richer source for this document exists
 
+# BOUNDED RETRIES. Every open outcome -- UNVERIFIED, ZERO_CHUNK,
+# EXTRACT_FAILED, and the RECOVERABLE qualifiers -- is retried only while the
+# document's attempt count is below ``max_attempts()``. Attempts are keyed to
+# (source content, EXTRACTOR_VERSION): the same bytes through the same
+# extractor give the same outcome, so a further retry can only repeat it.
+# Live 2026-10-03 one drawing PDF OOM-killed every ingest pass at the same
+# position and 711 settled-but-open rows were re-touched on every pass.
+# Reaching the bound appends ``attempts_exhausted@<EXTRACTOR_VERSION>`` to
+# the reason; the row is then closed for this extractor. A new
+# EXTRACTOR_VERSION or new source bytes reopen it.
+ATTEMPTS_MARK = "attempts_exhausted@"
+
+
+def max_attempts() -> int:
+    """Configured retry bound (``INGEST_MAX_ATTEMPTS``, default 1, minimum 1)."""
+    import os
+
+    try:
+        return max(1, int(os.getenv("INGEST_MAX_ATTEMPTS", "1")))
+    except ValueError:
+        return 1
+
+
+def attempt_key(source_token: str | None) -> str:
+    """What an attempt count is counted against: these bytes, this extractor."""
+    return f"{source_token or ''}|{EXTRACTOR_VERSION}"
+
+
+def exhausted_reason(reason: str | None, attempts: int) -> str:
+    """``reason`` closed for the current extractor after ``attempts`` tries."""
+    mark = f"{ATTEMPTS_MARK}{EXTRACTOR_VERSION}:{attempts}:{TERMINAL}"
+    return f"{reason}|{mark}" if reason else mark
+
+
+def attempts_exhausted(reason: str | None) -> bool:
+    """True when ``reason`` carries the exhaustion mark for THIS extractor."""
+    return f"{ATTEMPTS_MARK}{EXTRACTOR_VERSION}:" in (reason or "")
+
+
+def recorded_attempts(doc: Mapping[str, Any]) -> int:
+    """Attempts on ``doc``'s ledger row for its current bytes + this extractor.
+
+    Read straight from ``metadata.ingest_attempts`` so resume can bound a row
+    whose last attempt killed the process before any outcome was stamped.
+    """
+    meta = doc.get("metadata") or {}
+    prior = meta.get("ingest_attempts") if isinstance(meta, Mapping) else None
+    if not isinstance(prior, Mapping):
+        return 0
+    key = attempt_key(doc.get("content_sha256") or doc.get("drive_md5"))
+    if prior.get("key") != key:
+        return 0
+    return attempt_count(prior)
+
+
+def attempt_count(prior: Mapping[str, Any]) -> int:
+    """The ``n`` of a stored ``ingest_attempts`` record; 0 if absent or malformed."""
+    n = prior.get("n")
+    if isinstance(n, bool) or not isinstance(n, (int, str)):
+        return 0
+    text = str(n).strip()
+    return int(text) if text.isdigit() else 0
+
 # Formats that can yield text at all. Everything else registers as
 # UNSUPPORTED_TYPE rather than sitting at zero chunks looking like a failure.
 #
@@ -282,6 +345,8 @@ def is_open(
     still open. The same sparse outcome stamped with the current extractor
     is settled.
     """
+    if attempts_exhausted(reason):
+        return False
     if status in OPEN_STATUSES:
         return True
     if docx_stale_extractor_open(
@@ -318,6 +383,10 @@ def resume_is_already_indexed(
     be read, do not count the row as already indexed.
     """
     if chunk_count <= 0:
+        if recorded_attempts(doc) >= max_attempts():
+            # Bounded retries: these bytes have had their tries with this
+            # extractor, including one that died before stamping an outcome.
+            return True
         status = doc.get("ingest_status")
         if not status:
             return False
