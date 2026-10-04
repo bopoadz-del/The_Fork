@@ -27,6 +27,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # A status correction has no meaningful inverse: re-recording an empty
-    # file as indexed is the defect this revision removes.
-    pass
+    # Data-only revision: the schema is unchanged, so stepping back below 0019
+    # needs no work, and re-recording an empty file as indexed would restore
+    # the defect this revision removes. Logged so the step is visible.
+    import logging
+
+    logging.getLogger("alembic.runtime.migration").info(
+        "0019 downgrade: empty-indexed status correction kept (data-only revision)"
+    )
