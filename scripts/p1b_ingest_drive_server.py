@@ -385,6 +385,12 @@ def _file_pipeline_budget() -> tuple[int, float]:
     return mem_mb, timeout_s
 
 
+def _pipeline_isolation_enabled() -> bool:
+    """``P1B_ISOLATE_PIPELINE`` (default off). The run-once deployment turns
+    it on (ingest-run-once.yml); in-process remains the default elsewhere."""
+    return os.getenv("P1B_ISOLATE_PIPELINE", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
 def ingest_file_isolated(
     file_meta: Dict[str, Any],
     project_id: str,
@@ -418,7 +424,7 @@ def ingest_file_isolated(
         out.pop("chunks", None)  # the parent needs the outcome, not the text
         return out_rel, out
 
-    if not extract_isolated.isolation_available():
+    if not (_pipeline_isolation_enabled() and extract_isolated.isolation_available()):
         return _pipeline()
     mem_mb, timeout_s = _file_pipeline_budget()
     (out_rel, out), diag = extract_isolated.run_isolated(

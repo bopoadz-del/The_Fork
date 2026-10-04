@@ -884,6 +884,7 @@ def test_a_file_that_kills_its_child_is_recorded_and_the_run_goes_on(harness, mo
     from app.core import doc_index, gdrive_service
     from app.core import projects as projects_mod
 
+    monkeypatch.setenv("P1B_ISOLATE_PIPELINE", "1")
     victim = harness.files[30]["id"]
     real_download = gdrive_service.download_file_bytes
 
@@ -916,6 +917,7 @@ def test_a_file_that_kills_its_child_is_recorded_and_the_run_goes_on(harness, mo
 def test_pipeline_runs_in_process_where_fork_is_unavailable(harness, monkeypatch):
     from app.core import extract_isolated
 
+    monkeypatch.setenv("P1B_ISOLATE_PIPELINE", "1")
     monkeypatch.setattr(extract_isolated, "isolation_available", lambda: False)
     assert harness.run() == 0
     assert harness.report()["accounting"]["attempted"] == harness.expected_assigned

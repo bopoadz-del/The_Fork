@@ -67,10 +67,12 @@ jobs:
           fi
           # The worker command carries --keep-alive (it held finished
           # containers open for the retired service). A run-once task must
-          # exit when the pass ends: switch it off for this task only.
+          # exit when the pass ends: switch it off for this task only. And
+          # each file's whole pipeline runs in its own memory-guarded child
+          # (P1B_ISOLATE_PIPELINE), so no single file can OOM-kill the run.
           container=$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" \
             --query 'taskDefinition.containerDefinitions[0].name' --output text)
-          overrides=$(printf '{"containerOverrides":[{"name":"%s","environment":[{"name":"P1B_KEEP_ALIVE","value":"0"}]}]}' "$container")
+          overrides=$(printf '{"containerOverrides":[{"name":"%s","environment":[{"name":"P1B_KEEP_ALIVE","value":"0"},{"name":"P1B_ISOLATE_PIPELINE","value":"1"}]}]}' "$container")
           arn=$(aws ecs run-task --cluster "$ECS_CLUSTER" \
             --task-definition "$TASK_FAMILY" \
             --launch-type FARGATE --count 1 \
