@@ -32,9 +32,6 @@ class Extractor:
     # An Office Open XML package: sniffed for a non-zip payload first
     # (doc_index._quarantine_meta) before the reader opens it.
     office_package: bool = False
-    # The system package (in the Dockerfile) that provides the converter this
-    # extractor shells out to, if any. Guarded by a test against the image.
-    system_package: Optional[str] = None
 
 
 _REGISTRY: Dict[str, Extractor] = {}
@@ -80,7 +77,7 @@ def _pdf(file_path: str, filename: str, force_ocr: bool):
     return doc_index._extract_pdf(file_path, filename, force_ocr=force_ocr)
 
 
-@reads(".doc", system_package="antiword")
+@reads(".doc")
 def _word_97(file_path: str, filename: str, force_ocr: bool):
     from app.core import doc_index
 
@@ -164,25 +161,47 @@ def _pptx(file_path: str, filename: str, force_ocr: bool):
     return doc_index._extract_pptx_with_meta(file_path)
 
 
-@reads(".ppt", system_package="catdoc")
+# PowerPoint 97-2003 record types ([MS-PPT] 2.13.24) that hold slide text.
+_PPT_TEXT_CHARS_ATOM = 0x0FA0  # UTF-16LE
+_PPT_TEXT_BYTES_ATOM = 0x0FA8  # 8-bit (low bytes of UTF-16)
+_PPT_MAIN_MASTER = 0x03F8      # slide master: placeholder boilerplate only
+
+
+@reads(".ppt")
 def _powerpoint_97(file_path: str, filename: str, force_ocr: bool):
-    # Legacy binary PowerPoint: catppt (shipped with the catdoc package the
-    # image already carries for .doc) prints the slide text.
-    import shutil
-    import subprocess
+    # Legacy binary PowerPoint, read in pure Python: walk the record tree of
+    # the "PowerPoint Document" stream and keep the text atoms (placeholders
+    # and text boxes alike). catppt was tried first: it prints only master
+    # theme names for files saved by current PowerPoint.
+    import struct
+
+    import olefile
 
     from app.core import file_crypto
 
-    catppt = shutil.which("catppt")
-    if not catppt:
-        return "", {"extract_failed": "ConverterMissing",
-                    "extract_failed_detail": "catppt is not on PATH (catdoc package)"}
     with file_crypto.open_plaintext(file_path) as readable_path:
-        out = subprocess.run(
-            [catppt, "-d", "utf-8", readable_path],
-            capture_output=True, timeout=120, check=True,
-        )
-    return out.stdout.decode("utf-8", errors="replace"), {}
+        ole = olefile.OleFileIO(readable_path)
+        try:
+            stream = ole.openstream("PowerPoint Document").read()
+        finally:
+            ole.close()
+
+    texts = []
+    pos, end = 0, len(stream)
+    while pos + 8 <= end:
+        ver_inst, rec_type, rec_len = struct.unpack_from("<HHI", stream, pos)
+        body = pos + 8
+        if (ver_inst & 0x000F) == 0x000F:  # container
+            # descend, except into a master's "Click to edit ..." prompts
+            pos = body + rec_len if rec_type == _PPT_MAIN_MASTER else body
+            continue
+        if rec_type == _PPT_TEXT_CHARS_ATOM:
+            texts.append(stream[body:body + rec_len].decode("utf-16-le", errors="replace"))
+        elif rec_type == _PPT_TEXT_BYTES_ATOM:
+            texts.append(stream[body:body + rec_len].decode("latin-1", errors="replace"))
+        pos = body + rec_len
+    lines = (t.replace("\r", "\n").strip() for t in texts)
+    return "\n".join(t for t in lines if t), {}
 
 
 @reads(".rtf")
