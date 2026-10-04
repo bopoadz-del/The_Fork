@@ -623,6 +623,79 @@ def test_preview_rag_backfill_stub_resolves_drive_by_filename(
     assert refreshed["size"] == len(pdf)
 
 
+def _stub_and_twins(store, tmp_path, name, twin_ids):
+    """A cited rag_backfill stub (no Drive id) plus P1B rows of the same name."""
+    from app.core import users
+
+    users.ensure_user_exists("twin-owner")
+    stub_proj = store.create_project(name="Stub corpus", user_id="twin-owner")["id"]
+    twin_proj = store.create_project(name="Drive corpus", user_id="twin-owner")["id"]
+    stub = store.add_document(
+        project_id=stub_proj, original_name=name,
+        file_path="G:\My Drive\\" + name, size=0,
+        metadata={"source": "rag_backfill_client_clean_all", "drive_file_id": None},
+    )
+    for fid in twin_ids:
+        store.add_document(
+            project_id=twin_proj, original_name=name,
+            file_path=str(tmp_path / f"gone-{fid}.pdf"), size=0,
+            metadata={"source": "p1b_server_drive_reingestion", "drive_file_id": fid},
+        )
+    return stub
+
+
+def test_cited_stub_opens_from_its_ledger_twins_drive_id(client, monkeypatch, tmp_path):
+    """Live 2026-10-04: a chat cited a rag_backfill stub, whose row has no
+    Drive id, and the Drive name search found nothing -- 404. The same
+    original was ingested from Drive into another row: its id is the source."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    pdf = b"%PDF-1.4 conditions of contract"
+    stub = _stub_and_twins(store, tmp_path, "Vol 1 - Conditions of Contract.pdf", ["drive-twin-1"])
+    searched: list[str] = []
+    monkeypatch.setattr(
+        "app.core.gdrive_service.find_file_id_by_exact_name",
+        lambda name: searched.append(name) or (None, "not found"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (pdf, None) if fid == "drive-twin-1" else (None, "wrong id"),
+    )
+
+    path, status = store.materialize_document_file(store.get_document(stub["id"]))
+
+    assert status == "ok", status
+    assert open(path, "rb").read() == pdf
+    assert searched == []  # the ledger answered; no Drive-wide name search
+    meta = store.get_document(stub["id"])["metadata"]
+    assert meta["drive_file_id"] == "drive-twin-1"
+    assert meta["drive_resolved_from"] == "ledger_twin"
+
+
+def test_ambiguous_ledger_twins_are_not_guessed(client, monkeypatch, tmp_path):
+    """Two different originals share the name: no guess from the ledger."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    stub = _stub_and_twins(store, tmp_path, "Drawing register.pdf", ["drive-a", "drive-b"])
+    monkeypatch.setattr(
+        "app.core.gdrive_service.find_file_id_by_exact_name",
+        lambda name: (None, f"no Drive file named {name}"),
+    )
+    downloads: list[str] = []
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: downloads.append(fid) or (b"%PDF-1.4", None),
+    )
+
+    path, status = store.materialize_document_file(store.get_document(stub["id"]))
+
+    assert path is None and "no Google Drive file id" in status
+    assert downloads == []
+    assert not (store.get_document(stub["id"])["metadata"] or {}).get("drive_file_id")
+
+
 def test_preview_rag_backfill_stub_unresolved_clear_404(
     client, monkeypatch, tmp_path,
 ):
