@@ -752,3 +752,69 @@ def test_stale_extractor_open_without_retry_marks_run_incomplete(
     assert summaries[-1]["complete"] is False
     assert summaries[-1]["accounting"]["stale_extractor_open"] == 2
     assert summaries[-1]["accounting"]["retried"] == 0
+
+
+# ── duplicate-content files are recorded, not re-downloaded ───────────────
+
+
+def test_second_resume_makes_zero_downloads_for_known_duplicates(harness, monkeypatch):
+    """A source file whose bytes match an existing row was downloaded, hashed
+    and dropped on every pass, because nothing recorded its id. The first run
+    records it against the canonical row; the second run never downloads it."""
+    import hashlib
+
+    from app.core import gdrive_service
+    from app.core import projects as projects_mod
+
+    dup_bytes = b"identical content " * 16
+    dup_sha = hashlib.sha256(dup_bytes).hexdigest()
+    canonical = harness.docs[0]  # already indexed, 5 chunks
+    dup_fids = {f["id"] for f in harness.files[30:34]}
+    for f in harness.files[30:34]:
+        f["md5Checksum"] = "same-md5"
+    downloads: Dict[str, int] = {}
+
+    def _download(fid):
+        downloads[fid] = downloads.get(fid, 0) + 1
+        return (dup_bytes if fid in dup_fids else f"unique {fid}".encode() * 16), None
+
+    def _find_by_sha(pid, sha):
+        return canonical if sha == dup_sha else None
+
+    def _record_alias(doc_id, source_file_id, token):
+        assert doc_id == canonical["id"]
+        canonical["metadata"].setdefault("source_aliases", {})[source_file_id] = token or ""
+
+    monkeypatch.setattr(gdrive_service, "download_file_bytes", _download)
+    monkeypatch.setattr(projects_mod, "find_document_by_sha", _find_by_sha)
+    monkeypatch.setattr(projects_mod, "record_source_alias", _record_alias)
+
+    harness.run()
+    first = {fid: downloads.get(fid, 0) for fid in dup_fids}
+    assert all(n == 1 for n in first.values()), first
+    assert set(canonical["metadata"]["source_aliases"]) == dup_fids
+
+    downloads.clear()
+    harness.run()
+    assert {fid: downloads.get(fid, 0) for fid in dup_fids} == dict.fromkeys(dup_fids, 0)
+    acc = harness.report()["accounting"]
+    assert acc["already_indexed"] >= harness.preindexed_count + len(dup_fids)
+
+
+def test_duplicate_whose_source_changed_is_downloaded_again(harness, monkeypatch):
+    """The alias holds only while the source's content token is unchanged."""
+    from app.core import gdrive_service
+
+    canonical = harness.docs[0]
+    fid = harness.files[31]["id"]
+    canonical["metadata"]["source_aliases"] = {fid: "old-md5"}
+    harness.files[31]["md5Checksum"] = "new-md5"
+    downloads: Dict[str, int] = {}
+
+    def _download(f):
+        downloads[f] = downloads.get(f, 0) + 1
+        return f"unique {f}".encode() * 16, None
+
+    monkeypatch.setattr(gdrive_service, "download_file_bytes", _download)
+    harness.run()
+    assert downloads.get(fid) == 1
