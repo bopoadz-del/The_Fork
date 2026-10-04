@@ -22,7 +22,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.dependencies import require_user
-from app.core import audit, doc_index, drive_auth, file_crypto, jwt_auth, projects as store
+from app.core import audit, doc_index, drive_auth, file_crypto, jwt_auth, privileges, projects as store
 from app.routers import projects as projects_router
 from app.routers.projects import ALLOWED_DOC_EXTENSIONS
 
@@ -376,6 +376,7 @@ async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
     proj = store.get_project(project_id, user_id=auth["user_id"])
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
+    privileges.raise_unless_may_add_to_project_rag(auth.get("role"))
     # Validate the connection now so a disconnected Drive fails fast (409)
     # instead of silently no-op'ing in the background.
     try:
@@ -681,6 +682,7 @@ async def drive_import(project_id: str, req: DriveImportRequest,
     proj = store.get_project(project_id, user_id=auth["user_id"])
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
+    privileges.raise_unless_may_add_to_project_rag(auth.get("role"))
 
     # Same 409 handling as the /v1/drive/files route (Task 3).
     try:

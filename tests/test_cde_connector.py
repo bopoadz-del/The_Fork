@@ -316,6 +316,7 @@ def test_connectors_mode_oauth_when_enabled_and_flagged(client, monkeypatch):
     assert conn["connected"] is True
 
 
+@pytest.mark.usefixtures("dev_key_is_admin")
 def test_sync_and_post_fail_closed_when_not_configured(client, monkeypatch):
     monkeypatch.delenv("CDE_ADAPTER", raising=False)
     monkeypatch.delenv("ACONEX_ENABLED", raising=False)
@@ -341,6 +342,7 @@ def test_sync_and_post_fail_closed_when_not_configured(client, monkeypatch):
     assert post.status_code == 409
 
 
+@pytest.mark.usefixtures("dev_key_is_admin")
 def test_sync_fake_document_and_post_rfi_via_http(client, fake_cde, monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("INDEX_ON_UPLOAD", "false")

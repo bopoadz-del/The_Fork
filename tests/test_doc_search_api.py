@@ -178,6 +178,7 @@ def test_search_reports_skipped(client):
 _LEGACY_H = {"Authorization": "Bearer cb_dev_key"}
 
 
+@pytest.mark.usefixtures("dev_key_is_admin")
 def test_upload_eager_indexes(tmp_path, monkeypatch):
     """With INDEX_ON_UPLOAD unset (defaults to true), uploading a doc builds the index."""
     import os
