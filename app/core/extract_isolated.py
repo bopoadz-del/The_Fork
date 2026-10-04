@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,32 @@ _TIMEOUT_S = float(os.getenv("DOC_EXTRACT_TIMEOUT_S", "600"))
 _ENABLED = os.getenv("DOC_EXTRACT_ISOLATE", "1").strip().lower() not in {
     "0", "false", "no", "off",
 }
+
+# CONTAINER GUARD. ``RLIMIT_AS`` bounds the child's NEW address space, not
+# its resident memory: a forked child that writes to pages it shares with
+# the parent (CPython touches refcounts everywhere) turns them into private
+# copies, so the child can grow by roughly the parent's whole footprint on
+# top of its own budget. Live 2026-10-04 that took the 4 GB ingest container
+# to an OOM kill with every child inside its limit. While a child runs, the
+# parent watches the container's non-reclaimable memory and stops the child
+# once it passes this fraction of the limit -- the file fails, the container
+# lives. Read at call time; 0 disables the guard.
+def _guard_fraction() -> float:
+    try:
+        return float(os.getenv("DOC_ISOLATE_MEM_GUARD_FRACTION", "0.85"))
+    except ValueError:
+        return 0.85
+
+
+_GUARD_POLL_S = 0.5
+
+
+def _memory_pressure() -> float | None:
+    """Container memory pressure (see ``ingest_lifecycle.memory_pressure``)."""
+    from app.core.ingest_lifecycle import memory_pressure
+
+    return memory_pressure()
+
 
 # Below this, extract in-process. The measured blow-up was a 4.4 MB PDF; a
 # document smaller than this cannot plausibly reach the 1.5 GB child ceiling,
@@ -284,11 +311,24 @@ def run_isolated(
     child_conn.close()  # only the child writes; else the parent never sees EOF
 
     status, payload = "crash", None
+    guard = _guard_fraction()
+    pressure_seen: float | None = None
     try:
-        if parent_conn.poll(wait_s):
-            status, payload = parent_conn.recv()
-        else:
-            status = "timeout"
+        deadline = time.monotonic() + wait_s
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                status = "timeout"
+                break
+            if parent_conn.poll(min(_GUARD_POLL_S, remaining)):
+                status, payload = parent_conn.recv()
+                break
+            if guard > 0:
+                pressure_seen = _memory_pressure()
+                if pressure_seen is not None and pressure_seen >= guard:
+                    proc.kill()
+                    status = "memory_guard"
+                    break
     except EOFError:
         # Child died without sending -- the kernel OOM killer reaching the
         # child instead of RLIMIT_AS raising inside it.
@@ -306,6 +346,10 @@ def run_isolated(
     reason = {
         "memory": f"{label} exceeded the {budget_mb} MB child limit",
         "timeout": f"{label} exceeded {wait_s:.0f}s",
+        "memory_guard": (
+            f"{label} stopped by the container memory guard at "
+            f"{(pressure_seen or 0) * 100:.0f}% of the container's memory"
+        ),
         "crash": f"{label} child died (exitcode={proc.exitcode})",
     }.get(status, f"{label} failed: {payload}")
 
