@@ -160,6 +160,34 @@ async def test_walk_drive_folder_into_project_recurses(isolated_data_dir, monkey
 
 
 @pytest.mark.asyncio
+async def test_include_extensions_narrows_but_never_widens_the_text_rule(isolated_data_dir, monkeypatch):
+    """A caller-supplied include_extensions used to REPLACE the allow-list, so
+    a request could pull drawings or photos into a project. It now narrows the
+    one text-only declaration and can never widen it."""
+    from app.routers import drive as drive_router
+    from app.core import projects as projects_mod
+
+    tree = _drive_tree_factory()
+    tree["sub2"].append({"id": "f3", "name": "site_plan.dwg", "mimeType": "image/vnd.dwg"})
+    files = {**_drive_files_factory(), "f3": ("image/vnd.dwg", b"dwg-bytes")}
+    monkeypatch.setattr(drive_router.httpx, "AsyncClient", lambda *a, **kw: _FakeDriveClient(tree, files))
+    monkeypatch.setattr(drive_router.doc_index, "maybe_eager_index", lambda *a, **kw: None)
+    proj = projects_mod.create_project(name="Narrow Test", user_id="system")
+
+    async def walk(include):
+        return await drive_router._walk_drive_folder_into_project(
+            project_id=proj["id"], user_id="system", access_token="fake-token",
+            folder_id="root", max_files=100, max_depth=4, role="other",
+            include_extensions=include,
+        )
+
+    widened = await walk([".dwg", ".pdf"])
+    assert {i["name"] for i in widened["imported"]} == {"risk_register.pdf"}
+    only_dwg = await walk([".dwg"])
+    assert only_dwg["imported_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_walk_drive_folder_into_project_paginates(isolated_data_dir, monkeypatch):
     from app.routers import drive as drive_router
     from app.core import projects as projects_mod

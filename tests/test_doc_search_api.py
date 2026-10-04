@@ -170,6 +170,20 @@ def test_search_reports_skipped(client):
     body = r.json()
     assert body["skipped_unsupported"] == 0
 
+    # A pre-rule non-text row still in the project is reported as skipped.
+    import os
+
+    from app.core import doc_index, file_crypto, projects as store
+
+    legacy = os.path.join(os.environ.get("DATA_DIR", "."), f"legacy-{_RUN}.dwg")
+    file_crypto.write_document(legacy, b"AutoCAD DWG binary")
+    store.add_document(pid, "legacy.dwg", file_path=legacy, size=18)
+    doc_index.index_project(pid)
+    r = client.get(f"/v1/projects/{pid}/documents/search",
+                   params={"q": "notes project"}, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["skipped_unsupported"] >= 1
+
 
 # ── Task 2 tests ─────────────────────────────────────────────────────────────
 
