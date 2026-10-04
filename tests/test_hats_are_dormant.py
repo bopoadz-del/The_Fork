@@ -33,7 +33,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 MANIFEST_DIR = Path("app/agents/manifests")
 
@@ -92,10 +91,10 @@ def test_the_hats_are_off_by_default():
 def test_enabling_the_hats_requires_every_declared_action_to_exist():
     """The fence.
 
-    Evaluated unconditionally against the manifests, but only ENFORCED as a
-    failure when the flag is on. While the flag is off it reports the gap
-    without failing, so incremental progress is possible; the moment someone
-    sets FORK_HATS_ENABLED they must have closed it.
+    Evaluated unconditionally against the manifests. With the flag on, any
+    undispatchable declared action is a hard failure. With the flag off, the
+    test asserts the dormant state holds: the activation pin is off and the
+    gap matches the register (closed, zero).
     """
     import os
 
@@ -109,12 +108,23 @@ def test_enabling_the_hats_requires_every_declared_action_to_exist():
     flag_on = (os.environ.get("FORK_HATS_ENABLED", "").strip()
                in ("1", "true", "True", "TRUE", "yes"))
     if not flag_on:
-        pytest.skip(
-            "hats are dormant (FORK_HATS_ENABLED unset). "
-            f"{sum(len(v) for v in missing.values())} declared actions are "
-            "currently undispatchable -- see KNOWN_INCOMPLETE.md. This test "
-            "becomes a hard failure the moment the flag is set."
+        # Dormant: assert the dormant state actually holds instead of
+        # skipping past it. The module-level pin agrees with the env, and the
+        # undispatchable set is what KNOWN_INCOMPLETE.md documents -- CLOSED
+        # 2026-08-15, i.e. empty. A gap reopening while dormant fails here
+        # rather than hiding behind a skip until someone flips the flag.
+        from app.agents import activation
+
+        assert activation.HATS_ENABLED is False, (
+            "FORK_HATS_ENABLED reads unset but activation.HATS_ENABLED is on"
         )
+        assert missing == {}, (
+            "hats are dormant (FORK_HATS_ENABLED unset), and KNOWN_INCOMPLETE.md "
+            "documents the declared-action gap as CLOSED (zero), but these hat "
+            "actions are undispatchable:\n"
+            + "\n".join(f"  {m}: {', '.join(a)}" for m, a in sorted(missing.items()))
+        )
+        return
 
     assert not missing, (
         "FORK_HATS_ENABLED is on, but these hats declare actions that no "

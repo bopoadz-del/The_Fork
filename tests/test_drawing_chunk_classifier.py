@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+import app.core.drawing_chunk_classifier as dcc
 from app.core.drawing_chunk_classifier import (
-    TAGGING_ENABLED,
     _looks_like_dimension_table,
     classify_chunk,
     filter_cost_grounding_chunks,
@@ -96,31 +96,50 @@ class TestCostTableNotTagged:
         assert _looks_like_dimension_table(PAYMENT_TABLE) is False
 
 
+@pytest.fixture
+def tagging_on(monkeypatch):
+    """Force the DRAWING_TABLE_CHUNK_TAGGING flag ON for one test.
+
+    The flag is read from the environment at import, but every function
+    reads the module attribute at call time, so patching it here exercises
+    the enabled branch in every run regardless of the CI environment.
+    """
+    monkeypatch.setattr(dcc, "TAGGING_ENABLED", True)
+
+
+@pytest.fixture
+def tagging_off(monkeypatch):
+    """Force the DRAWING_TABLE_CHUNK_TAGGING flag OFF for one test."""
+    monkeypatch.setattr(dcc, "TAGGING_ENABLED", False)
+
+
 class TestClassifierOutput:
     """classify_chunk returns correct structure."""
 
-    def test_dimension_table_classified_when_enabled(self):
-        if not TAGGING_ENABLED:
-            pytest.skip("TAGGING_ENABLED is False -- detection logic tested via _looks_like_dimension_table")
+    def test_dimension_table_classified_when_enabled(self, tagging_on):
         result = classify_chunk(DIM_TABLE_1)
+        assert result["tagging_enabled"] is True
         assert result["is_drawing_dimension_table"] is True
         assert result["exclude_from_cost_grounding"] is True
         assert result["classifier_score"] >= 3
 
-    def test_cost_table_not_classified(self):
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_cost_table_not_classified(self, monkeypatch, enabled):
+        monkeypatch.setattr(dcc, "TAGGING_ENABLED", enabled)
         result = classify_chunk(COST_TABLE_1)
         assert result["is_drawing_dimension_table"] is False
         assert result["exclude_from_cost_grounding"] is False
 
-    def test_when_tagging_disabled(self):
+    def test_when_tagging_disabled(self, tagging_off):
         """When TAGGING_ENABLED is False, all chunks pass through untagged."""
         result = classify_chunk(DIM_TABLE_1)
-        assert result["tagging_enabled"] is TAGGING_ENABLED
-        if not TAGGING_ENABLED:
-            assert result["is_drawing_dimension_table"] is False
-            assert result["exclude_from_cost_grounding"] is False
+        assert result["tagging_enabled"] is False
+        assert result["is_drawing_dimension_table"] is False
+        assert result["exclude_from_cost_grounding"] is False
 
-    def test_classifier_version_present(self):
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_classifier_version_present(self, monkeypatch, enabled):
+        monkeypatch.setattr(dcc, "TAGGING_ENABLED", enabled)
         result = classify_chunk(DIM_TABLE_1)
         assert result["classifier_version"] == "1.0"
 
@@ -128,31 +147,33 @@ class TestClassifierOutput:
 class TestChunkTagging:
     """tag_chunks_for_ingestion adds _classifier field."""
 
-    def test_tags_dimension_table_chunks(self):
-        chunks = [
+    @staticmethod
+    def _chunks():
+        return [
             {"text": DIM_TABLE_1, "chunk_id": "c1"},
             {"text": COST_TABLE_1, "chunk_id": "c2"},
         ]
-        tagged = tag_chunks_for_ingestion(chunks)
-        if TAGGING_ENABLED:
-            assert "_classifier" in tagged[0]
-            assert "_classifier" in tagged[1]
-            assert tagged[0]["_classifier"]["exclude_from_cost_grounding"] is True
-            assert tagged[1]["_classifier"]["exclude_from_cost_grounding"] is False
-        else:
-            # When disabled, _classifier field is NOT added
-            assert "_classifier" not in tagged[0]
-            assert "_classifier" not in tagged[1]
+
+    def test_tags_dimension_table_chunks(self, tagging_on):
+        tagged = tag_chunks_for_ingestion(self._chunks())
+        assert "_classifier" in tagged[0]
+        assert "_classifier" in tagged[1]
+        assert tagged[0]["_classifier"]["exclude_from_cost_grounding"] is True
+        assert tagged[1]["_classifier"]["exclude_from_cost_grounding"] is False
+
+    def test_no_tags_when_disabled(self, tagging_off):
+        tagged = tag_chunks_for_ingestion(self._chunks())
+        # When disabled, _classifier field is NOT added
+        assert "_classifier" not in tagged[0]
+        assert "_classifier" not in tagged[1]
 
 
 class TestCostGroundingFilter:
     """filter_cost_grounding_chunks removes dimension-table chunks."""
 
-    def test_filters_dimension_chunks(self):
-        if not TAGGING_ENABLED:
-            pytest.skip("TAGGING_ENABLED is False")
-
-        chunks = [
+    @staticmethod
+    def _tagged_chunks():
+        return [
             {"text": DIM_TABLE_1, "chunk_id": "c1",
              "_classifier": {"exclude_from_cost_grounding": True}},
             {"text": COST_TABLE_1, "chunk_id": "c2",
@@ -160,13 +181,15 @@ class TestCostGroundingFilter:
             {"text": "Some regular text about concrete pouring", "chunk_id": "c3",
              "_classifier": {"exclude_from_cost_grounding": False}},
         ]
-        filtered = filter_cost_grounding_chunks(chunks)
+
+    def test_filters_dimension_chunks(self, tagging_on):
+        filtered = filter_cost_grounding_chunks(self._tagged_chunks())
         ids = {c["chunk_id"] for c in filtered}
         assert "c1" not in ids, "Dimension table should be filtered out"
         assert "c2" in ids, "Cost table should remain"
         assert "c3" in ids, "Regular text should remain"
 
-    def test_noop_when_disabled(self):
+    def test_noop_when_disabled(self, tagging_off):
         """When TAGGING_ENABLED is False, all chunks pass through."""
         chunks = [
             {"text": DIM_TABLE_1, "chunk_id": "c1"},
@@ -174,6 +197,11 @@ class TestCostGroundingFilter:
         ]
         filtered = filter_cost_grounding_chunks(chunks)
         assert len(filtered) == 2
+
+    def test_noop_when_disabled_even_if_tagged(self, tagging_off):
+        """Disabled means no-op: even a chunk tagged for exclusion passes."""
+        filtered = filter_cost_grounding_chunks(self._tagged_chunks())
+        assert {c["chunk_id"] for c in filtered} == {"c1", "c2", "c3"}
 
 
 class TestRegressionCostFabrication:
@@ -183,17 +211,18 @@ class TestRegressionCostFabrication:
     ground a cost claim of "450 SAR/m3".
     """
 
-    def test_incident_chunk_detected(self):
-        """The chunk that caused the 450 SAR/m3 fabrication must be detected."""
-        incident_chunk = """
+    INCIDENT_CHUNK = """
         | Item | Description | Size | Qty | Unit |
         | 1 | Concrete | 250 kg/cm2 | 450 | m3 |
         | 2 | Rebar | 16mm | 1200 | kg |
         """
-        # Test the core detection logic (works regardless of env flag)
-        assert _looks_like_dimension_table(incident_chunk) is True
-        # When tagging is enabled, classify_chunk should also tag it
-        result = classify_chunk(incident_chunk)
-        if TAGGING_ENABLED:
-            assert result["is_drawing_dimension_table"] is True
-            assert result["exclude_from_cost_grounding"] is True
+
+    def test_incident_chunk_detected(self):
+        """The chunk that caused the 450 SAR/m3 fabrication must be detected."""
+        # Core detection logic works regardless of env flag
+        assert _looks_like_dimension_table(self.INCIDENT_CHUNK) is True
+
+    def test_incident_chunk_tagged_when_enabled(self, tagging_on):
+        result = classify_chunk(self.INCIDENT_CHUNK)
+        assert result["is_drawing_dimension_table"] is True
+        assert result["exclude_from_cost_grounding"] is True

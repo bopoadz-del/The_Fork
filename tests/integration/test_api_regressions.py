@@ -1,26 +1,11 @@
 """Regression tests for recently hardened API behavior."""
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 
 
 client = TestClient(app, headers={"Authorization": "Bearer cb_dev_key"})
-
-
-@pytest.mark.skip(reason="SecurityContainer API changed - auth method no longer exists")
-@pytest.mark.asyncio
-async def test_dev_key_is_rejected_in_production(monkeypatch):
-    """Development auth bypass must never work in production mode."""
-    pass
-
-
-@pytest.mark.skip(reason="SecurityContainer API changed - auth method no longer exists")
-@pytest.mark.asyncio
-async def test_dev_key_is_allowed_only_in_development(monkeypatch):
-    """Development auth shortcut should stay available for local development."""
-    pass
 
 
 def test_v1_block_detail_route_uses_block_info_handler():

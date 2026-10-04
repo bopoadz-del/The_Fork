@@ -17,9 +17,15 @@ Corpus tests honor ``RAG_EMBEDDING_MODEL``. CI pins ``fake`` so a fresh
 runner never downloads ``minishlab/potion-base-8M`` from HuggingFace
 (test.yml; run 33207362472 died on nine Hub 429 ERRORs after this
 module deleted that env). BM25 / signature tests are valid on the fake
-hash embedder. Hybrid-beats-semantic ranking tests skip when the
-configured model is ``fake`` — the hash embedder ranks ~randomly and
-cannot distinguish a manhole-spacing chunk from MEP rough-in.
+hash embedder. Hybrid-beats-semantic ranking tests need real semantic
+similarity -- the hash embedder ranks ~randomly and cannot distinguish a
+manhole-spacing chunk from MEP rough-in -- so they build the real
+model2vec embedder (``minishlab/potion-base-8M``) themselves, from the
+LOCAL Hugging Face cache only (Hub forced offline; nothing is downloaded
+inside a test). CI's production-like job pre-fetches that model into a
+cached HF_HOME and sets ``RAG_RANKING_MODEL_REQUIRED=1``, so there an
+unloadable model is a failure, not a skip. Elsewhere they skip only when
+the model is genuinely unavailable.
 """
 
 from __future__ import annotations
@@ -39,7 +45,12 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-from app.core.rag.embeddings import get_embedder, reset_embedder_cache  # noqa: E402
+from app.core.rag.embeddings import (  # noqa: E402
+    DEFAULT_MODEL2VEC,
+    Embedder,
+    get_embedder,
+    reset_embedder_cache,
+)
 from app.core.rag.vector_store import (  # noqa: E402
     Chunk,
     VectorStore,
@@ -180,28 +191,13 @@ CORPUS = [
 #   pytest tests/test_bm25_backend_parity.py tests/test_hybrid_retrieval.py::\
 #          test_hybrid_beats_semantic_q5_manhole_spacing  -> FAILS
 #
-# Asking the built embedder what it is removes the question of ordering
-# entirely: there is now one source of truth, consulted once, at the only
-# moment when the answer is knowable.
+# The ranking fixture now sidesteps the question entirely: it constructs the
+# real model itself, at run time, and never consults RAG_EMBEDDING_MODEL.
 
 
-@pytest.fixture
-def store_with_corpus():
-    """Build a VectorStore against a temp SQLite DB seeded with CORPUS.
-
-    Honors ``RAG_EMBEDDING_MODEL`` (CI: ``fake``). Never deletes that env
-    to force a Hub download. Ranking tests that need a real model are
-    skipif-gated separately.
-
-    Returns (store, embedder, db_path). Teardown removes the DB file.
-    """
-    reset_embedder_cache()
-    try:
-        embedder = get_embedder()
-    except Exception as exc:  # noqa: BLE001 — Hub 429 / missing snapshot
-        pytest.skip(
-            f"Embedder unavailable ({type(exc).__name__}: {exc})"
-        )
+def _seeded_store(embedder):
+    """Yield (store, embedder, db_path) for a temp SQLite DB seeded with
+    CORPUS using ``embedder``. Teardown removes the DB file."""
     tmpdir = tempfile.mkdtemp(prefix="hybrid_test_")
     db_path = os.path.join(tmpdir, f"vectors_{uuid.uuid4().hex}.db")
 
@@ -232,20 +228,66 @@ def store_with_corpus():
 
 
 @pytest.fixture
-def ranking_corpus(store_with_corpus):
-    """``store_with_corpus``, but only for a run that built a REAL embedder.
+def store_with_corpus():
+    """Build a VectorStore against a temp SQLite DB seeded with CORPUS.
 
-    Skips otherwise. See the note above ``store_with_corpus`` for why this
-    cannot be a module-level ``skipif``.
+    Honors ``RAG_EMBEDDING_MODEL`` (CI: ``fake``). Never deletes that env
+    to force a Hub download. Ranking tests that need a real model use
+    ``ranking_corpus`` instead.
+
+    Returns (store, embedder, db_path). Teardown removes the DB file.
     """
-    store, embedder, db_path = store_with_corpus
-    backend = getattr(embedder, "backend", None)
-    if backend == "fake":
+    reset_embedder_cache()
+    try:
+        embedder = get_embedder()
+    except Exception as exc:  # noqa: BLE001 — Hub 429 / missing snapshot
         pytest.skip(
-            "hybrid-vs-semantic ranking is baselined against a real embedding "
-            "model; this run built the fake (model2vec) backend"
+            f"Embedder unavailable ({type(exc).__name__}: {exc})"
         )
-    return store, embedder, db_path
+    yield from _seeded_store(embedder)
+
+
+# The real model the ranking assertions are baselined against.
+RANKING_MODEL = DEFAULT_MODEL2VEC
+
+
+@pytest.fixture
+def ranking_corpus(monkeypatch):
+    """``store_with_corpus``, but built on the REAL semantic embedder.
+
+    The model is constructed explicitly rather than via ``get_embedder()``,
+    so the outcome does not depend on ``RAG_EMBEDDING_MODEL`` (CI pins
+    ``fake``) or on which other module set it first -- see the note above.
+    The process-wide embedder cache is not touched.
+
+    The Hub is forced offline for the load, so this never downloads: the
+    model must already be in the local HF cache (CI's production-like job
+    pre-fetches it). If it cannot be loaded the test skips -- unless
+    ``RAG_RANKING_MODEL_REQUIRED=1``, which that job sets so the ranking
+    tests cannot silently stop running there.
+    """
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    try:
+        import huggingface_hub.constants as _hf_constants
+    except ImportError:
+        _hf_constants = None
+    if _hf_constants is not None:
+        # huggingface_hub reads the env once at import; patch the live value.
+        monkeypatch.setattr(_hf_constants, "HF_HUB_OFFLINE", True, raising=False)
+
+    try:
+        embedder = Embedder(model_name=RANKING_MODEL)
+    except Exception as exc:  # noqa: BLE001 — not installed / not cached
+        msg = (
+            f"real embedder {RANKING_MODEL!r} unavailable offline "
+            f"({type(exc).__name__}: {exc})"
+        )
+        if os.getenv("RAG_RANKING_MODEL_REQUIRED", "").strip() == "1":
+            pytest.fail(msg + " -- RAG_RANKING_MODEL_REQUIRED=1, so this "
+                        "run must provide it (see test.yml prefetch step)")
+        pytest.skip(msg)
+    assert embedder.backend != "fake", embedder.backend
+    yield from _seeded_store(embedder)
 
 
 def _ids(chunks):
@@ -322,14 +364,13 @@ def test_hybrid_beats_semantic_q5_manhole_spacing(ranking_corpus, monkeypatch):
     "MANHOLE" + "TYPE" pulls it up even though the natural-language
     query has no "1000m"/"intervals")."""
     store, embedder, _ = ranking_corpus
-    # NOTE (scrub audit 2026-08-12): the project token in this query is PINNED
-    # FIXTURE DATA, not a stray client reference. Under RAG_EMBEDDING_MODEL=fake
-    # the embedding is a deterministic function of the exact string, so editing
-    # the query at all re-rolls the semantic ranking and this assertion fails —
-    # verified by trying both "on the project" and "on the PRJ2 project".
-    # Changing it requires re-baselining the expected chunk, which is retrieval
-    # tuning, not a rename.
-    query = "Manhole spacing requirements for telecom ducts on the PRJ2 project"
+    # Re-baselined 2026-10 against the real model (minishlab/potion-base-8M)
+    # these tests now always build. The query used to carry a project token
+    # ("... on the <X> project"); the 2026-08 identifier scrub renamed that
+    # token, which re-rolled the ranking and broke this test unnoticed while
+    # it skipped everywhere. No project token is used now: the query is the
+    # plain natural-language question, as in the fallback test below.
+    query = "Manhole spacing requirements for telecom ducts"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
     hyb = _run_search(store, embedder, query, k=5, query_text=query)

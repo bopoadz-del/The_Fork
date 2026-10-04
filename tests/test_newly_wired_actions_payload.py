@@ -19,14 +19,32 @@ Several tests below exist only to hold that line.
 """
 from __future__ import annotations
 
-import glob
 from pathlib import Path
 
 import pytest
 
 IFC = Path("tests/fixtures/sample_office.ifc")
 DRAWING = Path("tests/fixtures/drawing_tm_200.pdf")
-PHOTOS = sorted(glob.glob("tests/fixtures/photos/*.jpg"))[:2]
+
+
+@pytest.fixture
+def photos(tmp_path):
+    """Two small synthetic JPEGs, generated per test.
+
+    track_progress hands each photograph's path to the image block and never
+    decodes it itself; detections come from StubImageBlock below. So the
+    pixels are irrelevant -- what matters is that real image files exist at
+    real paths, which a generated JPEG provides on every runner without the
+    gitignored eval photo set.
+    """
+    from PIL import Image
+
+    paths = []
+    for i, colour in enumerate([(128, 128, 128), (90, 110, 130)]):
+        path = tmp_path / f"site_photo_{i}.jpg"
+        Image.new("RGB", (64, 48), colour).save(path, format="JPEG")
+        paths.append(str(path))
+    return paths
 
 
 class StubImageBlock:
@@ -62,8 +80,7 @@ async def test_refuses_without_photographs():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not PHOTOS, reason="no photo fixtures")
-async def test_missing_image_block_is_a_refusal_not_zero_progress():
+async def test_missing_image_block_is_a_refusal_not_zero_progress(photos):
     """The finding this whole file is built around.
 
     No vision block means nothing looked at the photographs. Reporting 0%
@@ -71,7 +88,7 @@ async def test_missing_image_block_is_a_refusal_not_zero_progress():
     is the one that would land in front of a client.
     """
     result = await _container(bim=True).track_progress(
-        {"photos": PHOTOS, "bim_file": str(IFC)}, {})
+        {"photos": photos, "bim_file": str(IFC)}, {})
 
     assert result["status"] == "error", (
         f"expected a refusal, got {result.get('status')} with "
@@ -83,11 +100,10 @@ async def test_missing_image_block_is_a_refusal_not_zero_progress():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not PHOTOS, reason="no photo fixtures")
-async def test_missing_model_is_a_refusal_not_zero_progress():
+async def test_missing_model_is_a_refusal_not_zero_progress(photos):
     """Same rule on the other input: no model, no comparison, no number."""
     result = await _container(image=True).track_progress(
-        {"photos": PHOTOS, "bim_file": ""}, {})
+        {"photos": photos, "bim_file": ""}, {})
 
     assert result["status"] == "error"
     assert "progress_percentage" not in result
@@ -95,8 +111,7 @@ async def test_missing_model_is_a_refusal_not_zero_progress():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not PHOTOS or not IFC.is_file(), reason="fixtures missing")
-async def test_identifies_model_elements_in_the_photographs():
+async def test_identifies_model_elements_in_the_photographs(photos):
     """The happy path, end to end: real IFC parse, real comparison.
 
     `sample_office.ifc` contains walls, so a detected "wall" must match them.
@@ -107,7 +122,7 @@ async def test_identifies_model_elements_in_the_photographs():
     pytest.importorskip("ifcopenshell", reason="IFC parsing unavailable")
 
     result = await _container(image=True, bim=True).track_progress(
-        {"photos": PHOTOS, "bim_file": str(IFC)}, {})
+        {"photos": photos, "bim_file": str(IFC)}, {})
 
     assert result["status"] == "success", result
     assert result["elements_found"] > 0, (
@@ -121,8 +136,7 @@ async def test_identifies_model_elements_in_the_photographs():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not PHOTOS or not IFC.is_file(), reason="fixtures missing")
-async def test_objects_absent_from_the_model_are_reported_as_deviations():
+async def test_objects_absent_from_the_model_are_reported_as_deviations(photos):
     """`_find_deviations` catches seen-but-not-modelled.
 
     The stub reports an excavator, which no office model contains. It must
@@ -131,7 +145,7 @@ async def test_objects_absent_from_the_model_are_reported_as_deviations():
     pytest.importorskip("ifcopenshell", reason="IFC parsing unavailable")
 
     result = await _container(image=True, bim=True).track_progress(
-        {"photos": PHOTOS, "bim_file": str(IFC)}, {})
+        {"photos": photos, "bim_file": str(IFC)}, {})
 
     detected = {d["detected"] for d in result["deviations"]}
     assert "excavator" in detected, result["deviations"]

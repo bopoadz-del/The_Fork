@@ -27,10 +27,25 @@ jobs:
           - profile: virgin
             cerebrum_virgin: "true"
             cerebrum_domain_kits: ""
+            redis_image: ""
           - profile: production-like
             cerebrum_virgin: "false"
             cerebrum_domain_kits: "construction"
+            redis_image: "redis:7-alpine"
     name: test (${{ matrix.profile }})
+    services:
+      # Production-like profile only: an empty image means the service is not
+      # started (virgin). Used ONLY by the "Redis-backed tests" step below,
+      # which is the only step that sets REDIS_URL -- see the note there.
+      redis:
+        image: ${{ matrix.redis_image }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,6 +91,26 @@ jobs:
       - name: Security scan
         run: python scripts/security_scan.py
 
+      - name: Cache real embedder (hybrid ranking tests)
+        # tests/test_hybrid_retrieval.py's four hybrid-vs-semantic ranking
+        # tests need real semantic similarity; the fake hash embedder ranks
+        # ~randomly. They build minishlab/potion-base-8M (model2vec, already
+        # in requirements.txt) from the LOCAL HF cache with the Hub forced
+        # offline, so nothing downloads inside a test. Production-like only.
+        if: matrix.profile == 'production-like'
+        id: hf-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-model2vec-minishlab-potion-base-8M-v1
+
+      - name: Prefetch real embedder (cache miss only)
+        # prefetch_embedder.py retries Hub 429s with long backoff and proves
+        # the model then loads offline -- a failed fetch fails here, loudly,
+        # not as a skip inside the test run.
+        if: matrix.profile == 'production-like' && steps.hf-cache.outputs.cache-hit != 'true'
+        run: python scripts/prefetch_embedder.py minishlab/potion-base-8M
+
       - name: Run tests
         # --cov-fail-under is a regression FLOOR (current coverage ~57%);
         # the global gate fails the job if coverage drops below it or if no
@@ -106,6 +141,10 @@ jobs:
           # (test_scenario_validation timed out this way on the virgin
           # profile of run 28755289990).
           RAG_EMBEDDING_MODEL: fake
+          # Production-like: the real embedder was prefetched above, so the
+          # hybrid ranking tests must run -- an unloadable model FAILS them
+          # instead of skipping. Unset (skip-if-absent) on the virgin profile.
+          RAG_RANKING_MODEL_REQUIRED: ${{ matrix.profile == 'production-like' && '1' || '' }}
 
       - name: No undeclared dead functions
         # Line coverage cannot answer "has this FUNCTION ever run": a module
@@ -139,6 +178,75 @@ jobs:
           CEREBRUM_DOMAIN_KITS: construction
           RAG_EMBEDDING_MODEL: fake
         run: python scripts/mutation_probes.py
+
+      - name: Redis-backed tests
+        # The tests that need a live Redis (session-store roundtrip, /v1/health
+        # redis.connected) run here against the redis service container.
+        #
+        # REDIS_URL is set for THIS step only, never for the main test run:
+        # with it set, the rate limiter, session store and hydration leader
+        # lock all switch to Redis, whose state (rate-limit windows, leases,
+        # sessions) persists across tests where the in-memory backends are
+        # reset per test. Scoping it here keeps every other test's behaviour
+        # exactly what it is on the virgin and postgres jobs.
+        if: matrix.profile == 'production-like'
+        run: >
+          pytest tests/test_session_store.py tests/test_uvicorn_workers.py
+          -v --tb=short --timeout=120 -rs
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/redis-data
+          CEREBRUM_VIRGIN: "false"
+          CEREBRUM_DOMAIN_KITS: construction
+          RAG_EMBEDDING_MODEL: fake
+          REDIS_URL: redis://localhost:6379/0
+
+      - name: Cache eval photographs
+        # tests/test_photo_intelligence_real_images.py runs the committed
+        # safety_world_v2.onnx over real Commons photographs. The photos are
+        # deliberately not committed (licence re-checked at fetch time).
+        if: matrix.profile == 'production-like'
+        id: photo-cache
+        uses: actions/cache@v4
+        with:
+          path: tests/fixtures/photos
+          key: eval-photos-${{ hashFiles('tests/fixtures/photo_eval_manifest.json') }}
+
+      - name: Fetch eval photographs (cache miss only)
+        # The script exits non-zero if ANY manifest entry is unusable (one
+        # has since been deleted from Commons). That is reported as a
+        # warning, not swallowed: the test step below runs with
+        # PHOTO_EVAL_REQUIRED=1, so a photograph the tests actually use
+        # being absent FAILS the job.
+        if: matrix.profile == 'production-like' && steps.photo-cache.outputs.cache-hit != 'true'
+        run: |
+          if ! python scripts/fetch_eval_photos.py; then
+            echo "::warning::fetch_eval_photos.py reported unusable manifest entries (see log)"
+          fi
+
+      - name: Install detector runtime (CPU)
+        # Same pins as the Dockerfile's detector layer. Installed AFTER the
+        # main test run and the Redis step, so torch/ultralytics can change
+        # nothing about them; only the real-image step below uses it.
+        if: matrix.profile == 'production-like'
+        run: |
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu             "torch==2.5.1" "torchvision==0.20.1"             "ultralytics==8.4.75" "onnxruntime==1.27.0"
+          pip uninstall -y opencv-python opencv-python-headless
+          pip install "opencv-python-headless==4.10.0.84"
+
+      - name: Real-image photo tests
+        if: matrix.profile == 'production-like'
+        run: >
+          pytest tests/test_photo_intelligence_real_images.py
+          -v --tb=short --timeout=300 -rs
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/photo-data
+          CEREBRUM_VIRGIN: "false"
+          CEREBRUM_DOMAIN_KITS: construction
+          RAG_EMBEDDING_MODEL: fake
+          PHOTO_EVAL_REQUIRED: "1"
+          YOLO_OFFLINE: "1"
 
       - name: Diff coverage (per-PR gate on lines changed)
         # Runs only on pull_request events. Compares coverage.xml against

@@ -4,10 +4,16 @@ The synthetic tests in test_photo_observations.py pin the contract but cannot
 tell whether the model is right about an image. These run the actual ONNX over
 actual construction photographs.
 
-They SKIP (never fail-open) when the fixtures or the weights are absent, so CI
-needs no network and no 50 MB model. Fetch them with:
+They SKIP (never fail-open) when the photographs or the detector runtime are
+absent, so the main CI test run needs no network and no torch. Fetch the
+photographs with:
 
     python scripts/fetch_eval_photos.py
+
+CI's production-like job runs this file in a dedicated step that fetches the
+photographs (cached), installs the CPU detector runtime the Dockerfile ships,
+and sets ``PHOTO_EVAL_REQUIRED=1`` -- under which every "absent" skip below
+becomes a FAILURE, so these tests cannot quietly stop running there.
 
 Measured behaviour for these specific images is recorded in
 docs/PHOTO_INTELLIGENCE_EVAL.md. Deliberately, the assertions here do NOT pin
@@ -31,30 +37,46 @@ from app.containers.construction.photo_observations import (
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "photos"
 WEIGHTS = Path("data/models/safety_world_v2.onnx")
 
-pytestmark = pytest.mark.skipif(
-    not FIXTURES.is_dir() or not any(FIXTURES.glob("*.jpg")),
-    reason="eval photographs absent — run `python scripts/fetch_eval_photos.py` "
-           "(network); these fixtures are deliberately not committed",
-)
+def _required() -> bool:
+    return os.getenv("PHOTO_EVAL_REQUIRED", "").strip() == "1"
+
+
+def _absent(reason: str):
+    """Skip for a missing prerequisite -- or fail, where CI requires it."""
+    if _required():
+        pytest.fail(f"PHOTO_EVAL_REQUIRED=1 but {reason}")
+    pytest.skip(reason)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _photographs_present():
+    if not FIXTURES.is_dir() or not any(FIXTURES.glob("*.jpg")):
+        _absent("eval photographs absent — run `python scripts/fetch_eval_photos.py` "
+                "(network); these fixtures are deliberately not committed")
 
 
 @pytest.fixture(scope="module")
 def detector():
     if not WEIGHTS.is_file():
-        pytest.skip(f"detector weights not found at {WEIGHTS}")
-    os.environ.setdefault("SAFETY_WORLD_WEIGHTS", str(WEIGHTS))
+        _absent(f"detector weights not found at {WEIGHTS}")
     from app.blocks.safety_world_detector import default_detector
 
-    det = default_detector()
+    # Scoped, not os.environ.setdefault: a module fixture that writes the
+    # process environment leaks SAFETY_WORLD_WEIGHTS into every later test.
+    with pytest.MonkeyPatch.context() as mp:
+        if not os.getenv("SAFETY_WORLD_WEIGHTS"):
+            mp.setenv("SAFETY_WORLD_WEIGHTS", str(WEIGHTS))
+        det = default_detector()
     if det is None:
-        pytest.skip("default_detector() returned None — SAFETY_WORLD_WEIGHTS not resolving")
+        _absent("default_detector() returned None — detector runtime "
+                "(ultralytics/onnxruntime) not installed or weights not resolving")
     return det
 
 
 def _analyse(detector, name):
     path = FIXTURES / name
     if not path.is_file():
-        pytest.skip(f"fixture {name} not downloaded")
+        _absent(f"fixture {name} not downloaded")
     return [{
         "photo": path.name,
         "detections": detector.detect(path, conf_threshold=LOW_CONF_THRESHOLD),

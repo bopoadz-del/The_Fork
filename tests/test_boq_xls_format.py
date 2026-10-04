@@ -7,8 +7,12 @@ back "could not extract line items". Mechanism: `_parse_excel` hardcodes
 dies with "File is not a zip file" while the block's own ui_schema lists
 ".xls" in its accept list. An advertised capability that could never work.
 
-The fixture is generated with xlwt if available; otherwise the test that
-needs a real BIFF file skips LOUDLY rather than silently passing.
+The BIFF fixture is committed at tests/fixtures/legacy_boq.xls. It was
+saved by Microsoft Excel as "Excel 97-2003 Workbook" (FileFormat 56), one
+sheet named "BOQ" holding exactly ROWS below, with document personal
+information removed. A committed file means the real-BIFF test runs on
+every runner without an xlwt dependency; test_fixture_is_real_biff_holding_rows guards
+file against drifting away from ROWS.
 """
 from __future__ import annotations
 
@@ -26,18 +30,24 @@ ROWS = [
 ]
 
 
+FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "legacy_boq.xls"
+
+
 @pytest.fixture
-def xls_boq(tmp_path):
-    xlwt = pytest.importorskip(
-        "xlwt", reason="xlwt needed to author a real BIFF .xls fixture")
-    wb = xlwt.Workbook()
-    ws = wb.add_sheet("BOQ")
-    for r, row in enumerate(ROWS):
-        for c, val in enumerate(row):
-            ws.write(r, c, val)
-    path = str(tmp_path / "legacy_boq.xls")
-    wb.save(path)
-    return path
+def xls_boq():
+    return str(FIXTURE)
+
+
+def test_fixture_is_real_biff_holding_rows():
+    """The committed fixture is an OLE2/BIFF .xls (not a renamed .xlsx)
+    and holds exactly ROWS on a sheet named BOQ."""
+    import xlrd
+    assert FIXTURE.read_bytes()[:8] == bytes.fromhex("d0cf11e0a1b11ae1")
+    book = xlrd.open_workbook(str(FIXTURE))
+    assert book.sheet_names() == ["BOQ"]
+    sh = book.sheet_by_index(0)
+    got = [tuple(sh.row_values(r)) for r in range(sh.nrows)]
+    assert got == [tuple(row) for row in ROWS], got
 
 
 @pytest.mark.asyncio
@@ -71,9 +81,9 @@ async def test_xlsx_still_parses_after_the_engine_change(tmp_path):
 async def test_engine_is_selected_by_extension(monkeypatch, tmp_path):
     """The machinery decision, runnable in CI without a BIFF author.
 
-    The real-file test above needs xlwt and skips where absent; this one pins
+    The real-file test above parses the committed BIFF fixture; this one pins
     the mechanism itself -- .xls must go to xlrd, .xlsx to openpyxl -- so the
-    regression cannot come back invisibly on a runner without xlwt.
+    regression cannot come back invisibly behind a parse that happens to pass.
     """
     import pandas as pd
     seen = {}
@@ -101,8 +111,7 @@ async def test_a_boq_with_a_title_block_above_the_header_still_parses(tmp_path):
     the parser assumed headers at row 0, resolved no columns, and extracted
     ZERO line items from a file pandas read perfectly.
 
-    Reproduced here as .xlsx so the fence runs everywhere (the .xls variant of
-    the same file needs xlwt to author and skips where absent).
+    Reproduced here as .xlsx, authored in-test with openpyxl.
     """
     from openpyxl import Workbook
     wb = Workbook()
