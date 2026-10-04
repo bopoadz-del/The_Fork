@@ -293,3 +293,104 @@ def test_duplicate_content_source_is_recorded_once(monkeypatch, tmp_path):
     projects.record_source_alias(doc["id"], "src-2", "tok")
     meta = projects.get_document(doc["id"])["metadata"]
     assert meta["source_aliases"] == {"src-2": "tok"}
+
+
+# ── uniform bound, per status class ────────────────────────────────────────
+
+_CLASSES = [
+    # (label, status, reason, extension, chunk_count, extractor_version)
+    ("unverified", "UNVERIFIED", None, "a.pdf", 0, None),
+    ("zero_chunk", "ZERO_CHUNK", None, "a.pdf", 0, None),
+    ("extract_failed", "EXTRACT_FAILED", None, "a.pdf", 0, None),
+    ("recoverable_skip", "UNSUPPORTED_TYPE", "dwg:recoverable", "sheet.dwg", 0, None),
+    ("stale_extractor_docx", "TEXT_SPARSE", "single_window:terminal", "spec.docx", 1, "old-extractor"),
+]
+
+
+def _simulate_passes(doc, chunk_count, parsers, passes=10):
+    """Run ``passes`` resume decisions; each one that assigns the file counts
+    an attempt on the ledger row, exactly as index_document does."""
+    from app.core import ingest_status as ist
+
+    processed = 0
+    for _ in range(passes):
+        if ist.resume_is_already_indexed(doc, chunk_count, parseable_exts=parsers):
+            continue
+        processed += 1
+        key = ist.attempt_key(doc.get("content_sha256"))
+        prior = (doc.setdefault("metadata", {}).get("ingest_attempts") or {})
+        n = prior.get("n", 0) if prior.get("key") == key else 0
+        doc["metadata"]["ingest_attempts"] = {"n": n + 1, "key": key}
+    return processed
+
+
+@pytest.mark.parametrize("label,status,reason,name,chunks,extractor", _CLASSES, ids=[c[0] for c in _CLASSES])
+@pytest.mark.parametrize("bound", [1, 3])
+def test_each_class_is_processed_at_most_max_attempts_times(
+    monkeypatch, label, status, reason, name, chunks, extractor, bound,
+):
+    from app.core import ingest_status as ist
+
+    monkeypatch.setenv("INGEST_MAX_ATTEMPTS", str(bound))
+    doc = {"original_name": name, "ingest_status": status, "ingest_status_reason": reason,
+           "extractor_version": extractor, "content_sha256": "bytes-1"}
+    parsers = {".pdf", ".docx", ".dwg"}  # a build that can parse every class here
+    assert not ist.resume_is_already_indexed(doc, chunks, parseable_exts=parsers), "starts as work"
+
+    assert _simulate_passes(doc, chunks, parsers) == bound
+    assert ist.resume_is_already_indexed(doc, chunks, parseable_exts=parsers), "skipped afterwards"
+
+
+@pytest.mark.parametrize("label,status,reason,name,chunks,extractor", _CLASSES, ids=[c[0] for c in _CLASSES])
+def test_each_class_reopens_on_new_bytes_and_on_a_new_extractor(
+    monkeypatch, label, status, reason, name, chunks, extractor,
+):
+    from app.core import ingest_status as ist
+
+    monkeypatch.setenv("INGEST_MAX_ATTEMPTS", "1")
+    parsers = {".pdf", ".docx", ".dwg"}
+    doc = {"original_name": name, "ingest_status": status, "ingest_status_reason": reason,
+           "extractor_version": extractor, "content_sha256": "bytes-1"}
+    _simulate_passes(doc, chunks, parsers)
+    assert ist.resume_is_already_indexed(doc, chunks, parseable_exts=parsers)
+
+    changed = {**doc, "content_sha256": "bytes-2"}
+    assert _simulate_passes(changed, chunks, parsers) == 1, "new source content reopens once"
+
+    monkeypatch.setattr(ist, "EXTRACTOR_VERSION", "next-extractor")
+    assert _simulate_passes(doc, chunks, parsers) == 1, "a new extractor reopens once"
+
+
+@needs_fork
+def test_child_process_does_not_share_parent_db_connection(monkeypatch, tmp_path):
+    """The child that runs _produce_chunks starts with an EMPTY pool (the
+    parent's pooled connections are detached, not closed), can still read the
+    DB on its own connection, and the parent's pool is intact afterwards."""
+    _projects, _doc_index, _pid = _reload(monkeypatch, tmp_path)
+    from sqlalchemy import text
+
+    from app.core.db import get_engine
+    from app.core.extract_isolated import run_isolated
+
+    eng = get_engine()
+    with eng.connect() as conn:  # leave one connection checked in to the pool
+        conn.execute(text("SELECT 1"))
+    parent_pooled = eng.pool.checkedin()
+    assert parent_pooled >= 1
+
+    def _in_child():
+        from app.core.db import get_engine as _ge
+
+        e = _ge()
+        inherited = e.pool.checkedin()
+        with e.connect() as c:
+            projects_seen = c.execute(text("SELECT count(*) FROM projects")).scalar()
+        return inherited, projects_seen
+
+    (inherited, projects_seen), diag = run_isolated(_in_child, (), fallback=(None, None))
+    assert diag == {}
+    assert inherited == 0, "child inherited the parent's pooled connections"
+    assert projects_seen >= 1, "child could not read the DB on its own connection"
+    assert eng.pool.checkedin() == parent_pooled, "parent pool was disturbed"
+    with eng.connect() as conn:
+        assert conn.execute(text("SELECT 1")).scalar() == 1
