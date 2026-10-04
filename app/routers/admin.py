@@ -1438,7 +1438,14 @@ def admin_corpus_bulk_insert(
     from app.core.models import Document, Project, rag_chunk_table_name
     from app.core.rag.vector_store import get_store
 
-    # Resolve + validate the namespace BEFORE any row is written.
+    # Resolve + validate the namespace BEFORE any row is written. A
+    # request-supplied "" would select the RETIRED legacy ``chunks`` table:
+    # refused outright -- a request never chooses the retired namespace.
+    if req.namespace is not None and not req.namespace.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="namespace '' is the retired legacy chunks table; omit it to use the active namespace",
+        )
     try:
         namespace_table = rag_chunk_table_name(
             req.namespace if req.namespace is not None
