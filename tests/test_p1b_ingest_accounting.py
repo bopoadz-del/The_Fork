@@ -818,3 +818,54 @@ def test_duplicate_whose_source_changed_is_downloaded_again(harness, monkeypatch
     monkeypatch.setattr(gdrive_service, "download_file_bytes", _download)
     harness.run()
     assert downloads.get(fid) == 1
+
+
+def test_file_over_the_memory_budget_is_recorded_not_downloaded_then_skipped(harness, monkeypatch):
+    """Admission before download: a file whose store-and-index demand cannot
+    fit is never downloaded, gets a closed ledger row, and the next resume
+    skips it."""
+    from app.core import doc_index, gdrive_service
+    from app.core import projects as projects_mod
+
+    big = harness.files[35]
+    big["size"] = 5 * 1024 * 1024
+    big["md5Checksum"] = "big-md5"
+    monkeypatch.setenv("DOC_INDEX_FILE_MEM_MB", "1")  # 1 MB child budget
+    downloads: Dict[str, int] = {}
+
+    def _download(fid):
+        downloads[fid] = downloads.get(fid, 0) + 1
+        return b"x" * 256, None
+
+    def _add_document(**kw):
+        row = {"id": f"row-{kw['metadata']['drive_file_id']}", "metadata": dict(kw["metadata"]),
+               "drive_md5": kw.get("drive_md5"), "original_name": kw["original_name"]}
+        harness.docs.append(row)
+        return row
+
+    def _attempt(doc_id, key):
+        row = next(d for d in harness.docs if d["id"] == doc_id)
+        row["metadata"]["ingest_attempts"] = {"n": 1, "key": key}
+        return 1
+
+    def _stamp(doc_id, filename, chunk_count, **kw):
+        row = next(d for d in harness.docs if d["id"] == doc_id)
+        row["ingest_status"] = "EXTRACT_FAILED"
+        row["ingest_status_reason"] = kw.get("reason_override")
+
+    monkeypatch.setattr(gdrive_service, "download_file_bytes", _download)
+    monkeypatch.setattr(projects_mod, "add_document", _add_document)
+    monkeypatch.setattr(projects_mod, "record_ingest_attempt", _attempt)
+    monkeypatch.setattr(doc_index, "_stamp_index_ledger", _stamp)
+
+    harness.run()
+    assert downloads.get(big["id"], 0) == 0
+    row = next(d for d in harness.docs if d["metadata"].get("drive_file_id") == big["id"])
+    assert row["ingest_status"] == "EXTRACT_FAILED"
+    assert row["ingest_status_reason"].startswith("memory_budget")
+
+    downloads.clear()
+    harness.run()
+    assert downloads.get(big["id"], 0) == 0
+    acc = harness.report()["accounting"]
+    assert acc["already_indexed"] >= harness.preindexed_count + 1

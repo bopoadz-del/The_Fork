@@ -101,6 +101,57 @@ def _memory_pressure() -> float | None:
     return memory_pressure()
 
 
+# MEMORY ADMISSION. Fernet (file_crypto) has no streaming mode, so with
+# encryption on a stored file is held WHOLE several times over: the parent
+# keeps the downloaded bytes, the PKCS7-padded copy, the AES ciphertext, the
+# framed token and its base64 form at once; an indexing child reads the
+# base64 token and decrypts it to plaintext. Live 2026-10-04 the parent
+# reached 3.6 GB of a 4 GB task on files of 350-400 MB and was OOM-killed on
+# the next, larger one. A file whose demand cannot fit is refused BEFORE it
+# is downloaded and recorded as such, instead of killing the whole run.
+_FERNET_B64 = 4 / 3  # base64 expansion of a Fernet token
+_PARENT_COPIES_ENCRYPTED = 4 + _FERNET_B64  # bytes, padded, ciphertext, framed token, base64
+_CHILD_COPIES_ENCRYPTED = 1 + _FERNET_B64   # base64 token on read + plaintext
+
+
+def memory_demand(size_bytes: int, *, encrypted: bool) -> tuple[int, int]:
+    """Peak bytes ``(parent, child)`` to store and to index one file of this size."""
+    size = max(0, int(size_bytes or 0))
+    if encrypted:
+        return int(size * _PARENT_COPIES_ENCRYPTED), int(size * _CHILD_COPIES_ENCRYPTED)
+    return size, size
+
+
+def admission_refusal(
+    size_bytes: int, *, encrypted: bool, child_budget_mb: int,
+) -> str | None:
+    """Why a file of this size cannot be processed in the memory available, or None.
+
+    The child side compares the demand with the configured child budget; the
+    parent side with the container's headroom under the memory guard, read
+    now (unknown headroom refuses nothing on that side).
+    """
+    parent_need, child_need = memory_demand(size_bytes, encrypted=encrypted)
+    mb = 1024 * 1024
+    if child_need > child_budget_mb * mb:
+        return (
+            f"memory_budget: indexing needs ~{child_need // mb} MB, "
+            f"over the {child_budget_mb} MB child budget"
+        )
+    from app.core.ingest_lifecycle import memory_numbers
+
+    used, limit = memory_numbers()
+    guard = _guard_fraction()
+    if used is not None and limit and guard > 0:
+        headroom = int(limit * guard) - used
+        if parent_need > headroom:
+            return (
+                f"memory_budget: storing needs ~{parent_need // mb} MB, "
+                f"over the {max(0, headroom) // mb} MB container headroom"
+            )
+    return None
+
+
 # Below this, extract in-process. The measured blow-up was a 4.4 MB PDF; a
 # document smaller than this cannot plausibly reach the 1.5 GB child ceiling,
 # and running it in-process keeps extraction's side effects observable (see
