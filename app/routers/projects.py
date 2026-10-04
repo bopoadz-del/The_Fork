@@ -861,13 +861,23 @@ async def add_document(
     )
     audit.record("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])
-    # Index under the id the document was actually STORED under. For the
-    # master-corpus alias that is the backing corpus, not the virtual id —
-    # indexing under the alias would put the chunks in a different project
-    # from the document row they describe.
-    background_tasks.add_task(
-        doc_index.maybe_eager_index, store.storage_project_id(project_id), doc["id"],
-    )
+    # Only the admin path adds to the project's knowledge base (owner ruling,
+    # app/core/privileges.py). A user's upload is stored, not indexed.
+    from app.core import privileges
+
+    if privileges.caller_may_add_to_project_rag(auth.get("role")):
+        # Index under the id the document was actually STORED under. For the
+        # master-corpus alias that is the backing corpus, not the virtual id —
+        # indexing under the alias would put the chunks in a different project
+        # from the document row they describe.
+        background_tasks.add_task(
+            doc_index.maybe_eager_index, store.storage_project_id(project_id), doc["id"],
+        )
+    else:
+        doc = store.update_document_metadata(doc["id"], {"indexing": {
+            "status": "not_indexed",
+            "detail": privileges.PROJECT_RAG_ADMIN_ONLY_DETAIL,
+        }}) or doc
 
     # V2 inline safety + QA/QC detection for image uploads — runs PIL +
     # COCO YOLO + the fine-tuned safety_qaqc detector and surfaces a

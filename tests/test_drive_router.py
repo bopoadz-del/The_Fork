@@ -267,6 +267,7 @@ def test_files_requires_auth(client):
     assert client.get("/v1/drive/files").status_code == 401
 
 
+@pytest.mark.usefixtures("dev_key_is_admin")
 def test_drive_import_adds_project_document(client, monkeypatch):
     proj = client.post("/v1/projects", headers=H, json={"name": "Drive Test"}).json()
     pid = proj["id"]
@@ -303,6 +304,7 @@ def test_drive_import_adds_project_document(client, monkeypatch):
     assert any(d["original_name"] == "Spec.pdf" for d in detail["documents"])
 
 
+@pytest.mark.usefixtures("dev_key_is_admin")
 def test_drive_import_requires_connection(client):
     proj = client.post("/v1/projects", headers=H, json={"name": "P2"}).json()
     r = client.post(f"/v1/projects/{proj['id']}/drive/import", headers=H,
@@ -310,6 +312,7 @@ def test_drive_import_requires_connection(client):
     assert r.status_code == 409
 
 
+@pytest.mark.usefixtures("dev_key_is_admin")
 def test_drive_import_rejects_disallowed_extension(client, monkeypatch):
     proj = client.post("/v1/projects", headers=H, json={"name": "P3"}).json()
     pid = proj["id"]

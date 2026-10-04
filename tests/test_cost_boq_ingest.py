@@ -40,6 +40,7 @@ def _new_project(client, name="Cost BOQ Ingest Project"):
     return r.json()
 
 
+@pytest.mark.usefixtures("dev_key_is_admin")
 def test_cost_boq_export_persists_document_and_schedules_index(client, monkeypatch):
     """A cost-boq export with categories must: (a) return a valid xlsx download,
     (b) add a new document to the project, and (c) schedule eager indexing."""

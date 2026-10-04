@@ -244,7 +244,8 @@ def test_index_folder_route_is_async_returns_queued(isolated_data_dir, monkeypat
     projects_mod.create_project(
         name="Idx", user_id="idx-user", project_id="idx-proj-1", origin="user_create",
     )
-    app.dependency_overrides[require_user] = lambda: {"user_id": "idx-user", "role": "user"}
+    # Indexing a folder into a project is the admin path (privileges.py).
+    app.dependency_overrides[require_user] = lambda: {"user_id": "idx-user", "role": "admin"}
 
     async def fake_token(uid):  # connection check passes
         return "tok"

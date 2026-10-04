@@ -1,6 +1,6 @@
 # Ingest rules — text formats only, and no archive
 
-**Read this before touching any ingest path.** Two owner rules, both binding:
+**Read this before touching any ingest path.** Three owner rules, all binding:
 
 1. **Text formats only** (below): video, CAD drawings, photos/images, map
    files and every format not in `TEXT_BEARING_EXTS` are never ingested,
@@ -8,6 +8,9 @@
 2. **No archive** ([below](#no-archive)): the platform keeps no copy of an
    original file. Google Drive is the source of truth for admin-added
    project documents; the extracted chunks are what the RAG needs.
+3. **Only the admin path adds to the knowledge base**
+   ([below](#who-adds-to-the-knowledge-base)): a user's upload is not indexed
+   into the project RAG.
 
 Both follow [`RAG_GAPS_REVIEW_2026-09-12.md` §E](RAG_GAPS_REVIEW_2026-09-12.md).
 
@@ -66,6 +69,23 @@ The platform does not archive original files (owner ruling, 2026-10-04).
   upload buffer, ~7.7x the file size, now 1x.
 - Originals are read only when a person asks: an admin runs the ingest, or a
   user opens a cited document. Nothing in the app fetches originals by itself.
+
+## Who adds to the knowledge base
+
+One rule, `app/core/privileges.caller_may_add_to_project_rag` (admin only),
+decides every path into a project's RAG (owner ruling, 2026-10-04):
+
+| path | admin | anyone else |
+|---|---|---|
+| Drive ingest (ECS RunTask) | adds | — (operator-run) |
+| `POST /v1/projects/{id}/documents`, `/upload` with a project | stored and indexed | stored, **not indexed** (`indexing.status = not_indexed`) |
+| Drive folder index, Drive import, Aconex sync / event ingest | adds | 403 |
+| Aconex via `/v1/execute` | rows cached and indexed | rows cached, not indexed |
+| Cost / priced BOQ export with `ingest` | download + added | download only |
+| Nightly hydration | reads conversations only — never documents | same |
+
+The user layer of the RAG is written only when the user explicitly asks
+through the LLM; no upload writes it.
 
 ## Why this page exists
 

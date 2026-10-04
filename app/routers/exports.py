@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from app.dependencies import require_user
 from app.core import projects as projects_store
 from app.core import agent_memory
-from app.core import doc_index, file_crypto
+from app.core import doc_index, file_crypto, privileges
 
 router = APIRouter()
 
@@ -639,7 +639,8 @@ async def export_cost_boq(
     # the project's RAG corpus so chat can answer from it. Mirrors the upload
     # path in app/routers/projects.py (add_document). Best-effort: a RAG-ingest
     # failure must NEVER 500 the export — the download below is the contract.
-    if req.ingest:
+    # Only the admin path adds to a project's knowledge base (privileges.py).
+    if req.ingest and privileges.caller_may_add_to_project_rag(auth.get("role")):
         try:
             with open(path, "rb") as fh:
                 raw_bytes = fh.read()
@@ -780,7 +781,7 @@ async def price_boq(
     os.close(fd)
     wb.save(path)
 
-    if req.ingest:
+    if req.ingest and privileges.caller_may_add_to_project_rag(auth.get("role")):
         _persist_and_index(project_id, name, path, background_tasks)
 
     return FileResponse(
