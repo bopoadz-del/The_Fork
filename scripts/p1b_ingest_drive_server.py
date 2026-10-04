@@ -311,6 +311,12 @@ def _safe_stored_name(original: str) -> str:
     return f"{safe}{ext}"
 
 
+def _drive_reports_empty(file_meta: Dict[str, Any]) -> bool:
+    """True when Drive states the file's size and it is zero bytes."""
+    raw = str(file_meta.get("size", "")).strip()
+    return raw.isdigit() and int(raw) == 0
+
+
 def _ingest_file(
     file_meta: Dict[str, Any],
     project_id: str,
@@ -1325,12 +1331,21 @@ def main() -> int:
                 # the module docstring): anything else is never assigned,
                 # downloaded, stored or archived -- only counted.
                 or not ist.is_ingestible(path)
+                # A file Drive reports as zero bytes has nothing to ingest.
+                # It used to be downloaded, found empty and dropped with no
+                # record -- so every resume downloaded it again.
+                or _drive_reports_empty(fm)
             )
 
         unsupported_files = [f for f in files if _is_unsupported(f)]
         supported_files = [f for f in files if not _is_unsupported(f)]
         for fm in unsupported_files:
-            fmt = Path(fm.get("_drive_path") or fm.get("name") or "").suffix.lower() or "(none)"
+            from app.core import ingest_status as _ist
+
+            path = fm.get("_drive_path") or fm.get("name") or ""
+            fmt = Path(path).suffix.lower() or "(none)"
+            if _ist.is_ingestible(path) and _drive_reports_empty(fm):
+                fmt = "(empty)"  # a text format, but nothing in it
             by_format = accounting.setdefault("unsupported_by_format", {})
             by_format[fmt] = by_format.get(fmt, 0) + 1
         filtered_files = [f for f in supported_files if f["id"] not in already_indexed]
