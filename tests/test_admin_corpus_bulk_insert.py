@@ -177,3 +177,14 @@ def test_bulk_insert_handles_empty_payload(client):
     counts = resp.json()["counts"]
     assert counts == {"projects": 0, "documents": 0, "chunks": 0,
                       "projects_seen": 0, "documents_seen": 0, "chunks_seen": 0}
+
+
+def test_bulk_insert_refuses_the_retired_legacy_namespace(client):
+    """A request must never route chunks into the retired ``chunks`` table."""
+    p = _payload()
+    p["namespace"] = ""
+    resp = client.post("/v1/admin/corpus/bulk-insert", json=p)
+    assert resp.status_code == 400, resp.text
+    assert "retired" in resp.json()["detail"]
+    with SessionLocal() as s:
+        assert s.get(Project, PROJ) is None, "a refused request wrote rows"
