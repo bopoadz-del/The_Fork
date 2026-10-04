@@ -382,11 +382,13 @@ def resume_is_already_indexed(
     Fail closed: if this is a .docx and status / extractor_version cannot
     be read, do not count the row as already indexed.
     """
+    if recorded_attempts(doc) >= max_attempts():
+        # Bounded retries, every class and any chunk count: these bytes have
+        # had their tries with this extractor -- including one that died
+        # before stamping an outcome, and a stale-extractor .docx whose
+        # re-extraction keeps landing thin.
+        return True
     if chunk_count <= 0:
-        if recorded_attempts(doc) >= max_attempts():
-            # Bounded retries: these bytes have had their tries with this
-            # extractor, including one that died before stamping an outcome.
-            return True
         status = doc.get("ingest_status")
         if not status:
             return False

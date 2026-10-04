@@ -366,7 +366,8 @@ def process_identity() -> Dict[str, Any]:
         except OSError as exc:
             ident["session_error"] = str(exc)
     try:
-        ident["tty"] = os.ttyname(0) if os.isatty(0) else None
+        # os.ttyname is POSIX-only; a run started from a Windows shell has no tty name.
+        ident["tty"] = os.ttyname(0) if hasattr(os, "ttyname") and os.isatty(0) else None
     except OSError:
         ident["tty"] = None
     return ident
