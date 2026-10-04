@@ -70,6 +70,21 @@ async def upload_v1(
         _, ext = os.path.splitext(original_name.lower())
         if ext not in ALLOWED_UPLOAD_EXTENSIONS:
             raise HTTPException(status_code=400, detail=f"File type '{ext}' not allowed")
+        # A file sent WITH a project is persisted and indexed: text formats
+        # only, refused before anything is written. Without a project it stays
+        # a session/sandbox upload.
+        from app.core.ingest_status import is_ingestible
+
+        if project_id and project_id.strip() and not is_ingestible(original_name):
+            raise HTTPException(
+                status_code=415,
+                detail=(
+                    f"File type '{ext}' is not ingestible into a project: the "
+                    f"knowledge base takes text formats only "
+                    f"(docs/INGEST_EXCLUSION_RULE.md). Upload it without a "
+                    f"project to use it in a chat for the session."
+                ),
+            )
 
         # Generate unique filename
         file_id = str(uuid.uuid4())[:8]

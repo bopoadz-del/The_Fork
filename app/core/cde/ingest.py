@@ -18,7 +18,7 @@ from app.core.cde.errors import CdeError, CdeNotConfiguredError
 from app.core.cde.factory import get_cde_client
 from app.core.cde.protocol import CdeClient
 from app.core.cde.types import CdeDocument, CdeMailDraft, CdePostResult
-from app.core.upload_limits import ALLOWED_UPLOAD_EXTENSIONS
+from app.core.ingest_status import TEXT_BEARING_EXTS
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +50,10 @@ def ingest_cde_bytes(
     """Store CDE bytes as a project document with CDE provenance metadata."""
     original_name = _safe_filename(original_name)
     _, ext = os.path.splitext(original_name.lower())
-    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+    if ext not in TEXT_BEARING_EXTS:
         raise CdeError(
-            f"CDE file type '{ext}' is not an allowed corpus extension"
+            f"CDE file type '{ext}' is not ingestible: the knowledge base takes "
+            f"text formats only (docs/INGEST_EXCLUSION_RULE.md)"
         )
     digest = hashlib.sha256(payload).hexdigest()
     existing = store.find_document_by_sha(fork_project_id, digest)

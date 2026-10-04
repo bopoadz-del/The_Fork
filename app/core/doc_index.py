@@ -64,10 +64,6 @@ from app.core.subprocess_env import scrubbed_env
 
 logger = logging.getLogger(__name__)
 
-# Image extensions — Stream F runs OCR on these to make scanned drawings /
-# photos searchable. They are SUPPORTED (not "unsupported_type") even when OCR
-# yields no text: a blank photo simply indexes with empty chunks.
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
 
 # Extensions we know how to extract text from.
 #
@@ -80,10 +76,11 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
 # The owner's ruling was NO kmz in the RAG at all. Reuse this constant rather
 # than adding a parallel kmz/kml check elsewhere -- see the matching
 # UNSUPPORTED_TYPE guard in app/core/ingest_status.py.
-_SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".doc", ".docx", ".xlsx", ".pptx", ".zip", ".rar", ".msg", ".ifc"}
-    | _IMAGE_EXTS
-)
+# Derived, never declared here: the RAG ingests text formats only (see
+# ingest_status.TEXT_BEARING_EXTS and docs/INGEST_EXCLUSION_RULE.md).
+from app.core.ingest_status import TEXT_BEARING_EXTS as _TEXT_BEARING_EXTS  # noqa: E402
+
+_SUPPORTED_EXTS = _TEXT_BEARING_EXTS
 
 # A PDF whose recovered text-layer is shorter than this is treated as a
 # scanned / image-only PDF and re-extracted via OCR.
@@ -247,134 +244,12 @@ def _run_sync(coro):
 _DEFAULT_IMAGE_OCR_MAX_PIXELS = 6_000_000
 
 
-def image_ocr_max_pixels() -> int:
-    """Pixel cap for a standalone image before OCR and detection.
-
-    Defaults to the same 6 MP the PDF page path has used since
-    ``PDF_OCR_MAX_PIXELS`` -- OCR on a site photo does not improve past it.
-    ``IMAGE_OCR_MAX_PIXELS`` overrides; anything unparseable keeps the default.
-    """
-    raw = (os.getenv("IMAGE_OCR_MAX_PIXELS") or "").strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        return _DEFAULT_IMAGE_OCR_MAX_PIXELS
-    return value if value > 0 else _DEFAULT_IMAGE_OCR_MAX_PIXELS
 
 
-@contextlib.contextmanager
-def _bounded_image(file_path: str):
-    """Yield a path to ``file_path`` bounded to ``image_ocr_max_pixels()``.
-
-    Live ingest on 9e6fe98: the oom_kill counter went 3 -> 47 in seventy
-    files, and every burst landed on a 20-48 MP DJI aerial photograph. The
-    image branch ran the OCR block and the YOLO detector on each one at native
-    size; the OCR preprocessor only ever UPSCALES, so nothing on this path
-    bounded a bitmap the way the PDF page path already did. Raising task memory
-    only meant a bigger bitmap before the kernel killed the forked tesseract --
-    the Python RSS stayed near 1.1 GB against a 3.3 GB cgroup.
-
-    Decodes ONCE, at reduced scale where the codec allows it (``draft`` lets a
-    JPEG decode at 1/2, 1/4 or 1/8 without ever holding the full bitmap), and
-    yields one temp copy for both consumers. Under the cap, or on anything PIL
-    cannot open, the original path is yielded unchanged so a bad file stays a
-    bad file rather than becoming a crash here.
-    """
-    cap = image_ocr_max_pixels()
-    tmp_path = None
-    try:
-        from PIL import Image
-        with file_crypto.open_plaintext(file_path) as plain_path:
-            with Image.open(plain_path) as img:
-                if img.width * img.height > cap:
-                    scale = (cap / (img.width * img.height)) ** 0.5
-                    target = (max(1, int(img.width * scale)),
-                              max(1, int(img.height * scale)))
-                    # JPEG: the decoder picks the smallest 1/2^n scale that
-                    # still covers ``target`` -- the full bitmap is never built.
-                    img.draft(img.mode if img.mode in ("L", "RGB") else "RGB", target)
-                    img.thumbnail(target, Image.Resampling.LANCZOS)
-                    fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
-                    os.close(fd)
-                    (img if img.mode in ("L", "RGB") else img.convert("RGB")).save(
-                        tmp_path, "JPEG", quality=85)
-    except Exception:
-        # Anything PIL cannot open stays the caller's problem, not a crash
-        # here: a bad file must still reach the OCR block as a bad file.
-        logger.debug("image bound skipped for %s", os.path.basename(file_path),
-                     exc_info=True)
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        tmp_path = None
-    try:
-        yield tmp_path or file_path
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                logger.debug("could not remove bounded image %s", tmp_path)
 
 
-def _ocr_extract(file_path: str) -> tuple[str, bool]:
-    """Run the OCR block on ``file_path``; return ``(text, low_quality)``.
-
-    Never raises — any OCR error / missing text yields ``("", False)``. The
-    OCR block does its own ``open_plaintext`` decryption, so the raw stored
-    path is passed straight through.
-    """
-    try:
-        from app.blocks.ocr import OCRBlock
-
-        result = _run_sync(OCRBlock().process(file_path))
-        if not isinstance(result, dict) or result.get("status") == "error":
-            return "", False
-        text = result.get("text") or ""
-        quality = result.get("quality") or {}
-        low_quality = bool(quality.get("low_quality"))
-        return text, low_quality
-    except Exception:
-        return "", False
 
 
-def _safety_world_extract(file_path: str, filename: str) -> str:
-    """Run the baked YOLO-Worldv2 detector and return a searchable summary.
-
-    The detector is only loaded when ``SAFETY_WORLD_WEIGHTS`` points at an
-    existing baked .onnx file. Detections are summarised as a plain-text
-    sentence so construction photos that OCR blanks still produce RAG
-    chunks. Never raises — any failure yields "".
-    """
-    try:
-        from pathlib import Path
-
-        from app.blocks.safety_world_detector import default_detector
-        from app.core.file_crypto import open_plaintext
-
-        detector = default_detector()
-        if detector is None:
-            return ""
-
-        conf = float(os.getenv("SAFETY_WORLD_CONF", "0.05"))
-        with open_plaintext(file_path) as plain_path:
-            detections = detector.detect(Path(plain_path), conf_threshold=conf)
-        if not detections:
-            return ""
-
-        # Group by class, keep highest confidence per class, stable order.
-        by_class: dict[str, float] = {}
-        for d in detections:
-            cls = d.get("class", "unknown")
-            conf_val = float(d.get("confidence") or 0.0)
-            by_class[cls] = max(by_class.get(cls, 0.0), conf_val)
-
-        items = ", ".join(
-            f"{cls} ({conf_val:.2f})"
-            for cls, conf_val in sorted(by_class.items(), key=lambda kv: (-kv[1], kv[0]))
-        )
-        return f"Construction site photo {filename}: detected {items}."
-    except Exception:
-        return ""
 
 
 def _ocr_dpi_for_page(width_pt: float, height_pt: float,
@@ -1321,6 +1196,10 @@ def _extract_archive(
         # Skip directories and macOS resource forks.
         if name.endswith("/") or "__macosx" in lower:
             continue
+        # The archive is held to the same rule as any file: a member that is
+        # not a text format is never read into memory or written to disk.
+        if ext not in _SUPPORTED_EXTS:
+            continue
 
         try:
             with file_crypto.open_plaintext(file_path) as readable_path:
@@ -1356,12 +1235,6 @@ def _extract_archive(
                 )
                 if nested_text:
                     parts.append(f"[archive:{name}]\n{nested_text}")
-                continue
-
-            # Skip images inside archives — per-photo OCR/YOLO is too expensive
-            # when a ZIP contains hundreds of construction photos, and the archive
-            # itself is still locatable by name plus any text/PDF members.
-            if ext in _IMAGE_EXTS:
                 continue
 
             # Supported file: route through the same extraction pipeline.
@@ -1716,25 +1589,6 @@ def _extract_with_meta_impl(
         if ext in {".txt", ".md", ".csv", ".json", ".xml"}:
             raw = file_crypto.read_document(file_path)
             return raw.decode("utf-8", errors="replace"), {}
-
-        # ── images → OCR + YOLO-World fallback ───────────────────────────────
-        if ext in _IMAGE_EXTS:
-            # Bound the bitmap ONCE and hand the same copy to both consumers.
-            # A 40 MP drone photo at native size was forking tesseract and
-            # torch against ~120 MB bitmaps and taking the worker out
-            # (oom_kill 3 -> 47 on 9e6fe98). See _bounded_image.
-            with _bounded_image(file_path) as bounded_path:
-                text, low_quality = _ocr_extract(bounded_path)
-                # Construction photos usually OCR blank; run the baked
-                # YOLO-World detector to produce a searchable summary of
-                # visible objects.
-                yolo_text = _safety_world_extract(bounded_path, filename or "")
-            if yolo_text:
-                text = f"{text}\n\n{yolo_text}".strip() if text else yolo_text
-            meta: dict[str, Any] = {}
-            if low_quality:
-                meta["ocr_low_quality"] = True
-            return text, meta
 
         # ── PDF ──────────────────────────────────────────────────────────────
         # Per-page: keep each page's text layer, OCR image-only pages, add
@@ -2481,6 +2335,18 @@ def skipped_count(project_id: str) -> int:
             )
         ).scalar()
     return int(n or 0)
+
+
+def drop_index_entry(project_id: str, document_id: str) -> bool:
+    """Remove one document's index entry (one row). True when a row went."""
+    with _index_txn(project_id) as conn:
+        result = conn.execute(
+            delete(DocIndexEntry).where(
+                DocIndexEntry.project_id == project_id,
+                DocIndexEntry.document_id == document_id,
+            )
+        )
+        return bool(result.rowcount)
 
 
 def _write_index(project_id: str, data: dict[str, Any]) -> None:

@@ -331,5 +331,5 @@ def test_drive_import_rejects_disallowed_extension(client, monkeypatch):
 
     r = client.post(f"/v1/projects/{pid}/drive/import", headers=H,
                      json={"file_id": "f1", "name": "evil.exe"})
-    assert r.status_code == 400, r.text
-    assert "not allowed" in r.json()["detail"]
+    assert r.status_code == 415, r.text
+    assert "not ingestible" in r.json()["detail"]
