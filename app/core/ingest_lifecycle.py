@@ -384,17 +384,17 @@ def _anon_and_cache_bytes(
     return total - avail, info.get("Cached")
 
 
-def memory_pressure(
+def memory_numbers(
     *,
     proc_root: Path = Path("/proc"),
     cgroup_root: Path = Path("/sys/fs/cgroup"),
-) -> Optional[float]:
-    """Fraction of this container's memory in NON-reclaimable use, or None.
+) -> tuple[Optional[int], Optional[int]]:
+    """(non-reclaimable bytes in use, limit bytes) for this container.
 
-    Anonymous memory over the limit -- page cache excluded, because the
-    kernel drops cache before it OOM-kills. The limit is the cgroup's when it
-    is readable and finite, else the box's MemTotal (on Fargate the cgroup
-    reports ``max`` and the micro-VM is the task).
+    Anonymous memory -- page cache excluded, because the kernel drops cache
+    before it OOM-kills. The limit is the cgroup's when it is readable and
+    finite, else the box's MemTotal (on Fargate the cgroup reports ``max``
+    and the micro-VM is the task). ``(None, None)`` where neither is known.
     """
     dirs = cgroup_candidate_dirs(proc_root=proc_root, cgroup_root=cgroup_root)
     info = _meminfo_bytes(proc_root)
@@ -406,6 +406,18 @@ def memory_pressure(
     used = stat.get("anon", stat.get("total_rss"))
     if used is None and total is not None and info.get("MemAvailable") is not None:
         used = total - info["MemAvailable"]
+    if not limit or used is None:
+        return None, None
+    return used, limit
+
+
+def memory_pressure(
+    *,
+    proc_root: Path = Path("/proc"),
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> Optional[float]:
+    """Fraction of this container's memory in NON-reclaimable use, or None."""
+    used, limit = memory_numbers(proc_root=proc_root, cgroup_root=cgroup_root)
     if not limit or used is None:
         return None
     return used / limit
