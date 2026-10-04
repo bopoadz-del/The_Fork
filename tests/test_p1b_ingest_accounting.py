@@ -912,3 +912,31 @@ def test_excluded_formats_are_never_assigned_downloaded_or_recorded(harness, mon
         assert acc["unsupported_by_format"].get(".jpg") == 1
     assert all(downloads.get(f["id"], 0) == 0 for f in excluded), downloads
     assert not {f["id"] for f in excluded} & set(rows), rows
+
+
+def test_zero_byte_drive_files_are_never_downloaded(harness, monkeypatch):
+    """Drive says 0 bytes: nothing to ingest. They used to be downloaded,
+    found empty and dropped with no record, so every resume fetched them
+    again. Now they are filtered at discovery and counted as (empty)."""
+    from app.core import gdrive_service
+
+    empty = [
+        {"id": f"empty{i}", "name": f"placeholder{i}.pdf",
+         "_drive_path": f"{FOLDER_NAME}/sub/placeholder{i}.pdf",
+         "mimeType": "application/pdf", "size": "0"}
+        for i in range(3)
+    ]
+    harness.files.extend(empty)
+    downloads: Dict[str, int] = {}
+
+    def _download(fid):
+        downloads[fid] = downloads.get(fid, 0) + 1
+        return b"x" * 256, None
+
+    monkeypatch.setattr(gdrive_service, "download_file_bytes", _download)
+    for _ in range(2):
+        assert harness.run() == 0
+        acc = harness.report()["accounting"]
+        assert acc["assigned"] == harness.expected_assigned, acc
+        assert acc["unsupported_by_format"].get("(empty)") == 3
+    assert all(downloads.get(f["id"], 0) == 0 for f in empty), downloads
