@@ -40,6 +40,8 @@ from __future__ import annotations
 import os
 from typing import Any, Collection, Mapping, NamedTuple
 
+from app.core import text_extractors as _text_extractors
+
 # ── status vocabulary (mirrors the CHECK constraint in migration 0016) ────────
 
 UNVERIFIED = "UNVERIFIED"
@@ -106,6 +108,39 @@ def is_ingestible(name_or_ext: str | None) -> bool:
     return ext in TEXT_BEARING_EXTS
 
 
+def correct_empty_indexed(conn) -> int:
+    """Re-stamp rows recorded INDEXED that hold no text: a file that yields no
+    text is never recorded as indexed. Each gets what ``classify`` gives zero
+    chunks (ZERO_CHUNK, or UNSUPPORTED_TYPE for a non-ingestible or empty
+    file). A row counts as empty only when its ledger says 0 chunks AND no
+    chunk table holds a chunk for it. Idempotent: a second run changes 0
+    rows. Dialect neutral (``conn`` is a SQLAlchemy connection).
+    """
+    import sqlalchemy as sa
+
+    insp = sa.inspect(conn)
+    chunk_tables = [
+        name for name in insp.get_table_names()
+        if name.startswith("chunks") and "doc_id" in {c["name"] for c in insp.get_columns(name)}
+    ]
+    no_chunks = "".join(
+        f" AND NOT EXISTS (SELECT 1 FROM {name} c WHERE c.doc_id = d.id)" for name in chunk_tables
+    )
+    rows = conn.execute(sa.text(
+        "SELECT d.id, d.original_name, d.size FROM documents d "
+        "WHERE d.ingest_status = :indexed AND COALESCE(d.chunk_count, 0) = 0" + no_chunks
+    ), {"indexed": INDEXED}).all()
+    for doc_id, name, size in rows:
+        outcome = classify(
+            chunk_count=0, extension=os.path.splitext(name or "")[1], size_bytes=size,
+        )
+        conn.execute(sa.text(
+            "UPDATE documents SET ingest_status = :status, ingest_status_reason = :reason "
+            "WHERE id = :id AND ingest_status = :indexed"
+        ), {"status": outcome.status, "reason": outcome.reason, "id": doc_id, "indexed": INDEXED})
+    return len(rows)
+
+
 def max_attempts() -> int:
     """Configured retry bound (``INGEST_MAX_ATTEMPTS``, default 1, minimum 1)."""
     import os
@@ -170,17 +205,12 @@ def attempt_count(prior: Mapping[str, Any]) -> int:
 #: design (docs/RAG_GAPS_REVIEW_2026-09-12.md section E: CAD, images,
 #: Google Earth, video, GIS internals and fonts are never ingested). Every
 #: ingest entry point -- Drive ingest, the Drive walker and import, CDE,
-#: project document upload, archive members, the indexer -- derives from
-#: this set; no other list may decide ingestibility. See
+#: project document upload, the indexer -- derives from this set; no other
+#: list may decide ingestibility. Compressed files are never ingestible. See
 #: ``is_ingestible`` and docs/INGEST_EXCLUSION_RULE.md.
-TEXT_BEARING_EXTS = frozenset(
-    {
-        ".pdf", ".txt", ".md", ".csv", ".json", ".xml",
-        ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-        ".rtf", ".msg", ".htm", ".html",
-        ".zip", ".ifc",
-    }
-)
+# Built from the extractor registry (app/core/text_extractors.py): a format
+# is ingestible only when a working text extractor is registered for it.
+TEXT_BEARING_EXTS = _text_extractors.formats()
 
 # .kmz/.kml are geospatial containers, not prose. They chunk (zipped/raw KML
 # is XML, so extraction "succeeds"), but the RAG data-quality incident of

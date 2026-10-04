@@ -27,23 +27,30 @@ question context (`POST /v1/chat/analyze-photo`), never a document.
 
 ## The single declaration
 
-`app/core/ingest_status.py` → **`TEXT_BEARING_EXTS`** (with
-`is_ingestible()`). It is the only list that decides whether a file may be
-ingested. Everything else derives from it:
+`app/core/text_extractors.py` -- the **extractor registry**. A format is
+ingestible only when a working text extractor is registered for it; each
+extractor declares its formats with `@reads(...)`, and
+`ingest_status.TEXT_BEARING_EXTS` (with `is_ingestible()`) is built from the
+registry, never written by hand. To support a format, register an extractor.
+A test reads a real sample of every registered format into a chunk.
 
 | entry point | how it applies the rule |
 |---|---|
-| Drive ingest (`scripts/p1b_ingest_drive_server.py`) | non-text files are filtered at discovery: never assigned or downloaded; counted in `accounting.unsupported_by_format` |
-| Indexer (`doc_index._SUPPORTED_EXTS`) | *is* `TEXT_BEARING_EXTS` |
-| Archive members (`doc_index._extract_archive`) | a non-text member is skipped before it is read |
+| Drive ingest (`scripts/p1b_ingest_drive_server.py`) | non-ingestible files are filtered at discovery: never assigned or downloaded; counted in `accounting.unsupported_by_format` |
+| Indexer (`doc_index`) | dispatches through the registry; a file that yields no text is stamped ZERO_CHUNK, never recorded as indexed |
 | Project document upload (`POST /v1/projects/{id}/documents`) | 415 with the rule's message |
 | `/upload` with a `project_id` | 415 before anything is written |
-| Drive walker + Drive import (`app/routers/drive.py`) | allow-list is `TEXT_BEARING_EXTS`; import returns 415 |
+| Drive walker + Drive import (`app/routers/drive.py`) | the registry's formats only; import returns 415 |
 | CDE ingest (`app/core/cde/ingest.py`) | refused with the rule's message |
+
+**Compressed files** (zip, rar and every other compressed-folder format) are
+never ingested, opened or unpacked. No extractor reads one; an upload of one
+(either route, with or without a project) answers 415 "Compressed files are
+not supported. Unzip it and upload the documents." (`app/core/compressed.py`).
 
 Session/sandbox uploads (no project) and chat photos keep their own
 acceptance: they are context for one conversation, never persisted into the
-knowledge base.
+knowledge base. Redline runs on PDF drawings only.
 
 ## No archive
 
