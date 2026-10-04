@@ -869,3 +869,53 @@ def test_file_over_the_memory_budget_is_recorded_not_downloaded_then_skipped(har
     assert downloads.get(big["id"], 0) == 0
     acc = harness.report()["accounting"]
     assert acc["already_indexed"] >= harness.preindexed_count + 1
+
+
+# ── a file's whole pipeline runs in its own child ──────────────────────────
+
+needs_fork = pytest.mark.skipif(os.name != "posix", reason="isolated pipeline needs POSIX fork")
+
+
+@needs_fork
+def test_a_file_that_kills_its_child_is_recorded_and_the_run_goes_on(harness, monkeypatch):
+    """The parent never holds a file's bytes: a pipeline child that dies (here
+    SIGKILL, as the OOM killer would) leaves the run going, and the file is
+    recorded on the ledger as EXTRACT_FAILED with the reason."""
+    from app.core import doc_index, gdrive_service
+    from app.core import projects as projects_mod
+
+    victim = harness.files[30]["id"]
+    real_download = gdrive_service.download_file_bytes
+
+    def _download(fid):
+        if fid == victim:
+            os.kill(os.getpid(), signal.SIGKILL)
+        return real_download(fid)
+
+    recorded: Dict[str, Any] = {}
+
+    def _add_document(**kw):
+        row = {"id": f"row-{kw['metadata']['drive_file_id']}", "metadata": dict(kw["metadata"])}
+        harness.docs.append(row)
+        return row
+
+    def _stamp(doc_id, filename, chunk_count, **kw):
+        recorded[doc_id] = kw.get("reason_override")
+
+    monkeypatch.setattr(gdrive_service, "download_file_bytes", _download)
+    monkeypatch.setattr(projects_mod, "add_document", _add_document)
+    monkeypatch.setattr(projects_mod, "record_ingest_attempt", lambda doc_id, key: 1)
+    monkeypatch.setattr(doc_index, "_stamp_index_ledger", _stamp)
+
+    assert harness.run() == 0
+    acc = harness.report()["accounting"]
+    assert acc["attempted"] == harness.expected_assigned, acc
+    assert any("child died" in (r or "") for r in recorded.values()), recorded
+
+
+def test_pipeline_runs_in_process_where_fork_is_unavailable(harness, monkeypatch):
+    from app.core import extract_isolated
+
+    monkeypatch.setattr(extract_isolated, "isolation_available", lambda: False)
+    assert harness.run() == 0
+    assert harness.report()["accounting"]["attempted"] == harness.expected_assigned

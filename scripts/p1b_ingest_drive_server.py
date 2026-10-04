@@ -32,7 +32,7 @@ import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -263,6 +263,8 @@ def tally_key_for_index_result(result: Dict[str, Any]) -> str:
             return "zero_chunk"
         if err in ("SKIPPED_TOO_LARGE", "SKIPPED_MEMORY_BUDGET"):
             return "skipped_too_large"
+        if err == "EXTRACT_FAILED":
+            return "zero_chunk"
         if err == "SKIPPED_TOO_SMALL":
             return "skipped_too_small"
         if err == "SKIPPED_UNSUPPORTED":
@@ -301,6 +303,134 @@ def _safe_stored_name(original: str) -> str:
     ext = Path(original).suffix
     safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in base)[:80]
     return f"{safe}{ext}"
+
+
+def record_unprocessed_file(
+    file_meta: Dict[str, Any],
+    project_id: str,
+    run_id: str,
+    existing_doc: Optional[Dict[str, Any]],
+    reason: str,
+) -> str:
+    """Ledger a source file this pass could not process; return its row id.
+
+    Its row -- the retry row, a row an interrupted attempt already created
+    for this source file, or a new metadata-only row -- gets one counted
+    attempt and a closed EXTRACT_FAILED stamp carrying ``reason``, so resume
+    skips it until its bytes or the extractor change.
+    """
+    from app.core import doc_index
+    from app.core import ingest_status as ist
+    from app.core import projects as projects_mod
+    from app.core.ingest_reconcile import source_content_token
+
+    rel = file_meta.get("_drive_path") or file_meta.get("name", "")
+    token = source_content_token(file_meta)
+    row = existing_doc
+    if row is None:
+        row = next(
+            (
+                d for d in projects_mod.list_documents(project_id)
+                if (d.get("metadata") or {}).get("drive_file_id") == file_meta["id"]
+                and d.get("retrieval_visible", True)
+            ),
+            None,
+        )
+    if row is None:
+        row = projects_mod.add_document(
+            project_id=project_id,
+            original_name=Path(rel).name,
+            size=int(file_meta.get("size") or 0),
+            metadata={
+                "drive_file_id": file_meta["id"],
+                "drive_path": rel,
+                "source": "p1b_server_drive_reingestion",
+                "ingestion_run_id": run_id,
+                "mimeType": file_meta.get("mimeType", ""),
+            },
+            drive_md5=token,
+        )
+    key_source = row.get("content_sha256") or row.get("drive_md5") or token
+    projects_mod.record_ingest_attempt(row["id"], ist.attempt_key(key_source))
+    doc_index._stamp_index_ledger(
+        row["id"], Path(rel).name, 0, extract_failed=True, reason_override=reason,
+    )
+    return row["id"]
+
+
+def _file_pipeline_budget() -> tuple[int, float]:
+    """``(mem_mb, timeout_s)`` for one file's whole pipeline in its own child.
+
+    ``P1B_FILE_MEM_MB`` / ``P1B_FILE_TIMEOUT_S`` when set. Otherwise the
+    memory budget is the container's headroom under the memory guard, read
+    now, and the timeout covers download + store + index (one hour).
+    """
+    from app.core import extract_isolated, ingest_lifecycle
+
+    mb = 1024 * 1024
+    raw_mem = os.getenv("P1B_FILE_MEM_MB", "").strip()
+    raw_wait = os.getenv("P1B_FILE_TIMEOUT_S", "").strip()
+    mem_mb = int(raw_mem) if raw_mem.isdigit() and int(raw_mem) > 0 else 0
+    if not mem_mb:
+        used, limit = ingest_lifecycle.memory_numbers()
+        guard = extract_isolated._guard_fraction() or 1.0  # noqa: SLF001
+        if used is not None and limit:
+            mem_mb = max(256, int((limit * guard - used) // mb))
+        else:
+            mem_mb = 3072
+    try:
+        timeout_s = float(raw_wait) if raw_wait else 3600.0
+    except ValueError:
+        timeout_s = 3600.0
+    return mem_mb, timeout_s
+
+
+def ingest_file_isolated(
+    file_meta: Dict[str, Any],
+    project_id: str,
+    data_dir: Path,
+    run_id: str,
+    gdrive_service: Any,
+    *,
+    existing_doc: Optional[Dict[str, Any]] = None,
+    reingest_of: Optional[str] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """One file's WHOLE pipeline -- download, hash, encrypt, archive, index --
+    in its own memory-guarded child.
+
+    Live 2026-10-04: every child-side limit held and the container still died,
+    because the parent itself held each file whole while downloading,
+    encrypting (Fernet cannot stream) and archiving it -- several copies of a
+    400 MB file at once. Now the parent never touches a file's bytes: a child
+    that runs out of memory, crashes or overruns dies alone, the container
+    guard stops it before the kernel would, and the parent records the file
+    on the ledger and moves on. Where fork is unavailable it runs in-process.
+    """
+    from app.core import extract_isolated
+
+    rel = file_meta.get("_drive_path") or file_meta.get("name", "")
+
+    def _pipeline() -> Tuple[str, Dict[str, Any]]:
+        out_rel, out = _ingest_file(
+            file_meta, project_id, data_dir, run_id, gdrive_service,
+            existing_doc=existing_doc, reingest_of=reingest_of,
+        )
+        out.pop("chunks", None)  # the parent needs the outcome, not the text
+        return out_rel, out
+
+    if not extract_isolated.isolation_available():
+        return _pipeline()
+    mem_mb, timeout_s = _file_pipeline_budget()
+    (out_rel, out), diag = extract_isolated.run_isolated(
+        _pipeline, (), fallback=(rel, None),
+        label=f"ingest of {Path(rel).name}", mem_mb=mem_mb, timeout_s=timeout_s,
+    )
+    if not diag and out is not None:
+        return out_rel, out
+    reason = (diag or {}).get("extract_failed_detail") or "ingest child returned nothing"
+    record_unprocessed_file(file_meta, project_id, run_id, existing_doc, reason)
+    log(f"ISOLATED_INGEST failed {rel!r}: {reason}")
+    return rel, {"status": "error", "error": "EXTRACT_FAILED", "reason": reason}
 
 
 def _ingest_file(
@@ -366,8 +496,6 @@ def _ingest_file(
     # a file whose store-and-index demand cannot fit is recorded on the ledger
     # as a closed EXTRACT_FAILED instead of OOM-killing the run.
     from app.core import extract_isolated
-    from app.core import ingest_status as ist
-    from app.core.ingest_reconcile import source_content_token
 
     refusal = extract_isolated.admission_refusal(
         size,
@@ -375,29 +503,7 @@ def _ingest_file(
         child_budget_mb=doc_index._file_budget()[0],
     )
     if refusal:
-        token = source_content_token(file_meta)
-        if existing_doc is not None:
-            doc_id = existing_doc["id"]
-            key_source = existing_doc.get("content_sha256") or existing_doc.get("drive_md5") or token
-        else:
-            doc_id = projects_mod.add_document(
-                project_id=project_id,
-                original_name=Path(rel).name,
-                size=size,
-                metadata={
-                    "drive_file_id": file_meta["id"],
-                    "drive_path": rel,
-                    "source": "p1b_server_drive_reingestion",
-                    "ingestion_run_id": run_id,
-                    "mimeType": mime,
-                },
-                drive_md5=token,
-            )["id"]
-            key_source = token
-        projects_mod.record_ingest_attempt(doc_id, ist.attempt_key(key_source))
-        doc_index._stamp_index_ledger(
-            doc_id, Path(rel).name, 0, extract_failed=True, reason_override=refusal,
-        )
+        record_unprocessed_file(file_meta, project_id, run_id, existing_doc, refusal)
         log(f"MEMORY_ADMISSION refused {rel!r} size={size}: {refusal}")
         return rel, {
             "status": "error",
@@ -1477,7 +1583,7 @@ def main() -> int:
         def _process_one(file_meta: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             rel = file_meta.get("_drive_path") or file_meta.get("name", "")
             try:
-                _, result = _ingest_file(
+                _, result = ingest_file_isolated(
                     file_meta, project_id, data_dir, run_id, gdrive_service,
                     existing_doc=retry_doc_by_fid.get(file_meta["id"]),
                     reingest_of=getattr(args, "reingest", None),
