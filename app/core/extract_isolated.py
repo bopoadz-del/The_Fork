@@ -110,15 +110,29 @@ def _memory_pressure() -> float | None:
 # the next, larger one. A file whose demand cannot fit is refused BEFORE it
 # is downloaded and recorded as such, instead of killing the whole run.
 _FERNET_B64 = 4 / 3  # base64 expansion of a Fernet token
-_PARENT_COPIES_ENCRYPTED = 4 + _FERNET_B64  # bytes, padded, ciphertext, framed token, base64
 _CHILD_COPIES_ENCRYPTED = 1 + _FERNET_B64   # base64 token on read + plaintext
+
+
+def _parent_factor() -> float:
+    """Parent peak as a multiple of file size (``P1B_PARENT_MEMORY_FACTOR``).
+
+    Counting Fernet's own copies gives ~5.3x, but the parent also joins the
+    download's buffered chunks into one bytes object and hands the whole
+    payload to the R2 client, which checksums and buffers it. Measured live
+    2026-10-04: 3,567 MB peak on ~398 MB files over an ~800 MB baseline,
+    i.e. ~7x. The default is that measurement.
+    """
+    try:
+        return max(1.0, float(os.getenv("P1B_PARENT_MEMORY_FACTOR", "7")))
+    except ValueError:
+        return 7.0
 
 
 def memory_demand(size_bytes: int, *, encrypted: bool) -> tuple[int, int]:
     """Peak bytes ``(parent, child)`` to store and to index one file of this size."""
     size = max(0, int(size_bytes or 0))
     if encrypted:
-        return int(size * _PARENT_COPIES_ENCRYPTED), int(size * _CHILD_COPIES_ENCRYPTED)
+        return int(size * _parent_factor()), int(size * _CHILD_COPIES_ENCRYPTED)
     return size, size
 
 
