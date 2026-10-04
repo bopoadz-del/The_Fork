@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -182,7 +181,6 @@ async def test_run_with_no_activity(isolated_data_dir, monkeypatch):
     assert envelope["status"] == "success"
     result = envelope["result"]
     assert result["projects_processed"] == 0
-    assert result["files_indexed"] == 0
 
     g = hydration_store.get_latest("global")
     assert g is not None
@@ -395,13 +393,11 @@ async def test_hydrate_operation_on_learning_engine(isolated_data_dir, monkeypat
     assert inner["run_date"] == "2026-05-26"
 
 
-# ── Gap closure: drop-folder discovery ─────────────────────────────────────
+# ── Hydration reads conversations, never documents ────────────────────────
 
 
 def _make_dropbox_file(tmp_path, project_id: str, filename: str, content: bytes = b"x"):
-    """Create a file under the convention path the discovery helper walks."""
-    import os
-
+    """A file where the retired drop-folder discovery used to look."""
     dropbox = os.path.join(str(tmp_path), "projects", project_id, "dropbox")
     os.makedirs(dropbox, exist_ok=True)
     p = os.path.join(dropbox, filename)
@@ -421,65 +417,50 @@ def _make_project(name: str = "test-project") -> str:
     return p["id"]
 
 
-def test_discover_attaches_new_files(isolated_data_dir, monkeypatch):
-    """Files dropped under the convention path get auto-attached to the project."""
+@pytest.mark.asyncio
+async def test_hydration_never_reads_attaches_or_indexes_documents(
+    isolated_data_dir, monkeypatch,
+):
+    """The nightly pass reads conversations only (owner: the app reads an
+    original only when a person asks; only the admin path adds to a project's
+    knowledge base). With every former file source populated -- a drop-folder
+    file, LOCAL_PROJECT_FOLDERS, GDRIVE_PROJECT_FOLDERS -- and an already
+    indexed project, a pass touches no document."""
+    from app.core import doc_index, gdrive_service
     from app.core import projects as projects_store
-    from app.core.learning.hydration import _discover_local_drive_files
+    from app.core.learning import hydration as hydration_module
 
-    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
-    pid = _make_project("X")
-
+    pid = _make_project("NoFiles")
     _make_dropbox_file(isolated_data_dir, pid, "spec.pdf", b"%PDF-1.4\n")
-    _make_dropbox_file(isolated_data_dir, pid, "plan.dwg", b"x")
-    _make_dropbox_file(isolated_data_dir, pid, "ignored.exe", b"x")  # disallowed
-    _make_dropbox_file(isolated_data_dir, pid, ".hidden", b"x")      # dotfile
+    local = isolated_data_dir / "local_folder"
+    local.mkdir()
+    (local / "notes.txt").write_text("site notes", encoding="utf-8")
+    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{local}")
+    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:folder-1")
+    _seed_conversation(pid, "2026-05-26T10:00:00Z", "rebar for L3?", "120 kg/m3")
 
-    count, errors = _discover_local_drive_files(pid)
-    assert count == 2, f"expected 2 attached, got {count} (errors: {errors})"
-    assert errors == []
+    touched: list[str] = []
 
-    docs = projects_store.list_documents(pid)
-    names = sorted(d["original_name"] for d in docs)
-    assert names == ["plan.dwg", "spec.pdf"]
+    def _record(name):
+        return lambda *a, **k: touched.append(name)
 
+    monkeypatch.setattr(projects_store, "add_document", _record("add_document"))
+    monkeypatch.setattr(doc_index, "index_document", _record("index_document"))
+    monkeypatch.setattr(doc_index, "maybe_eager_index", _record("maybe_eager_index"))
+    monkeypatch.setattr(doc_index, "_load_index", lambda p: {"documents": [{"document_id": "d1"}]})
+    monkeypatch.setattr(gdrive_service, "is_configured", lambda: True)
+    monkeypatch.setattr(gdrive_service, "walk_folder", _record("walk_folder"))
+    monkeypatch.setattr(gdrive_service, "download_file_bytes", _record("download_file_bytes"))
 
-def test_discover_is_idempotent(isolated_data_dir, monkeypatch):
-    """Running discovery twice in a row does not re-attach the same files."""
-    from app.core.learning.hydration import _discover_local_drive_files
+    async def fake_chat(prompt, max_tokens=600):
+        return ("## What users asked for\n- rebar\n", "deepseek")
 
-    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
-    pid = _make_project("I")
-    _make_dropbox_file(isolated_data_dir, pid, "a.pdf", b"%PDF\n")
+    monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
 
-    first, _ = _discover_local_drive_files(pid)
-    second, _ = _discover_local_drive_files(pid)
-    assert first == 1
-    assert second == 0
+    result = await hydration_module.run(target_date="2026-05-26", project_ids=[pid])
 
-
-def test_discover_skips_when_dropbox_missing(isolated_data_dir, monkeypatch):
-    from app.core.learning.hydration import _discover_local_drive_files
-
-    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
-    count, errors = _discover_local_drive_files("nope")
-    assert count == 0
-    assert errors == []
-
-
-def test_discover_oversize_file_recorded_as_error(isolated_data_dir, monkeypatch):
-    from app.core.learning.hydration import _discover_local_drive_files
-
-    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
-    monkeypatch.setenv("HYDRATION_MAX_ATTACH_SIZE", "100")
-    pid = _make_project("O")
-    _make_dropbox_file(isolated_data_dir, pid, "big.pdf", b"x" * 500)
-
-    count, errors = _discover_local_drive_files(pid)
-    assert count == 0
-    assert any("oversize" in e for e in errors)
-
-
-# ── Gap closure: heuristic summary fallback ────────────────────────────────
+    assert result["projects_processed"] == 1
+    assert touched == []
 
 
 @pytest.mark.asyncio
@@ -619,256 +600,6 @@ def test_gdrive_parse_project_folder_map(monkeypatch):
     monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", "p1:folder1, p2:folder2,, bad-entry, : ,p3:f3")
     m = gdrive_service.parse_project_folder_map()
     assert m == {"p1": "folder1", "p2": "folder2", "p3": "f3"}
-
-
-def test_gdrive_not_configured_is_silent(monkeypatch, isolated_data_dir):
-    """No env vars set → discover returns (0, []) and makes no API calls."""
-    from app.core.learning.hydration import _discover_gdrive_files
-
-    monkeypatch.delenv("GDRIVE_PROJECT_FOLDERS", raising=False)
-    monkeypatch.delenv("GDRIVE_SERVICE_ACCOUNT_JSON", raising=False)
-    pid = _make_project("Q")
-    count, errors = _discover_gdrive_files(pid)
-    assert count == 0
-    assert errors == []
-
-
-def test_gdrive_mapping_without_key_reports_error(monkeypatch, isolated_data_dir):
-    """Folder mapping set but key missing → recorded as a non-fatal error."""
-    from app.core.learning.hydration import _discover_gdrive_files
-
-    pid = _make_project("K")
-    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:abc123")
-    monkeypatch.delenv("GDRIVE_SERVICE_ACCOUNT_JSON", raising=False)
-    count, errors = _discover_gdrive_files(pid)
-    assert count == 0
-    assert any("GDRIVE_SERVICE_ACCOUNT_JSON" in e for e in errors)
-
-
-def test_gdrive_happy_path_attaches_and_dedupes(monkeypatch, isolated_data_dir):
-    """With list/download stubbed, two new files get attached on the first
-    pass; a second pass attaches zero (sidecar dedup)."""
-    from app.core.learning import hydration as hydration_module
-    from app.core import gdrive_service, projects as projects_store
-
-    pid = _make_project("D")
-    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:driveFolderId")
-    monkeypatch.setenv("GDRIVE_SERVICE_ACCOUNT_JSON", "{}")  # any truthy value; gdrive_service.is_configured checks env, not content
-
-    # Stub the gdrive_service surface so the test doesn't need a real key.
-    monkeypatch.setattr(gdrive_service, "is_configured", lambda: True)
-    monkeypatch.setattr(
-        gdrive_service,
-        "list_folder_files",
-        lambda folder_id, page_size=100: (
-            [
-                {"id": "f1", "name": "spec.pdf", "mimeType": "application/pdf", "size": "12"},
-                {"id": "f2", "name": "plan.dwg", "mimeType": "application/octet-stream", "size": "5"},
-                {"id": "f3", "name": "design.gdoc", "mimeType": "application/vnd.google-apps.document"},
-            ],
-            None,
-        ),
-    )
-    monkeypatch.setattr(
-        gdrive_service,
-        "download_file_bytes",
-        lambda fid: (b"%PDF-1.4\nhello" if fid == "f1" else b"binary", None),
-    )
-
-    # Avoid double-encrypting in the test
-    monkeypatch.setattr("app.core.file_crypto.write_document",
-                        lambda path, data: open(path, "wb").write(data))
-
-    count1, errors1 = hydration_module._discover_gdrive_files(pid)
-    assert count1 == 2, f"expected 2 attached, got {count1} (errors: {errors1})"
-    # The Google-native doc must be silently skipped (it's not a real download target)
-    assert all("design.gdoc" not in e for e in errors1)
-
-    docs = projects_store.list_documents(pid)
-    names = sorted(d["original_name"] for d in docs)
-    assert names == ["plan.dwg", "spec.pdf"]
-
-    # Second pass: same listing, but sidecar now remembers f1+f2+f3 → zero new
-    count2, errors2 = hydration_module._discover_gdrive_files(pid)
-    assert count2 == 0
-    assert errors2 == []
-
-
-def test_gdrive_oversize_advertised_is_skipped(monkeypatch, isolated_data_dir):
-    """Files whose Drive metadata advertises a size above the cap never get
-    downloaded — the size check happens before the download call."""
-    from app.core.learning import hydration as hydration_module
-    from app.core import gdrive_service
-
-    pid = _make_project("OS")
-    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:driveFolderId")
-    monkeypatch.setenv("GDRIVE_SERVICE_ACCOUNT_JSON", "{}")
-    monkeypatch.setenv("HYDRATION_MAX_ATTACH_SIZE", "100")
-    monkeypatch.setattr(gdrive_service, "is_configured", lambda: True)
-    monkeypatch.setattr(
-        gdrive_service,
-        "list_folder_files",
-        lambda folder_id, page_size=100: (
-            [{"id": "fbig", "name": "huge.pdf", "mimeType": "application/pdf", "size": "9999999"}],
-            None,
-        ),
-    )
-    downloads = []
-    monkeypatch.setattr(
-        gdrive_service,
-        "download_file_bytes",
-        lambda fid: (downloads.append(fid), (b"x", None))[1],
-    )
-
-    count, errors = hydration_module._discover_gdrive_files(pid)
-    assert count == 0
-    assert any("oversize" in e for e in errors)
-    assert downloads == [], "oversize file must be skipped before download is called"
-
-
-def test_gdrive_list_error_is_non_fatal(monkeypatch, isolated_data_dir):
-    """A Drive API failure during list must surface as an error string, not
-    raise — hydration's per-project loop catches but the inner helper should
-    return cleanly anyway."""
-    from app.core.learning import hydration as hydration_module
-    from app.core import gdrive_service
-
-    pid = _make_project("L")
-    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:driveFolderId")
-    monkeypatch.setenv("GDRIVE_SERVICE_ACCOUNT_JSON", "{}")
-    monkeypatch.setattr(gdrive_service, "is_configured", lambda: True)
-    monkeypatch.setattr(
-        gdrive_service,
-        "list_folder_files",
-        lambda folder_id, page_size=100: ([], "403: insufficient permissions"),
-    )
-
-    count, errors = hydration_module._discover_gdrive_files(pid)
-    assert count == 0
-    assert any("403" in e for e in errors)
-
-
-# ── Arbitrary local folders (LOCAL_PROJECT_FOLDERS) ────────────────────────
-
-
-def test_local_folders_env_parsing(monkeypatch):
-    """First-colon split keeps Windows-style paths intact; whitespace and
-    empties are ignored; relative paths get resolved (warning logged)."""
-    from app.core.learning.hydration import _parse_local_project_folders
-
-    monkeypatch.setenv(
-        "LOCAL_PROJECT_FOLDERS",
-        " p1:/tmp/a, p2:/tmp/b , , p3:relative/path, malformed-entry",
-    )
-    m = _parse_local_project_folders()
-    assert m["p1"] == "/tmp/a"
-    assert m["p2"] == "/tmp/b"
-    # Relative resolved to absolute (OS-normalised separator)
-    assert os.path.isabs(m["p3"]) and m["p3"].endswith(os.path.normpath("relative/path"))
-    assert "malformed-entry" not in m
-
-
-def test_local_folders_attaches_recursively(tmp_path, monkeypatch, isolated_data_dir):
-    """A configured folder gets walked recursively; allowed files attach,
-    disallowed extensions and hidden files are skipped."""
-    from app.core.learning.hydration import _discover_arbitrary_local_folders
-    from app.core import projects as projects_store
-
-    laptop = tmp_path / "MyProject"
-    (laptop / "subdir").mkdir(parents=True)
-    (laptop / "spec.pdf").write_bytes(b"%PDF-1.4")
-    (laptop / "subdir" / "plan.dwg").write_bytes(b"\x00\x00")
-    (laptop / "secret.exe").write_bytes(b"x")        # disallowed
-    (laptop / ".hidden.pdf").write_bytes(b"x")        # dotfile
-    (laptop / "subdir" / ".cache").mkdir()             # hidden subdir
-    (laptop / "subdir" / ".cache" / "x.pdf").write_bytes(b"x")  # under hidden subdir
-
-    pid = _make_project("L")
-    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{laptop}")
-
-    count, errors = _discover_arbitrary_local_folders(pid)
-    assert count == 2, f"expected 2, got {count} (errors: {errors})"
-
-    docs = projects_store.list_documents(pid)
-    names = sorted(d["original_name"] for d in docs)
-    assert names == ["plan.dwg", "spec.pdf"]
-
-
-def test_local_folders_idempotent(tmp_path, monkeypatch, isolated_data_dir):
-    """Second pass attaches zero — realpath compare against documents.file_path
-    catches the dupes without any sidecar state."""
-    from app.core.learning.hydration import _discover_arbitrary_local_folders
-
-    laptop = tmp_path / "ProjectI"
-    laptop.mkdir()
-    (laptop / "spec.pdf").write_bytes(b"%PDF-1.4")
-
-    pid = _make_project("I2")
-    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{laptop}")
-
-    first, _ = _discover_arbitrary_local_folders(pid)
-    second, _ = _discover_arbitrary_local_folders(pid)
-    assert first == 1 and second == 0
-
-
-def test_local_folders_missing_folder_reports_error(tmp_path, monkeypatch, isolated_data_dir):
-    from app.core.learning.hydration import _discover_arbitrary_local_folders
-
-    pid = _make_project("M")
-    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{tmp_path}/does-not-exist")
-    count, errors = _discover_arbitrary_local_folders(pid)
-    assert count == 0
-    assert any("not found" in e for e in errors)
-
-
-def test_local_folders_unconfigured_is_silent(monkeypatch, isolated_data_dir):
-    from app.core.learning.hydration import _discover_arbitrary_local_folders
-
-    monkeypatch.delenv("LOCAL_PROJECT_FOLDERS", raising=False)
-    pid = _make_project("N")
-    count, errors = _discover_arbitrary_local_folders(pid)
-    assert count == 0 and errors == []
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="symlinks require elevated privileges on Windows")
-def test_local_folders_symlink_escape_blocked(tmp_path, monkeypatch, isolated_data_dir):
-    """A symlink inside the configured folder that resolves outside it must
-    NOT be attached — protects against `~/Documents/Project/leak -> /etc`."""
-    from app.core.learning.hydration import _discover_arbitrary_local_folders
-
-    laptop = tmp_path / "ProjectS"
-    laptop.mkdir()
-    # A normal file (should be attached) plus a symlink to an outside file
-    # with an allowed extension (must NOT be attached).
-    (laptop / "ok.pdf").write_bytes(b"%PDF-1.4")
-    outside = tmp_path / "secrets.pdf"
-    outside.write_bytes(b"%PDF-secret")
-    os.symlink(str(outside), str(laptop / "leak.pdf"))
-
-    pid = _make_project("S")
-    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{laptop}")
-    count, _errors = _discover_arbitrary_local_folders(pid)
-    # Only the in-folder file should be attached; the symlink escape is dropped.
-    assert count == 1
-    from app.core import projects as projects_store
-    names = [d["original_name"] for d in projects_store.list_documents(pid)]
-    assert names == ["ok.pdf"]
-
-
-def test_local_folders_oversize_recorded(tmp_path, monkeypatch, isolated_data_dir):
-    from app.core.learning.hydration import _discover_arbitrary_local_folders
-
-    laptop = tmp_path / "ProjectB"
-    laptop.mkdir()
-    (laptop / "big.pdf").write_bytes(b"x" * 500)
-
-    pid = _make_project("B")
-    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{laptop}")
-    monkeypatch.setenv("HYDRATION_MAX_ATTACH_SIZE", "100")
-
-    count, errors = _discover_arbitrary_local_folders(pid)
-    assert count == 0
-    assert any("oversize" in e for e in errors)
 
 
 def test_gdrive_load_service_account_info_handles_inline_and_file(tmp_path, monkeypatch):

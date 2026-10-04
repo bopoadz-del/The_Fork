@@ -1,5 +1,11 @@
 ﻿# Drive re-import runbook
 
+> **RETIRED 2026-10-04.** Hydration no longer discovers, attaches or
+> re-indexes documents, so Steps 3-7 below no longer import anything. Re-import
+> a project's documents with the admin Drive ingest
+> (`.github/workflows/ingest-run-once.yml` → `scripts/p1b_ingest_drive_server.py`).
+> See [`docs/INGEST_EXCLUSION_RULE.md`](../INGEST_EXCLUSION_RULE.md).
+
 From "env vars just landed on Render" to "all Drive-linked projects re-imported, re-indexed, and verified".
 
 **Scope:** this runbook only re-imports files from Google Drive. It does **not** flip the GK lexical fold flag, run feature-matrix sweeps, or touch eval oracles. Those resume after this runbook is complete.

@@ -175,9 +175,8 @@ async def _do_hydration_pass() -> None:
         # The execute() wrapper nests the operation's return in `result`.
         inner = envelope.get("result") if isinstance(envelope, dict) else {}
         logger.info(
-            "hydration pass complete: projects=%s files_indexed=%s",
+            "hydration pass complete: projects=%s",
             (inner or {}).get("projects_processed"),
-            (inner or {}).get("files_indexed"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("hydration pass failed: %s", exc)
