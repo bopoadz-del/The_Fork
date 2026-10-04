@@ -48,15 +48,17 @@ def client():
 
 def test_both_upload_routes_share_one_allowlist():
     """A file accepted by one route and rejected by the other is, from the
-    browser, indistinguishable from the product being broken."""
+    browser, indistinguishable from the product being broken. Two contracts:
+    a file that becomes a PROJECT DOCUMENT (either route) must be a text
+    format -- one declaration, ingest_status.TEXT_BEARING_EXTS (the /upload
+    route's project refusal is pinned in test_ingest_text_only_rule); a
+    session upload without a project keeps the sandbox allow-list."""
+    from app.core.ingest_status import TEXT_BEARING_EXTS
     from app.routers import projects as projects_router
     from app.routers import upload as upload_router
 
-    assert (
-        set(projects_router.ALLOWED_DOC_EXTENSIONS)
-        == set(upload_router.ALLOWED_UPLOAD_EXTENSIONS)
-        == set(upload_limits.ALLOWED_UPLOAD_EXTENSIONS)
-    )
+    assert projects_router.ALLOWED_DOC_EXTENSIONS is TEXT_BEARING_EXTS
+    assert set(upload_router.ALLOWED_UPLOAD_EXTENSIONS) == set(upload_limits.ALLOWED_UPLOAD_EXTENSIONS)
 
 
 def test_limits_are_read_per_request_not_bound_at_import(monkeypatch):
