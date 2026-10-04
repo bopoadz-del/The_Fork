@@ -261,7 +261,7 @@ def tally_key_for_index_result(result: Dict[str, Any]) -> str:
         err = result.get("error")
         if err == "ZERO_CHUNK":
             return "zero_chunk"
-        if err == "SKIPPED_TOO_LARGE":
+        if err in ("SKIPPED_TOO_LARGE", "SKIPPED_MEMORY_BUDGET"):
             return "skipped_too_large"
         if err == "SKIPPED_TOO_SMALL":
             return "skipped_too_small"
@@ -360,6 +360,50 @@ def _ingest_file(
             "status": "error",
             "error": "SKIPPED_TOO_SMALL",
             "size_bytes": size,
+        }
+
+    # Memory admission BEFORE download (see extract_isolated.admission_refusal):
+    # a file whose store-and-index demand cannot fit is recorded on the ledger
+    # as a closed EXTRACT_FAILED instead of OOM-killing the run.
+    from app.core import extract_isolated
+    from app.core import ingest_status as ist
+    from app.core.ingest_reconcile import source_content_token
+
+    refusal = extract_isolated.admission_refusal(
+        size,
+        encrypted=file_crypto.encryption_enabled(),
+        child_budget_mb=doc_index._file_budget()[0],
+    )
+    if refusal:
+        token = source_content_token(file_meta)
+        if existing_doc is not None:
+            doc_id = existing_doc["id"]
+            key_source = existing_doc.get("content_sha256") or existing_doc.get("drive_md5") or token
+        else:
+            doc_id = projects_mod.add_document(
+                project_id=project_id,
+                original_name=Path(rel).name,
+                size=size,
+                metadata={
+                    "drive_file_id": file_meta["id"],
+                    "drive_path": rel,
+                    "source": "p1b_server_drive_reingestion",
+                    "ingestion_run_id": run_id,
+                    "mimeType": mime,
+                },
+                drive_md5=token,
+            )["id"]
+            key_source = token
+        projects_mod.record_ingest_attempt(doc_id, ist.attempt_key(key_source))
+        doc_index._stamp_index_ledger(
+            doc_id, Path(rel).name, 0, extract_failed=True, reason_override=refusal,
+        )
+        log(f"MEMORY_ADMISSION refused {rel!r} size={size}: {refusal}")
+        return rel, {
+            "status": "error",
+            "error": "SKIPPED_MEMORY_BUDGET",
+            "reason": refusal,
+            "size_mb": round(size / (1024 * 1024), 1),
         }
 
     # Download from Drive.
