@@ -175,3 +175,26 @@ def test_stream_write_round_trips_when_encrypted(tmp_path, monkeypatch):
     written = file_crypto.write_document_stream(dest.as_posix(), io.BytesIO(body))
     assert written == len(body)  # plaintext length, not ciphertext
     assert file_crypto.read_document(dest.as_posix()) == body
+
+
+def test_a_project_document_is_accepted_by_both_routes_alike(client):
+    """Replaces the link #773 dropped from the allow-list contract: /upload
+    WITH a project accepts exactly what POST /v1/projects/{id}/documents
+    accepts. It used to check the sandbox list first, so text formats outside
+    it (an archive, a mail, HTML) were refused there and accepted here."""
+    from app.core.ingest_status import TEXT_BEARING_EXTS
+
+    pid = client.post("/v1/projects", json={"name": "Both routes"}, headers=H).json()["id"]
+    only_in_project_rule = sorted(set(TEXT_BEARING_EXTS) - set(upload_limits.ALLOWED_UPLOAD_EXTENSIONS))
+    assert only_in_project_rule, "nothing to compare: the two lists became equal"
+    for ext in only_in_project_rule:
+        name = f"doc{ext}"
+        via_project = client.post(
+            f"/v1/projects/{pid}/documents", files={"file": (name, b"text body", "text/plain")}, headers=H,
+        )
+        via_upload = client.post(
+            "/upload", files={"file": (name, b"text body", "text/plain")},
+            data={"project_id": pid}, headers=H,
+        )
+        assert via_project.status_code == 201, (ext, via_project.text)
+        assert via_upload.status_code == 200, (ext, via_upload.text)

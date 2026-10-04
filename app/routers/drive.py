@@ -284,7 +284,7 @@ class DriveIndexFolderRequest(BaseModel):
     max_files: int = 100                 # hard cap so a Drive of 10k files can't DoS
     max_depth: int = 4                   # how deep to recurse
     role: str = "other"                  # doc_role to tag the imports with
-    include_extensions: list[str] | None = None  # whitelist override; default = ALLOWED_DOC_EXTENSIONS
+    include_extensions: list[str] | None = None  # narrows ALLOWED_DOC_EXTENSIONS; never widens it
 
 
 async def _run_index_folder_bg(
@@ -457,7 +457,11 @@ async def _walk_drive_folder_into_project(
     include items from shared drives so approved project folders that live on a
     shared drive still recurse correctly.
     """
-    allowed = set(ext.lower() for ext in (include_extensions or ALLOWED_DOC_EXTENSIONS))
+    # A caller may narrow the formats, never widen them past the one text-only
+    # declaration (docs/INGEST_EXCLUSION_RULE.md).
+    allowed = set(ALLOWED_DOC_EXTENSIONS)
+    if include_extensions:
+        allowed &= {ext.lower() for ext in include_extensions}
     folder_mt = "application/vnd.google-apps.folder"
     imported: list[Dict[str, Any]] = []
     skipped: list[Dict[str, Any]] = []
