@@ -312,7 +312,6 @@ def test_ocr_required_stamps_ocr_degraded(monkeypatch, tmp_path):
     monkeypatch.setattr(doc_index, "chunk_extracted_document", lambda text, **k: ["c1", "c2"])
     monkeypatch.setattr(doc_index, "_boq_chunks_for_document", lambda *a, **k: [])
     monkeypatch.setattr(doc_index, "_drawing_chunks_for_document", lambda *a, **k: [])
-    monkeypatch.setattr(doc_index, "_ifc_chunks_for_document", lambda *a, **k: [])
     monkeypatch.setattr(doc_index, "_normalize_cesmm_in_chunks", lambda chunks: chunks)
 
     result = doc_index.index_document(proj["id"], doc["id"])
