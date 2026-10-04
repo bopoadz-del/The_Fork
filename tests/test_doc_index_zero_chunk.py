@@ -213,7 +213,6 @@ def test_admin_doc_reindex_does_not_ok_a_scan_without_ocr(
     )
     monkeypatch.setattr(doc_index, "_boq_chunks_for_document", lambda *a, **k: [])
     monkeypatch.setattr(doc_index, "_drawing_chunks_for_document", lambda *a, **k: [])
-    monkeypatch.setattr(doc_index, "_ifc_chunks_for_document", lambda *a, **k: [])
 
     proj = projects_mod.create_project("Admin Scan Reindex")
     path = _write_txt(tmp_path, "Priced BOQ.pdf", b"%PDF-1.4 cover")
