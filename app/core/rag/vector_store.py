@@ -326,6 +326,11 @@ def _enable_iterative_scan(session) -> None:
         _ITERATIVE_SCAN_SUPPORTED = False
 
 
+def _is_production() -> bool:
+    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "")).strip().lower()
+    return env in ("prod", "production")
+
+
 def _rag_vector_namespace() -> str:
     """Active RAG vector namespace. Legacy ``chunks`` table = empty string."""
     return os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
@@ -605,6 +610,16 @@ class VectorStore:
         self.db_path = db_path
         self.dim = dim
         self.namespace = namespace if namespace is not None else _rag_vector_namespace()
+        if self.namespace == "" and _is_production():
+            # namespace "" is the RETIRED legacy ``chunks`` table. Production
+            # reads and writes the namespaced table only; a misconfigured
+            # RAG_VECTOR_NAMESPACE (or a caller passing "") must fail loud
+            # rather than silently serve an empty, contaminated table.
+            raise RuntimeError(
+                "RAG vector namespace '' (the retired legacy chunks table) is "
+                "refused when ENV=production; set RAG_VECTOR_NAMESPACE to the "
+                "active namespace"
+            )
         self.model_name = model_name or os.getenv("RAG_EMBEDDING_MODEL") or "fake"
         self._lock = Lock()
         self._database_url = _database_url(db_path)
