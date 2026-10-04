@@ -382,6 +382,11 @@ def _ingest_file(
         reingest_of, content_sha, existing_by_sha,
     )
     if existing_by_sha and not reingest_of and existing_doc is None:
+        from app.core.ingest_reconcile import source_content_token
+
+        projects_mod.record_source_alias(
+            existing_by_sha["id"], file_meta["id"], source_content_token(file_meta),
+        )
         return rel, {
             "status": "error",
             "error": "DUPLICATE_SHA",
@@ -494,6 +499,7 @@ def _ingest_file(
             drive_md5=drive_token,
         )
     except projects_mod.DuplicateContentError as exc:
+        projects_mod.record_source_alias(exc.existing_id, file_meta["id"], drive_token)
         return rel, {
             "status": "error",
             "error": "DUPLICATE_SHA",
@@ -1191,12 +1197,20 @@ def main() -> int:
 
             from app.core import doc_index as _doc_index
             from app.core import ingest_status as ist
-            from app.core.ingest_reconcile import should_skip_resume
+            from app.core.ingest_reconcile import should_skip_resume, source_content_token
 
             drive_by_id = {str(fm.get("id") or ""): fm for fm in files if fm.get("id")}
 
             folder_stale_open = 0
             for doc in projects_mod.list_documents(project_id):
+                # Duplicate-content source files recorded against this row:
+                # done while their content token is unchanged.
+                for alias_fid, alias_token in ((doc.get("metadata") or {}).get("source_aliases") or {}).items():
+                    current_token = source_content_token(drive_by_id.get(alias_fid))
+                    if alias_fid in drive_by_id and (
+                        not alias_token or not current_token or alias_token == current_token
+                    ):
+                        already_indexed.add(alias_fid)
                 fid = (doc.get("metadata") or {}).get("drive_file_id")
                 if not fid:
                     continue
@@ -1542,7 +1556,13 @@ def main() -> int:
             run.finish(lifecycle.PHASE_COMPLETED, complete=True)
             exit_code = 0
 
-    if args.keep_alive and not dry_run and exit_code == 0:
+    # ``--keep-alive`` held a finished container open so the always-on ECS
+    # service would not restart it. A run-once task must exit, so the
+    # deployment can switch it off with P1B_KEEP_ALIVE=0.
+    keep_alive = args.keep_alive and os.getenv("P1B_KEEP_ALIVE", "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+    if keep_alive and not dry_run and exit_code == 0:
         log("pass complete; keeping container alive for log inspection.")
         while True:
             time.sleep(3600)

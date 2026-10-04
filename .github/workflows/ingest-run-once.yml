@@ -65,10 +65,17 @@ jobs:
             echo "::error::no network configuration found on $SERVICE_FOR_NETWORK"
             exit 1
           fi
+          # The worker command carries --keep-alive (it held finished
+          # containers open for the retired service). A run-once task must
+          # exit when the pass ends: switch it off for this task only.
+          container=$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" \
+            --query 'taskDefinition.containerDefinitions[0].name' --output text)
+          overrides=$(printf '{"containerOverrides":[{"name":"%s","environment":[{"name":"P1B_KEEP_ALIVE","value":"0"}]}]}' "$container")
           arn=$(aws ecs run-task --cluster "$ECS_CLUSTER" \
             --task-definition "$TASK_FAMILY" \
             --launch-type FARGATE --count 1 \
             --network-configuration "$netcfg" \
+            --overrides "$overrides" \
             --started-by "ingest-run-once:${{ github.run_id }}" \
             --query 'tasks[0].taskArn' --output text)
           echo "task=$arn"
