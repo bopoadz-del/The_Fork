@@ -394,3 +394,67 @@ def test_child_process_does_not_share_parent_db_connection(monkeypatch, tmp_path
     assert eng.pool.checkedin() == parent_pooled, "parent pool was disturbed"
     with eng.connect() as conn:
         assert conn.execute(text("SELECT 1")).scalar() == 1
+
+
+# ── container memory guard ─────────────────────────────────────────────────
+
+
+def test_memory_pressure_reads_cgroup_anon_against_its_limit(tmp_path):
+    from app.core.ingest_lifecycle import memory_pressure
+
+    proc, cg = tmp_path / "proc", tmp_path / "cg"
+    (proc / "self").mkdir(parents=True)
+    (proc / "self" / "cgroup").write_text("0::/\n")
+    (proc / "meminfo").write_text("MemTotal: 8388608 kB\nMemAvailable: 4194304 kB\n")
+    cg.mkdir()
+    (cg / "memory.max").write_text(str(4 * 1024**3))
+    (cg / "memory.stat").write_text(f"anon {3 * 1024**3}\nfile {1024**3}\n")
+    assert memory_pressure(proc_root=proc, cgroup_root=cg) == pytest.approx(0.75)
+
+
+def test_memory_pressure_falls_back_to_meminfo_when_the_cgroup_hides_it(tmp_path):
+    """Fargate: memory.max reads 'max' and memory.stat is absent; the micro-VM
+    is the task, so MemTotal - MemAvailable over MemTotal is the pressure."""
+    from app.core.ingest_lifecycle import memory_pressure, read_memory_snapshot
+
+    proc, cg = tmp_path / "proc", tmp_path / "cg"
+    (proc / "self").mkdir(parents=True)
+    (proc / "self" / "cgroup").write_text("0::/\n")
+    (proc / "self" / "status").write_text("VmRSS: 1024 kB\nVmHWM: 2048 kB\n")
+    (proc / "meminfo").write_text(
+        "MemTotal: 4194304 kB\nMemAvailable: 1048576 kB\nCached: 1572864 kB\n")
+    cg.mkdir()
+    (cg / "memory.max").write_text("max\n")
+    assert memory_pressure(proc_root=proc, cgroup_root=cg) == pytest.approx(0.75)
+    snap = read_memory_snapshot(proc_root=proc, cgroup_root=cg)
+    assert snap.anon_mb == pytest.approx(3072.0) and snap.file_mb == pytest.approx(1536.0)
+    assert "anon=3072MB" in snap.as_line() and "page_cache=1536MB" in snap.as_line()
+
+
+@needs_fork
+def test_container_guard_stops_the_child_before_the_container_dies(monkeypatch):
+    """Copy-on-write growth is invisible to RLIMIT_AS; the parent's guard on
+    container memory stops the child, and the parent carries on."""
+    from app.core import extract_isolated
+
+    monkeypatch.setenv("DOC_ISOLATE_MEM_GUARD_FRACTION", "0.85")
+    monkeypatch.setattr(extract_isolated, "_memory_pressure", lambda: 0.97)
+
+    t0 = time.monotonic()
+    result, diag = extract_isolated.run_isolated(
+        time.sleep, (60,), fallback="fallback", label="indexing of x", timeout_s=120,
+    )
+    assert time.monotonic() - t0 < 30, "guard did not stop the child"
+    assert result == "fallback"
+    assert diag["extract_failed"] == "memory_guard"
+    assert "97%" in diag["extract_failed_detail"]
+
+
+@needs_fork
+def test_container_guard_off_at_zero(monkeypatch):
+    from app.core import extract_isolated
+
+    monkeypatch.setenv("DOC_ISOLATE_MEM_GUARD_FRACTION", "0")
+    monkeypatch.setattr(extract_isolated, "_memory_pressure", lambda: 0.99)
+    result, diag = extract_isolated.run_isolated(lambda: "done", (), fallback=None)
+    assert result == "done" and diag == {}

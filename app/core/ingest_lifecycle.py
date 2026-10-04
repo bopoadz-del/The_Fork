@@ -189,6 +189,13 @@ class MemorySnapshot:
     oom_kill: Optional[int] = None
     oom_group_kill: Optional[int] = None
     uptime_s: Optional[float] = None
+    #: Non-reclaimable (anonymous) memory of the whole container -- every
+    #: process in it, copy-on-write pages counted once. What the OOM killer
+    #: actually weighs.
+    anon_mb: Optional[float] = None
+    #: Page cache. Counted in cgroup usage, but the kernel reclaims it before
+    #: it kills anything.
+    file_mb: Optional[float] = None
 
     def headroom_mb(self) -> Optional[float]:
         """MB left before the cgroup ceiling, or None when either is unknown."""
@@ -207,6 +214,8 @@ class MemorySnapshot:
             "oom_kill": self.oom_kill,
             "oom_group_kill": self.oom_group_kill,
             "uptime_s": self.uptime_s,
+            "anon_mb": self.anon_mb,
+            "file_mb": self.file_mb,
         }
 
     def as_line(self) -> str:
@@ -228,6 +237,10 @@ class MemorySnapshot:
             bits.append(f"headroom={headroom:.0f}MB")
         if self.cgroup_peak_mb is not None:
             bits.append(f"cgroup_peak={self.cgroup_peak_mb:.0f}MB")
+        if self.anon_mb is not None:
+            bits.append(f"anon={self.anon_mb:.0f}MB")
+        if self.file_mb is not None:
+            bits.append(f"page_cache={self.file_mb:.0f}MB")
         if self.oom_kill is not None:
             bits.append(f"oom_kill={self.oom_kill}")
         if self.oom_group_kill:
@@ -318,6 +331,7 @@ def read_memory_snapshot(
     limit = _first_int(dirs, "memory.max", "memory.limit_in_bytes")
     cg_peak = _first_int(dirs, "memory.peak", "memory.max_usage_in_bytes")
     events = _first_kv(dirs, "memory.events", "memory.oom_control")
+    anon_b, file_b = _anon_and_cache_bytes(dirs, proc_root)
     if current is None and limit is None and cg_peak is None and not events:
         logger.warning("cgroup memory path isn't available at %s", cgroup_root)
 
@@ -333,7 +347,68 @@ def read_memory_snapshot(
         oom_kill=events.get("oom_kill"),
         oom_group_kill=events.get("oom_group_kill"),
         uptime_s=host_uptime_s(proc_root),
+        anon_mb=_mb(anon_b),
+        file_mb=_mb(file_b),
     )
+
+
+def _meminfo_bytes(proc_root: Path) -> Dict[str, int]:
+    """``/proc/meminfo`` as bytes (``MemTotal``, ``MemAvailable``, ``Cached`` ...)."""
+    raw = _read_text(proc_root / "meminfo") or ""
+    out: Dict[str, int] = {}
+    for line in raw.splitlines():
+        name, _, rest = line.partition(":")
+        parts = rest.split()
+        if parts and parts[0].isdigit():
+            out[name.strip()] = int(parts[0]) * 1024
+    return out
+
+
+def _anon_and_cache_bytes(
+    dirs: Sequence[Path], proc_root: Path,
+) -> tuple[Optional[int], Optional[int]]:
+    """(anonymous, page cache) bytes: cgroup ``memory.stat`` first, else meminfo.
+
+    A Fargate task is its own micro-VM, so where the cgroup files hide the
+    numbers, ``/proc/meminfo`` describes exactly this task.
+    """
+    stat = _first_kv(dirs, "memory.stat")
+    anon = stat.get("anon", stat.get("total_rss"))
+    cache = stat.get("file", stat.get("total_cache"))
+    if anon is not None:
+        return anon, cache
+    info = _meminfo_bytes(proc_root)
+    total, avail = info.get("MemTotal"), info.get("MemAvailable")
+    if total is None or avail is None:
+        return None, None
+    return total - avail, info.get("Cached")
+
+
+def memory_pressure(
+    *,
+    proc_root: Path = Path("/proc"),
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> Optional[float]:
+    """Fraction of this container's memory in NON-reclaimable use, or None.
+
+    Anonymous memory over the limit -- page cache excluded, because the
+    kernel drops cache before it OOM-kills. The limit is the cgroup's when it
+    is readable and finite, else the box's MemTotal (on Fargate the cgroup
+    reports ``max`` and the micro-VM is the task).
+    """
+    dirs = cgroup_candidate_dirs(proc_root=proc_root, cgroup_root=cgroup_root)
+    info = _meminfo_bytes(proc_root)
+    limit = _first_int(dirs, "memory.max", "memory.limit_in_bytes")
+    total = info.get("MemTotal")
+    if limit is None or (total is not None and limit > total):
+        limit = total
+    stat = _first_kv(dirs, "memory.stat")
+    used = stat.get("anon", stat.get("total_rss"))
+    if used is None and total is not None and info.get("MemAvailable") is not None:
+        used = total - info["MemAvailable"]
+    if not limit or used is None:
+        return None
+    return used / limit
 
 
 # ── process identity ────────────────────────────────────────────────────────
