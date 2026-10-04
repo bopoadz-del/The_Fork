@@ -184,9 +184,8 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_VECTOR_NAMESPACE", "v2")
 
-    from app.core import doc_index, file_crypto, gdrive_service
+    from app.core import doc_index, gdrive_service
     from app.core import projects as projects_mod
-    from app.core import r2_storage
     from app.core.rag import embeddings as emb, vector_store as vs
 
     monkeypatch.setattr(gdrive_service, "is_configured", lambda: True)
@@ -196,13 +195,6 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setattr(
         gdrive_service, "download_file_bytes", lambda fid: (b"x" * 256, None),
     )
-    monkeypatch.setattr(file_crypto, "write_document", lambda path, data: None)
-    monkeypatch.setattr(
-        r2_storage, "archive_document",
-        lambda **kw: {"archived": False, "r2_object_key": None,
-                      "error": "R2_UPLOAD_FAILED: AccessDenied"},
-    )
-    monkeypatch.setattr(r2_storage, "delete_local_archive", lambda path: None)
     monkeypatch.setattr(
         projects_mod, "get_or_create_project",
         lambda name, **kw: ({"id": kw.get("project_id") or name}, False),
@@ -213,6 +205,9 @@ def harness(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         projects_mod, "set_document_drive_md5", lambda did, token: None,
+    )
+    monkeypatch.setattr(
+        projects_mod, "set_document_file_path", lambda did, path: None,
     )
     added = {"n": 0}
 

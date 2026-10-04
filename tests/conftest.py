@@ -301,3 +301,25 @@ def data_dir():
 # legacy Playwright browser suite was deleted. pytest-asyncio now manages loop
 # lifecycle; forcibly closing the loop after every test broke module-scoped
 # async fixtures (RuntimeError: Event loop is closed).
+
+
+@pytest.fixture
+def dev_key_is_admin(monkeypatch):
+    """Give ``cb_dev_key`` the admin role for one test.
+
+    Only the admin path adds to a project's knowledge base
+    (``app/core/privileges.caller_may_add_to_project_rag``); the dev key has no
+    role, so a test of an indexing route runs as an admin caller. The non-admin
+    side of that rule is tested in tests/test_project_rag_admin_only.py.
+    """
+    from app.core.auth import auth as auth_manager
+
+    original = auth_manager.validate_key
+
+    def _validate(credentials):
+        principal = original(credentials)
+        if getattr(credentials, "credentials", None) == "cb_dev_key":
+            principal = {**principal, "role": "admin"}
+        return principal
+
+    monkeypatch.setattr(auth_manager, "validate_key", _validate)

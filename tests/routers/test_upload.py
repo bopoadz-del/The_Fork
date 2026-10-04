@@ -91,7 +91,7 @@ async def test_upload_enqueues_job_when_redis_configured(
         file=_make_file(),
         project_id=project_pid,
         background_tasks=spy,
-        auth={"user_id": "user1"},
+        auth={"user_id": "user1", "role": "admin"},
     )
 
     assert response["indexed"] is True
@@ -137,7 +137,7 @@ async def test_upload_falls_back_to_background_task_when_enqueue_fails(
         file=_make_file(),
         project_id=project_pid,
         background_tasks=spy,
-        auth={"user_id": "user1"},
+        auth={"user_id": "user1", "role": "admin"},
     )
 
     assert response["indexed"] is True
@@ -170,7 +170,7 @@ async def test_upload_falls_back_when_enqueue_returns_false(
         file=_make_file(),
         project_id=project_pid,
         background_tasks=spy,
-        auth={"user_id": "user1"},
+        auth={"user_id": "user1", "role": "admin"},
     )
 
     assert response["indexed"] is True

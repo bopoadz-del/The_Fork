@@ -43,15 +43,17 @@ def _tenant(tag: str):
 
 
 @pytest.fixture
-def two_tenants(client):
+def two_tenants(client, dev_key_is_admin):
     _owner, h_owner = _tenant("owner")
     _other, h_other = _tenant("other")
     pid = client.post(
         "/v1/projects", headers=h_owner, json={"name": "Tenancy Probe"}
     ).json()["id"]
+    # Only the admin path adds to a project's knowledge base, so the owner's
+    # project is seeded by an admin; what is under test is who may SEARCH it.
     r = client.post(
         f"/v1/projects/{pid}/documents",
-        headers=h_owner,
+        headers={"Authorization": "Bearer cb_dev_key"},
         files={
             "file": (
                 "notes.txt",

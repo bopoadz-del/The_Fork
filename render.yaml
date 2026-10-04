@@ -14,7 +14,7 @@
 #   UVICORN_WORKERS   declared 2, UNSET live (so one worker). Applying would
 #                     double worker count on a 4 GB box; nobody has tested
 #                     two workers against the extraction memory profile.
-#   44 env vars       set live and absent here (R2_*, LLM keys, FORK_*,
+#   44 env vars       set live and absent here (LLM keys, FORK_*,
 #                     RAG_GK_*, GDRIVE_*). Verify how apply treats undeclared
 #                     vars BEFORE applying — if it prunes them, applying is a
 #                     credential wipe.
@@ -364,8 +364,8 @@ services:
   # NO DISK. A Render disk mounts to exactly one instance and the-fork already
   # holds the-fork-data, so this worker CANNOT share /app/data. DATA_DIR below
   # is therefore ephemeral scratch, which is fine for the ingest path — the
-  # script deletes each download right after indexing (r2_storage
-  # .delete_local_archive) and the durable outputs are the Neon rows plus the
+  # script deletes each download right after indexing (the platform keeps no
+  # copy of an original) and the durable outputs are the Neon rows plus the
   # Render log. The JSON report and shard manifest the worker writes die with
   # the container; do not treat their absence as evidence, and do not treat a
   # stale copy as current. On the disk-backed WEB path the same script writes
@@ -437,16 +437,6 @@ services:
       - key: SECRET_KEY
         sync: false
       - key: GDRIVE_SERVICE_ACCOUNT_JSON
-        sync: false
-      - key: R2_ACCOUNT_ID
-        sync: false
-      - key: R2_ACCESS_KEY_ID
-        sync: false
-      - key: R2_SECRET_ACCESS_KEY
-        sync: false
-      - key: R2_BUCKET_NAME
-        sync: false
-      - key: R2_ENDPOINT_URL
         sync: false
       - key: SENTRY_DSN
         sync: false

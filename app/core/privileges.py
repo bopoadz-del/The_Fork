@@ -41,6 +41,29 @@ def caller_role() -> Optional[str]:
     return _caller_role.get()
 
 
+# Owner ruling (docs/INGEST_EXCLUSION_RULE.md "Who adds to the knowledge
+# base"): only the admin path adds to a project's knowledge base. A user's
+# upload is stored and stays usable as a file, but is never indexed into the
+# project RAG; the user layer is written only when the user explicitly asks
+# through the LLM. Every route that would index into a project asks this.
+PROJECT_RAG_ADMIN_ONLY_DETAIL = (
+    "Only an admin adds documents to a project's knowledge base. "
+    "The file was not indexed."
+)
+
+
+def caller_may_add_to_project_rag(role: Optional[str] = None) -> bool:
+    """True only for an admin caller. An unknown caller is not: fails closed."""
+    effective = role if role is not None else _caller_role.get()
+    return effective == "admin"
+
+
+def raise_unless_may_add_to_project_rag(role: Optional[str] = None) -> None:
+    """403 for a route whose only job is adding documents to a project's RAG."""
+    if not caller_may_add_to_project_rag(role):
+        raise HTTPException(403, PROJECT_RAG_ADMIN_ONLY_DETAIL)
+
+
 def privileged_forbidden_detail(block_name: str) -> str:
     return f"Block '{block_name}' executes arbitrary code and is admin-only."
 

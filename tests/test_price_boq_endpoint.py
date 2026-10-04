@@ -108,6 +108,7 @@ def _upload(client, pid, content: bytes, filename="unpriced_boq.xlsx"):
 
 
 # ── endpoint: happy path ─────────────────────────────────────────────────────
+@pytest.mark.usefixtures("dev_key_is_admin")
 def test_price_boq_endpoint_prices_persists_and_indexes(client, monkeypatch):
     proj = _new_project(client)
     pid = proj["id"]

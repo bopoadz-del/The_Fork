@@ -68,14 +68,17 @@ async def upload_v1(
         # Prevent path traversal
         original_name = os.path.basename(original_name.replace("\\", "/"))
         _, ext = os.path.splitext(original_name.lower())
-        if ext not in ALLOWED_UPLOAD_EXTENSIONS:
-            raise HTTPException(status_code=400, detail=f"File type '{ext}' not allowed")
-        # A file sent WITH a project is persisted and indexed: text formats
-        # only, refused before anything is written. Without a project it stays
-        # a session/sandbox upload.
+        # A file sent WITH a project becomes a project document: the one
+        # project rule (TEXT_BEARING_EXTS) decides, exactly as on
+        # POST /v1/projects/{id}/documents, and it is refused before anything
+        # is written. Without a project it is a session/sandbox upload and
+        # the sandbox list decides.
         from app.core.ingest_status import is_ingestible
 
-        if project_id and project_id.strip() and not is_ingestible(original_name):
+        with_project = bool(project_id and project_id.strip())
+        if not with_project and ext not in ALLOWED_UPLOAD_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"File type '{ext}' not allowed")
+        if with_project and not is_ingestible(original_name):
             raise HTTPException(
                 status_code=415,
                 detail=(
@@ -138,7 +141,16 @@ async def upload_v1(
                     response["document_id"] = doc.get("id") if isinstance(doc, dict) else None
                     response["indexed"] = True
                     response["indexing_status"] = "scheduled"
-                    if response["document_id"]:
+                    # Only the admin path adds to the project's knowledge base
+                    # (owner ruling, app/core/privileges.py): a user's upload
+                    # is stored, not indexed.
+                    from app.core import privileges
+
+                    if not privileges.caller_may_add_to_project_rag(auth.get("role")):
+                        response["indexed"] = False
+                        response["indexing_status"] = "not_indexed"
+                        response["indexing_detail"] = privileges.PROJECT_RAG_ADMIN_ONLY_DETAIL
+                    elif response["document_id"]:
                         # Queue and index under the id the document was STORED
                         # under. For the master-corpus alias that is the backing
                         # corpus — the alias has no project row, so anything

@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core import audit, projects as store
+from app.core import audit, privileges, projects as store
 from app.core.cde import (
     CdeError,
     CdeNotConfiguredError,
@@ -150,6 +150,7 @@ async def sync_aconex(
 ):
     """Pull CDE documents into the project corpus (RAG cache)."""
     _owned_or_404(project_id, auth["user_id"])
+    privileges.raise_unless_may_add_to_project_rag(auth.get("role"))
     cde_project_id = _resolve_cde_project_id(req.cde_project_id)
     try:
         result = await sync_cde_documents(
@@ -231,6 +232,8 @@ async def poll_aconex_events(
     Inject cites live CDE rows or stays silent. No Fork-owned register.
     """
     _owned_or_404(project_id, auth["user_id"])
+    if req.ingest_documents:
+        privileges.raise_unless_may_add_to_project_rag(auth.get("role"))
     cde_project_id = _resolve_cde_project_id(req.cde_project_id)
     try:
         result = await process_cde_events(
