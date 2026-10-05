@@ -82,9 +82,12 @@ def test_margin_filters_gk_below_bar_keeps_gk_above(monkeypatch):
         gk_chunks=[_chunk("gk_low", GK, 0.92), _chunk("gk_high", GK, 1.05)],
     )
     monkeypatch.setenv("RAG_GK_SCORE_MARGIN", "0.2")
-    chunks, _ = ret.retrieve_with_filter("query", ACTIVE, k=3)
+    # The margin guards questions framed inside the project.
+    chunks, _ = ret.retrieve_with_filter("query about this contract", ACTIVE, k=3)
     ids = [c.chunk_id for c in chunks]
-    assert ids == ["gk_high", "ap1"]
+    # gk_high clears the margin and is kept; a project-framed question puts
+    # the project's best chunk first (project layer first).
+    assert ids == ["ap1", "gk_high"]
     assert "gk_low" not in ids
 
 
@@ -178,7 +181,7 @@ def test_doc_lookup_intent_applies_knobs(monkeypatch):
     )
     monkeypatch.setenv("RAG_GK_SCORE_MARGIN", "5.0")
     chunks, _ = ret.retrieve_with_filter(
-        "query", ACTIVE, k=3, intent="document_lookup",
+        "query about this contract", ACTIVE, k=3, intent="document_lookup",
     )
     assert [c.chunk_id for c in chunks] == ["ap1"]
 
