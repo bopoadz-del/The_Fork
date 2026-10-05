@@ -109,11 +109,11 @@ def test_following_rows_skip_only_the_retired_document(store):
 
 
 def test_chunk_reads_never_select_the_embedding(store):
-    from app.core.db import _engine_for_url
+    from sqlalchemy.engine import Engine
 
-    # The store's own engine: another module may have re-pointed the
-    # process default (DATA_DIR reloads) since the store was opened.
-    engine = _engine_for_url(store._database_url)
+    # Every engine: a module that reloads app.core.db leaves the store on an
+    # engine object this test could not otherwise name.
+    engine = Engine
     seen = []
 
     def _rec(conn, cursor, statement, parameters, context, executemany):
