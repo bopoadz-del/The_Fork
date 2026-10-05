@@ -2,7 +2,7 @@
 
 STATUS: DORMANT BY VERDICT — ships flag-OFF and must stay off with the
 default model. The offline proof (2026-08-02, scripts/rerank_offline_proof.py
-against live drive_archive top-50) measured ms-marco-MiniLM reranking as
+against the live master-corpus top-50) measured ms-marco-MiniLM reranking as
 NEGATIVE: doc-recall@5 fell 47% -> 43%. MS-MARCO web-passage training
 transfers badly to OCR-flavoured construction chunks. Full decision record +
 enable-later checklist: docs/rag-reranker.md.

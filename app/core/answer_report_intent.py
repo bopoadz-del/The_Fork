@@ -127,10 +127,10 @@ def export_workspace_project_id(
 ) -> str:
     """UI/workspace project id for an export URL — never the RAG backing id.
 
-    Live H1: chat remaps ``master_corpus`` → ``drive_archive`` before the
-    agent runs. Stamping that remapped id into
+    Chat remaps ``master_corpus`` → the master-corpus source project
+    before the agent runs. Stamping that remapped id into
     ``/v1/projects/{id}/conversations/.../export`` 404s
-    (``Project 'drive_archive' not found``). Prefer the ``ws-{ui_pid}``
+    (``Project '<source id>' not found``). Prefer the ``ws-{ui_pid}``
     conversation prefix, then reverse-map the master-corpus source.
     """
     from app.core.projects import MASTER_CORPUS_PROJECT_ID, ui_project_id

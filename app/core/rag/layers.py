@@ -49,7 +49,7 @@ def authority_rank(name: str) -> int:
 # ── ingest-time classification ─────────────────────────────────────────────
 
 def _gk_project_ids() -> set:
-    """Projects treated as the shared general-knowledge layer (curated_kb)."""
+    """Projects treated as the shared general-knowledge layer (env-configured)."""
     raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     return {p.strip() for p in raw.split(",") if p.strip()}
 

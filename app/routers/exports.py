@@ -293,8 +293,8 @@ class EvmExportRequest(BaseModel):
 def _check_owner(project_id: str, user_id: str) -> Dict[str, Any]:
     # master_corpus is a virtual alias — any authenticated user may read/export
     # conversations scoped to it (same as GET /v1/projects/master_corpus).
-    # Live H1: chat remaps the alias to MASTER_CORPUS_SOURCE_PROJECT_ID
-    # (drive_archive). Stale export buttons that stamp that backing id
+    # Chat remaps the alias to MASTER_CORPUS_SOURCE_PROJECT_ID
+    # (the backing source). Stale export buttons that stamp that backing id
     # must still resolve — look up the UI alias, never the archive id.
     lookup_id = projects_store.ui_project_id(project_id) or project_id
     proj = projects_store.get_project(
@@ -1102,9 +1102,9 @@ def _render_message_docx(
 ) -> str:
     """Render a single assistant message to a temp DOCX and return its path.
 
-    Markdown is RENDERED, not printed: H1 on the 13b2bf7 gate battery found
-    ``word/document.xml`` carrying literal asterisks
-    (``is:**SAR 1,754,504,456.25**``) in a client-facing deliverable. See
+    Markdown is RENDERED, not printed: an exported
+    ``word/document.xml`` once carried literal asterisks
+    (``is:**SAR 1,234,567.00**``) in a client-facing deliverable. See
     ``app/lib/markdown_docx``. The URL goes in a real page footer part, not a
     trailing body paragraph -- the same run found no ``word/footer*.xml`` at
     all. Sources are not yet persisted in agent_memory, so the Sources section

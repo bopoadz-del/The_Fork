@@ -320,7 +320,7 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
     proj["documents_truncated"] = len(proj.get("documents") or []) < doc_count
 
     # Live chunk counts come from the vector store, not the legacy doc_index
-    # JSON blob. Bulk-inserted chunks (drive_archive migration) never touch
+    # JSON blob. Bulk-inserted chunks (the master-corpus migration) never touch
     # doc_index, so counting from the ``chunks`` table is the only accurate
     # source. Both the project total and the per-document counts are cheap
     # indexed queries (COUNT / GROUP BY), so they run for every project size.

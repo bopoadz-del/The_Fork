@@ -1,6 +1,6 @@
 """Deterministic project/company identifier scrub for RAG answers.
 
-Pilot confidentiality stopgap: the general-knowledge corpus (drive_archive)
+Pilot confidentiality stopgap: the master-corpus source project
 still holds a client's project documents, whose technical content is useful but
 whose *names* must not leak into answers (one client's project identity showing
 up in another context). Until deployment-grade per-tenant isolation lands, this

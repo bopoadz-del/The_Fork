@@ -463,7 +463,8 @@ def admin_restore_archived_project(project_id: str,
     """Restore an ARCHIVED project to active — the missing undo for Delete.
 
     2026-07-26: the sidebar cleanup archived the REAL corpus projects
-    (client_infra_pack_1, drive_archive) along with the duplicate shells, and
+    (a client corpus project and the master-corpus source) along with the
+    duplicate shells, and
     archive hides a project from retrieval — corpus-project chat silently
     degraded with no way back from the UI or API. Restore flips status to
     'active'; pass hide_from_sidebar=true to keep the row out of the sidebar
@@ -1213,7 +1214,7 @@ def admin_corpus_collections(
 
     Read-only. Issues one COUNT(*) per project + one GROUP BY for folder
     breakdown — bounded by the number of distinct project_ids. Designed
-    for the 70 GB drive_archive corpus where the operator needs to see
+    for a 70 GB master-corpus source where the operator needs to see
     what's actually in there grouped by source folder.
 
     Works on both Postgres production and SQLite dev / pilot.
@@ -1331,8 +1332,8 @@ def admin_corpus_collections(
         alias_entry["is_master_corpus_alias"] = True
         collections.append(alias_entry)
 
-    # Largest first so the eye lands on drive_archive immediately when it
-    # exists.
+    # Largest first so the eye lands on the master-corpus source immediately
+    # when it exists.
     collections.sort(key=lambda c: (-c["chunks"], -c["documents"], c["project_id"]))
 
     return {
@@ -1349,7 +1350,7 @@ def admin_corpus_collections(
 #
 # Accepts a JSON payload of projects/documents/chunks and inserts them
 # into the production tables. Designed for operator loads (the original
-# drive_archive migration, the dd-2023-118 Vol 3 backfill) where direct
+# master-corpus migration, a single-contract volume backfill) where direct
 # psycopg from outside the Render perimeter is blocked by the pgsql
 # ipAllowList default.
 #
@@ -1610,7 +1611,7 @@ def admin_corpus_delete_docs(
     """Export or delete a specific list of documents from one corpus.
 
     Purpose: prune project-specific content that was indexed into a general
-    corpus (e.g. company procedure folders in ``drive_archive``) without
+    corpus (e.g. company procedure folders in the master-corpus source) without
     touching the rest. Operates on an explicit ``doc_ids`` list scoped to one
     ``project_id`` — it never deletes a whole project and never cascades.
 
@@ -1728,7 +1729,7 @@ def admin_corpus_reconcile(
 ):
     """Detect (and optionally repair) chunks stored under the wrong project_id.
 
-    The drive_archive migration wrote chunks via ``/v1/admin/corpus/bulk-insert``
+    The master-corpus migration wrote chunks via ``/v1/admin/corpus/bulk-insert``
     using a per-document destination project_id. If the manifest mapped a
     document to project A but the chunk rows were stamped with project B,
     direct search on project A returns 0 results while project B returns chunks

@@ -9,7 +9,7 @@ and the index-time gate in ``doc_index``.
 Measured on the live corpus 2026-09-04 (see artifacts INGEST_PROOF / the gap
 receipt) -- the numbers below are calibration evidence, not preference:
 
-* 1,873 of 2,691 PDFs in ``client_infra_pack_1`` held exactly ONE chunk while
+* 1,873 of 2,691 PDFs in one client corpus project held exactly ONE chunk while
   being indistinguishable from a fully-extracted specification.
 * A chars-per-MB gate was tried and REJECTED: 935 one-chunk documents sit above
   any defensible cut, because chars/MB conflates image-heavy with text-poor.
