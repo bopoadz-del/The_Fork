@@ -3263,83 +3263,6 @@ def _apply_contract_data_filename_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_contract_data_docs(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: List[str],
-) -> Dict[str, str]:
-    """Pull chunks from filename-matched Contract Data files into ``fused``."""
-    names: Dict[str, str] = {}
-    if not query_wants_contract_data_file(query):
-        return names
-    try:
-        from app.core.projects import documents_matching_title_phrase
-    except Exception:  # noqa: BLE001
-        logger.warning("contract-data rescue: projects import failed", exc_info=True)
-        return names
-    fetch = getattr(store, "chunks_for_docs", None)
-    if not callable(fetch):
-        return names
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    recovered = 0
-    for pid in pids:
-        try:
-            matches = documents_matching_title_phrase(pid, "contract data")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("contract-data rescue listing for %s failed: %s", pid, exc)
-            continue
-        if not matches:
-            continue
-        for doc in matches:
-            names[doc["id"]] = doc.get("original_name") or ""
-        try:
-            hits = fetch(pid, [d["id"] for d in matches], k_per_doc=40)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("contract-data rescue fetch for %s failed: %s", pid, exc)
-            continue
-        keep = None
-        if query_asks_for_aca_including_vat(query):
-            keep = chunk_states_aca_including_vat
-        elif query_asks_for_time_for_completion(query):
-            keep = chunk_states_time_for_completion
-        elif query_asks_who_the_engineer_is(query):
-            keep = chunk_states_engineer_identity
-        elif query_asks_delay_damages_daily_amount(query):
-            keep = _chunk_is_daily_damages_operand
-        elif query_asks_for_defects_notification_period(query):
-            keep = chunk_states_defects_notification_period
-        elif query_asks_for_parent_company_guarantee(query):
-            keep = chunk_states_pcg_contract_data
-        elif query_asks_for_contract_commencement_date(query):
-            keep = chunk_states_commencement_contract_data
-        paired = _pair_adjacent_keep_text(hits, keep) if keep else []
-        daily_damages_ask = query_asks_delay_damages_daily_amount(query)
-        for chunk in paired:
-            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
-            # Daily amount: rate earns the asked-value bonus; ACA enters at 0 so
-            # the monetary reservation still owns the last slot.
-            bonus = _ASKED_PARTICULAR_VALUE_BONUS
-            if daily_damages_ask and not chunk_states_delay_damages_rate(chunk.text or ""):
-                bonus = 0.0
-            fused[chunk.chunk_id] = (chunk, 0.0, bonus)
-            recovered += 1
-        # The ACA ask still needs every Contract Data window so the filename
-        # fence can see the including-VAT row. TfC / Engineer asks only keep the
-        # answering row — an ACA-only file must not fill top-k.
-        if query_asks_for_accepted_contract_amount(query):
-            for chunk in hits:
-                names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
-                if chunk.chunk_id in fused:
-                    continue
-                fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
-                recovered += 1
-    if recovered:
-        logger.info("contract-data rescue recovered %d chunk(s) for a particulars ask", recovered)
-    return names
-
-
 # ── Named-row rescue: ANY filled Contract Data row the question names ─────
 #
 # Live b64bbd2, 0/3 each: "What is the value of the Performance Bond?",
@@ -3680,106 +3603,349 @@ def format_named_community_tfc_span_line(composed: Dict[str, Any]) -> str:
     )
 
 
-def _rescue_named_particulars_rows(
+# ── labelled-row recall: the filled row for the label a question names ────
+#
+# A particular (an amount, a duration, a party, "Not Used", "Not required",
+# a register entry, a bill item marked Rate Only) is a labelled ROW: a label
+# cell and a value cell. Asked plainly, the row is absent from the pool: a
+# scanned table embeds badly, the row shares one or two words with the
+# question, and long prose that mentions the same topic at length fills the
+# slots. The discriminator is the row itself: a line that opens with a label
+# the question names and states a value for it.
+#
+# The labels come from the question: the particular names it uses (a lexicon
+# of contract-particular names), any identifier label it names ("Schedule 7",
+# a bill item code), and runs of its own content words. A filled value is a
+# figure, a party, a date, a register entry or a stated absence ("No", "Not
+# required", "Not used", "to be notified"); a blank template ("[insert
+# amount]") and a pointer to somewhere else ("as stated in the Contract
+# Data") are not.
+_PARTICULARS_KIND_PHRASES = ("contract data", "appendix to tender", "contract particulars")
+_LABELLED_ROW_MAX_LABELS = 6
+_LABELLED_ROW_FETCH_K = 20
+_LABELLED_ROW_VALUE_CHARS = 120
+_STATED_ABSENCE_RE = re.compile(
+    r"(?i)^(?:no|none|nil|n/?a|not\s+(?:required|used|applicable|populated|stated)|"
+    r"tba|tbc|to\s+be\s+(?:advised|agreed|confirmed|notified|issued|inserted))\b"
+)
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"(?i)\[\s*(?:insert|name|amount|date|enter|state)\b|\.{5,}|_{5,}"
+)
+# A value cell that points elsewhere is not a value.
+_ROW_VALUE_POINTER_RE = re.compile(
+    r"(?i)\b(?:stated|set\s+out|specified|given|shown|defined|referred\s+to)\s+in\s+"
+    r"(?:the\s+)?(?:contract\s+data|appendix|schedule|particular|letter\s+of)"
+)
+_ROW_VALUE_MAX_PROSE_WORDS = 14
+
+
+def asked_row_labels(query: str) -> List[str]:
+    """The row labels the question names, most specific first.
+
+    Identifier labels ("schedule 7", a bill item code) first, then the
+    contract-particular names it uses, then runs of its own content words.
+    Empty for a definition question.
+    """
+    q = query or ""
+    if _DEFINITION_QUESTION_RE.search(q):
+        return []
+    out: List[str] = []
+
+    def _add(label: str) -> None:
+        lab = " ".join((label or "").lower().split())
+        if len(lab) >= 3 and lab not in out:
+            out.append(lab)
+
+    if query_asks_for_numbered_contract_schedule(q):
+        for lab in extract_asked_schedule_labels(q):
+            _add(lab)
+    if query_asks_for_boq_item_amount(q):
+        for code in extract_asked_cesmm_codes(q):
+            _add(code)
+    for phrase in _asked_particular_key_phrases(q):
+        _add(phrase)
+    for phrase in sorted(_label_phrases(q), key=lambda p: -len(p.split())):
+        _add(phrase)
+    return out
+
+
+def query_wants_a_labelled_row(query: str) -> bool:
+    """A question whose answer is a filled row, so its labels may be text-searched.
+
+    A contract-particulars question, a numbered register / schedule entry, or
+    a bill item named by its code. An ordinary question is not searched this
+    way: its word runs are not labels.
+    """
+    q = query or ""
+    if _DEFINITION_QUESTION_RE.search(q):
+        return False
+    return bool(
+        query_asks_for_contract_particulars(q)
+        or query_asks_for_numbered_contract_schedule(q)
+        or (query_asks_for_boq_item_amount(q) and extract_asked_cesmm_codes(q))
+        or query_asks_for_parent_company_guarantee(q)
+        or query_asks_for_contract_commencement_date(q)
+        or query_wants_contract_data_file(q)
+    )
+
+
+def _row_value_is_filled(value: str) -> bool:
+    val = (value or "").strip(" \t|:;-–—.")
+    if not val or not re.search(r"[A-Za-z0-9]", val):
+        return False
+    if _TEMPLATE_PLACEHOLDER_RE.search(val):
+        return False
+    if _ROW_VALUE_POINTER_RE.search(val):
+        return False
+    if _STATED_ABSENCE_RE.search(val):
+        return True
+    if _CD_FILLED_VALUE_RE.search(val[:_LABELLED_ROW_VALUE_CHARS]):
+        return True
+    # A sentence of prose under a heading is a clause, not a value cell.
+    return len(val.split()) <= _ROW_VALUE_MAX_PROSE_WORDS
+
+
+def chunk_states_labelled_row(text: str, labels: List[str]) -> bool:
+    """True when a line opens with one of ``labels`` and a filled value follows.
+
+    The value is the rest of the line after the label (past any ``:`` / ``|``
+    cell separators), or the next line when the label stands alone on its
+    line, as a scanned key often does.
+    """
+    if not labels:
+        return False
+    lines = [ln for ln in (text or "").splitlines()]
+    for i, line in enumerate(lines):
+        end = _line_is_labelled(line, labels)
+        if end is None:
+            continue
+        rest = line.lower()[end:]
+        if rest.strip(" \t|:;-–—.") == "" and i + 1 < len(lines):
+            rest = lines[i + 1]
+        if _row_value_is_filled(rest):
+            return True
+    return False
+
+
+def _known_particular_row_test(query: str):
+    """The row recogniser for a contract particular whose row shape is known.
+
+    None when the question asks for no such particular.
+    """
+    if query_asks_for_aca_including_vat(query):
+        return chunk_states_aca_including_vat
+    if query_asks_for_time_for_completion(query):
+        return chunk_states_time_for_completion
+    if query_asks_who_the_engineer_is(query):
+        return chunk_states_engineer_identity
+    if query_asks_delay_damages_daily_amount(query):
+        return _chunk_is_daily_damages_operand
+    if query_asks_for_defects_notification_period(query):
+        return chunk_states_defects_notification_period
+    if query_asks_for_parent_company_guarantee(query):
+        return chunk_states_pcg_contract_data
+    if query_asks_for_contract_commencement_date(query):
+        return chunk_states_commencement_contract_data
+    return None
+
+
+def chunk_states_asked_row(query: str, text: str, labels: Optional[List[str]] = None) -> bool:
+    """True when ``text`` states the row the question asks for.
+
+    The particular shapes the retriever already recognises (a rate, a party,
+    a duration, a Rate Only item, a register entry, a not-required /
+    not-populated particular) or, for any other label, a labelled row with a
+    filled value.
+    """
+    if chunk_answers_asked_particular(query, text):
+        return True
+    if query_asks_for_parent_company_guarantee(query) and chunk_states_pcg_contract_data(text):
+        return True
+    if (
+        query_asks_for_contract_commencement_date(query)
+        and chunk_states_commencement_contract_data(text)
+    ):
+        return True
+    if query_asks_for_numbered_contract_schedule(query):
+        schedule_labels = extract_asked_schedule_labels(query)
+        if schedule_labels and chunk_states_schedule_register(text, schedule_labels):
+            return True
+    if query_asks_for_boq_item_amount(query):
+        codes = extract_asked_cesmm_codes(query)
+        if codes and chunk_states_rate_only_item(text, codes):
+            return True
+    return chunk_states_labelled_row(text, labels if labels is not None else asked_row_labels(query))
+
+
+def recall_labelled_rows(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     extra_pids: List[str],
-) -> int:
-    """Pull the filled Contract Data row(s) the question names into ``fused``."""
+) -> Dict[str, str]:
+    """Pull the filled row(s) for the label(s) the question names into ``fused``.
+
+    Labelled-row recall, in two passes:
+
+      * the particulars documents (their kind read from the upload name) are
+        loaded, and the rows the question names -- by its own label phrases,
+        or by a particular it asks for -- are pooled with the asked-value
+        bonus; a row that runs on into the next chunk brings that chunk, and
+        a share of a named sum brings the row stating the sum;
+      * for a particulars-shaped question, the question's labels are also
+        searched as text across the project, so a row that lives in a file
+        of another kind (a register, a bill, a scanned sheet) is pooled when
+        it states a value for that label.
+
+    Returns ``{doc_id: name}`` for the particulars documents listed here.
+    Failures never raise -- the semantic pool stands.
+    """
+    names: Dict[str, str] = {}
     if _DEFINITION_QUESTION_RE.search(query or ""):
-        return 0
-    if (
-        len(_named_row_terms(query)) < _NAMED_ROW_MIN_LINE_TERMS
-        and not _label_phrases(query)
-    ):
-        return 0
+        return names
+    labels = asked_row_labels(query)
+    named_terms = _named_row_terms(query)
+    if not labels and len(named_terms) < _NAMED_ROW_MIN_LINE_TERMS:
+        return names
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+
+    def _pool(chunk: Chunk, bonus: float) -> None:
+        nonlocal recovered
+        prev = fused.get(chunk.chunk_id)
+        if prev is not None:
+            fused[chunk.chunk_id] = (prev[0], prev[1], max(prev[2] or 0.0, bonus))
+            return
+        fused[chunk.chunk_id] = (chunk, 0.0, bonus)
+        recovered += 1
+
+    keep = (lambda text: chunk_states_asked_row(query, text, labels))
+    daily_damages_ask = query_asks_delay_damages_daily_amount(query)
+
+    def _bonus_for(text: str) -> float:
+        # A daily amount is composed from the rate and the sum it is a share
+        # of: the rate row earns the asked-value bonus, the sum enters at 0 so
+        # the monetary reservation still owns the last slot.
+        if daily_damages_ask and not chunk_states_delay_damages_rate(text):
+            return 0.0
+        return _ASKED_PARTICULAR_VALUE_BONUS
+
+    # ── pass 1: the particulars documents ─────────────────────────────────
     try:
         from app.core.projects import documents_matching_title_phrase
     except Exception:  # noqa: BLE001
-        logger.warning("named-row rescue: projects import failed", exc_info=True)
-        return 0
-    fetch = getattr(store, "chunks_for_docs", None)
-    if not callable(fetch):
-        return 0
-    matched: List[Tuple[int, Chunk]] = []
-    sheet: List[Chunk] = []
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    for pid in pids:
-        try:
-            docs = documents_matching_title_phrase(pid, "contract data")
-            k_per = 80 if query_asks_named_community_tfc_span(query) else 40
-            hits = fetch(pid, [d["id"] for d in docs], k_per_doc=k_per) if docs else []
-        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
-            logger.warning("named-row rescue for %s failed: %s", pid, exc)
-            continue
-        sheet.extend(hits)
-        for chunk in hits:
-            strength = named_particulars_row_match(query, chunk.text or "")
-            if strength:
-                matched.append((strength, chunk))
-    matched.sort(key=lambda m: (-m[0], m[1].chunk_index))
-    row_cap = _NAMED_ROW_MAX_CHUNKS
-    if query_asks_named_community_tfc_span(query):
-        # Live F1: list + M1–5 times filled both slots and the
-        # continuation (547 / Northern) never entered chosen.
-        row_cap = max(row_cap, 4)
-    chosen = [chunk for _strength, chunk in matched[:row_cap]]
-    # A row that runs on into the next chunk is still one row. The second
-    # half carries no label, so it is found from the first half, not by name.
-    for parent in list(chosen):
-        for cont in _enumeration_continuations(parent, sheet):
-            if all(cont.chunk_id != c.chunk_id for c in chosen):
-                chosen.append(cont)
-    # Set3 F1: a named-community Time-for-Completion span needs the
-    # continuation rows that name the community AND state days, even
-    # when the opening header is too long for enumeration rescue.
-    if query_asks_named_community_tfc_span(query):
-        community = extract_asked_community_name(query)
-        needle = (community or "").lower()
-        if needle:
-            for chunk in sheet:
-                text = chunk.text or ""
-                if needle not in text.lower():
-                    continue
-                if not re.search(r"(?i)\d+\s*days", text):
-                    continue
-                if all(chunk.chunk_id != c.chunk_id for c in chosen):
-                    chosen.append(chunk)
-    recovered = 0
-    # Live 24d1c0c E2, 0/3: the 0.015%-per-day row ranked first and the answer
-    # stopped, correctly, at "0.45% of the Contract Price — which is not in
-    # the retrieved context". A share of the contract sum is half an answer;
-    # the sum is one row up the same sheet. Below the asked row's bonus, so
-    # the base can accompany the row and never outrank it.
-    if any(_NAMED_ROW_SHARE_OF_SUM_RE.search(c.text or "") for c in chosen):
-        docs = {c.doc_id for c in chosen}
-        base = next(
-            (
-                c for c in sheet
-                if c.doc_id in docs
-                and chunk_states_accepted_contract_amount(c.text or "")
-            ),
-            None,
-        )
-        if base is not None and base.chunk_id not in fused:
-            fused[base.chunk_id] = (base, 0.0, _NAMED_ROW_BASE_AMOUNT_BONUS)
-            recovered += 1
-    for chunk in chosen:
-        prev = fused.get(chunk.chunk_id)
-        if prev is not None:
-            # Already pooled on cosine alone: it still has to beat the
-            # table-of-contents page that repeats the label.
-            fused[chunk.chunk_id] = (
-                prev[0], prev[1], max(prev[2], _ASKED_PARTICULAR_VALUE_BONUS),
+        logger.warning("labelled-row recall: projects import failed", exc_info=True)
+        documents_matching_title_phrase = None
+    by_docs = getattr(store, "chunks_for_docs", None)
+    span_ask = query_asks_named_community_tfc_span(query)
+    if documents_matching_title_phrase is not None and callable(by_docs):
+        matched: List[Tuple[int, Chunk]] = []
+        sheet: List[Chunk] = []
+        for pid in pids:
+            docs: List[Dict[str, str]] = []
+            for phrase in _PARTICULARS_KIND_PHRASES:
+                try:
+                    docs.extend(documents_matching_title_phrase(pid, phrase) or [])
+                except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+                    logger.warning(
+                        "particulars listing for %s (%r) failed: %s", pid, phrase, exc,
+                    )
+            ids: List[str] = []
+            for doc in docs:
+                did = doc.get("id") or ""
+                if did and did not in ids:
+                    ids.append(did)
+                    names[did] = doc.get("original_name") or ""
+            if not ids:
+                continue
+            try:
+                hits = by_docs(pid, ids, k_per_doc=80 if span_ask else 40)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("particulars fetch for %s failed: %s", pid, exc)
+                continue
+            sheet.extend(hits)
+            for chunk in hits:
+                strength = named_particulars_row_match(query, chunk.text or "")
+                if strength:
+                    matched.append((strength, chunk))
+            # A label split from its value across chunks is still one row. Only
+            # for a particular whose row shape is known: joining arbitrary
+            # neighbours would make any two adjacent rows look like one.
+            known = _known_particular_row_test(query)
+            if known is not None:
+                for chunk in _pair_adjacent_keep_text(hits, known):
+                    names.setdefault(chunk.doc_id, "")
+                    _pool(chunk, _bonus_for(chunk.text or ""))
+            # The Accepted Contract Amount ask keeps every window of the sheet so
+            # the filename fence can see the variant (VAT basis) asked for.
+            if query_asks_for_accepted_contract_amount(query):
+                for chunk in hits:
+                    if chunk.chunk_id not in fused:
+                        fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+                        recovered += 1
+        matched.sort(key=lambda m: (-m[0], m[1].chunk_index))
+        row_cap = max(_NAMED_ROW_MAX_CHUNKS, 4) if span_ask else _NAMED_ROW_MAX_CHUNKS
+        chosen = [chunk for _strength, chunk in matched[:row_cap]]
+        # A row that runs on into the next chunk is still one row. The second
+        # half carries no label, so it is found from the first half.
+        for parent in list(chosen):
+            for cont in _enumeration_continuations(parent, sheet):
+                if all(cont.chunk_id != c.chunk_id for c in chosen):
+                    chosen.append(cont)
+        # A span across a named group of milestones needs every row that names
+        # the group and states days, even past an over-long repeated header.
+        if span_ask:
+            needle = (extract_asked_community_name(query) or "").lower()
+            if needle:
+                for chunk in sheet:
+                    text = chunk.text or ""
+                    if needle in text.lower() and re.search(r"(?i)\d+\s*days", text):
+                        if all(chunk.chunk_id != c.chunk_id for c in chosen):
+                            chosen.append(chunk)
+        # A share of a named sum is half an answer; the sum is a row of the same
+        # sheet. Below the asked row's bonus, so it accompanies and never leads.
+        if any(_NAMED_ROW_SHARE_OF_SUM_RE.search(c.text or "") for c in chosen):
+            docs_in = {c.doc_id for c in chosen}
+            base = next(
+                (c for c in sheet
+                 if c.doc_id in docs_in and chunk_states_accepted_contract_amount(c.text or "")),
+                None,
             )
-            continue
-        fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
-        recovered += 1
+            if base is not None and base.chunk_id not in fused:
+                fused[base.chunk_id] = (base, 0.0, _NAMED_ROW_BASE_AMOUNT_BONUS)
+                recovered += 1
+        for chunk in chosen:
+            _pool(chunk, _ASKED_PARTICULAR_VALUE_BONUS)
+
+    # ── pass 2: the question's labels as text, project corpus ─────────────
+    if labels and query_wants_a_labelled_row(query):
+        gk = set(_general_knowledge_project_ids())
+        text_pids = [p for p in pids if p == project_id or p not in gk]
+        for label in labels[:_LABELLED_ROW_MAX_LABELS]:
+            recovered += _pool_lexical_hits_matching(
+                project_id, fused, store, (label,), keep,
+                label="labelled-row", bonus=_bonus_for,
+            )
+        containing = getattr(store, "chunks_containing_all", None)
+        if callable(containing):
+            for pid in text_pids:
+                for label in labels[:_LABELLED_ROW_MAX_LABELS]:
+                    try:
+                        hits = containing(pid, [label], k=_LABELLED_ROW_FETCH_K)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "labelled-row text fetch for %s (%r) failed: %s", pid, label, exc,
+                        )
+                        continue
+                    # Adds what the pool is missing; a row already pooled keeps
+                    # the score the other legs gave it.
+                    for chunk in _pair_adjacent_keep_text(hits or [], keep):
+                        if chunk.chunk_id not in fused:
+                            _pool(chunk, _bonus_for(chunk.text or ""))
     if recovered:
-        logger.info("named-row rescue recovered %d Contract Data chunk(s)", recovered)
-    return recovered
+        logger.info("labelled-row recall pooled %d chunk(s) for labels %r", recovered, labels)
+    return names
 
 
 # ── Schedule-register / Not Used rescue ────────────────────────────
@@ -3919,59 +4085,6 @@ def _apply_schedule_register_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_schedule_register_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: List[str],
-) -> int:
-    """Pull Schedule-N register / Not Used index rows into ``fused``.
-
-    Cosine never ranks the short index line; Vol 4/5/CPM flood the
-    semantic pool. Failures never raise.
-    """
-    if not query_asks_for_contract_particulars(query):
-        return 0
-    if not query_asks_for_numbered_contract_schedule(query):
-        return 0
-    labels = extract_asked_schedule_labels(query)
-    if not labels:
-        return 0
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return 0
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    recovered = 0
-    for pid in pids:
-        for label in labels:
-            needle_sets = ([label, "not used"], [label])
-            for needles in needle_sets:
-                try:
-                    hits = fetch(pid, needles, k=20)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "schedule-register rescue for %s (%r) failed: %s",
-                        pid, needles, exc,
-                    )
-                    continue
-                for chunk in hits:
-                    if not chunk_states_schedule_register(
-                        chunk.text or "", labels,
-                    ):
-                        continue
-                    if chunk.chunk_id in fused:
-                        continue
-                    fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
-                    recovered += 1
-    if recovered:
-        logger.info(
-            "schedule-register rescue recovered %d chunk(s) for labels %r",
-            recovered, labels,
-        )
-    return recovered
-
-
 # ── PCG / commencement-date honest-refusal (Contract Data over form / pack) ─────────────
 #
 # Observed on BASELINE 0d9fd23:
@@ -4064,16 +4177,6 @@ _COMMENCEMENT_FILLED_DATE_RE = re.compile(
 _COMMENCEMENT_UNSUPPORTED_LINE = (
     "The contract Commencement Date is not stated in the Contract Data "
     "retrieved for this project. I will not invent a calendar date."
-)
-_PCG_VALUE_RESCUE_PHRASES = (
-    "parent company guarantee",
-    "4.3.7",
-    "not required",
-)
-_COMMENCEMENT_RESCUE_PHRASES = (
-    "commencement date",
-    "not populated",
-    "letter of acceptance",
 )
 
 
@@ -4314,104 +4417,6 @@ def _apply_commencement_date_boost(
         boosted = score + _COMMENCEMENT_HONEST_BONUS
         chunk.score = round(boosted, 6)
         scored[i] = (boosted, chunk)
-
-
-def _rescue_pcg_value_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: Optional[List[str]] = None,
-) -> int:
-    """Pull the Contract Data 4.3.7 / not-required row into ``fused``."""
-    if not query_asks_for_parent_company_guarantee(query):
-        return 0
-    recovered = _pool_lexical_hits_matching(
-        project_id, fused, store, _PCG_VALUE_RESCUE_PHRASES,
-        chunk_states_pcg_contract_data, label="pcg-value",
-        bonus=_PCG_HONEST_BONUS,
-    )
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return recovered
-    pids = [project_id] + [
-        p for p in (extra_pids or []) if p and p != project_id
-    ]
-    needle_sets = (
-        ["parent company guarantee", "not required"],
-        ["parent company guarantee"],
-        ["4.3.7"],
-    )
-    for pid in pids:
-        for needles in needle_sets:
-            try:
-                hits = fetch(pid, needles, k=20)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "pcg-value rescue for %s (%r) failed: %s",
-                    pid, needles, exc,
-                )
-                continue
-            for chunk in hits:
-                if not chunk_states_pcg_contract_data(chunk.text or ""):
-                    continue
-                if chunk.chunk_id in fused:
-                    continue
-                fused[chunk.chunk_id] = (chunk, 0.0, _PCG_HONEST_BONUS)
-                recovered += 1
-    if recovered:
-        logger.info("pcg-value rescue recovered %d chunk(s)", recovered)
-    return recovered
-
-
-def _rescue_commencement_date_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: Optional[List[str]] = None,
-) -> int:
-    """Pull the empty / filled Contract Data commencement row into ``fused``."""
-    if not query_asks_for_contract_commencement_date(query):
-        return 0
-    recovered = _pool_lexical_hits_matching(
-        project_id, fused, store, _COMMENCEMENT_RESCUE_PHRASES,
-        chunk_states_commencement_contract_data, label="commencement-date",
-        bonus=_COMMENCEMENT_HONEST_BONUS,
-    )
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return recovered
-    pids = [project_id] + [
-        p for p in (extra_pids or []) if p and p != project_id
-    ]
-    needle_sets = (
-        ["commencement date", "not populated"],
-        ["commencement date", "loa"],
-        ["commencement date"],
-    )
-    for pid in pids:
-        for needles in needle_sets:
-            try:
-                hits = fetch(pid, needles, k=20)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "commencement-date rescue for %s (%r) failed: %s",
-                    pid, needles, exc,
-                )
-                continue
-            for chunk in hits:
-                if not chunk_states_commencement_contract_data(chunk.text or ""):
-                    continue
-                if chunk.chunk_id in fused:
-                    continue
-                fused[chunk.chunk_id] = (
-                    chunk, 0.0, _COMMENCEMENT_HONEST_BONUS,
-                )
-                recovered += 1
-    if recovered:
-        logger.info("commencement-date rescue recovered %d chunk(s)", recovered)
-    return recovered
 
 
 # Dual-query retrieval (F18, phase-3 campaign). Measured on a 203-page
@@ -5035,15 +5040,6 @@ def chunk_answers_asked_particular(query: str, text: str) -> bool:
     )
 
 
-_DELAY_RATE_RESCUE_PHRASES = (
-    "delay damages per calendar day",
-    "delay damages per day",
-    "delay damages contract price",
-)
-_ACA_BASE_RESCUE_PHRASES = (
-    "accepted contract amount excluding vat",
-    "accepted contract amount",
-)
 # Combined GC+Contract Data volumes put Sub-Clause 8.8 at chunks 9–11
 # and the filled 1.1.1 excl-VAT row in a later appendix. identifier_search
 # LIMIT and first-N chunks_for_docs stay on the 8.8 toy windows.
@@ -5080,19 +5076,6 @@ _E1_REAL_ACA_TEXT_NEEDLES = (
     ("0.1", "price"),
     ("0.1", "calendar"),
 )
-_ENGINEER_IDENTITY_RESCUE_PHRASES = (
-    "1.3.1 engineer",
-    "engineer limited",
-    "the engineer",
-    "name of the engineer",
-)
-_ACA_INCL_RESCUE_PHRASES = (
-    "accepted contract amount including vat",
-    "amount including vat",
-    "accepted contract amount (including vat)",
-    "amount (including vat)",
-    "1.1.1 including vat",
-)
 # Live Wave-1 A2 on 9ad62cc: identifier_search + first-N neighbors
 # stay on Contract Data chunk #0 (delay damages × a partial ACA).
 # Scanned 1.1.1 including-VAT sits later in the same volume.
@@ -5103,15 +5086,6 @@ _A2_INCL_TEXT_NEEDLES = (
     ("amount", "including"),
     ("incl", "vat"),
     ("1.1.1", "vat"),
-)
-_TFC_RESCUE_PHRASES = (
-    "time for completion for the whole of the works",
-    "1.1.75 time for completion",
-)
-_DNP_RESCUE_PHRASES = (
-    "defects notification period",
-    "1.1.27 defects notification",
-    "defects notification period days",
 )
 _ASKED_PARTICULAR_VALUE_BONUS = 2.0
 _TFC_DAYS_RE = re.compile(r"(?i)\b(\d{2,4})\s+(?:calendar\s+|working\s+)?days\b")
@@ -6156,10 +6130,11 @@ def _pool_lexical_hits_matching(
     for chunk in _pair_adjacent_keep_text(hits, keep):
         if chunk.chunk_id in fused:
             continue
-        fused[chunk.chunk_id] = (chunk, 0.0, bonus)
+        add = bonus(chunk.text or "") if callable(bonus) else bonus
+        fused[chunk.chunk_id] = (chunk, 0.0, add)
         recovered += 1
     if recovered:
-        logger.info("%s rescue recovered %d chunk(s)", label, recovered)
+        logger.info("%s lexical recall pooled %d chunk(s)", label, recovered)
     return recovered
 
 
@@ -7224,54 +7199,6 @@ def _rescue_e1_real_aca_from_pool_docs(
         logger.info(
             "e1 late-operand scan recovered %d chunk(s) past first-N 8.8 windows",
             recovered,
-        )
-    return recovered
-
-
-def _rescue_asked_particular_value_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-) -> int:
-    """Out-of-pool fetch for ACA incl-VAT, TfC, delay rate, DNP and Engineer asks."""
-    recovered = 0
-    if query_asks_for_delay_damages_rate(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
-            chunk_states_delay_damages_rate, label="delay-damages-rate",
-        )
-    if query_asks_delay_damages_daily_amount(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
-            chunk_states_delay_damages_rate, label="delay-damages-daily-rate",
-        )
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _ACA_BASE_RESCUE_PHRASES,
-            chunk_states_accepted_contract_amount,
-            label="delay-damages-daily-aca",
-            bonus=0.0,
-        )
-    if query_asks_who_the_engineer_is(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _ENGINEER_IDENTITY_RESCUE_PHRASES,
-            chunk_states_engineer_identity, label="engineer-identity",
-        )
-    if query_asks_for_aca_including_vat(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _ACA_INCL_RESCUE_PHRASES,
-            chunk_states_aca_including_vat, label="aca-including-vat",
-        )
-    if query_asks_for_time_for_completion(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _TFC_RESCUE_PHRASES,
-            chunk_states_time_for_completion, label="time-for-completion",
-        )
-    if query_asks_for_defects_notification_period(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _DNP_RESCUE_PHRASES,
-            chunk_states_defects_notification_period,
-            label="defects-notification-period",
         )
     return recovered
 
@@ -8428,66 +8355,6 @@ def _apply_priced_boq_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_rate_only_item_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: Optional[List[str]] = None,
-) -> int:
-    """Pull the asked CESMM Rate Only row into ``fused``. Project-first.
-
-    Identifier search collapses OCR ``D 529.3``. ``chunks_containing_all``
-    is the out-of-pool backup when cosine never fetched the short row.
-    Failures never raise. GK rate-book notes are not searched.
-    """
-    if not query_asks_for_boq_item_amount(query):
-        return 0
-    codes = extract_asked_cesmm_codes(query)
-    if not codes:
-        return 0
-
-    def _keep(text: str) -> bool:
-        return chunk_states_rate_only_item(text, codes)
-
-    recovered = _pool_lexical_hits_matching(
-        project_id, fused, store, tuple(codes),
-        _keep, label="rate-only-item",
-    )
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return recovered
-    pids = [project_id] + [
-        p for p in (extra_pids or []) if p and p != project_id
-    ]
-    for pid in pids:
-        for code in codes:
-            rest = code[1:] if len(code) > 1 else code
-            needle_sets = ([code, "rate only"], [rest, "rate only"])
-            for needles in needle_sets:
-                try:
-                    hits = fetch(pid, needles, k=20)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "rate-only rescue for %s (%r) failed: %s",
-                        pid, needles, exc,
-                    )
-                    continue
-                for chunk in hits:
-                    if not _keep(chunk.text or ""):
-                        continue
-                    if chunk.chunk_id in fused:
-                        continue
-                    fused[chunk.chunk_id] = (chunk, 0.0, _RATE_ONLY_BONUS)
-                    recovered += 1
-    if recovered:
-        logger.info(
-            "rate-only rescue recovered %d chunk(s) for codes %r",
-            recovered, codes,
-        )
-    return recovered
-
-
 # ── list continuation ─────────────────────────────────────────────────────
 #
 # A clause that introduces a list ("... shall be set out as follows:", "the
@@ -9439,17 +9306,10 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     ))
-    filename_names.update(_rescue_contract_data_docs(
+    filename_names.update(recall_labelled_rows(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     ))
-    _rescue_asked_particular_value_chunks(
-        query, project_id, fused_lex, store,
-    )
-    _rescue_named_particulars_rows(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
     _pool_named_document_control_block(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
@@ -9462,21 +9322,6 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
     )
     _rescue_a2_including_vat_from_pool_docs(
-        query, project_id, fused_lex, store,
-    )
-    _rescue_schedule_register_chunks(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
-    _rescue_pcg_value_chunks(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
-    _rescue_commencement_date_chunks(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
-    _rescue_rate_only_item_chunks(
         query, project_id, fused_lex, store,
     )
     _pool_page_total_rows(
@@ -10036,25 +9881,17 @@ def retrieve_with_filter(
         store,
         extra_pids=extra_rescue_pids,
     ))
-    filename_names.update(_rescue_contract_data_docs(
+    # Labelled-row recall: the filled row for every label the question names
+    # (a particular, a register entry, a bill item), from the particulars
+    # documents and -- for a particulars-shaped question -- the project text.
+    filename_names.update(recall_labelled_rows(
         query,
         project_id,
         fused,
         store,
         extra_pids=extra_rescue_pids,
     ))
-    # Delay-rate / Engineer asks: the year-lock may already have the right PREFIX-YEAR-SEQ
-    # while the rate / Engineer appointment sit in a later
-    # unprefixed chunk cosine never fetched. Rescue is project-only so
-    # the FIDIC note's illustrative 0.05% cannot impersonate the rate.
-    _rescue_asked_particular_value_chunks(query, project_id, fused, store)
-    # A4/A7/A8: the rest of the Contract Data sheet — any filled row the
-    # question names, not only the seven with a rescue of their own.
-    _rescue_named_particulars_rows(
-        query, project_id, fused, store,
-        extra_pids=extra_rescue_pids,
-    )
-    # B6: number / revision / author of a document the question names.
+    # Number / revision / author of a document the question names.
     _pool_named_document_control_block(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
@@ -10067,28 +9904,8 @@ def retrieve_with_filter(
     )
     _rescue_e1_real_aca_from_pool_docs(query, project_id, fused, store)
     _rescue_a2_including_vat_from_pool_docs(query, project_id, fused, store)
-    _rescue_schedule_register_chunks(
-        query,
-        project_id,
-        fused,
-        store,
-        extra_pids=extra_rescue_pids,
-    )
-    # PCG / commencement date asks: Contract Data "not required" / empty commencement over
-    # Schedule 8 form % and commencement-pack dates.
-    _rescue_pcg_value_chunks(
-        query, project_id, fused, store,
-        extra_pids=extra_rescue_pids,
-    )
-    _rescue_commencement_date_chunks(
-        query, project_id, fused, store,
-        extra_pids=extra_rescue_pids,
-    )
-    # Rate Only ask: Rate Only CESMM row (D529.3) vs priced lookalikes. Project-only
-    # so a curated CESMM note cannot impersonate the client's Amount.
-    _rescue_rate_only_item_chunks(query, project_id, fused, store)
-    # Page-total ask: Part Summary footer for page d/3/1 loses to
-    # D110 / D290.1 line items. Project-only so a GK rate note cannot
+    # Page-total ask: the page's summary footer loses to the item lines on
+    # the same page. Project-only so a reference rate note cannot
     # impersonate the client's page total.
     _pool_page_total_rows(query, project_id, fused, store)
     # List continuation: an in-pool introduction that ends "as follows";
