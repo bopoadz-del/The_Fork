@@ -94,8 +94,10 @@ def test_real_baseline_is_a_ceiling_with_no_stale_keys():
     every baselined key still exists (a deleted form must be removed by
     regenerating the baseline, never left behind as a stale allowance)."""
     sh = _load()
+    # The file must exist (an absent file would read as "nothing allowed" and
+    # hide a broken path); an EMPTY baseline is the goal state, not an error.
+    assert (sh.repo_root() / sh.BASELINE_PATH).is_file(), "baseline missing: run --write-baseline"
     base_syms, base_probes = sh.load_baseline()
-    assert base_syms or base_probes, "baseline missing: run --write-baseline"
     # Ceiling: the gate itself is green against main.
     assert sh.scan() == []
     # No stale keys: every grandfathered form is still present.
