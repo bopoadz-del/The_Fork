@@ -9,6 +9,29 @@ Last reviewed against `main`: 2026-07-30. Numbers below are the most recent
 figures in the repo at that date; several predate the current corpus/config
 and are flagged as such.
 
+## SLM posture model
+
+Blind refusal 7/60.
+
+That line is the cerebrum-slm posture epoch-2 blind-set result recorded with
+this wiring. It is not a Fork-path score. The Fork-path cells below stay
+empty of invented numbers: the sealed READY-gate unseen set and the SLM
+blind set were not re-scored through the Fork (the sets are not in this
+repo, and live Tinker sampling was not run).
+
+| set | path | refusal/qualification | fact-leak | routing | citation validity | n |
+| --- | --- | --- | --- | --- | --- | --- |
+| Fork READY-gate unseen | current | not measured | not measured | not measured | not measured | not measured |
+| Fork READY-gate unseen | posture | not measured | not measured | not measured | not measured | not measured |
+| SLM blind | current | not measured | not measured | not measured | not measured | not measured |
+| SLM blind | posture | 7/60 blind refusal | not measured | not measured | not measured | 60 |
+
+`FORK_POSTURE_MODEL` stays off by default. `master_corpus` is the shadow
+project once the final-answer change is deployed. Nothing is `on` until
+48 hours of that shadow show zero fact-leak, citation validity 100%,
+refusal/qualification at least the current path, and latency p95 within
++500 ms. p95 was not measured.
+
 ---
 
 ## 1. Feature / recall pass rate is well under half (~41%)
