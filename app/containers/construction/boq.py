@@ -675,8 +675,8 @@ class ConstructionBoqMixin:
         )
 
         # Operator-stated Accepted Contract Amount wins over a stored
-        # project fact (live M7 used 1,463 from memory instead of
-        # SAR 1,754,504,456.25 from the brief).
+        # project fact (a stale remembered value must not beat the
+        # amount the operator typed in the brief).
         if fig.get("contract_value"):
             contract_value = float(fig["contract_value"])
         else:

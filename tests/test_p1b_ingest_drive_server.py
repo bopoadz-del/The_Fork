@@ -49,8 +49,8 @@ def test_parser_accepts_repeatable_and_comma_separated_folder_ids():
 
 
 def test_parser_accepts_reingest_old_id():
-    args = build_parser().parse_args(["--reingest", "REDACTED"])
-    assert args.reingest == "REDACTED"
+    args = build_parser().parse_args(["--reingest", "5a1e0001"])
+    assert args.reingest == "5a1e0001"
 
 
 def test_parser_omitting_folder_id_leaves_default_unset():

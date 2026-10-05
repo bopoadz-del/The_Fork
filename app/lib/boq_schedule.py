@@ -653,8 +653,8 @@ def _chunk_looks_like_measured_boq(text: str, filename: str) -> bool:
 def _resolve_rag_project_id(project_id: str) -> str:
     """Map the Master Corpus UI alias to the backing RAG project.
 
-    Chunks are stored under ``MASTER_CORPUS_SOURCE_PROJECT_ID`` (live:
-    ``drive_archive``). Searching the alias ``master_corpus`` is empty.
+    Chunks are stored under ``MASTER_CORPUS_SOURCE_PROJECT_ID`` (the
+    backing source project). Searching the alias ``master_corpus`` is empty.
     Listing helpers already remap; ``chunks_for_docs`` / ``retrieve_with_filter``
     do not.
     """
@@ -722,9 +722,9 @@ def _prefer_newer_contract_year_items(
     """Keep measured rows from the newest dated bill when two years mixed.
 
     Undated fixture rows (no PREFIX-YEAR-SEQ in ``source``) stay. When a
-    later-year bill is present, drop earlier-year siblings so leftover F1
-    cannot elect REDACTED once REDACTED's demolition BOQ is in the
-    pool.
+    later-year bill is present, drop earlier-year siblings so an unnamed
+    ask cannot elect the earlier contract once the later one's bill is in
+    the pool.
     """
     dated_keys: List[Tuple[int, int]] = []
     for item in items or []:
@@ -843,7 +843,7 @@ def _list_boq_scope_documents(project_id: str) -> List[Dict[str, str]]:
     # keep rows the demolition filter accepts.
     # Unnamed Master Corpus leftover F1: when both years' demolition
     # bills are in the pool, the later package owns the ask. Arrival
-    # order used to hand generate_wbs the REDACTED bill (or only
+    # order used to hand generate_wbs the earlier year's bill (or only
     # its Conditions of Contract prose) and synthesis then refused.
     pool = demo or found
     pool = _prefer_newer_contract_year_docs(pool)

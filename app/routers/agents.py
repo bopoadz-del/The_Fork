@@ -94,7 +94,7 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
         for project_id in _workspace_project_candidates(conversation_id):
             # Same include_admin_approved grant as project GET / documents /
             # rag search (PR #586). Master-corpus-only was the leftover that
-            # 404'd New chat on curated_kb for every non-owner.
+            # 404'd New chat on a shared general-knowledge project for every non-owner.
             if store.get_project(
                 project_id, user_id=auth["user_id"], include_admin_approved=True
             ) is not None:

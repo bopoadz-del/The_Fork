@@ -53,7 +53,7 @@ _DOMAIN_BUCKETS = {
     "project_management": ("wbdg_project_management", "evm"),
     "bim": ("wbdg_bim",),
     "ksa_authorities": ("ksa_",),
-    "procedures": ("prc_",),
+    "procedures": ("_procedure",),
     "commissioning_om": ("commissioning", "operations_maintenance"),
 }
 

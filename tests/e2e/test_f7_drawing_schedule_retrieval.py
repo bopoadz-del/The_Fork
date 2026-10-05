@@ -68,7 +68,7 @@ REAL_NON_DRAWINGS = [
     "REDACTED.pdf",
     "NF-053-0000-JCB-PLN-DE-000006-A_Post-appointment BIM Execution Plan.pdf",
     "REDACTED - Volume 1 - Conditions of Contract.pdf",
-    "REDACTED.pdf",
+    "XYZ-301 Request for Information.pdf",
 ]
 
 

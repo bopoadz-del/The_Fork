@@ -2,7 +2,7 @@
 
 Wires the previously-dormant construction_knowledge.enforce_critical_rules into
 the agent answer path: a deviation from a critical standard (e.g. 'APPROVED' on
-a design document, PRC-501) appends a flagged note but NEVER rejects, edits, or
+a design document, the design review procedure) appends a flagged note but NEVER rejects, edits, or
 halts the answer. Operators bend rules deliberately; the platform flags, it does
 not stop.
 """
@@ -24,7 +24,7 @@ def test_deviation_is_flagged_not_blocked():
     # ...and a flagged, non-blocking note is appended.
     assert "Standards note" in out
     assert "not blocking" in out.lower()
-    assert "PRC-501" in out
+    assert "design review and acceptance procedure" in out
 
 
 def test_clean_answer_is_untouched():
@@ -64,7 +64,7 @@ _LIGHTING_ANSWER = (
     "lighting design as per standard design."
 )
 _PRC_ASK = (
-    "What statuses can a design review package come back with under PRC-501?"
+    "What statuses can a design review package come back with under the review procedure?"
 )
 
 
@@ -74,14 +74,14 @@ def test_lighting_answer_does_not_gain_prc501_note():
     assert out == _LIGHTING_ANSWER
     assert "323" in out
     assert "Standards note" not in out
-    assert "PRC-501" not in out
+    assert "design review and acceptance procedure" not in out
 
 
 def test_prc501_question_still_gains_the_note():
     out = _standards_advisory(_DEVIATION, question=_PRC_ASK)
     assert out.startswith(_DEVIATION)
     assert "Standards note" in out
-    assert "PRC-501" in out
+    assert "design review and acceptance procedure" in out
     assert "not blocking" in out.lower()
 
 
@@ -92,7 +92,7 @@ def test_postprocess_lighting_question_skips_prc501_note():
         messages=[{"role": "user", "content": _LIGHTING_ASK}],
     )
     assert "Standards note" not in out
-    assert "PRC-501" not in out
+    assert "design review and acceptance procedure" not in out
     assert "323" in out
 
 
@@ -104,7 +104,7 @@ def test_postprocess_design_status_question_still_annotates():
     )
     assert out.startswith(_DEVIATION)
     assert "Standards note" in out
-    assert "PRC-501" in out
+    assert "design review and acceptance procedure" in out
 
 
 def test_postprocess_refused_cost_answer_is_not_annotated():

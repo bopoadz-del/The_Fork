@@ -155,16 +155,16 @@
         }
       ],
       "required_documents": [
-        "JR_TEM-601",
-        "SSJ_TEM-602",
+        "JobRequisition",
+        "SoleSourceJustification",
         "RAT",
-        "RFP_TEM-613",
-        "TenderEvaluationReport_TEM-624",
-        "AwardRecommendationLetter_TEM-625"
+        "RFP",
+        "TenderEvaluationReport",
+        "AwardRecommendationLetter"
       ],
       "approval_roles": [
         "Estimator",
-        "VP_Project_Management",
+        "Project_Management_Lead",
         "Contracts_Manager",
         "Tender_Analysis_Committee",
         "Project_Director"
@@ -176,10 +176,10 @@
         "region_specific": false,
         "project_specific": false,
         "standards_cross_ref": [
-          "PRC-601",
-          "PRC-602",
-          "PRC-603",
-          "PRC-604"
+          "job_requisition",
+          "request_for_proposals",
+          "tender_analysis",
+          "contract_award"
         ]
       },
       "remediation": [],
@@ -187,7 +187,7 @@
         "source": "construction procurement procedures (general)",
         "project": null,
         "confidence": "controlled_document",
-        "verified_against_standard": "PRC procedures"
+        "verified_against_standard": "procedure catalogue"
       },
       "credibility_tier": 4,
       "needs_review": false

@@ -302,11 +302,9 @@ def _apply_rag_context(
                 "that are not in the context.\n\nCALCULATION REQUEST: "
             )
         elif _message_wants_boq_scope_wbs_ask(question):
-            # Leftover F1 on Master Corpus: "Answer only from the client
-            # project documents. Generate a high-level WBS for the
-            # demolition and site clearance scope in this project's BOQ."
-            # The verb is generative, but the user prefix plus REDACTED
-            # CoC excerpts made the model refuse and cite the wrong
+            # A "client documents only" prefix on a BOQ-scope WBS ask: the
+            # verb is generative, but the prefix plus an earlier contract
+            # year's CoC excerpts made the model refuse and cite the wrong
             # contract. Measured BOQ rows (via generate_wbs) are the
             # evidence; another year's Conditions of Contract is not.
             directive = (
@@ -740,7 +738,7 @@ def _user_names_project_file(user_low: str, original_name: str) -> bool:
     """True when the user message names this project file.
 
     Full ``original_name`` match first. A distinctive stem (≥12 chars) also
-    matches so leftover L1 can say ``REDACTED`` without the
+    matches so a user can say ``site_waterproofing_spec`` without the
     upload timestamp suffix. The user token is the *shorter* string when
     the stored name has a timestamp; match both directions.
     """
@@ -1012,7 +1010,7 @@ _FILE_PREDISPATCH_EXTS = {
     ".dwg": "drawing_qto",
 }
 # Plain-text AND office specs: fetch_document extracts bytes from disk
-# even when RAG chunks are empty (leftover L1 khor_*.docx).
+# even when RAG chunks are empty (an unindexed .docx the user named).
 _TEXT_PREDISPATCH_EXTS = {".txt", ".md", ".docx", ".doc"}
 # PDF drawings share the .pdf extension with specs/contracts. Only
 # pre-dispatch drawing_qto when the turn is actually a take-off.
@@ -2524,7 +2522,7 @@ _UNIT_RATE_TOKEN_RE = re.compile(
 
 
 # A sentence, not a reference: it ends in "?", opens with a question word, or
-# runs to seven words or more ("REDACTED" is six).
+# runs to seven words or more ("vol 3 specification 2 of 5" is six).
 _QUOTED_SENTENCE_RE = re.compile(
     r"(?i)\?\s*$|^(?:what|which|who|whom|when|where|why|how|is|are|does|do|can|"
     r"could|should|calculate|compute|find|give|show|list|explain)\b"
@@ -2798,7 +2796,7 @@ def answer_contains_routing_preamble(text: str) -> bool:
         return True
     return bool(_ROUTING_PREAMBLE_LINE_RE.search(text))
 
-# Per-excerpt retrieval telemetry, e.g. "[doc_id=REDACTED chunk=11 score=2.199
+# Per-excerpt retrieval telemetry, e.g. "[doc_id=0a1b2c3d chunk=11 score=2.199
 # src=...]". Internal by construction: the user never asked for a cosine.
 _RETRIEVAL_MARKER_RE = re.compile(
     r"\[doc_id=[^\]\s]+\s+chunk=\d+\s+score=", re.IGNORECASE
@@ -3478,7 +3476,7 @@ def _fetch_document_content(
     # list_documents(project_id) does not contain. It would then call
     # fetch_document, get "no document with id X in this project", and report
     # the file as unavailable — while quoting from it. Live example: the model
-    # cited the seeded ksa_saudi_building_code reference, then could not open
+    # cited a seeded general-knowledge reference, then could not open
     # it. A citation the model cannot resolve is a citation the USER cannot
     # trust, so the fetch scope must match the retrieval scope exactly.
     #
@@ -4086,9 +4084,9 @@ _CITATION_RE = re.compile(
 )
 
 # Bracketless line form gpt-oss-style models also emit:
-#   Source: REDACTED.pdf, chunk 65.
-#   Sources: REDACTED.pdf, chunks 16, 34, 55.
-#   Source: “REDACTED.xlsx”, which lists ...
+#   Source: Site-Safety-Plan.pdf, chunk 65.
+#   Sources: Site-Safety-Plan.pdf, chunks 16, 34, 55.
+#   Source: “Example Quantity Comparison.xlsx”, which lists ...
 # Anchor on start-of-line or newline + "Source[s]:" prefix; capture the
 # rest of the line up to a sentence terminator. The post-capture parsing
 # strips quotes and extracts an optional ", chunk(s) ..." suffix.
@@ -4109,8 +4107,8 @@ _CITATION_QUOTED_RE = re.compile(
 )
 
 # doc_id form gpt-oss also emits when it wants to be technically precise:
-#   [doc_id=REDACTED, chunk 65, score 0.697]
-#   [doc_id=REDACTED chunk=65 score=0.697]    (the RAG-injection header style)
+#   [doc_id=4e5f6a7b, chunk 65, score 0.697]
+#   [doc_id=4e5f6a7b chunk=65 score=0.697]    (the RAG-injection header style)
 # Match either separator style; capture (doc_id, chunk_index). The chunk
 # is REQUIRED here — a bare [doc_id=...] would be ambiguous.
 _CITATION_DOCID_RE = re.compile(
@@ -4120,8 +4118,8 @@ _CITATION_DOCID_RE = re.compile(
 
 # gpt-oss-120b (the pilot model) inline form — the filename is INSIDE the
 # brackets and the chunk number comes AFTER, mid-sentence:
-#   ...protected (Source: [REDACTED - Site Demolition … Part 3], chunk 941).
-#   ...schedule (Source: [REDACTED … Part 2], chunks 1988-1990).
+#   ...protected (Source: [AB-2001-101 - Example Package … Part 3], chunk 941).
+#   ...schedule (Source: [AB-2001-101 … Part 2], chunks 1988-1990).
 # Distinct from _CITATION_RE ("[source: file, chunk N]" — source INSIDE the
 # bracket). Group 1 = filename (often truncated with an ellipsis); group 2 =
 # the chunk-number blob (digits, commas, and en-/em-dash ranges).
@@ -4414,8 +4412,8 @@ def _is_contract_data_fact_lookup(user_message: str | None) -> bool:
     """True for a Contract Data Q&A turn that is not asking for a unit rate
     or a SAR arithmetic result.
 
-    A delay-damages rate ask: "What are the Delay Damages for the whole of the
-    Works?" is a filled-particular lookup. The cost gate's BOQ refusal is
+    A delay-damages rate ask (the rate, no arithmetic) is a
+    filled-particular lookup. The cost gate's BOQ refusal is
     the wrong instrument — it wiped a grounded (or model-expanded)
     percentage particular because a SAR-per-day gloss did not sit in a
     rate-semantic chunk. A daily-amount ask ("calculate … in SAR") still gates.
@@ -6211,7 +6209,7 @@ def gate_cost_answer(
 
 # ── Standards advisory (ADVISORY, never blocks) ─────────────────────────────
 # Highlights a deviation from a critical construction standard (e.g. 'APPROVED'
-# used on a design document, PRC-501) by APPENDING a note — it never rejects,
+# used on a design document, design review procedure) by APPENDING a note — it never rejects,
 # edits, or halts the answer. Operators bend rules deliberately in the field; the
 # platform's job is to flag the deviation so the choice is informed, not to
 # enforce a stop. Flag STANDARDS_ADVISORY (default on); never raises. This is the
@@ -6220,13 +6218,12 @@ def _standards_advisory_enabled() -> bool:
     return os.getenv("STANDARDS_ADVISORY", "1") not in ("0", "false", "False", "")
 
 
-# PRC-501 flags the word APPROVED on design documents. A lighting answer
+# The design review procedure flags the word APPROVED on design documents. A lighting answer
 # that quotes "subject to the Engineer's approval" also contains "design"
 # and "document", and the answer-only scan appended this note to a
 # question that never asked about design-document wording.
 _DESIGN_STATUS_QUESTION_RE = re.compile(
-    r"(?i)\bPRC-\s*501\b"
-    r"|\bdesign\s+(?:review|document|drawing|package|submission|status)"
+    r"(?i)\bdesign\s+(?:review|document|drawing|package|submission|status)"
     r"|\b(?:drawing|document)\s+status"
     r"|\b(?:approved|approval|approve)\b"
     r"|\bsign[- ]?off\b"
@@ -6234,7 +6231,7 @@ _DESIGN_STATUS_QUESTION_RE = re.compile(
 
 
 def _standards_note_relevant(question: str | None) -> bool:
-    """True when the PRC-501 note is about this question.
+    """True when the design-review note is about this question.
 
     No question keeps the historical answer-only scan. A non-empty
     question that is not about design-document status does not get the
@@ -6262,7 +6259,16 @@ def _standards_advisory(text: str, question: str | None = None) -> str:
             if rid in seen:
                 continue
             seen.add(rid)
-            proc = v.get("procedure", "")
+            # The live procedure document's code when the corpus has one,
+            # else the catalogue kind's label -- never a shipped code.
+            kind = str(v.get("procedure") or "").split("/")[0]
+            pid = v.get("procedure_id") or kind
+            if pid == kind and kind:
+                from app.core.procedure_catalogue import label as _proc_label
+
+                proc = _proc_label(kind)
+            else:
+                proc = pid
             msg = v.get("violation_message") or v.get("rule", "")
             lines.append(f"> - **{proc}** — {msg}" if proc else f"> - {msg}")
         if not lines:
@@ -7940,7 +7946,7 @@ def derivation_mismatches(text: str) -> list[tuple[str, float, float]]:
     paired with the next addend or with the total. A term is still a single
     operator (``4700 x 5.9161``, ``4800 / 20``); a mixed ``2 x 3 / 4`` is
     skipped. Tolerance is 0.5% or 0.01, whichever is larger, so a rounded
-    result (145.152 shown as 145.15) agrees.
+    result (12.345 shown as 12.35) agrees.
     """
     raw = text or ""
     out: list[tuple[str, float, float]] = []
@@ -8067,10 +8073,11 @@ def _graft_stated_total_follow_up(
 ) -> str:
     """Replace a one-element follow-up with the stated total.
 
-    Live follow-up ask: "add 7% waste to that total and price it at SAR 420/m³"
-    after 24 pile caps came back as 8.025 m³ (one cap × 1.07) and about
-    SAR 3,370. The count is in the previous operator turn. A reply that
-    already states 192.60 m³ and SAR 80,892 is left as written.
+    A follow-up that adds a waste percentage and a unit price to "that
+    total" after N identical elements came back as ONE element's volume
+    (one element × waste) and its price. The count is in the previous
+    operator turn. A reply that already states the N-element volume and
+    price is left as written.
     """
     try:
         from app.lib.construction_formulas_commercial import (
@@ -8146,7 +8153,7 @@ def _postprocess_answer(
     # Cost gate: calc succeeded, force_synthesis emitted 0 tokens.
     # Volume-only recover is not a priced take-off — compose from the ask.
     text = _graft_composed_user_priced_takeoff(text, messages)
-    # "Add waste to that total and price it" continues from the prior
+    # "Add a waste allowance and price the total" continues from the prior
     # count (24 caps / 180 m³), not from one element the tool just recomputed.
     text = _graft_stated_total_follow_up(text, messages)
     # Live ~27d6940: user-supplied M#=Nd + common start is arithmetic.
@@ -8208,7 +8215,7 @@ def _postprocess_answer(
     # Citation provenance: an attribution no evidence record backs is removed
     # and the answer flagged. Sibling of the cost gate above -- that one
     # grounds the FIGURES, this one grounds the claim about where they came
-    # from (gate battery 13b2bf7 F2: "BOQ context: ... (REDACTED)" from a
+    # from (a "BOQ context: ... (<contract id>)" line from a
     # template scheduler that has no BOQ input at all).
     from app.agents.citation_provenance import gate as _citation_provenance_gate
     text = _citation_provenance_gate(text, rag_sys_msg, messages)
@@ -11024,7 +11031,7 @@ class Agent:
             }
 
         # Deterministic file pre-dispatch BEFORE the RAG-miss short-circuit.
-        # Leftover L1: a timestamped ``REDACTED_….docx`` looks
+        # A timestamped ``<name>_spec_….docx`` the user names looks
         # like an identifier, retrieval misses (file not indexed), and the
         # canned "could not confirm this reference" used to fire in ~1s
         # without ever fetching bytes from disk.
@@ -15088,7 +15095,7 @@ def project_is_master_corpus(project_id: str | None) -> bool:
 def project_is_user_fixture(project_id: str | None) -> bool:
     """True when the active project is a user FIXTURE (not Master Corpus).
 
-    Live UI ids are hex slugs (``REDACTED``); the FIXTURE- prefix lives
+    Live UI ids are short hex slugs (``0a1b2c3d``-shaped); the FIXTURE- prefix lives
     on the project name. Synthetic test pids embed ``fixture`` too.
     """
     pid = (project_id or "").strip()
@@ -15176,7 +15183,7 @@ def _inject_user_ask_into_construction_calc_args(
     numbers. D7: never invent a figure that is not in the ask. Existing
     text/formula/message win so a later retry with real params is kept.
 
-    A follow-up ("add 7% waste to that total and price it") has no
+    A follow-up ("add a waste allowance and price the total") has no
     geometry. The count lives on the previous operator turn. Carry that
     text as ``prior_text`` so concrete_volume multiplies by it instead
     of pricing one element. Explicit dims on this call are not replaced.

@@ -21,7 +21,7 @@ _LOG = logging.getLogger(__name__)
 
 
 # A marker is repeated per excerpt, so a long engineering filename
-# ("REDACTED.pdf") would cost real budget
+# ("AB-CDE-001-0000-XYZ-SPC-IF-000001-B_Specification.pdf") would cost real budget
 # on every one. Long enough to keep a trailing "(exp. 17Jul25).pdf".
 _MAX_SOURCE_NAME_CHARS = 60
 

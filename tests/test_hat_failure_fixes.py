@@ -60,8 +60,11 @@ def test_quantity_surveyor_must_call_drawing_qto_on_pdf():
 def test_supervision_proposal_does_not_require_the_md_filename():
     agent = load_agents()["supervision-proposal"]
     text = agent.system_prompt.lower()
-    assert "supervision_proposal_structure.md" in text
-    assert "already inlined" in text or "do not search the corpus for a file named" in text
+    # The structure is inlined, and the prompt says so without naming any
+    # corpus file -- a filename in a prompt is a photograph of one corpus.
+    assert "already inlined" in text
+    assert "do not search the corpus for a structure file" in text
+    assert "supervision_proposal_structure" not in text
 
 
 def test_supervision_proposal_does_not_loop_search_on_contractor_boq():

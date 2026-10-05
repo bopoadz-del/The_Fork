@@ -186,7 +186,7 @@ _MONTHS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
 }
-# "Blinding 15 Sep to 25 Sep 2026" / "Rebar fixing 2026-09-28 - 2026-10-02".
+# "Activity A 3 Mar to 9 Mar 2031" / "Activity B 2031-03-12 - 2031-03-16".
 _ACTIVITY_LINE_RE = re.compile(
     r"(?P<name>[A-Za-z][A-Za-z0-9 /&'\-]{1,60}?)\s+"
     r"(?P<d1>\d{1,2}\s+[A-Za-z]{3,9}(?:\s+\d{4})?|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})"
@@ -312,8 +312,8 @@ def _stated_look_ahead_date(text: str) -> str | None:
 
     "Today is 21 September", "Today's date is 21 September",
     "as of today, 21 September", "as at 21 September",
-    "from 21 September 2026". Activity spans ("15 Sep to 25 Sep",
-    "from 15 Sep to 25 Sep") are not a stated today. Year comes from the
+    "from 21 September 2026". Activity spans ("3 Mar to 9 Mar",
+    "from 3 Mar to 9 Mar") are not a stated today. Year comes from the
     token, else a year already in the schedule text, else the clock year.
     """
     raw = text or ""
@@ -337,8 +337,8 @@ def _activities_from_text(text: str) -> List[Dict[str, Any]]:
     """Activities the operator typed in the message, or [].
 
     Only rows carrying a name AND two dates are returned -- a half-written row
-    is dropped, never completed by guesswork. A live look-ahead ask listed five
-    activities in the message and the look-ahead demanded a .xer, because no
+    is dropped, never completed by guesswork. A look-ahead ask that typed its
+    activities in the message used to be told to supply a .xer, because no
     path looked here.
     """
     blob = text or ""
@@ -1415,9 +1415,9 @@ class ConstructionScheduleMixin:
                 "error": "window must be at least 1 day",
             }
 
-        # Activities supplied in the request are a valid source. A live
-        # look-ahead ask listed five activities and said not to ask for a programme file;
-        # the tool errored for a missing .xer anyway, so the answer became
+        # Activities supplied in the request are a valid source. An ask
+        # that typed its activities and declined a programme file used to
+        # error for a missing .xer anyway, so the answer became
         # "supply a .xer" instead of the look-ahead the operator had already
         # given the data for. A file still wins when one is named, and an
         # empty request still errors -- nothing is ever invented here.
@@ -3129,8 +3129,8 @@ class ConstructionScheduleMixin:
             citations = []
             for item in boq_items or []:
                 code = str((item or {}).get("item_key") or "").strip()
-                # Item codes only — source filenames can carry REDACTED
-                # and leftover F1 must not cite that year as governing.
+                # Item codes only — source filenames can carry another
+                # contract year's id, which must not be cited as governing.
                 if code and code not in citations:
                     citations.append(code)
             result["scaffold"] = {

@@ -218,10 +218,10 @@ def test_answer_is_caveat_detects_refusal_phrases():
 
 
 def test_sanitize_inline_paths_cleans_markdown_table_source_cell():
-    raw = "| Source |\n| G:\\My Drive\\PRC-501.pdf |"
+    raw = "| Source |\n| G:\\My Drive\\XYZ-501.pdf |"
     cleaned = _sanitize_inline_paths(raw)
     assert "G:\\My Drive" not in cleaned
-    assert "PRC-501.pdf" in cleaned
+    assert "XYZ-501.pdf" in cleaned
 
 
 def test_build_sources_returns_empty_for_caveat(monkeypatch):

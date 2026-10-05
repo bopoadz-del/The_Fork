@@ -62,7 +62,7 @@ _FTS5_SAFE_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 # OCR of CESMM/BOQ item codes inserts a space after the class letter
 # (``D 549.2`` vs ``D549.2``). Collapse that gap so index text and query
 # identifiers share one token shape. Only a single Latin letter is
-# consumed — drawing codes (IP-INF-054) and contract ids (REDACTED)
+# consumed — drawing codes (AB-CDE-001) and contract ids (AB-2002-202)
 # are unchanged.
 _CESMM_OCR_SPACE_RE = re.compile(r"\b([A-Za-z])[ \t]+(\d+\.\d+)\b")
 _CESMM_COMPACT_TOKEN_RE = re.compile(r"^[a-z]\d+$")
@@ -471,7 +471,7 @@ def _ensure_hnsw_index(eng, table_name: str) -> None:
 
     Semantic search runs ``ORDER BY embedding <=> q``; WITHOUT this index that
     is an exact sequential scan — fine at ~10k chunks, catastrophic at 100k+
-    (the drive_archive GK layer is 133k: per-query full-scan hit tens of
+    (a full-Drive corpus layer is 133k: per-query full-scan hit tens of
     seconds and dropped the DB). HNSW + ``vector_cosine_ops`` matches the
     ``<=>`` cosine operator the retriever uses. ``IF NOT EXISTS`` makes this a
     one-time build; later boots skip it. Never raises — a missing index

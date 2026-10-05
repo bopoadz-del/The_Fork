@@ -10,7 +10,7 @@ drive_archive probe:
   exact tokens (e.g. "TL-600-0000002", "SECTIONAL ELEVATION",
   "MANHOLE TYPE-A SHALL BE PROVIDED AT EVERY 1000M") that BM25 will
   surface but semantic-only buries.
-- A PRC-501 chunk for the Q3 regression check (must still rank top-2).
+- A XYZ-501 chunk for the Q3 regression check (must still rank top-2).
 - Generic construction noise.
 
 Corpus tests honor ``RAG_EMBEDDING_MODEL``. CI pins ``fake`` so a fresh
@@ -90,12 +90,12 @@ CORPUS = [
         "outside of the pipe wall to a maximum of 600mm beyond each "
         "side per BOQ unless drawing shows otherwise.",
     ),
-    # 5: Q3 regression chunk — PRC-501
+    # 5: Q3 regression chunk — XYZ-501
     (
-        "prc_501",
-        "REDACTED — Acceptance shall be "
-        "formalized by issuing a Project Decision Note (TEM-505) or a "
-        "Design Package Acceptance Form (TEM-504) after the Design "
+        "xyz_501",
+        "XYZ-501 Design Reviews & Acceptance — Acceptance shall be "
+        "formalized by issuing a Project Decision Note (QRS-505) or a "
+        "Design Package Acceptance Form (QRS-504) after the Design "
         "Review Workshop.",
     ),
     # 6-13: generic construction noise
@@ -300,7 +300,7 @@ def test_sanitize_fts5_query_strips_punctuation():
     # bag-of-words. See _sanitize_fts5_query docstring for the rationale.
     assert _sanitize_fts5_query("Manhole spacing requirements?") == \
         "Manhole OR spacing OR requirements"
-    assert _sanitize_fts5_query("PRC-501!") == "PRC OR 501"
+    assert _sanitize_fts5_query("XYZ-501!") == "XYZ OR 501"
     assert _sanitize_fts5_query("") == ""
     assert _sanitize_fts5_query("   ?!?  ") == ""
     # Single token: no OR
@@ -362,17 +362,17 @@ def test_hybrid_beats_semantic_q2_sectional_elevation(ranking_corpus, monkeypatc
 
 
 def test_hybrid_preserves_q3_prc501(ranking_corpus, monkeypatch):
-    """Q3 regression: PRC-501 query must still hit the PRC-501 chunk
+    """Q3 regression: XYZ-501 query must still hit the XYZ-501 chunk
     top-1 or top-2 under hybrid (semantic was already good; hybrid
     shouldn't break it)."""
     store, embedder, _ = ranking_corpus
-    query = "PRC-501 Design Reviews and Acceptance procedure"
+    query = "XYZ-501 Design Reviews and Acceptance procedure"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
     hyb = _run_search(store, embedder, query, k=5, query_text=query)
     top2_ids = _ids(hyb[:2])
-    assert any("prc_501" in i for i in top2_ids), \
-        f"hybrid should preserve PRC-501 top-2; got top-2 = {top2_ids}"
+    assert any("xyz_501" in i for i in top2_ids), \
+        f"hybrid should preserve XYZ-501 top-2; got top-2 = {top2_ids}"
 
 
 def test_hybrid_disabled_falls_back_to_semantic(store_with_corpus, monkeypatch):

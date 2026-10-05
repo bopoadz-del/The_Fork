@@ -2,7 +2,7 @@
 
 Live Master Corpus pack D1 (SHA 567147a / #480): the UBCC Concrete
 Batching Plant at Wadi Safar letter was in Neon (ids 8199b14b,
-REDACTED) and the handover certificate was too (REDACTED). Retrieval
+5a1e0001) and the handover certificate was too (5a1e0003). Retrieval
 returned only Volume 5 Other Documents (geotech, plot agreement, weekly
 reports) and the model refused — letter not in the excerpts.
 

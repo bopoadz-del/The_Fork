@@ -115,7 +115,7 @@ def test_the_whole_of_the_works_line_is_unchanged():
     assert out["contract_amount"] == pytest.approx(CONTRACT_PRICE)
     assert out.get("basis") == "whole"
     line = cc.format_delay_damages_daily_line(out)
-    assert line.startswith("Delay damages for the whole of the Works are ")
+    assert line.startswith("Whole-of-Works delay damages: ")
     assert "per Milestone" not in line
     assert "per Section" not in line
     assert "The contract states:" not in line

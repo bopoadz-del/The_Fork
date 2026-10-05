@@ -18,9 +18,9 @@ from app.agents.runtime import (
 
 
 def test_extract_single_citation():
-    txt = "These points are listed in the procedure’s checklist [source: REDACTED.pdf, chunk 65]."
+    txt = "These points are listed in the procedure’s checklist [source: XYZ-406_HSE.pdf, chunk 65]."
     out = _extract_cited_chunk_indexes(txt)
-    assert out == [("REDACTED.pdf", 65)]
+    assert out == [("XYZ-406_HSE.pdf", 65)]
 
 
 def test_extract_multiple_chunk_numbers():
@@ -43,15 +43,15 @@ def test_extract_handles_unicode_hyphens():
     """gpt-oss sometimes rewrites file names with non-breaking hyphens.
     The extractor returns whatever the model emitted; matching is then
     handled by _normalise_filename at the lookup step."""
-    txt = "[source: PRC‑1000.pdf, chunk 1]"  # non-breaking hyphen
+    txt = "[source: XYZ‑1000.pdf, chunk 1]"  # non-breaking hyphen
     out = _extract_cited_chunk_indexes(txt)
     assert out[0][1] == 1
-    assert "PRC" in out[0][0]
+    assert "XYZ" in out[0][0]
 
 
 def test_normalise_filename_collapses_dashes():
-    a = "PRC‑406_HSE Audit.PDF"  # non-breaking hyphen + uppercase ext
-    b = "REDACTED audit.pdf"
+    a = "XYZ‑406_HSE Audit.PDF"  # non-breaking hyphen + uppercase ext
+    b = "xyz-406_hse audit.pdf"
     assert _normalise_filename(a) == _normalise_filename(b)
 
 
@@ -77,14 +77,14 @@ def test_build_sources_uses_cited_chunks_when_present(monkeypatch):
         {"doc_id": "d1", "chunk_index": 65, "score": 0.69},  # the actually-cited one
     ])
     # Stub the doc-name lookup so we don't need a real DB.
-    _stub_get_document(monkeypatch, "REDACTED.pdf")
+    _stub_get_document(monkeypatch, "XYZ-406_HSE.pdf")
 
-    text = "Per the procedure [source: REDACTED.pdf, chunk 65]."
+    text = "Per the procedure [source: XYZ-406_HSE.pdf, chunk 65]."
     out = _build_sources_from_audit(audit, text)
 
     assert len(out) == 1
     assert out[0]["page_or_section"] == "chunk #65"
-    assert out[0]["doc_name"] == "REDACTED.pdf"
+    assert out[0]["doc_name"] == "XYZ-406_HSE.pdf"
     # Score 0.69 → Medium, not High
     assert out[0]["confidence"] == "Medium"
 
@@ -126,9 +126,9 @@ def test_build_sources_unicode_dash_matches(monkeypatch):
     audit = _make_audit([
         {"doc_id": "d1", "chunk_index": 65, "score": 0.69},
     ])
-    _stub_get_document(monkeypatch, "REDACTED.pdf")
+    _stub_get_document(monkeypatch, "XYZ-406_HSE.pdf")
 
-    text = "see [source: PRC‑406_HSE.pdf, chunk 65]"  # NBH
+    text = "see [source: XYZ‑406_HSE.pdf, chunk 65]"  # NBH
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
     assert out[0]["page_or_section"] == "chunk #65"
@@ -182,9 +182,9 @@ def test_build_sources_matches_inline_bracket_cite_by_chunk_index(monkeypatch):
 def test_extract_bracketless_line_form_single():
     """gpt-oss sometimes emits 'Source: foo.pdf, chunk N.' on its own
     line at the end of the answer, no brackets."""
-    txt = "Some answer body here.\nSource: REDACTED.pdf, chunk 65."
+    txt = "Some answer body here.\nSource: XYZ-406_HSE.pdf, chunk 65."
     out = _extract_cited_chunk_indexes(txt)
-    assert ("REDACTED.pdf", 65) in out
+    assert ("XYZ-406_HSE.pdf", 65) in out
 
 
 def test_extract_bracketless_at_start():
@@ -209,9 +209,9 @@ def test_build_sources_uses_bracketless_citation(monkeypatch):
         {"doc_id": "d1", "chunk_index": 0,  "score": 0.78},
         {"doc_id": "d1", "chunk_index": 65, "score": 0.69},
     ])
-    _stub_get_document(monkeypatch, "REDACTED.pdf")
+    _stub_get_document(monkeypatch, "XYZ-406_HSE.pdf")
 
-    text = "Answer body.\nSource: REDACTED.pdf, chunk 65."
+    text = "Answer body.\nSource: XYZ-406_HSE.pdf, chunk 65."
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
     assert out[0]["page_or_section"] == "chunk #65"
@@ -242,7 +242,7 @@ def test_build_sources_uses_doc_id_citation(monkeypatch):
         {"doc_id": "REDACTED", "chunk_index": 4,  "score": 0.74},
         {"doc_id": "REDACTED", "chunk_index": 65, "score": 0.69},
     ])
-    _stub_get_document(monkeypatch, "REDACTED.pdf")
+    _stub_get_document(monkeypatch, "XYZ-406_HSE.pdf")
 
     text = "Per the procedure [doc_id=REDACTED, chunk 65, score 0.697]."
     out = _build_sources_from_audit(audit, text)
@@ -274,9 +274,9 @@ def test_extract_smart_quote_source_inline():
 
 
 def test_extract_smart_quote_source_with_chunk():
-    txt = 'Source: “REDACTED.pdf”, chunk 8.'
+    txt = 'Source: “XYZ-302_Risk Management.pdf”, chunk 8.'
     out = _extract_cited_chunk_indexes(txt)
-    assert ("REDACTED.pdf", 8) in out
+    assert ("XYZ-302_Risk Management.pdf", 8) in out
 
 
 def test_extract_filename_with_spaces_and_punctuation(monkeypatch):
@@ -337,11 +337,11 @@ from app.agents.runtime import _clean_path_label, _sanitize_citation_labels
 
 
 def test_clean_path_label_strips_windows_drive():
-    assert _clean_path_label(r"G:\My Drive\500-Design Management\PRC-501.pdf") == "PRC-501.pdf"
+    assert _clean_path_label(r"G:\My Drive\500-Design Management\XYZ-501.pdf") == "XYZ-501.pdf"
 
 
 def test_clean_path_label_strips_unix_path():
-    assert _clean_path_label("/home/user/projects/specs/PRC-501.pdf") == "PRC-501.pdf"
+    assert _clean_path_label("/home/user/projects/specs/XYZ-501.pdf") == "XYZ-501.pdf"
 
 
 def test_clean_path_label_strips_network_share():
@@ -349,21 +349,21 @@ def test_clean_path_label_strips_network_share():
 
 
 def test_clean_path_label_leaves_basename_alone():
-    assert _clean_path_label("PRC-501.pdf") == "PRC-501.pdf"
+    assert _clean_path_label("XYZ-501.pdf") == "XYZ-501.pdf"
 
 
 def test_sanitize_citation_labels_cleans_bracketed_windows_path():
-    raw = "See [source: G:\\My Drive\\PRC-501.pdf, chunk 3] for details."
+    raw = "See [source: G:\\My Drive\\XYZ-501.pdf, chunk 3] for details."
     cleaned = _sanitize_citation_labels(raw)
     assert "G:\\My Drive" not in cleaned
-    assert "[source: PRC-501.pdf, chunk 3]" in cleaned
+    assert "[source: XYZ-501.pdf, chunk 3]" in cleaned
 
 
 def test_sanitize_citation_labels_cleans_chinese_bracket_path():
-    raw = "See 【source: G:\\My Drive\\PRC-501.pdf, chunk 3】 for details."
+    raw = "See 【source: G:\\My Drive\\XYZ-501.pdf, chunk 3】 for details."
     cleaned = _sanitize_citation_labels(raw)
     assert "G:\\My Drive" not in cleaned
-    assert "【source: PRC-501.pdf, chunk 3】" in cleaned
+    assert "【source: XYZ-501.pdf, chunk 3】" in cleaned
 
 
 def test_sanitize_citation_labels_cleans_bracketless_source_line():
@@ -374,9 +374,9 @@ def test_sanitize_citation_labels_cleans_bracketless_source_line():
 
 
 def test_extract_chinese_bracket_source():
-    txt = "Per the procedure 【source: REDACTED.pdf, chunk 65】."
+    txt = "Per the procedure 【source: XYZ-406_HSE.pdf, chunk 65】."
     out = _extract_cited_chunk_indexes(txt)
-    assert ("REDACTED.pdf", 65) in out
+    assert ("XYZ-406_HSE.pdf", 65) in out
 
 
 def test_build_sources_cleans_raw_doc_name(monkeypatch):
@@ -388,11 +388,11 @@ def test_build_sources_cleans_raw_doc_name(monkeypatch):
     }
     monkeypatch.setattr(
         "app.core.projects.get_document",
-        lambda did: {"original_name": r"G:\My Drive\REDACTED.pdf"},
+        lambda did: {"original_name": r"G:\My Drive\XYZ-406_HSE.pdf"},
     )
     out = _build_sources_from_audit(audit, "citation text")
     assert len(out) == 1
-    assert out[0]["doc_name"] == "REDACTED.pdf"
+    assert out[0]["doc_name"] == "XYZ-406_HSE.pdf"
     assert out[0]["project_id"] == "proj_x"
     assert out[0]["chunk_index"] == 4
     assert out[0]["chunk_id"] == "proj_x:d1:4"

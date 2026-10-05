@@ -139,7 +139,7 @@ async def rag_gk_status(
     project_id: str = "master_corpus",
     auth: dict = Depends(require_api_key),
 ):
-    """Read-only diagnostic for general-knowledge (``training_material``) grounding.
+    """Read-only diagnostic for general-knowledge (``RAG_GENERAL_KNOWLEDGE_PROJECTS``) grounding.
 
     Added to settle why FIDIC KB notes don't surface in chat. Answers:
       1. Is the GK corpus seeded?  -> ``gk_docs`` lists each GK doc by name.
