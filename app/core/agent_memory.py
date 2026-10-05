@@ -290,7 +290,7 @@ def append_message(
     mid = str(uuid.uuid4())
     now = _now()
     if role == "assistant" and provenance is None:
-        from app.agents.need_plan import LAST_PROVENANCE
+        from app.agents.provenance_trail import LAST_PROVENANCE
 
         provenance = LAST_PROVENANCE.get()
     with _lock:

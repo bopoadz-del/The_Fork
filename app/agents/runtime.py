@@ -8116,43 +8116,22 @@ def _graft_stated_total_follow_up(
     return line
 
 
-async def _apply_need_plan(
-    messages: list[dict[str, Any]], user_message: str, project_id: str | None,
-) -> None:
-    """Need plan for this turn: declare what the question needs, fetch each
-    piece from its home in code, fold the fetched facts (with their sources)
-    into the question. Never raises; no plan leaves the turn unchanged."""
-    try:
-        from app.agents import need_plan
-
-        ctx = await need_plan.plan_and_fetch(user_message, project_id)
-        if ctx is None:
-            return
-        block = need_plan.facts_block(ctx)
-        if block and messages and messages[-1].get("role") == "user":
-            messages[-1] = {**messages[-1],
-                            "content": block + "\n\n" + (messages[-1].get("content") or "")}
-    except Exception:  # noqa: BLE001 — planning must never break a turn
-        _LOG.warning("need plan failed; answering without it", exc_info=True)
-
-
 def _record_figure_provenance(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]],
     audit_rec: dict[str, Any] | None,
 ) -> str:
-    from app.agents import need_plan
+    """Record where each figure came from (stream + message store). On this
+    path the record is kept, not enforced: the answer text is unchanged."""
     from app.agents.citation_provenance import figure_provenance
+    from app.agents.provenance_trail import LAST_PROVENANCE
 
-    ctx = need_plan.CURRENT.get()
-    out, entries = figure_provenance(text, rag_sys_msg, messages, ctx)
-    if ctx is None:
-        out = text  # no plan this turn: record, do not enforce
-    need_plan.LAST_PROVENANCE.set(entries)
+    _out, entries = figure_provenance(text, rag_sys_msg, messages, enforce=False)
+    LAST_PROVENANCE.set(entries)
     if isinstance(audit_rec, dict):
         audit_rec["provenance"] = entries
-    return out
+    return text
 
 
 def _postprocess_answer(
@@ -11066,7 +11045,6 @@ class Agent:
                 messages, _rag_sys_msg,
                 user_data_authoritative=self.user_data_authoritative,
             )
-        await _apply_need_plan(messages, user_message, project_id)
 
         _apply_hat_activation(messages, user_message, self.name)
 
@@ -12051,7 +12029,6 @@ class Agent:
                 messages, _rag_sys_msg,
                 user_data_authoritative=self.user_data_authoritative,
             )
-        await _apply_need_plan(messages, user_message, project_id)
 
         _apply_hat_activation(messages, user_message, self.name)
 

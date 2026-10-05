@@ -900,10 +900,9 @@ def gate(
 # the answer come from? Every figure (a number carrying a unit, a currency or a
 # percent) gets an entry -- user input, calculator (formula and inputs),
 # project document or general knowledge (document and page). A figure with no
-# entry is not stated: its clause is removed. Applied on turns that ran a need
-# plan (``app.agents.need_plan``); the plan's own fetched facts are evidence
-# too. One mechanism: the calculator credit, retrieval records and user words
-# above are what back a figure here.
+# entry is not stated (when enforced): its clause is removed. One mechanism:
+# the calculator credit, retrieval records and user words above are what back
+# a figure here.
 
 _PROV_FIGURE_RE = re.compile(
     r"(?<![\w.])(?P<pre>(?:SAR|AED|USD|EUR|GBP|QAR|KWD|OMR|BHD|\$|£|€)\s?)?"
@@ -962,7 +961,7 @@ def _working(values: set[float]) -> set[float]:
 
 
 def _entry_for_record(rec: EvidenceRecord, figure: str) -> dict[str, Any]:
-    from app.agents.need_plan import SOURCE_GENERAL, SOURCE_PROJECT
+    from app.agents.provenance_trail import SOURCE_GENERAL, SOURCE_PROJECT
 
     gk = (rec.layer or "") == "general_knowledge"
     return {
@@ -976,12 +975,16 @@ def figure_provenance(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
-    need_ctx: Any = None,
+    *,
+    enforce: bool = True,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Return ``(answer, provenance)``: every figure credited to a source, any
-    figure without one removed. Never raises -- on failure the answer passes
-    through with an empty record."""
-    from app.agents import need_plan as np_
+    """Return ``(answer, provenance)``: every figure credited to its source --
+    the user's own words, a calculator run (formula and inputs), or a
+    retrieved chunk (layer, document, page). With ``enforce`` a figure that
+    matches none of them is removed (its clause); without, the answer is
+    returned unchanged and only the record is built. Never raises -- on
+    failure the answer passes through with an empty record."""
+    from app.agents import provenance_trail as pt
 
     try:
         if not text or not text.strip():
@@ -994,29 +997,8 @@ def figure_provenance(
         calc_entries: list[tuple[set[float], dict[str, Any]]] = []
         for credit in _calculator_credits(ev):
             nums = set(credit.result_numbers) | set(_nums(json.dumps(credit.inputs, default=str)))
-            calc_entries.append((nums, {"source": np_.SOURCE_CALCULATOR,
+            calc_entries.append((nums, {"source": pt.SOURCE_CALCULATOR,
                                         "formula": credit.calculation, "inputs": credit.inputs}))
-        fact_entries: list[tuple[set[float], dict[str, Any]]] = []
-        missing: list[str] = []
-        facts = list(getattr(need_ctx, "facts", []) or []) if need_ctx is not None else []
-        for f in facts:
-            if f.source == np_.SOURCE_CALCULATOR:
-                nums = set(_nums(json.dumps(f.result or {}, default=str))) | set(
-                    _nums(json.dumps(f.inputs or {}, default=str)))
-                calc_entries.append((nums, {"source": np_.SOURCE_CALCULATOR,
-                                            "formula": f.formula, "inputs": f.inputs}))
-            elif f.value:
-                fact_entries.append((set(_nums(f.value)), {
-                    "source": f.source, "doc_id": f.doc_id, "doc_name": f.doc_name,
-                    "page": f.page, "note": f.note, "what": f.what}))
-            alt = getattr(f, "alternative", None)
-            if alt and alt.get("value"):
-                fact_entries.append((set(_nums(str(alt["value"]))), {
-                    "source": alt.get("source"), "doc_id": alt.get("doc_id"),
-                    "doc_name": alt.get("doc_name"), "page": alt.get("page"),
-                    "note": "differs from the project value; stated, not used", "what": f.what}))
-        if need_ctx is not None:
-            missing = [n.what for n in getattr(need_ctx, "missing", []) or []]
         calc_pool: set[float] = set()
         for nums, _meta in calc_entries:
             calc_pool |= nums
@@ -1029,14 +1011,9 @@ def figure_provenance(
             fig = m.group(0).strip()
             entry: dict[str, Any] | None = None
             if _match(value, _rescaled(user_vals)):
-                entry = {"figure": fig, "source": np_.SOURCE_USER}
+                entry = {"figure": fig, "source": pt.SOURCE_USER}
             if entry is None:
                 for nums, meta in calc_entries:
-                    if _match(value, _rescaled(nums)):
-                        entry = {"figure": fig, **meta}
-                        break
-            if entry is None:
-                for nums, meta in fact_entries:
                     if _match(value, _rescaled(nums)):
                         entry = {"figure": fig, **meta}
                         break
@@ -1046,24 +1023,21 @@ def figure_provenance(
                         entry = _entry_for_record(rec, fig)
                         break
             if entry is None and working and _match(value, working):
-                entry = {"figure": fig, "source": np_.SOURCE_CALCULATOR, "working": True}
+                entry = {"figure": fig, "source": pt.SOURCE_CALCULATOR, "working": True}
             if entry is None:
                 bad.append(m)
+                entries.append({"figure": fig, "source": None})
             else:
                 entries.append(entry)
+        if not enforce:
+            return text, entries
         out = text
         for m in reversed(bad):
             start, end = _clause_span(out, m.start(), m.end())
             out = out[:start].rstrip(" ,;") + out[end:]
         if bad:
             _LOG.info("figure_provenance: removed %d figure(s) with no source", len(bad))
-        for f in facts:
-            if f.source in (np_.SOURCE_PROJECT, np_.SOURCE_GENERAL):
-                entries.append({"fact": f.what, "source": f.source, "doc_id": f.doc_id,
-                                "doc_name": f.doc_name, "page": f.page, "note": f.note})
-        if missing:
-            entries.append({"source": "missing_input", "what": missing})
-        return out, entries
+        return out, [e for e in entries if e.get("source")]
     except Exception:  # noqa: BLE001 -- a gate must never break an answer
         _LOG.exception("figure_provenance failed; passing answer through")
         return text, []
