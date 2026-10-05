@@ -54,12 +54,12 @@ DISCIPLINE_FULL: dict[str, str] = {
     "IF": "Infrastructure",
 }
 
-# JCB-DWG drawing-number pattern observed across the the client project corpus.
+# JCB-DWG drawing-number pattern (one consultant's numbering convention).
 # Two token orders both appear in the wild:
-#   IP-INF-053-0000-JCB-DWG-TM-200-1000005-A   (TM/SG/EL/TL sheets)
-#   IP-INF-053-JCB-0000-DWG-WS-600-0000001-C   (WS sheets — tokens 4-5 swapped)
+#   AB-CDE-001-0000-JCB-DWG-TM-200-0000001-A   (TM/SG/EL/TL sheets)
+#   AB-CDE-001-JCB-0000-DWG-WS-600-0000001-C   (WS sheets — tokens 4-5 swapped)
 # Accept both by alternation. Shorter fallback covers project-specific
-# schemes that don't use the full IP-INF prefix.
+# schemes that don't use the full two-group prefix.
 _DWG_NUMBER_FULL = re.compile(
     r"[A-Z]{2,}-[A-Z]{2,}-\d{3}-"
     r"(?:\d{4}-[A-Z]{3,}|[A-Z]{3,}-\d{4})-"
@@ -86,10 +86,10 @@ def _strip_doubled_letter_prefix(dn: str) -> str:
     """Strip stray leading characters that fall outside a clean JCB-style
     drawing-number prefix.
 
-    Bug observed in pilot: ST sheet returned ``IIP-INF-054-...`` because
-    the source text run was something like ``XIIP-INF-054-...`` and the
-    regex `[A-Z]{2,}-[A-Z]{2,}-...` legitimately accepted ``XIIP`` (or in
-    a leading position, ``IIP``). A negative-lookbehind in the regex does
+    Bug observed in pilot: ST sheet returned ``AAB-CDE-001-...`` because
+    the source text run was something like ``XAAB-CDE-001-...`` and the
+    regex `[A-Z]{2,}-[A-Z]{2,}-...` legitimately accepted ``XAAB`` (or in
+    a leading position, ``AAB``). A negative-lookbehind in the regex does
     not help: at string start there's no preceding char, so
     ``XIIP-INF-...`` produces ``IIP-...`` and ``IIP-INF-...`` produces
     ``IIP-...`` again.
@@ -729,7 +729,7 @@ class DrawingQTOBlock(UniversalBlock):
                         total_chars += len(chars)
                         # Save raw full-page text for drawing-number fallback
                         # rescue (Bug 2: when title-block extractor returned a
-                        # half-match like "IP-INF-053-JCB" we re-scan the full
+                        # half-match like "AB-CDE-001-JCB" we re-scan the full
                         # page for a proper JCB-DWG pattern).
                         page_full_raw_texts.append(
                             "".join(c["text"] for c in chars)
@@ -803,7 +803,7 @@ class DrawingQTOBlock(UniversalBlock):
         tb = dict(primary["title_block"])
         # Bug 2: reject drawing-number matches that aren't a full JCB
         # drawing-number on this corpus. The short fallback regex
-        # sometimes grabs a half-match ("IP-INF-053-JCB") from a random
+        # sometimes grabs a half-match ("AB-CDE-001-JCB") from a random
         # title-block fragment. Two valid full forms exist in the wild:
         #   ...-0000-JCB-DWG-...   (TM/SG/EL/TL token order)
         #   ...-JCB-0000-DWG-...   (WS token order, tokens 4-5 swapped)

@@ -37,7 +37,7 @@ def _om_outline_from_text(text: str) -> Optional[Dict[str, Any]]:
         {"section": "2. Existing-services interfaces",
          "content": "Interfaces from Specification Vol 2 Existing Services — do not invent utility owners."},
         {"section": "3. Environmental constraints",
-         "content": "Environment Requirements SoW and Pre-Mobilization Environmental Checklist obligations."},
+         "content": "Environmental requirements and pre-mobilisation environmental obligations stated in the project documents."},
         {"section": "4. Reservoir / wet-test operations",
          "content": "First wet test, isolation, fill and drawdown — watertightness only, not a membrane electrical test."},
         {"section": "5. Mechanical / pumping",

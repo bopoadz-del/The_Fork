@@ -337,8 +337,8 @@ def _activities_from_text(text: str) -> List[Dict[str, Any]]:
     """Activities the operator typed in the message, or [].
 
     Only rows carrying a name AND two dates are returned -- a half-written row
-    is dropped, never completed by guesswork. A live look-ahead ask listed five
-    activities in the message and the look-ahead demanded a .xer, because no
+    is dropped, never completed by guesswork. A look-ahead ask that typed its
+    activities in the message used to be told to supply a .xer, because no
     path looked here.
     """
     blob = text or ""
@@ -1415,9 +1415,9 @@ class ConstructionScheduleMixin:
                 "error": "window must be at least 1 day",
             }
 
-        # Activities supplied in the request are a valid source. A live
-        # look-ahead ask listed five activities and said not to ask for a programme file;
-        # the tool errored for a missing .xer anyway, so the answer became
+        # Activities supplied in the request are a valid source. An ask
+        # that typed its activities and declined a programme file used to
+        # error for a missing .xer anyway, so the answer became
         # "supply a .xer" instead of the look-ahead the operator had already
         # given the data for. A file still wins when one is named, and an
         # empty request still errors -- nothing is ever invented here.
@@ -3129,8 +3129,8 @@ class ConstructionScheduleMixin:
             citations = []
             for item in boq_items or []:
                 code = str((item or {}).get("item_key") or "").strip()
-                # Item codes only — source filenames can carry DD-2022-175
-                # and leftover F1 must not cite that year as governing.
+                # Item codes only — source filenames can carry another
+                # contract year's id, which must not be cited as governing.
                 if code and code not in citations:
                     citations.append(code)
             result["scaffold"] = {

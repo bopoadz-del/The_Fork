@@ -16,9 +16,8 @@ logger = logging.getLogger(__name__)
 
 _STEEL_DENSITY = 7850.0  # kg/m^3
 
-# Live UI pack E4 (Master Corpus / theshovel.ai):
-#   "Concrete volume for a raft 30x20x1.5 m including your documented waste
-#    factor." → net 900 m3; documented waste is 5% (× 1.05) → 945 m3.
+# A raft-volume ask that says to include the documented waste factor:
+#   L x W x T m net, documented waste 5% (x 1.05) on top.
 # Leftover L6 aliased unnamed L×W×D to excavation_volume (bank only, no
 # waste). A concrete/raft ask must pin concrete_volume and this factor.
 # Kill switch: APPLY_DOCUMENTED_WASTE=0 restores the FAIL (net 900).
@@ -1064,7 +1063,7 @@ def resource_line_cost(
     }
 
 
-# Live A2-2: "What is the weight of 12 tonnes of Y16 bars in metres run?"
+# A metres-run-from-bar-mass ask (N tonnes of a named bar size).
 _METRES_RUN_ASK_RE = re.compile(
     r"(?i)metres?\s+run|meters?\s+run|"
     r"(?:tonnes?|tons?|kg).{0,40}(?:y|t|h)?\d{1,2}.{0,40}(?:metr|length|run)|"

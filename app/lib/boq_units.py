@@ -3,8 +3,8 @@
 Determines the CORRECT unit of measurement for a BOQ line item from its work
 type (the description), independent of what a scanned PDF / OCR produced for the
 printed unit. Grounded in the standard methods of measurement -- CESMM4
-(civil/infrastructure) and POMI (buildings); see
-docs/knowledge/boq_units_of_measurement.md.
+(civil/infrastructure) and POMI (buildings); the shipped units-of-measurement
+reference lives in docs/knowledge/.
 
 Used at ingestion (boq_processor) to (a) FILL a blank/unreadable unit from the
 inferred work-type unit and (b) FLAG a stated unit that contradicts the work

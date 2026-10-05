@@ -75,8 +75,8 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
     }
 
 
-# Live delay-damages daily-amount ask: "Calculate the delay damages per
-# calendar day in SAR for the whole of the Works." The delay-rate ask already
+# A delay-damages daily-amount ask (an amount in SAR per calendar day, not
+# the rate itself). The delay-rate ask already
 # surfaces the rate string (0.1% of Contract Price per calendar day) and the
 # ACA ask surfaces the ACA.
 # The model quoted sources and never multiplied. This path composes
@@ -121,8 +121,8 @@ _CONTRACT_DATA_CTX_RE = re.compile(
 _WHOLE_WORKS_RE = re.compile(r"(?i)\bwhole\s+of\s+the\s+works\b")
 _SUBCLAUSE_87_RE = re.compile(r"(?i)\b(?:sub[- ]?clause\s+)?8\.7\b")
 # Live daily-amount ask after #535: CoC 8.7/8.8 windows state 0.015% of the
-# excl-VAT ACA (SAR 263,175.67/day). Contract Data 8.8 is 0.1% of the
-# Contract Price (SAR 1,754,504.46/day). First-match compose elected
+# excl-VAT ACA (a much smaller SAR/day product). Contract Data 8.8 is 0.1%
+# of the Contract Price (the figure the ask wants). First-match compose elected
 # 0.015% whenever that window led the excerpts. Kill-switch
 # COMPOSE_REJECT_E1_LOOKALIKE_RATE=0 restores electing 0.015%.
 _LOOKALIKE_RATE_PERCENT = 0.015
@@ -130,7 +130,7 @@ _PREFERRED_WHOLE_WORKS_RATE = 0.1
 # Live daily-amount ask on c5c6dfa: Contract Data 8.8 chunks 9–11 carried a
 # FIDIC worked-example ACA of SAR 10,000,000. Compose elected it
 # (0.1% → SAR 10,000/day) instead of the filled excl-VAT row
-# (~SAR 1,754,504,456.25). Kill-switch COMPOSE_REJECT_E1_TOY_ACA=0
+# (a billion-scale amount). Kill-switch COMPOSE_REJECT_E1_TOY_ACA=0
 # restores electing the first match (the FAIL).
 _TOY_ACA_AMOUNT = 10_000_000.0
 _TOY_DAILY_AMOUNT = 10_000.0
@@ -165,7 +165,7 @@ def delay_damages_rate_is_coc_lookalike(rate: float, ctx: str = "") -> bool:
     """True for CoC 8.7/8.8 0.015%-of-ACA, not Contract Data 0.1% of Price.
 
     Live daily-amount ask: chunks 9–11 restated delay damages as 0.015% of
-    the filled excl-VAT ACA. That product is SAR 263,175.67/day. The
+    the filled excl-VAT ACA, a different SAR/day product. The
     Contract Data particular is 0.1% of the Contract Price. A genuine
     Contract Data row that itself says 0.015% of the Contract Price is
     not a lookalike.
@@ -241,7 +241,7 @@ def aca_amount_is_toy_example(amount: float, ctx: str = "") -> bool:
     particular of exactly 10M is not a toy. Non-10M/10k figures are
     never the worked example — Contract Data template cues
     (``insert``, ``for example``) must not stain the filled excl-VAT
-    ACA (~SAR 1,754,504,456.25).
+    ACA (a billion-scale amount, e.g. SAR 1,234,567,890.00).
     """
     if not reject_e1_toy_aca_enabled():
         return False
@@ -367,13 +367,13 @@ def parse_delay_damages_rate_percent(text: str, ask: str = "") -> float | None:
     Conditions pointer are not the rate. When a CoC 8.7/8.8 window
     restates 0.015% of the ACA next to the Contract Data 0.1% of
     Contract Price, the Contract Data particular wins — first-match
-    used to emit SAR 263,175.67/day. Does not invent a percentage.
+    used to emit the 0.015% product. Does not invent a percentage.
     """
     cands = _iter_delay_rate_candidates(text, ask)
     if not cands:
         return None
     preferred = [(pct, score) for pct, score in cands if score >= 2]
-    # Score 0 is the CoC 0.015% lookalike. Do not compose 263,175.67
+    # Score 0 is the CoC 0.015% lookalike. Do not compose a figure
     # from that alone — retrieval must still surface Contract Data 0.1%.
     pool = preferred or [(pct, score) for pct, score in cands if score >= 1]
     if not pool:
@@ -610,7 +610,7 @@ def _figure_is_clause_111(text: str, amount: float) -> bool:
     """True when ``amount`` is this text's clause 1.1.1 net Accepted Contract Amount.
 
     Live Contract Data states the clause as a table row —
-    ``1.1.1: | | Accepted Contract Amount: SAR 1,754,504,456.25(One Billion …) |``
+    ``1.1.1: | | Accepted Contract Amount: SAR 1,234,567,890.00(One Billion …) |``
     — with NO VAT qualifier; the including-VAT figure is a separate
     particular in the same chunk. Demanding the literal "excluding VAT"
     scored the real base 0 and left a partial ACA to compose (live milestone
@@ -858,9 +858,9 @@ def format_delay_damages_daily_line(composed: dict) -> str:
 
 # Excerpts arrive as "[doc_id=<id> chunk=<n> ...] <text>" blocks. A rate and a
 # base figure that sit in DIFFERENT documents are two contracts' numbers, and
-# multiplying across them is how #701 produced 0.015% x SAR 144,042,486.50 --
+# multiplying across them is how #701 produced 0.015% x another project's ACA --
 # an amount belonging to another project entirely.
-# "DD-2023-118", "IP-INF-054": a contract/document reference shape.
+# "AB-2002-202", "AB-CDE-001": a contract/document reference shape.
 _CONTRACT_ID_RE = re.compile(r"\b([A-Z]{2,4}-\d{3,4}-\d{2,4})\b")
 _DOC_MARKER_RE = re.compile(r"\[doc_id=([^\s\]]+)[^\]]*\]")
 
@@ -1435,10 +1435,10 @@ def parse_delay_period_days(query: str) -> int | None:
 def _window_is_whole_of_works_rate(blob: str) -> bool:
     """True when the window is the whole-of-Works daily rate, not a Milestone.
 
-    Live per-milestone delay-damages ask on 4ab5561: a packed particulars row said "per Milestone"
+    A per-milestone delay-damages ask: a packed particulars row said "per Milestone"
     and then "Delay Damages (for the whole of the Works): 0.1%". First-
-    percent parse elected 0.1% and composed 70,180,178.25. The Contract
-    Data milestone rate is 0.015%.
+    percent parse elected 0.1% and composed the whole-of-Works product.
+    The Contract Data milestone rate is a different, smaller percentage.
     """
     return bool(_WHOLE_WORKS_RE.search(blob or ""))
 
@@ -1507,7 +1507,7 @@ def compose_delay_damages_over_period_from_excerpts(
 
     Uses the Milestone row the question names. Does not fall through to
     the whole-of-Works 0.1% when the ask is a Milestone scenario — that
-    product is a different figure (live per-milestone ask vs 0.1% × 40).
+    product is a different figure.
     """
     if not compose_delay_damages_period_enabled():
         return None

@@ -1,10 +1,10 @@
 """Render an assistant message's markdown into a Word document properly.
 
-THE INCIDENT (H1, gate battery ``13b2bf7``, 2026-08-31). The exported docx
+THE INCIDENT (2026-08-31). The exported docx
 was walked entry by entry through its ZIP central directory rather than
 trusted by content-type, and ``word/document.xml`` contained, literally::
 
-    The Accepted Contract Amount, **excluding VAT**, is:**SAR 1,754,504,456.25**
+    The Accepted Contract Amount, **excluding VAT**, is:**SAR 1,234,567.00**
 
 Asterisks as characters. The exporter's own docstring admitted it -- "does
 not parse markdown ... Word will display literally" -- so this was a known
