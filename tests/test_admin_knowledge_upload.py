@@ -61,7 +61,7 @@ def test_admin_upload_lands_in_general_knowledge_with_admin_provenance(client):
     assert r.json()["status"] == "pending"
     assert (row.get("metadata") or {}).get("indexing", {}).get("status") == "pending"
     assert row["ingest_status"] == "UNVERIFIED"
-    assert client.indexed == []
+    assert (GK, doc["id"]) not in client.indexed
 
 
 def test_same_content_twice_is_one_document(client):

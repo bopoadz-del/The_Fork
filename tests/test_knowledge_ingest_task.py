@@ -72,7 +72,10 @@ def test_upload_returns_pending_and_never_calls_the_indexer(client, gk):
     assert row["ingest_status"] == "UNVERIFIED"
     assert row["metadata"]["indexing"]["status"] == "pending"
     assert row["content_sha256"] == hashlib.sha256(body).hexdigest()
-    assert client.index_calls == []
+    # (The boot seed may index its own notes during app startup; the
+    # uploaded document is never indexed by this request.)
+    uploaded = r.json()["document"]["id"]
+    assert not [c for c in client.index_calls if uploaded in c[1]]
 
 
 def test_upload_hashes_while_streaming_not_by_reading_the_file_back(client, monkeypatch):
