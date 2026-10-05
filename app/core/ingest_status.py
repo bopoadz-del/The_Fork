@@ -57,6 +57,9 @@ QUARANTINED = "QUARANTINED"
 # would require an ALTER CONSTRAINT. Recoverable: force_ocr / raise ceiling.
 OCR_DEGRADED = "OCR_DEGRADED"
 
+# Statuses whose document holds chunks and is retrieved.
+INDEXED_STATUSES = frozenset({INDEXED, TEXT_SPARSE})
+
 ALL_STATUSES = frozenset(
     {
         UNVERIFIED,
@@ -69,6 +72,13 @@ ALL_STATUSES = frozenset(
         QUARANTINED,
     }
 )
+
+# Statuses that keep NO chunks: a failed, empty, unsupported, quarantined or
+# tombstoned document. Writing one deletes the document's chunks in the same
+# transaction (projects.delete_document_chunks), and retrieval ignores any
+# chunk of such a document. UNVERIFIED (not yet classified) is neither: a
+# document holds its chunks for a moment before the ledger classifies it.
+NO_CHUNK_STATUSES = ALL_STATUSES - INDEXED_STATUSES - {UNVERIFIED}
 
 # Extractor family stamped on INDEXED rows after the content-control fix.
 # #550 / 8535199: Word SDT + deduped text boxes. Bump the suffix when the
@@ -139,6 +149,71 @@ def correct_empty_indexed(conn) -> int:
             "WHERE id = :id AND ingest_status = :indexed"
         ), {"status": outcome.status, "reason": outcome.reason, "id": doc_id, "indexed": INDEXED})
     return len(rows)
+
+
+def enforce_chunk_invariants(conn) -> dict:
+    """Make the ledger and the chunk tables agree. Idempotent; dialect neutral.
+
+    1. A document of a format no extractor reads (compressed folders, files
+       without an extension, images ...) is removed with its chunks and its
+       index entries: it may not be a project document at all.
+    2. A document in a no-chunk status keeps no chunks.
+    3. A document recorded in an indexed status that holds no chunk, or a
+       not-yet-classified one that holds chunks, is classified from what it
+       actually holds.
+    Returns the counts changed; a second run returns all zeros.
+    """
+    import sqlalchemy as sa
+
+    insp = sa.inspect(conn)
+    tables = set(insp.get_table_names())
+    chunk_tables = sorted(
+        name for name in tables
+        if name.startswith("chunks") and "doc_id" in {c["name"] for c in insp.get_columns(name)}
+    )
+    out = {"removed_documents": 0, "removed_chunks": 0, "reclassified": 0}
+
+    def _chunks(doc_id: str) -> int:
+        return sum(int(conn.execute(sa.text(
+            f"SELECT COUNT(*) FROM {t} WHERE doc_id = :d"), {"d": doc_id}).scalar() or 0)
+            for t in chunk_tables)
+
+    def _drop_chunks(doc_id: str) -> int:
+        return sum(int(conn.execute(sa.text(
+            f"DELETE FROM {t} WHERE doc_id = :d"), {"d": doc_id}).rowcount or 0)
+            for t in chunk_tables)
+
+    for doc_id, name in conn.execute(sa.text("SELECT id, original_name FROM documents")).all():
+        if not is_ingestible(name or ""):
+            out["removed_chunks"] += _drop_chunks(doc_id)
+            if "doc_index_entries" in tables:
+                conn.execute(sa.text("DELETE FROM doc_index_entries WHERE document_id = :d"), {"d": doc_id})
+            conn.execute(sa.text("UPDATE documents SET superseded_by = NULL WHERE superseded_by = :d"),
+                         {"d": doc_id})
+            conn.execute(sa.text("DELETE FROM documents WHERE id = :d"), {"d": doc_id})
+            out["removed_documents"] += 1
+
+    barred = ", ".join(f"'{s}'" for s in sorted(NO_CHUNK_STATUSES))
+    for (doc_id,) in conn.execute(sa.text(
+            f"SELECT id FROM documents WHERE ingest_status IN ({barred})")).all():
+        removed = _drop_chunks(doc_id)
+        if removed:
+            out["removed_chunks"] += removed
+            conn.execute(sa.text("UPDATE documents SET chunk_count = 0 WHERE id = :d"), {"d": doc_id})
+
+    held = ", ".join(f"'{s}'" for s in sorted(INDEXED_STATUSES | {UNVERIFIED}))
+    for doc_id, name, size, status in conn.execute(sa.text(
+            f"SELECT id, original_name, size, ingest_status FROM documents WHERE ingest_status IN ({held})")).all():
+        n = _chunks(doc_id)
+        if (status == UNVERIFIED and n == 0) or (status in INDEXED_STATUSES and n > 0):
+            continue  # nothing to classify yet / already consistent
+        outcome = classify(chunk_count=n, extension=os.path.splitext(name or "")[1],
+                           size_bytes=size if n == 0 else None)
+        conn.execute(sa.text(
+            "UPDATE documents SET ingest_status = :s, ingest_status_reason = :r, chunk_count = :n "
+            "WHERE id = :d"), {"s": outcome.status, "r": outcome.reason, "n": n, "d": doc_id})
+        out["reclassified"] += 1
+    return out
 
 
 def max_attempts() -> int:
