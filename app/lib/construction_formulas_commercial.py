@@ -815,7 +815,7 @@ def format_delay_damages_daily_line(composed: dict) -> str:
             line = f"{line} Source: {source}."
         return line
     line = (
-        f"Delay damages for the whole of the Works are "
+        f"Whole-of-Works delay damages: "
         f"{cur} {daily:,.2f} per calendar day "
         f"({pct:g}% of Accepted Contract Amount {cur} {base:,.2f})."
     )
