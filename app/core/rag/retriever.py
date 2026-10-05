@@ -9,6 +9,8 @@ where caching, dimension matching, and graceful-degradation policy live.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -919,6 +921,9 @@ def _doc_name_for_id(doc_id: str) -> str:
     """Resolve a doc_id to its original filename. Returns '' if not
     found - the noise filter treats unknown names as non-noise so a
     schema mismatch never silently drops a real document."""
+    prefetched = _PREFETCHED_DOC_NAMES.get()
+    if prefetched is not None and doc_id in prefetched:
+        return prefetched[doc_id]
     try:
         from app.core import projects as _projects
         doc = _projects.get_document(doc_id)
@@ -926,6 +931,38 @@ def _doc_name_for_id(doc_id: str) -> str:
     except Exception:
         logger.debug("doc name lookup failed for %s", doc_id, exc_info=True)
         return ""
+
+
+# Names fetched in one query for the duration of a ``_doc_names_prefetched``
+# block; ``_doc_name_for_id`` answers from it instead of one round trip per
+# chunk (live: ~30 single-row document reads per question).
+_PREFETCHED_DOC_NAMES: ContextVar[Optional[Dict[str, str]]] = ContextVar(
+    "_PREFETCHED_DOC_NAMES", default=None,
+)
+
+
+@contextmanager
+def _doc_names_prefetched(doc_ids: Iterable[str]):
+    """Resolve many doc names with one query for the enclosed lookups.
+
+    An id with no documents row resolves to ``""``, which is what the
+    per-id lookup returns for it. If the batch read fails nothing is
+    prefetched and every lookup falls back to its own query.
+    """
+    ids = sorted({d for d in doc_ids if d})
+    names: Optional[Dict[str, str]] = None
+    if ids:
+        try:
+            from app.core import projects as _projects
+            found = _projects.document_names(ids)
+            names = {did: found.get(did, "") for did in ids}
+        except Exception:  # noqa: BLE001 — per-id lookups still answer
+            logger.debug("batched doc name lookup failed", exc_info=True)
+    token = _PREFETCHED_DOC_NAMES.set(names)
+    try:
+        yield
+    finally:
+        _PREFETCHED_DOC_NAMES.reset(token)
 
 
 def retrieve(
@@ -9380,9 +9417,12 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     scored_lex: List[Tuple[float, Chunk]] = [
         (c.score or 0.0, c) for c in candidates
     ]
-    for _, chunk in scored_lex:
-        if chunk.doc_id not in name_by_id:
-            name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
+    with _doc_names_prefetched(
+        c.doc_id for _, c in scored_lex if c.doc_id not in name_by_id
+    ):
+        for _, chunk in scored_lex:
+            if chunk.doc_id not in name_by_id:
+                name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     _apply_filename_overlap_boost(query, scored_lex, name_by_id)
     _apply_source_class_preference(query, scored_lex, name_by_id)
     _cap_specification_class_bonus(query, scored_lex, name_by_id)
@@ -10059,9 +10099,12 @@ def retrieve_with_filter(
     # The same-drawing "prefer highest revision" suppression is computed from
     # these annotations and applied in the kept-selection loop below.
     name_by_id: Dict[str, str] = dict(filename_names)
-    for _, chunk in scored:
-        if chunk.doc_id not in name_by_id:
-            name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
+    with _doc_names_prefetched(
+        c.doc_id for _, c in scored if c.doc_id not in name_by_id
+    ):
+        for _, chunk in scored:
+            if chunk.doc_id not in name_by_id:
+                name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     for i, (score, chunk) in enumerate(scored):
         nm = name_by_id.get(chunk.doc_id, "")
         # The filename itself is evidence, not just a ranking input — see
