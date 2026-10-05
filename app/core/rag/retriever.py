@@ -478,11 +478,13 @@ def elect_answer_bearing_contract(
          lambda _name, text: chunk_states_part_summary_total(
              text, extract_asked_boq_page_refs(query),
          )),
-        # Set3 C3: "on what date was the demolition bill issued, and under
-        # which RFP number?" A Date:/RFP No. stamp is the answer. The
-        # demolition-titled earlier pack must not lock the pool.
-        (query_asks_for_bill_issue_identity,
-         lambda _name, text: chunk_states_bill_issue_stamp(text)),
+        # "On what date was <named document> issued, and under which <label>
+        # number?" An issue stamp is the answer. An earlier contract whose
+        # file names repeat the title must not lock the pool.
+        (query_asks_for_issue_identity,
+         lambda _name, text: chunk_states_issue_stamp(
+             text, asked_reference_labels(query),
+         )),
     ]
     active = [is_answer for asks, is_answer in kinds if asks(query)]
     if not active:
@@ -572,14 +574,14 @@ class _ContractScope:
             list(ranked_docs) if ranked_docs is not None else None
         )
         if docs is not None:
-            if query_asks_which_specification_document(
+            if query_asks_which_document(
                 self.query,
             ):
                 self._title_phrases = extract_document_title_phrases(self.query)
                 if self._title_phrases:
                     self._spec_identity_in_pool = any(
-                        chunk_states_spec_document_identity(text, self._title_phrases)
-                        or spec_title_filename_bonus(name, self._title_phrases) > 0
+                        chunk_states_document_register_line(text, self._title_phrases)
+                        or title_filename_bonus(name, self._title_phrases) > 0
                         for name, text in docs
                     )
             if (
@@ -767,8 +769,8 @@ class _ContractScope:
                 if not _chunk_keeps_for_daily_damages(filename, chunk_text):
                     return False
         if self._spec_identity_in_pool:
-            titled = spec_title_filename_bonus(filename, self._title_phrases) > 0
-            identity = chunk_states_spec_document_identity(
+            titled = title_filename_bonus(filename, self._title_phrases) > 0
+            identity = chunk_states_document_register_line(
                 chunk_text, self._title_phrases,
             )
             if not (titled or identity):
@@ -2611,57 +2613,61 @@ def _pool_docs_named_by_query(
     return names
 
 
-# ── document-identity rescue (live B6) ─────────────────────────────────────
+# ── named-document recall: identity of a document the question names ──────
 #
-# Live 24d1c0c, 0/3: "What is the document number and revision of the priced
-# Bill of Quantities, and who prepared it?" The cover is indexed, in a file
-# NAMED ``…Bill of Quantities (Priced).pdf``; searched by its document number
-# it ranks first. Asked plainly, the top five were contract templates that
-# describe how a bill should be identified. A control block is labels and
-# codes — nothing in the question resembles it — and "document number",
-# "revision", "prepared" are in every template in the corpus.
+# "What is the document number and revision of <named document>, and who
+# prepared it?" / "On what date was <named document> issued, and under which
+# <reference> number?" The answer is the named document's own control block
+# (labels and codes) or its issue stamp ("Date: ... <Label> No. <code>").
+# Nothing in the question resembles either, and "document number", "revision",
+# "prepared" are in every template in the corpus, so cosine prefers templates
+# that describe how a document should be identified.
 #
-# The filename rescue above keeps the five most "distinctive" words,
-# capitalised first; "priced", the one word that tells this bill from the
-# unpriced one, came sixth. Here the words that ASK (number, revision,
-# prepared) are separated from the words that NAME, every naming word is
-# mandatory, and only the named document's control block is fetched.
+# The words that ASK (number, revision, prepared, the asked reference label)
+# are separated from the words that NAME the document; the named document is
+# found by its name or by the stamp that repeats its title, and only its
+# identity evidence is pooled.
+#
+# "under which RFP number", "which tender no.", "what contract reference":
+# the reference a question asks for by its label. Labels that are the
+# control-block path's own vocabulary are not issue-stamp labels.
+_REFERENCE_LABEL_ASK_RE = re.compile(
+    r"(?i)\b(?:under\s+which|which|what)\s+(?P<label>[a-z]{2,12})\s+"
+    r"(?:number|no\b\.?|reference|ref\b)"
+)
+_CONTROL_BLOCK_LABEL_WORDS = frozenset({
+    "document", "doc", "drawing", "revision", "page", "clause", "section",
+    "item", "sheet", "is", "its", "the",
+})
+_ISSUED_WHEN_RE = re.compile(
+    r"(?i)\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b|"
+    r"\b(?:on\s+what\s+)?date\s+was\b[^?]{0,80}"
+    r"\b(?:issued|prepared|dated|published|revised)\b"
+)
 _DOC_IDENTITY_ASK_RE = re.compile(
     r"(?i)\b(?:document|doc\.?|drawing|reference)\s+(?:number|no\b\.?|ref\b)|"
     r"\brevision\b|\bprepared\s+by\b|"
     r"\bwho\s+(?:prepared|authored|wrote|issued|checked|reviewed|approved)\b|"
     # "What is the date of the priced BOQ", "when / on what date was … issued".
-    r"\bdate\s+of\s+(?:the\s+)?(?!commencement|completion|award|access|taking)|"
-    r"\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b|"
-    r"\b(?:on\s+what\s+)?date\s+was\b[^?]{0,80}"
-    r"\b(?:issued|prepared|dated|published|revised)\b|"
-    r"\bunder\s+which\s+rfp\b|"
-    r"\bwhich\s+rfp\s+(?:number|no)\b|"
-    r"\brfp\s+(?:number|no)\b"
+    r"\bdate\s+of\s+(?:the\s+)?(?!commencement|completion|award|access|taking)"
 )
 _DOC_IDENTITY_ASK_WORDS = frozenset({
     "document", "number", "revision", "prepared", "authored", "wrote",
     "issued", "checked", "reviewed", "approved", "reference", "drawing",
-    "date", "dated", "title", "author", "rfp",
+    "date", "dated", "title", "author",
 })
-# Set3 C3: issue date + RFP of a named bill. Not B6 (who prepared /
-# revision) and not C1 ("date of the priced BOQ and the Employer's
-# contract reference") — those stay on the cover-block path.
-_BILL_ISSUE_ASK_RE = re.compile(
-    r"(?i)\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b|"
-    r"\b(?:on\s+what\s+)?date\s+was\b[^?]{0,80}"
-    r"\b(?:issued|prepared|dated|published|revised)\b|"
-    r"\bunder\s+which\s+rfp\b|"
-    r"\bwhich\s+rfp\s+(?:number|no)\b|"
-    r"\brfp\s+(?:number|no)\b"
+# A labelled issue date: "Date: July 10, 2031", "Dated 4 March 2031",
+# "Issue date: 04/03/2031".
+_LABELLED_DATE_RE = re.compile(
+    r"(?i)\b(?:issue\s+date|date\s+of\s+issue|dated|date)\s*:?\s*"
+    r"(?:[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]{3,9}\.?\s+\d{4}|"
+    r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{2}-\d{2})"
 )
-# Live BOQ page stamp: "Date: July 10, 2023 … RFP No. DD-2023-118".
-# Fixture dates use the same shape with a non-live year.
-_BILL_ISSUE_DATE_RE = re.compile(
-    r"(?i)\bdate\s*:\s*[A-Za-z]+\s+\d{1,2},\s+\d{4}"
-)
-_BILL_ISSUE_RFP_RE = re.compile(
-    r"(?i)\brfp\s+no\.?\s*[A-Za-z]{2,}-\d{4}-\d+"
+# A reference code: letters, then hyphen- or slash-joined segments, at least
+# one of them numeric ("AB-2031-044", "TN/88/12").
+_REFERENCE_CODE = r"[A-Za-z][A-Za-z0-9]*(?:[-/][A-Za-z0-9.]+)*[-/]\d+[A-Za-z0-9.-]*"
+_LABELLED_CODE_RE = re.compile(
+    rf"(?i)\b(?P<label>[a-z]{{2,12}})\s+no\.?\s*:?\s*{_REFERENCE_CODE}"
 )
 _DOC_CONTROL_BLOCK_LABEL_RES = tuple(
     re.compile(p, re.IGNORECASE) for p in (
@@ -2676,9 +2682,25 @@ _DOC_IDENTITY_COVER_CHUNKS = 8
 _DOC_IDENTITY_MAX_CHUNKS = 2
 
 
+def asked_reference_labels(query: str) -> List[str]:
+    """Labels of the references the question asks for by number ("rfp")."""
+    out: List[str] = []
+    for match in _REFERENCE_LABEL_ASK_RE.finditer(query or ""):
+        label = match.group("label").lower()
+        if label in _CONTROL_BLOCK_LABEL_WORDS or label in out:
+            continue
+        out.append(label)
+    return out
+
+
 def query_asks_for_document_identity(query: str) -> bool:
-    """True for "what number / revision is X, who prepared it"."""
-    return bool(_DOC_IDENTITY_ASK_RE.search(query or ""))
+    """True for "what number / revision is X, who prepared it, when was X issued"."""
+    q = query or ""
+    return bool(
+        _DOC_IDENTITY_ASK_RE.search(q)
+        or _ISSUED_WHEN_RE.search(q)
+        or asked_reference_labels(q)
+    )
 
 
 # "...number and revision OF THE priced Bill of Quantities, and who prepared
@@ -2690,7 +2712,7 @@ _DOC_IDENTITY_TITLE_RE = re.compile(
     r"(?i)\b(?:number|no\.?|revision|date|reference|ref|status|title|author)\s+"
     r"of\s+(?:the\s+)?(?P<title>.+?)(?=\s+and\s+(?:the|who|what|its|when)\b|[,;?]|$)"
 )
-# "On what date was the Demolition and Site Clearance bill issued"
+# "On what date was the <named document> issued"
 _DOC_IDENTITY_WAS_ISSUED_TITLE_RE = re.compile(
     r"(?i)\b(?:date|when)\s+was\s+(?:the\s+)?(?P<title>.+?)\s+"
     r"(?:issued|prepared|dated|published|revised)\b"
@@ -2705,21 +2727,34 @@ def document_identity_title_terms(query: str) -> List[str]:
         or _DOC_IDENTITY_TITLE_RE.search(q)
     )
     scope = pointed.group("title") if pointed else q
-    return sorted(
-        t for t in _significant_terms(scope)
-        if t not in _DOC_IDENTITY_ASK_WORDS
-    )
+    asking = _DOC_IDENTITY_ASK_WORDS | set(asked_reference_labels(q))
+    return sorted(t for t in _significant_terms(scope) if t not in asking)
 
 
-def query_asks_for_bill_issue_identity(query: str) -> bool:
-    """True for "on what date was X issued, and under which RFP number?"."""
-    return bool(_BILL_ISSUE_ASK_RE.search(query or ""))
+def query_asks_for_issue_identity(query: str) -> bool:
+    """True for "when was X issued, and under which <label> number?".
+
+    Who-prepared / revision asks and "the date of X and its reference" stay
+    on the control-block path.
+    """
+    q = query or ""
+    return bool(_ISSUED_WHEN_RE.search(q) or asked_reference_labels(q))
 
 
-def chunk_states_bill_issue_stamp(text: str) -> bool:
-    """True for a BOQ page stamp that prints Date: and RFP No. PREFIX-YEAR-SEQ."""
+def chunk_states_issue_stamp(text: str, labels: Optional[List[str]] = None) -> bool:
+    """True for an issue stamp: a labelled date and a labelled reference code.
+
+    With ``labels`` the reference must carry one of them ("RFP No. <code>");
+    without, any "<Label> No. <code>" counts.
+    """
     blob = text or ""
-    return bool(_BILL_ISSUE_DATE_RE.search(blob) and _BILL_ISSUE_RFP_RE.search(blob))
+    if not _LABELLED_DATE_RE.search(blob):
+        return False
+    wanted = {lab.lower() for lab in (labels or [])}
+    for match in _LABELLED_CODE_RE.finditer(blob):
+        if not wanted or match.group("label").lower() in wanted:
+            return True
+    return False
 
 
 def document_control_label_count(text: str) -> int:
@@ -2793,35 +2828,26 @@ def _pool_named_document_control_block(
     return recovered
 
 
-def _bill_issue_stamp_needles(terms: List[str]) -> List[str]:
-    """Needles that find a Date:/RFP stamp of the named bill.
-
-    Filename rescue cannot see a Volume 4 schedule whose name does not
-    repeat "Demolition and Site Clearance". The stamp itself does.
-    """
-    needles = ["rfp"]
-    for token in ("demolition", "clearance", "priced", "quantities"):
-        if token in terms:
-            needles.append(token)
-    if len(needles) < 2:
-        needles.extend(t for t in terms if t not in needles)
-    return needles[:6]
+_ISSUE_STAMP_TITLE_WORDS = 2
 
 
-def _rescue_bill_issue_stamp_chunks(
+def recall_issue_stamps(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     extra_pids: List[str],
 ) -> int:
-    """Pull Date:/RFP No. stamps of the named bill into ``fused``.
+    """Pull the issue stamp of the document the question names into ``fused``.
 
-    Live Set3 C3: cosine and filename ``require_all`` lock onto the
-    DD-2022-175 demolition-titled pack. The executed DD-2023-118 stamp
-    lives in Volume 4 and is fetched here, then year-locked.
+    A stamp repeats the document's title on every page it heads, so it is
+    found by its own words even when the file it sits in is named for
+    something else (a bill bound inside a schedules volume). The text fetch
+    pairs the asked reference label ("rfp") with the two most distinctive
+    title words; a hit must be a stamp and carry two title words. When stamps
+    from more than one contract match, the year-lock election keeps one.
     """
-    if not query_asks_for_bill_issue_identity(query):
+    if not query_asks_for_issue_identity(query):
         return 0
     terms = document_identity_title_terms(query)
     if len(terms) < 2:
@@ -2829,18 +2855,20 @@ def _rescue_bill_issue_stamp_chunks(
     fetch = getattr(store, "chunks_containing_all", None)
     if not callable(fetch):
         return 0
-    needles = _bill_issue_stamp_needles(terms)
+    labels = asked_reference_labels(query)
+    distinctive = sorted(terms, key=lambda t: (-len(t), t))[:_ISSUE_STAMP_TITLE_WORDS]
+    needles = (labels[:1] or ["date"]) + distinctive
     pids = [project_id] + [p for p in extra_pids if p and p != project_id]
     stamps: List[Tuple[str, object]] = []
     for pid in pids:
         try:
             hits = fetch(pid, needles, k=20)
         except Exception as exc:  # noqa: BLE001 — extras must not break the turn
-            logger.warning("bill-issue stamp rescue for %s failed: %s", pid, exc)
+            logger.warning("issue-stamp recall for %s failed: %s", pid, exc)
             continue
         for chunk in hits:
             text = chunk.text or ""
-            if not chunk_states_bill_issue_stamp(text):
+            if not chunk_states_issue_stamp(text, labels):
                 continue
             blob = text.lower()
             if sum(1 for t in terms if t in blob) < 2:
@@ -2849,8 +2877,7 @@ def _rescue_bill_issue_stamp_chunks(
                 name = _doc_name_for_id(chunk.doc_id) or ""
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "bill-issue stamp name lookup for %s failed: %s",
-                    chunk.doc_id, exc,
+                    "issue-stamp name lookup for %s failed: %s", chunk.doc_id, exc,
                 )
                 name = ""
             stamps.append((name, chunk))
@@ -2878,39 +2905,36 @@ def _rescue_bill_issue_stamp_chunks(
         recovered += 1
     if recovered:
         logger.info(
-            "bill-issue stamp rescue recovered %d chunk(s) winner=%s",
-            recovered, winner,
+            "issue-stamp recall pooled %d chunk(s) winner=%s", recovered, winner,
         )
     return recovered
 
 
-# ── specification-title filename rescue (live C2) ──────────────────────────
+# ── named-document recall: which document carries a title ────────────────
 #
-# Live Master Corpus C2 (SHA 567147a): "Which specification document covers
-# the Variation Procedure, and what is its number?" retrieved DD-2022-175
-# Demolition Specs Part 3. The governing spec is already in Neon —
-# ``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``. Term rescue treated
-# the demolition volume's in-chunk "specification" / "procedure" overlap as
-# already-grounded and skipped the out-of-pool fetch. Cosine prefers the
-# long demolition volume over the short titled spec.
+# "Which <kind of document> covers <Title Phrase>, and what is its number?"
+# The question names the document by its title. A long volume that merely
+# mentions the topic outranks the short titled document on cosine, and the
+# term rescue treats the volume's overlap as already grounded.
 #
-# The filename is the discriminator Demolition Specs cannot fake: it
-# carries the Title-Case phrase the question used.
-#
-# Re-score on tip d7a4ca8: there is still no standalone upload named
-# ``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``. The identifier
-# lives as a register line inside Vol 2 Specification (8 of 9). Cosine
-# prefers the later CSI heading ``Section 012650 — Variation and
-# Adjustments`` in the same file. Filename rescue cannot see a title
-# that is not in the upload name; the remaining delta is in-chunk
-# spec-identity election (SPE-NNNNN + title).
-_SPEC_IDENTITY_ASK_RE = re.compile(
-    r"(?i)\b(?:which|what)\s+specification\s+(?:document|section)s?\b"
-    r"|\bspecification\s+document\s+covers\b"
-    r"|\band\s+what\s+is\s+its\s+number\b"
+# Two places carry the title, and both are read from the corpus itself:
+#   * the upload name ("<code> <Title Phrase>.pdf") -- documents whose name
+#     contains the phrase are pulled into the pool and lifted;
+#   * a register line inside another volume ("<reference code> <Title
+#     Phrase>") -- the document number sits in front of the title. A
+#     section heading that only shares the topic ("Section 0123 - <topic>")
+#     has no reference code in front of the phrase and is not a register
+#     line.
+_WHICH_DOCUMENT_ASK_RE = re.compile(
+    r"(?i)\b(?:which|what)\s+(?:specification|procedure|plan|standard|manual|"
+    r"policy|report|document|drawing)s?\s+(?:document|section|covers|sets\s+out|"
+    r"describes|governs)\b"
+    r"|\b(?:specification|procedure|plan|standard|manual|policy|report)\s+"
+    r"document\s+covers\b"
+    r"|\band\s+what\s+is\s+its\s+(?:number|reference|ref)\b"
 )
-# Two-or-more consecutive Title-Case words ("Variation Procedure").
-# Leading question words ("Which Specification") are stripped below.
+# Two-or-more consecutive Title-Case words. Leading question words ("Which
+# Specification") are stripped below.
 _TITLE_CASE_PHRASE_RE = re.compile(
     r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\b"
 )
@@ -2919,27 +2943,31 @@ _TITLE_PHRASE_STOP = frozenset({
     "this", "that", "the", "and", "for", "its", "our",
 })
 # Equal to IDENTIFIER_BONUS_MAX so a titled filename beats a high-cosine
-# demolition volume the way an exact code beats boilerplate.
-_SPEC_TITLE_FILENAME_BONUS = 2.0
-# A CSI section number (``012650``) is not a document identity. The
-# register line carries ``SPE-`` + five-or-more digits.
-_SPE_DOC_CODE_RE = re.compile(r"(?i)\bSPE-\d{5,}\b")
+# volume the way an exact code beats boilerplate.
+_TITLE_MATCH_BONUS = 2.0
+# A document reference code: letter-led segments joined by hyphens, at least
+# three segments and one numeric run of three or more digits
+# ("AB-CD-XYZ-0001-2.0"). A bare section number is not one.
+_DOC_REFERENCE_CODE_RE = re.compile(
+    r"\b[A-Z][A-Z0-9]*(?:-[A-Z0-9][A-Z0-9.]*){2,}\b"
+)
+_REGISTER_LINE_GAP = 12
 
 
-def query_asks_which_specification_document(query: str) -> bool:
-    """True for a which-spec-covers-X / what-is-its-number ask (C2).
+def query_asks_which_document(query: str) -> bool:
+    """True for "which <kind of document> covers <Title>" / "what is its number".
 
-    Numbered-spec questions ("Specification 003113") stay on the
+    Numbered-document questions ("Specification 0042") stay on the
     identifier path. Contract-role and letter asks are not this class.
     """
-    return bool(_SPEC_IDENTITY_ASK_RE.search(query or ""))
+    return bool(_WHICH_DOCUMENT_ASK_RE.search(query or ""))
 
 
 def extract_document_title_phrases(query: str) -> List[str]:
     """Title-Case phrases of two or more content words from ``query``.
 
-    ``Variation Procedure`` is a document title. ``Which Specification``
-    is question scaffolding and is dropped. Lowercased, deduplicated.
+    A run of capitalised words is a title; leading question words ("Which
+    Specification") are dropped. Lowercased, deduplicated.
     """
     found: List[str] = []
     seen: Set[str] = set()
@@ -2958,7 +2986,7 @@ def extract_document_title_phrases(query: str) -> List[str]:
     return found
 
 
-def spec_title_filename_bonus(filename: str, phrases: List[str]) -> float:
+def title_filename_bonus(filename: str, phrases: List[str]) -> float:
     """Additive lift when the upload name carries a queried title phrase.
 
     Zero when the name shares no title phrase, so ordinary Q&A ranking
@@ -2968,7 +2996,7 @@ def spec_title_filename_bonus(filename: str, phrases: List[str]) -> float:
     if not blob or not phrases:
         return 0.0
     if any(phrase and phrase in blob for phrase in phrases):
-        return _SPEC_TITLE_FILENAME_BONUS
+        return _TITLE_MATCH_BONUS
     return 0.0
 
 
@@ -2977,38 +3005,39 @@ def _normalize_retrieval_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def chunk_states_spec_document_identity(text: str, phrases: List[str]) -> bool:
-    """True when the chunk names a SPE-NNNNN document whose title is the ask.
-
-    Live C2 on d7a4ca8: the register line ``DGDAX-DGD-PMO-SPE-012650-1.0
-    Variation Procedure`` is the document number. ``Section 012650 —
-    Variation and Adjustments`` in the same volume is a CSI heading, not
-    the identifier the question asked for. ``SPE-`` + five digits is the
-    discriminator; a bare ``012650`` is not.
-    """
+def chunk_states_document_register_line(text: str, phrases: List[str]) -> bool:
+    """True when a document reference code stands right before a title phrase."""
     if not phrases:
         return False
     blob = _normalize_retrieval_ws(text)
-    if not _SPE_DOC_CODE_RE.search(blob):
-        return False
     lower = blob.lower()
-    return any(bool(p) and p in lower for p in phrases)
+    for code in _DOC_REFERENCE_CODE_RE.finditer(blob):
+        if not any(ch.isdigit() for ch in code.group(0)):
+            continue
+        if not re.search(r"\d{3,}", code.group(0)):
+            continue
+        tail = lower[code.end():code.end() + _REGISTER_LINE_GAP + 80]
+        for phrase in phrases:
+            at = tail.find(phrase)
+            if 0 <= at <= _REGISTER_LINE_GAP:
+                return True
+    return False
 
 
-def _apply_spec_title_filename_boost(
+def _apply_title_filename_boost(
     query: str,
     scored: List[Tuple[float, Chunk]],
     name_by_id: Dict[str, str],
 ) -> None:
-    """In-place: lift chunks whose resolved filename matches a spec title."""
-    if not query_asks_which_specification_document(query):
+    """In-place: lift chunks whose resolved filename carries the asked title."""
+    if not query_asks_which_document(query):
         return
     phrases = extract_document_title_phrases(query)
     if not phrases:
         return
     for i, (score, chunk) in enumerate(scored):
         name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
-        add = spec_title_filename_bonus(name, phrases)
+        add = title_filename_bonus(name, phrases)
         if add <= 0.0:
             continue
         boosted = score + add
@@ -3016,141 +3045,107 @@ def _apply_spec_title_filename_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_spec_title_docs(
+def _apply_register_line_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift chunks whose body is a code + title register line."""
+    if not query_asks_which_document(query):
+        return
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_document_register_line(chunk.text or "", phrases):
+            continue
+        boosted = score + _TITLE_MATCH_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def recall_titled_documents(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     extra_pids: List[str],
 ) -> Dict[str, str]:
-    """Pull chunks from title-matched specs into ``fused``.
+    """Pull the documents the question names by title into ``fused``.
 
-    Returns ``{doc_id: original_name}`` so later name resolution does
-    not re-query the documents table for docs we just looked up.
-    Failures never raise — the semantic pool stands.
+    Both carriers of the title are fetched: documents whose upload name
+    contains a title phrase (their chunks), and register lines that print a
+    reference code before the phrase. Returns ``{doc_id: original_name}`` for
+    the name pass. Failures never raise -- the semantic pool stands.
     """
     names: Dict[str, str] = {}
-    if not query_asks_which_specification_document(query):
+    if not query_asks_which_document(query):
         return names
     phrases = extract_document_title_phrases(query)
     if not phrases:
         return names
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
 
     try:
         from app.core.projects import documents_matching_title_phrase
     except Exception:  # noqa: BLE001
-        logger.warning("spec-title rescue: projects import failed", exc_info=True)
-        return names
-
-    fetch = getattr(store, "chunks_for_docs", None)
-    if not callable(fetch):
-        return names
-
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    recovered = 0
-    for pid in pids:
-        matches: List[Dict[str, str]] = []
-        for phrase in phrases:
-            try:
-                matches.extend(documents_matching_title_phrase(pid, phrase))
-            except Exception as exc:  # noqa: BLE001 — extras must not break the turn
-                logger.warning(
-                    "spec-title rescue listing for %s (%r) failed: %s",
-                    pid, phrase, exc,
-                )
-        if not matches:
-            continue
-        seen_docs: Set[str] = set()
-        unique_matches: List[Dict[str, str]] = []
-        for doc in matches:
-            did = doc.get("id") or ""
-            if not did or did in seen_docs:
+        logger.warning("titled-document recall: projects import failed", exc_info=True)
+        documents_matching_title_phrase = None
+    by_docs = getattr(store, "chunks_for_docs", None)
+    if documents_matching_title_phrase is not None and callable(by_docs):
+        for pid in pids:
+            matches: List[Dict[str, str]] = []
+            for phrase in phrases:
+                try:
+                    matches.extend(documents_matching_title_phrase(pid, phrase))
+                except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+                    logger.warning(
+                        "titled-document listing for %s (%r) failed: %s", pid, phrase, exc,
+                    )
+            unique: List[Dict[str, str]] = []
+            for doc in matches:
+                did = doc.get("id") or ""
+                if not did or did in names:
+                    continue
+                names[did] = doc.get("original_name") or ""
+                unique.append(doc)
+            if not unique:
                 continue
-            seen_docs.add(did)
-            unique_matches.append(doc)
-            names[did] = doc.get("original_name") or ""
-        try:
-            hits = fetch(pid, [d["id"] for d in unique_matches])
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("spec-title rescue fetch for %s failed: %s", pid, exc)
-            continue
-        for chunk in hits:
-            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
-            if chunk.chunk_id in fused:
-                continue
-            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
-            recovered += 1
-    if recovered:
-        logger.info(
-            "spec-title rescue recovered %d chunk(s) for phrases %r",
-            recovered, phrases,
-        )
-    return names
-
-
-def _apply_spec_identity_text_boost(
-    query: str,
-    scored: List[Tuple[float, Chunk]],
-) -> None:
-    """In-place: lift chunks whose body is a SPE-NNNNN + title register line."""
-    if not query_asks_which_specification_document(query):
-        return
-    phrases = extract_document_title_phrases(query)
-    if not phrases:
-        return
-    for i, (score, chunk) in enumerate(scored):
-        if not chunk_states_spec_document_identity(chunk.text or "", phrases):
-            continue
-        boosted = score + _SPEC_TITLE_FILENAME_BONUS
-        chunk.score = round(boosted, 6)
-        scored[i] = (boosted, chunk)
-
-
-def _rescue_spec_identity_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: List[str],
-) -> int:
-    """Pull SPE-NNNNN + title register lines into ``fused``.
-
-    Filename title rescue cannot see a title that lives only in a volume's
-    table of contents. Failures never raise.
-    """
-    if not query_asks_which_specification_document(query):
-        return 0
-    phrases = extract_document_title_phrases(query)
-    if not phrases:
-        return 0
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return 0
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    recovered = 0
-    for pid in pids:
-        for phrase in phrases:
             try:
-                hits = fetch(pid, ["SPE-", phrase], k=20)
+                hits = by_docs(pid, [d["id"] for d in unique])
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "spec-identity rescue for %s (%r) failed: %s",
-                    pid, phrase, exc,
-                )
+                logger.warning("titled-document fetch for %s failed: %s", pid, exc)
                 continue
             for chunk in hits:
-                if not chunk_states_spec_document_identity(chunk.text or "", phrases):
-                    continue
+                names.setdefault(chunk.doc_id, "")
                 if chunk.chunk_id in fused:
                     continue
                 fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
                 recovered += 1
+
+    containing = getattr(store, "chunks_containing_all", None)
+    if callable(containing):
+        for pid in pids:
+            for phrase in phrases:
+                try:
+                    hits = containing(pid, [phrase], k=20)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "register-line recall for %s (%r) failed: %s", pid, phrase, exc,
+                    )
+                    continue
+                for chunk in hits:
+                    if not chunk_states_document_register_line(chunk.text or "", phrases):
+                        continue
+                    if chunk.chunk_id in fused:
+                        continue
+                    fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+                    recovered += 1
     if recovered:
         logger.info(
-            "spec-identity rescue recovered %d chunk(s) for phrases %r",
-            recovered, phrases,
+            "titled-document recall pooled %d chunk(s) for phrases %r", recovered, phrases,
         )
-    return recovered
+    return names
 
 
 # ── Contract Data filename rescue (live A2) ────────────────────────────────
@@ -9440,7 +9435,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
-    filename_names.update(_rescue_spec_title_docs(
+    filename_names.update(recall_titled_documents(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     ))
@@ -9448,10 +9443,6 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     ))
-    _rescue_spec_identity_chunks(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
     _rescue_asked_particular_value_chunks(
         query, project_id, fused_lex, store,
     )
@@ -9463,7 +9454,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
-    _rescue_bill_issue_stamp_chunks(
+    recall_issue_stamps(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
@@ -9510,8 +9501,8 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _apply_source_class_preference(query, scored_lex, name_by_id)
     _cap_specification_class_bonus(query, scored_lex, name_by_id)
     _apply_numeric_requirement_boost(query, scored_lex, higher_is_better=False)
-    _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
-    _apply_spec_identity_text_boost(query, scored_lex)
+    _apply_title_filename_boost(query, scored_lex, name_by_id)
+    _apply_register_line_boost(query, scored_lex)
     _apply_contract_data_filename_boost(query, scored_lex, name_by_id)
     _apply_asked_particular_value_boost(query, scored_lex)
     _apply_schedule_register_boost(query, scored_lex)
@@ -10033,13 +10024,12 @@ def retrieve_with_filter(
         store,
         extra_pids=extra_rescue_pids,
     )
-    # Spec-title filename rescue (C2). Runs EVEN WHEN term rescue already
-    # found "specification" / "procedure" overlap in a demolition volume
-    # — that in-pool hit is what used to skip the out-of-pool fetch of
-    # the titled Variation Procedure spec.
+    # Titled-document recall. Runs EVEN WHEN term rescue already found the
+    # topic's words in some long volume -- that in-pool hit is what used to
+    # skip the out-of-pool fetch of the document the question names.
     for _did, _nm in spec_deferral_names.items():
         filename_names.setdefault(_did, _nm)
-    filename_names.update(_rescue_spec_title_docs(
+    filename_names.update(recall_titled_documents(
         query,
         project_id,
         fused,
@@ -10053,13 +10043,6 @@ def retrieve_with_filter(
         store,
         extra_pids=extra_rescue_pids,
     ))
-    _rescue_spec_identity_chunks(
-        query,
-        project_id,
-        fused,
-        store,
-        extra_pids=extra_rescue_pids,
-    )
     # Delay-rate / Engineer asks: the year-lock may already have the right PREFIX-YEAR-SEQ
     # while the rate / Engineer appointment sit in a later
     # unprefixed chunk cosine never fetched. Rescue is project-only so
@@ -10076,9 +10059,9 @@ def retrieve_with_filter(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
     )
-    # Set3 C3: Date:/RFP stamp of the named bill. Filename rescue cannot
-    # see a later-year Volume 4 whose name does not repeat the bill title.
-    _rescue_bill_issue_stamp_chunks(
+    # Issue stamp of the named document. Filename recall cannot see a volume
+    # whose name does not repeat the document's title; the stamp does.
+    recall_issue_stamps(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
     )
@@ -10233,8 +10216,8 @@ def retrieve_with_filter(
     _cap_specification_class_bonus(query, scored, name_by_id)
     _apply_numeric_requirement_boost(query, scored)
     _apply_quantity_pointer_boost(query, scored, name_by_id)
-    _apply_spec_title_filename_boost(query, scored, name_by_id)
-    _apply_spec_identity_text_boost(query, scored)
+    _apply_title_filename_boost(query, scored, name_by_id)
+    _apply_register_line_boost(query, scored)
     _apply_contract_data_filename_boost(query, scored, name_by_id)
     _apply_asked_particular_value_boost(query, scored)
     _apply_schedule_register_boost(query, scored)
