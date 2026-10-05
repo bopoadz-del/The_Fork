@@ -297,7 +297,7 @@ def test_a2_late_scan_surfaces_incl_vat_past_chunk0_delay(monkeypatch):
 
 
 def test_a2_volume_helper_returns_incl(monkeypatch):
-    from app.core.rag.retriever import a2_including_vat_excerpts_from_loaded_cd_volume
+    from app.core.rag.retriever import including_vat_excerpts_from_loaded_cd_volume
 
     delay, incl, _names, _seeded = _chunk0_and_late_incl()
 
@@ -319,20 +319,20 @@ def test_a2_volume_helper_returns_incl(monkeypatch):
         "app.core.projects.documents_matching_title_phrase",
         lambda *a, **k: [],
     )
-    extra = a2_including_vat_excerpts_from_loaded_cd_volume(
+    extra = including_vat_excerpts_from_loaded_cd_volume(
         LIVE_A2, ACTIVE, _Store(),
         rag_context=_sys(CHUNK0_DELAY_PARTIAL)["content"],
         doc_ids=[CD_DOC],
     )
     assert ACA_INCL in extra
     assert PARTIAL_ACA_TXT not in extra
-    assert a2_including_vat_excerpts_from_loaded_cd_volume(
+    assert including_vat_excerpts_from_loaded_cd_volume(
         LIVE_E1, ACTIVE, _Store(), doc_ids=[CD_DOC],
     ) == ""
 
 
 def test_graft_a2_last_chance_from_loaded_cd_volume(monkeypatch):
-    from app.core.rag.retriever import a2_including_vat_excerpts_from_loaded_cd_volume
+    from app.core.rag.retriever import including_vat_excerpts_from_loaded_cd_volume
 
     delay, incl, _names, _seeded = _chunk0_and_late_incl()
 
@@ -354,7 +354,7 @@ def test_graft_a2_last_chance_from_loaded_cd_volume(monkeypatch):
         "app.core.projects.documents_matching_title_phrase",
         lambda *a, **k: [{"id": CD_DOC, "original_name": CD_NAME}],
     )
-    extra = a2_including_vat_excerpts_from_loaded_cd_volume(
+    extra = including_vat_excerpts_from_loaded_cd_volume(
         LIVE_A2, ACTIVE, rag_context=_sys(CHUNK0_DELAY_PARTIAL)["content"],
     )
     assert ACA_INCL in extra
@@ -369,7 +369,7 @@ def test_graft_a2_last_chance_from_loaded_cd_volume(monkeypatch):
 
 
 def test_a2_volume_helper_does_not_steal_neighbor_asks(monkeypatch):
-    from app.core.rag.retriever import a2_including_vat_excerpts_from_loaded_cd_volume
+    from app.core.rag.retriever import including_vat_excerpts_from_loaded_cd_volume
 
     delay, incl, _names, _seeded = _chunk0_and_late_incl()
 
@@ -381,21 +381,21 @@ def test_a2_volume_helper_does_not_steal_neighbor_asks(monkeypatch):
             return []
 
     for ask in (A3_ASK, A5_ASK, A6_ASK, A9_ASK, B2_ASK, C1_ASK, E1_ASK, F1_ASK):
-        assert a2_including_vat_excerpts_from_loaded_cd_volume(
+        assert including_vat_excerpts_from_loaded_cd_volume(
             ask, ACTIVE, _Store(), doc_ids=[CD_DOC],
         ) == ""
 
 
 def test_ensure_a2_kept_replaces_chunk0_delay_with_incl():
-    from app.core.rag.retriever import ensure_a2_kept_has_including_vat
+    from app.core.rag.retriever import ensure_kept_has_including_vat
 
     delay, incl, _names, _seeded = _chunk0_and_late_incl()
     kept = [delay]
     ranked = [delay, incl]
-    assert ensure_a2_kept_has_including_vat(LIVE_A2, kept, ranked) is True
+    assert ensure_kept_has_including_vat(LIVE_A2, kept, ranked) is True
     assert ACA_INCL in kept[0].text
     assert PARTIAL_ACA_TXT not in kept[0].text
-    assert ensure_a2_kept_has_including_vat(LIVE_E1, [delay], ranked) is False
+    assert ensure_kept_has_including_vat(LIVE_E1, [delay], ranked) is False
 
 
 def test_chunk0_partial_aca_is_not_including_vat():
@@ -469,7 +469,7 @@ def test_postprocess_rag_folded_a2_live_fail_becomes_including_vat():
 
 def test_graft_a2_last_chance_scans_cited_chunk_owner_pid(monkeypatch):
     """Master Corpus UI id is empty; including-VAT lives on the source pid."""
-    from app.core.rag.retriever import a2_including_vat_excerpts_from_loaded_cd_volume
+    from app.core.rag.retriever import including_vat_excerpts_from_loaded_cd_volume
 
     source_pid = "p_dd118"
     delay = _chunk("cd0", CD_DOC, 0.94, CHUNK0_DELAY_PARTIAL, chunk_index=0)
@@ -506,7 +506,7 @@ def test_graft_a2_last_chance_scans_cited_chunk_owner_pid(monkeypatch):
     rag_ctx = (
         f"[doc_id={CD_DOC} chunk=0 score=0.80] {CHUNK0_DELAY_PARTIAL}"
     )
-    extra = a2_including_vat_excerpts_from_loaded_cd_volume(
+    extra = including_vat_excerpts_from_loaded_cd_volume(
         LIVE_A2, ACTIVE, _Store(),
         rag_context=rag_ctx,
         extra_pids=[source_pid],

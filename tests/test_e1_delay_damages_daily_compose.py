@@ -614,7 +614,7 @@ def test_graft_composes_from_loaded_cd_when_top_k_is_refuse_prone(monkeypatch):
     """Refuse-prone top-k + loaded 0.1% × excl-VAT ACA → SAR 1,754,504.46/day."""
     volume = "\n\n".join((RATE_ROW, NET_ACA_ROW))
     monkeypatch.setattr(
-        "app.core.rag.retriever.e1_compose_excerpts_from_loaded_cd_volume",
+        "app.core.rag.retriever.daily_damages_excerpts_from_loaded_cd_volume",
         lambda *a, **k: volume,
     )
     rag = _sys(REFUSE_PRONE_8_8, REFUSE_PRONE_8_8, REFUSE_PRONE_8_8)
@@ -638,7 +638,7 @@ def test_graft_composes_from_loaded_cd_when_top_k_is_refuse_prone(monkeypatch):
 def test_graft_loaded_cd_still_rejects_015_lookalike(monkeypatch):
     """Volume last-chance must keep #536 lookalike rejection."""
     monkeypatch.setattr(
-        "app.core.rag.retriever.e1_compose_excerpts_from_loaded_cd_volume",
+        "app.core.rag.retriever.daily_damages_excerpts_from_loaded_cd_volume",
         lambda *a, **k: "\n\n".join((COC_015_WINDOW, NET_ACA_ROW)),
     )
     rag = _sys(REFUSE_PRONE_8_8, REFUSE_PRONE_8_8, REFUSE_PRONE_8_8)

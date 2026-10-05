@@ -94,37 +94,37 @@ def apply_token_cap(
     # headroom while still bounding a runaway injection.
     cap = int(os.getenv("MAX_RAG_TOKENS", "6000"))
     protect_ids: set[str] = set()
-    e1_ask = False
+    daily_damages_ask = False
     if query:
         try:
             from app.core.rag.retriever import (
-                _e1_has_standalone_excl_vat,
-                _e1_rate_preference,
+                _has_standalone_excl_vat_aca,
+                _daily_rate_preference,
                 query_asks_delay_damages_daily_amount,
             )
             if (
                 query_asks_delay_damages_daily_amount(query)
             ):
-                e1_ask = True
+                daily_damages_ask = True
                 for chunk in chunks:
                     try:
                         text = chunk.text or ""
                         if (
-                            _e1_rate_preference(text) >= 2
-                            or _e1_has_standalone_excl_vat(text)
+                            _daily_rate_preference(text) >= 2
+                            or _has_standalone_excl_vat_aca(text)
                         ):
                             protect_ids.add(chunk.chunk_id)
                     except Exception:  # noqa: BLE001 — one bad row
                         continue
         except Exception:  # noqa: BLE001 — cap must never break injection
             protect_ids = set()
-            e1_ask = False
+            daily_damages_ask = False
     protected = [c for c in chunks if c.chunk_id in protect_ids]
     rest = [c for c in chunks if c.chunk_id not in protect_ids]
-    if e1_ask and protect_ids:
+    if daily_damages_ask and protect_ids:
         try:
-            from app.core.rag.retriever import _e1_is_cap_noise
-            rest = [c for c in rest if not _e1_is_cap_noise(c.text or "")]
+            from app.core.rag.retriever import _is_daily_damages_cap_noise
+            rest = [c for c in rest if not _is_daily_damages_cap_noise(c.text or "")]
         except Exception:  # noqa: BLE001 — keep rest if noise class fails
             _LOG.debug(
                 "e1 token-cap noise filter failed; keeping rest",
@@ -456,10 +456,10 @@ def format_chunks_as_system_message(
                 "delay damages or a daily rate instead.\n"
             )
     if query and query_asks_delay_damages_daily_amount(query):
-        _e1_texts = [c.text or "" for c in chunks]
+        _daily_damages_texts = [c.text or "" for c in chunks]
         if (
-            any(chunk_states_delay_damages_rate(t) for t in _e1_texts)
-            and any(chunk_states_accepted_contract_amount(t) for t in _e1_texts)
+            any(chunk_states_delay_damages_rate(t) for t in _daily_damages_texts)
+            and any(chunk_states_accepted_contract_amount(t) for t in _daily_damages_texts)
         ):
             header += (
                 "DELAY DAMAGES PER CALENDAR DAY — excerpts below state the "

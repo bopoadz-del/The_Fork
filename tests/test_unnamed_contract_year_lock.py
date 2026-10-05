@@ -1569,8 +1569,8 @@ def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
     makes the fixture a hard test of the reservation and a useless one for
     any claim about where the rate row lands.
 
-    ``ensure_e1_kept_can_compose`` is the leftover-E1 last-chance twin of
-    ``reserve_e1_compose_operands`` (refuse-prone top-k). The probe must
+    ``ensure_kept_can_compose_daily_damages`` is the leftover-E1 last-chance twin of
+    ``reserve_daily_damages_operands`` (refuse-prone top-k). The probe must
     disable that path too, or the amount is still reachable and the
     reservation is no longer what the probe measures.
     """
@@ -1580,11 +1580,11 @@ def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
         lambda *_a, **_kw: False,
     )
     monkeypatch.setattr(
-        ret, "reserve_e1_compose_operands",
+        ret, "reserve_daily_damages_operands",
         lambda *_a, **_kw: False,
     )
     monkeypatch.setattr(
-        ret, "ensure_e1_kept_can_compose",
+        ret, "ensure_kept_can_compose_daily_damages",
         lambda *_a, **_kw: False,
     )
     top = top_k(E1)

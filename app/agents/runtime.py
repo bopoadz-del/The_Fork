@@ -6396,7 +6396,7 @@ def _graft_asked_contract_particular(
         if not _graft_asked_contract_particular_enabled():
             return text
         from app.core.rag.retriever import (
-            a2_including_vat_excerpts_from_loaded_cd_volume,
+            including_vat_excerpts_from_loaded_cd_volume,
             extract_aca_including_vat,
             extract_defects_notification_period,
             extract_engineer_identity,
@@ -6426,7 +6426,7 @@ def _graft_asked_contract_particular(
                 # ACA). Scan the loaded CD volume — including cited
                 # chunk owners, not only the UI project id — for the
                 # filled including-VAT row. Do not invent a figure.
-                extra = a2_including_vat_excerpts_from_loaded_cd_volume(
+                extra = including_vat_excerpts_from_loaded_cd_volume(
                     user, project_id or "", rag_context=rag,
                     extra_pids=extra_project_ids,
                 )
@@ -6718,9 +6718,9 @@ def _graft_composed_delay_damages_daily(
             # and do not fall through to the cost-grounding refuse.
             try:
                 from app.core.rag.retriever import (
-                    e1_compose_excerpts_from_loaded_cd_volume,
+                    daily_damages_excerpts_from_loaded_cd_volume,
                 )
-                extra = e1_compose_excerpts_from_loaded_cd_volume(
+                extra = daily_damages_excerpts_from_loaded_cd_volume(
                     user, project_id or "", rag_context=rag,
                     extra_pids=extra_project_ids,
                 )
@@ -7315,7 +7315,7 @@ def _compose_priced_boq_instead_of_retry(
         return ""
 
 
-def _e1_audit_project_ids(
+def _audit_project_ids_for_daily_damages(
     project_id: str | None,
     audit_rec: dict[str, Any] | None,
 ) -> tuple[str | None, list[str] | None]:
@@ -7365,7 +7365,7 @@ def _should_short_circuit_delay_damages_daily(
         user = _latest_operator_ask(messages)
         if not query_asks_delay_damages_daily_amount(user):
             return ""
-        pid, extra = _e1_audit_project_ids(project_id, audit_rec)
+        pid, extra = _audit_project_ids_for_daily_damages(project_id, audit_rec)
         grafted = _graft_composed_delay_damages_daily(
             "", rag_sys_msg, messages, project_id=pid,
             extra_project_ids=extra,
@@ -7416,14 +7416,14 @@ def _graft_boq_scope_wbs_if_wrong_contract(
     if not _message_wants_boq_scope_wbs_ask(user):
         return text
     from app.lib.boq_schedule import (
-        f1_wbs_answer_fails_wrong_contract,
-        f1_wbs_answer_is_grounded,
+        boq_wbs_answer_fails_wrong_contract,
+        boq_wbs_answer_is_grounded,
     )
     raw = text or ""
-    if f1_wbs_answer_is_grounded(raw) and not f1_wbs_answer_fails_wrong_contract(raw):
+    if boq_wbs_answer_is_grounded(raw) and not boq_wbs_answer_fails_wrong_contract(raw):
         return text
     recovered = _recover_answer_from_tool_messages(_EMPTY_RESPONSE_FALLBACK, messages)
-    if recovered and f1_wbs_answer_is_grounded(recovered):
+    if recovered and boq_wbs_answer_is_grounded(recovered):
         return recovered
     return text
 
@@ -7459,7 +7459,7 @@ _PART_SUMMARY_MISS_RE = re.compile(
     r"(?i)part\s+summary|priced\s+boq|not\s+found|could\s+not\s+find|"
     r"cannot\s+find|no\s+(?:printed\s+)?total",
 )
-_F1_MILESTONES_ONLY_RE = re.compile(
+_MILESTONES_ONLY_RE = re.compile(
     r"(?i)milestones?\s+1\s*[–-]\s*5\s+only|none of those are\s+"
     r"northern|no northern",
 )
@@ -7583,7 +7583,7 @@ def _graft_named_community_tfc_span(
             or body == _EMPTY_RESPONSE_FALLBACK
             or _GENERIC_ACK_RE.search(body)
             or _MISSING_PARTICULAR_RE.search(body)
-            or _F1_MILESTONES_ONLY_RE.search(body)
+            or _MILESTONES_ONLY_RE.search(body)
             or re.search(
                 r"(?i)cannot (?:answer|confirm|find)|could not|"
                 r"not in the (?:retrieved )?excerpts",
@@ -8152,7 +8152,7 @@ def _postprocess_answer(
     # text before the cost gate. A percentage-only excerpt still cannot
     # invent a daily figure; both operands must be in the excerpts or
     # the loaded CD volume (last-chance after refuse-prone top-k).
-    pid, extra_pids = _e1_audit_project_ids(project_id, audit_rec)
+    pid, extra_pids = _audit_project_ids_for_daily_damages(project_id, audit_rec)
     text = _graft_composed_delay_damages_daily(
         text, rag_sys_msg, messages, project_id=pid,
         extra_project_ids=extra_pids,
@@ -11094,10 +11094,10 @@ class Agent:
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
         # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
         # the turn. Other deliverables still keep the LLM.
-        _f1_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
-        if _f1_fast:
+        _boq_wbs_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
+        if _boq_wbs_fast:
             answer = _postprocess_answer(
-                _f1_fast, _rag_sys_msg, messages,
+                _boq_wbs_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
@@ -11119,15 +11119,15 @@ class Agent:
         # excerpts / loaded CD volume. Skip the provider hop so a
         # priced-BOQ refuse cannot close the turn. Predispatch
         # deliverables keep the LLM.
-        _e1_fast = _should_short_circuit_delay_damages_daily(
+        _daily_damages_fast = _should_short_circuit_delay_damages_daily(
             _rag_sys_msg, messages,
             has_predispatch=_has_pre,
             project_id=project_id,
             audit_rec=_rag_audit,
         )
-        if _e1_fast:
+        if _daily_damages_fast:
             answer = _postprocess_answer(
-                _e1_fast, _rag_sys_msg, messages,
+                _daily_damages_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
@@ -11463,13 +11463,13 @@ class Agent:
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
-        e1_cap = _should_short_circuit_delay_damages_daily(
+        daily_damages_cap = _should_short_circuit_delay_damages_daily(
             _rag_sys_msg, messages, has_predispatch=False,
             project_id=project_id, audit_rec=_rag_audit,
         )
         priced_cap = _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages)
-        if e1_cap:
-            final_text = e1_cap
+        if daily_damages_cap:
+            final_text = daily_damages_cap
         elif priced_cap:
             final_text = priced_cap
         else:
@@ -12225,10 +12225,10 @@ class Agent:
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
         # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
         # the turn. Other deliverables still keep the LLM.
-        _f1_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
-        if _f1_fast:
+        _boq_wbs_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
+        if _boq_wbs_fast:
             answer = _postprocess_answer(
-                _f1_fast, _rag_sys_msg, messages,
+                _boq_wbs_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
@@ -12249,15 +12249,15 @@ class Agent:
             return
         # Leftover E1 before B4/B5: compose rate × ACA so a priced-BOQ
         # refuse cannot close the turn. Predispatch keeps the LLM.
-        _e1_fast = _should_short_circuit_delay_damages_daily(
+        _daily_damages_fast = _should_short_circuit_delay_damages_daily(
             _rag_sys_msg, messages,
             has_predispatch=_has_pre,
             project_id=project_id,
             audit_rec=_rag_audit,
         )
-        if _e1_fast:
+        if _daily_damages_fast:
             answer = _postprocess_answer(
-                _e1_fast, _rag_sys_msg, messages,
+                _daily_damages_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
@@ -13025,13 +13025,13 @@ class Agent:
             messages.extend(pending_nudges)
 
         # Hit the cap without a final answer — force one more call with tools disabled.
-        e1_cap = _should_short_circuit_delay_damages_daily(
+        daily_damages_cap = _should_short_circuit_delay_damages_daily(
             _rag_sys_msg, messages, has_predispatch=False,
             project_id=project_id, audit_rec=_rag_audit,
         )
         priced_cap = _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages)
-        if e1_cap:
-            final_text = e1_cap
+        if daily_damages_cap:
+            final_text = daily_damages_cap
         elif priced_cap:
             final_text = priced_cap
         else:

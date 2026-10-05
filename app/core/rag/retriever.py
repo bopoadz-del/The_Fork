@@ -548,7 +548,7 @@ class _ContractScope:
         self._dnp_in_pool = False
         # OLD-pack E1: rate × ACA. A5's exclusive rate fence would
         # drop the money row; E1 needs both operands in the top-k.
-        self._e1_compose_in_pool = False
+        self._daily_damages_compose_in_pool = False
         self._schedule_labels: List[str] = []
         self._schedule_register_in_pool = False
         # F-BAT-D G3/G6: Contract Data "not required" / empty commencement
@@ -630,13 +630,13 @@ class _ContractScope:
                     chunk_states_delay_damages_rate(text) for _n, text in docs
                 )
                 has_aca = any(
-                    _chunk_is_e1_compose_operand(text)
+                    _chunk_is_daily_damages_operand(text)
                     and not chunk_states_delay_damages_rate(text)
                     for _n, text in docs
                 )
                 # Only fence when both operands are reachable. A
                 # rate-only fence would delete the ACA (live E1).
-                self._e1_compose_in_pool = has_rate and has_aca
+                self._daily_damages_compose_in_pool = has_rate and has_aca
             # OLD-pack G1: a Schedule-N register row ("Schedule 10: Not Used")
             # is the answer. Vol 4 / Vol 5 / CPM mention "schedule" at length
             # and used to occupy every slot. Not #500/#501/#502/#503.
@@ -726,8 +726,8 @@ class _ContractScope:
         # Named PREFIX-YEAR-SEQ (#443) is fail-closed onto that year.
         # The rate / Engineer fences are unnamed-only — a question that
         # names DD-2022-175 must still see that year's chunks.
-        e1_daily = query_asks_delay_damages_daily_amount(self.query)
-        if self._priced_item_in_pool and not e1_daily:
+        daily_damages_ask = query_asks_delay_damages_daily_amount(self.query)
+        if self._priced_item_in_pool and not daily_damages_ask:
             # WAVE 2 B5: a priced Part Nr. 3 line beats Rate Only /
             # Excluded siblings for the same CESMM code. G4 stays on
             # the Rate Only fence below when no priced row exists.
@@ -737,7 +737,7 @@ class _ContractScope:
                 chunk_text, self._rate_only_codes, query=self.query,
             ):
                 return False
-        elif self._rate_only_in_pool and not e1_daily:
+        elif self._rate_only_in_pool and not daily_damages_ask:
             if not chunk_states_rate_only_item(
                 chunk_text, self._rate_only_codes,
             ):
@@ -775,8 +775,8 @@ class _ContractScope:
             if self._dnp_in_pool:
                 if not chunk_states_defects_notification_period(chunk_text):
                     return False
-            if self._e1_compose_in_pool:
-                if not _chunk_keeps_for_e1_daily(filename, chunk_text):
+            if self._daily_damages_compose_in_pool:
+                if not _chunk_keeps_for_daily_damages(filename, chunk_text):
                     return False
         if self._spec_identity_in_pool:
             titled = spec_title_filename_bonus(filename, self._title_phrases) > 0
@@ -2442,7 +2442,7 @@ def _rescue_illumination_table_chunks(
     # by the call site as extra_pids. Attempts 1-2 (0/6 live) omitted the GK
     # layer, where the spec volume lives, so chunks_containing_all — which
     # matches project_id EXACTLY — returned nothing for every pid it tried.
-    pids = _e1_scan_project_ids(project_id, extra_pids, fused)
+    pids = _late_scan_project_ids(project_id, extra_pids, fused)
     needle_hits: Dict[str, int] = {}
     for pid in pids:
         for needles in _ILLUMINATION_NEEDLES:
@@ -3268,7 +3268,7 @@ def filename_looks_like_contract_data(filename: str) -> bool:
     return bool(re.search(r"(?i)contract\s+data", blob))
 
 
-def filename_looks_like_e1_rate_volume(filename: str) -> bool:
+def filename_looks_like_conditions_volume(filename: str) -> bool:
     """True for the bound CoC / Contract Data volume leftover E1 scans.
 
     Live sources cite ``DD-2023-118_…_Cond…`` — a complete Conditions
@@ -3317,7 +3317,7 @@ def _apply_contract_data_filename_boost(
     want_aca = query_asks_for_accepted_contract_amount(query)
     want_tfc = query_asks_for_time_for_completion(query)
     want_eng = query_asks_who_the_engineer_is(query)
-    want_e1 = query_asks_delay_damages_daily_amount(query)
+    want_daily_damages = query_asks_delay_damages_daily_amount(query)
     want_dnp = query_asks_for_defects_notification_period(query)
     want_pcg = (
         query_asks_for_parent_company_guarantee(query)
@@ -3339,7 +3339,7 @@ def _apply_contract_data_filename_boost(
             continue
         if want_eng and not want_aca and not chunk_states_engineer_identity(text):
             continue
-        if want_e1 and not want_aca and not chunk_states_delay_damages_rate(text):
+        if want_daily_damages and not want_aca and not chunk_states_delay_damages_rate(text):
             continue
         if want_dnp and not want_aca and not chunk_states_defects_notification_period(text):
             continue
@@ -3396,7 +3396,7 @@ def _rescue_contract_data_docs(
         elif query_asks_who_the_engineer_is(query):
             keep = chunk_states_engineer_identity
         elif query_asks_delay_damages_daily_amount(query):
-            keep = _chunk_is_e1_compose_operand
+            keep = _chunk_is_daily_damages_operand
         elif query_asks_for_defects_notification_period(query):
             keep = chunk_states_defects_notification_period
         elif query_asks_for_parent_company_guarantee(query):
@@ -3404,13 +3404,13 @@ def _rescue_contract_data_docs(
         elif query_asks_for_contract_commencement_date(query):
             keep = chunk_states_commencement_contract_data
         paired = _pair_adjacent_keep_text(hits, keep) if keep else []
-        e1 = query_asks_delay_damages_daily_amount(query)
+        daily_damages_ask = query_asks_delay_damages_daily_amount(query)
         for chunk in paired:
             names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
             # E1: rate earns the asked-value bonus; ACA enters at 0 so
             # the monetary reservation still owns the last slot.
             bonus = _ASKED_PARTICULAR_VALUE_BONUS
-            if e1 and not chunk_states_delay_damages_rate(chunk.text or ""):
+            if daily_damages_ask and not chunk_states_delay_damages_rate(chunk.text or ""):
                 bonus = 0.0
             fused[chunk.chunk_id] = (chunk, 0.0, bonus)
             recovered += 1
@@ -5139,18 +5139,18 @@ _ACA_BASE_RESCUE_PHRASES = (
 # #532/#533 prefix-400 + last-400 + ``1.1.1``+``excluding`` needles still
 # miss a middle-of-volume scanned row (live 77a96ac: top-k stayed on
 # chunks 9–11). Walk every chunk of those docs.
-_E1_REAL_ACA_DOC_SCAN = 400
+_REAL_ACA_DOC_SCAN = 400
 # Walk mid-volume windows up to this index. Live leftover E1 after
 # #541: a store that caps k_per_doc at 400 (and ignores all_rows)
 # never sees chunk 500 of a 1200-row combined volume via prefix+tail.
-_E1_REAL_ACA_MID_SCAN_MAX = 8000
-_E1_REAL_ACA_TEXT_K = 400
-_E1_REAL_ACA_PAIR_WINDOW = 3
+_REAL_ACA_MID_SCAN_MAX = 8000
+_REAL_ACA_TEXT_K = 400
+_REAL_ACA_PAIR_WINDOW = 3
 # Pin rescued 0.1% / excl-VAT rows above Cosine 9–11 (~0.95) so
 # apply_token_cap cannot drop them. Live leftover E1 after #538: sources
 # stayed on chunks 9–11 (3 HIGH) because late-scan operands entered
 # fused at score 0.0 and the cap kept the refuse-prone windows.
-_E1_OPERAND_PIN_SCORE = 2.4
+_DAILY_DAMAGES_OPERAND_PIN_SCORE = 2.4
 _E1_REAL_ACA_TEXT_NEEDLES = (
     # Scanned 1.1.1 rows split "Accepted\\nContract\\nAmount" — a
     # contiguous "accepted contract amount" LIKE misses. Clause +
@@ -5433,7 +5433,7 @@ def chunk_states_accepted_contract_amount(text: str) -> bool:
     return True
 
 
-def _chunk_is_e1_compose_operand(text: str) -> bool:
+def _chunk_is_daily_damages_operand(text: str) -> bool:
     """Rate row or ACA money row — the two E1 multiply operands."""
     if chunk_states_delay_damages_rate(text):
         return True
@@ -5449,7 +5449,7 @@ def _chunk_is_e1_compose_operand(text: str) -> bool:
         return False
 
 
-def _chunk_keeps_for_e1_daily(filename: str, text: str) -> bool:
+def _chunk_keeps_for_daily_damages(filename: str, text: str) -> bool:
     """Keep compose operands and filled particulars; drop GC lookalikes.
 
     Exclusive rate-or-ACA fencing deleted the particulars family and
@@ -5462,7 +5462,7 @@ def _chunk_keeps_for_e1_daily(filename: str, text: str) -> bool:
     including-VAT ACA. A filename match alone is not an operand.
     """
     _ = filename  # operands are textual; a CD filename is not enough
-    if _chunk_is_e1_compose_operand(text):
+    if _chunk_is_daily_damages_operand(text):
         return True
     t = text or ""
     if _DELAY_RATE_POINTER_RE.search(t) and not chunk_states_delay_damages_rate(t):
@@ -5475,7 +5475,7 @@ def _chunk_keeps_for_e1_daily(filename: str, text: str) -> bool:
     )
 
 
-def _e1_is_cap_noise(text: str) -> bool:
+def _is_daily_damages_cap_noise(text: str) -> bool:
     """True for CoC 0.015% or pointer-only 8.8 windows that crowd the cap.
 
     Live leftover E1 after #541: HIGH chunks 9–11 (pointer or 0.015% of
@@ -5487,9 +5487,9 @@ def _e1_is_cap_noise(text: str) -> bool:
     if not t:
         return False
     try:
-        if _e1_rate_preference(t) >= 2:
+        if _daily_rate_preference(t) >= 2:
             return False
-        if _e1_has_standalone_excl_vat(t):
+        if _has_standalone_excl_vat_aca(t):
             return False
     except Exception:  # noqa: BLE001 — treat as noise-unknown, keep the row
         logger.debug("e1 cap-noise test failed; keeping the row", exc_info=True)
@@ -5501,7 +5501,7 @@ def _e1_is_cap_noise(text: str) -> bool:
     return False
 
 
-def _e1_has_standalone_excl_vat(text: str) -> bool:
+def _has_standalone_excl_vat_aca(text: str) -> bool:
     """True for a 1.1.1 / excl-VAT money row, not a rate window that cites ACA.
 
     Live leftover E1 after #535: CoC chunks 9–11 state 0.015% of the
@@ -5519,10 +5519,10 @@ def _e1_has_standalone_excl_vat(text: str) -> bool:
         return False
     if chunk_states_delay_damages_rate(text or ""):
         return False
-    return _e1_aca_preference(text) >= 2
+    return _daily_damages_aca_preference(text) >= 2
 
 
-def _e1_rate_preference(text: str) -> int:
+def _daily_rate_preference(text: str) -> int:
     """Higher wins for E1's daily rate. Contract Data 0.1% beats CoC 0.015%."""
     t = text or ""
     if not chunk_states_delay_damages_rate(t):
@@ -5541,7 +5541,7 @@ def _e1_rate_preference(text: str) -> int:
         return 1
 
 
-def _e1_aca_preference(text: str) -> int:
+def _daily_damages_aca_preference(text: str) -> int:
     """Higher wins for E1's rate base. Excl-VAT (2) > unlabeled (1) > incl (0)."""
     try:
         from app.lib.construction_formulas_commercial import (
@@ -6252,7 +6252,7 @@ def _pool_lexical_hits_matching(
     return recovered
 
 
-def _e1_chunks_have_both_operands(chunks: Iterable) -> bool:
+def _chunks_have_both_daily_damages_operands(chunks: Iterable) -> bool:
     """True when loaded rows already have Contract Data 0.1% and excl-VAT ACA."""
     has_rate = False
     has_aca = False
@@ -6261,25 +6261,25 @@ def _e1_chunks_have_both_operands(chunks: Iterable) -> bool:
         if text is None and isinstance(chunk, str):
             text = chunk
         text = text or ""
-        if not has_rate and _e1_rate_preference(text) >= 2:
+        if not has_rate and _daily_rate_preference(text) >= 2:
             has_rate = True
-        if not has_aca and _e1_has_standalone_excl_vat(text):
+        if not has_aca and _has_standalone_excl_vat_aca(text):
             has_aca = True
         if has_rate and has_aca:
             return True
     return False
 
 
-def _e1_doc_qualifies_for_late_scan(text: str, name: str) -> bool:
+def _doc_qualifies_for_late_aca_scan(text: str, name: str) -> bool:
     """True for a fused row whose document may still hold E1 operands.
 
     Live leftover E1 after #537: Cosine kept pointer-only Contract Data
     8.8 chunks 9–11. ``chunk_states_delay_damages_rate`` is false on a
     pointer, and a truncated Sources filename (``…Vol 1.0_Con…``) misses
-    ``filename_looks_like_e1_rate_volume``. The bound volume still has
+    ``filename_looks_like_conditions_volume``. The bound volume still has
     0.1% + excl-VAT later — qualify the doc from the 8.8 pointer too.
     """
-    if filename_looks_like_e1_rate_volume(name):
+    if filename_looks_like_conditions_volume(name):
         return True
     if chunk_states_delay_damages_rate(text):
         return True
@@ -6292,7 +6292,7 @@ def _e1_doc_qualifies_for_late_scan(text: str, name: str) -> bool:
     )
 
 
-def _e1_scan_project_ids(
+def _late_scan_project_ids(
     project_id: str,
     extra_pids: Optional[Iterable[str]] = None,
     fused: Optional[Dict[str, Tuple]] = None,
@@ -6333,7 +6333,7 @@ def _e1_scan_project_ids(
     return out
 
 
-def _e1_pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
+def _pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
     """Rate-window docs already in fused, plus any Contract Data filename."""
     doc_ids: List[str] = []
     seen: Set[str] = set()
@@ -6356,7 +6356,7 @@ def _e1_pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
                 name = _doc_name_for_id(chunk.doc_id) or ""
             except Exception:  # noqa: BLE001 — filename is optional
                 name = ""
-        if not _e1_doc_qualifies_for_late_scan(text, name):
+        if not _doc_qualifies_for_late_aca_scan(text, name):
             continue
         seen.add(chunk.doc_id)
         doc_ids.append(chunk.doc_id)
@@ -6376,7 +6376,7 @@ def _e1_pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
     return doc_ids
 
 
-def _e1_doc_owner_project_ids(doc_ids: List[str]) -> List[str]:
+def _doc_owner_project_ids(doc_ids: List[str]) -> List[str]:
     """Project ids that actually own the cited documents.
 
     Live Master Corpus leftover E1: UI / remap pid can miss the row
@@ -6403,7 +6403,7 @@ def _e1_doc_owner_project_ids(doc_ids: List[str]) -> List[str]:
     return out
 
 
-def _e1_fetch_late_aca_chunks(
+def _fetch_late_aca_chunks(
     store,
     project_id: str,
     doc_ids: List[str],
@@ -6427,8 +6427,8 @@ def _e1_fetch_late_aca_chunks(
     by_id: Dict[str, Chunk] = {}
     allowed = set(doc_ids)
     fetch = getattr(store, "chunks_for_docs", None)
-    pids = _e1_scan_project_ids(project_id, extra_pids, fused)
-    for pid in _e1_doc_owner_project_ids(doc_ids):
+    pids = _late_scan_project_ids(project_id, extra_pids, fused)
+    for pid in _doc_owner_project_ids(doc_ids):
         if pid not in pids:
             pids.append(pid)
     if not pids and project_id:
@@ -6459,7 +6459,7 @@ def _e1_fetch_late_aca_chunks(
             # anywhere in the loaded volume still enter. Live leftover
             # E1 after #537: chunks 9–11 + BOQ refuse, 0.1% / excl-VAT
             # sitting mid-volume.
-            if not _e1_chunks_have_both_operands(by_id.values()):
+            if not _chunks_have_both_daily_damages_operands(by_id.values()):
                 try:
                     extra = fetch(pid, doc_ids, k_per_doc=1_000_000)
                 except TypeError:
@@ -6477,14 +6477,14 @@ def _e1_fetch_late_aca_chunks(
             # 9–11 / 0.015%+ACA) is not enough — that was the #537
             # flake: compose rejected the lookalike and the gate
             # refused.
-            if _e1_chunks_have_both_operands(by_id.values()):
+            if _chunks_have_both_daily_damages_operands(by_id.values()):
                 return list(by_id.values())
             for from_end in (False, True):
                 try:
                     try:
                         extra = fetch(
                             pid, doc_ids,
-                            k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                            k_per_doc=_REAL_ACA_DOC_SCAN,
                             from_end=from_end,
                         )
                     except TypeError:
@@ -6492,7 +6492,7 @@ def _e1_fetch_late_aca_chunks(
                             [] if from_end
                             else fetch(
                                 pid, doc_ids,
-                                k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                                k_per_doc=_REAL_ACA_DOC_SCAN,
                             )
                         )
                 except Exception as exc:  # noqa: BLE001 — extras must not break
@@ -6503,19 +6503,19 @@ def _e1_fetch_late_aca_chunks(
                     extra = []
                 for chunk in extra or []:
                     _keep(chunk)
-            if _e1_chunks_have_both_operands(by_id.values()):
+            if _chunks_have_both_daily_damages_operands(by_id.values()):
                 return list(by_id.values())
             # Mid-volume windows: prefix-400 + last-400 miss chunk 500
             # of a 1200-row volume when the store also caps k_per_doc
             # (k=1_000_000 still returns first-400). Walk offset=400,
             # 800, … until both operands exist. TypeError means the
             # store has no offset — fall through to needles.
-            offset = _E1_REAL_ACA_DOC_SCAN
-            while offset < _E1_REAL_ACA_MID_SCAN_MAX:
+            offset = _REAL_ACA_DOC_SCAN
+            while offset < _REAL_ACA_MID_SCAN_MAX:
                 try:
                     extra = fetch(
                         pid, doc_ids,
-                        k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                        k_per_doc=_REAL_ACA_DOC_SCAN,
                         offset=offset,
                     )
                 except TypeError:
@@ -6531,11 +6531,11 @@ def _e1_fetch_late_aca_chunks(
                     break
                 for chunk in got:
                     _keep(chunk)
-                if _e1_chunks_have_both_operands(by_id.values()):
+                if _chunks_have_both_daily_damages_operands(by_id.values()):
                     return list(by_id.values())
-                if len(got) < _E1_REAL_ACA_DOC_SCAN:
+                if len(got) < _REAL_ACA_DOC_SCAN:
                     break
-                offset += _E1_REAL_ACA_DOC_SCAN
+                offset += _REAL_ACA_DOC_SCAN
 
     containing = getattr(store, "chunks_containing_all", None)
     if callable(containing):
@@ -6545,11 +6545,11 @@ def _e1_fetch_late_aca_chunks(
                     try:
                         hits = containing(
                             pid, list(needles),
-                            k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                            k=_REAL_ACA_TEXT_K, doc_ids=doc_ids,
                         )
                     except TypeError:
                         hits = containing(
-                            pid, list(needles), k=_E1_REAL_ACA_TEXT_K,
+                            pid, list(needles), k=_REAL_ACA_TEXT_K,
                         )
                 except Exception as exc:  # noqa: BLE001 — extras must not break
                     logger.warning(
@@ -6558,19 +6558,19 @@ def _e1_fetch_late_aca_chunks(
                     hits = []
                 for chunk in hits or []:
                     _keep(chunk)
-            if _e1_chunks_have_both_operands(by_id.values()):
+            if _chunks_have_both_daily_damages_operands(by_id.values()):
                 return list(by_id.values())
     return list(by_id.values())
 
 
-_E1_RAG_DOC_ID_RE = re.compile(r"\[doc_id=([^\]\s]+)")
+_RAG_CONTEXT_DOC_ID_RE = re.compile(r"\[doc_id=([^\]\s]+)")
 
 
-def e1_doc_ids_from_rag_context(rag_context: str) -> List[str]:
+def doc_ids_from_rag_context(rag_context: str) -> List[str]:
     """Doc ids from ``[doc_id=…]`` markers in the injected RAG context."""
     out: List[str] = []
     seen: Set[str] = set()
-    for match in _E1_RAG_DOC_ID_RE.finditer(rag_context or ""):
+    for match in _RAG_CONTEXT_DOC_ID_RE.finditer(rag_context or ""):
         did = (match.group(1) or "").strip()
         if did and did not in seen:
             seen.add(did)
@@ -6578,7 +6578,7 @@ def e1_doc_ids_from_rag_context(rag_context: str) -> List[str]:
     return out
 
 
-def e1_compose_excerpts_from_loaded_cd_volume(
+def daily_damages_excerpts_from_loaded_cd_volume(
     query: str,
     project_id: str,
     store=None,
@@ -6595,7 +6595,7 @@ def e1_compose_excerpts_from_loaded_cd_volume(
     in the same loaded volume, return them so compose can state
     SAR/day — do not invent a figure and do not elect CoC 0.015%.
     """
-    pids = _e1_scan_project_ids(project_id, extra_pids)
+    pids = _late_scan_project_ids(project_id, extra_pids)
     if not (
         query_asks_delay_damages_daily_amount(query)
     ):
@@ -6613,7 +6613,7 @@ def e1_compose_excerpts_from_loaded_cd_volume(
     # — that timed out and left last-chance empty 4/5 New-chat attempts.
     for did in doc_ids or []:
         _add(did)
-    for did in e1_doc_ids_from_rag_context(rag_context):
+    for did in doc_ids_from_rag_context(rag_context):
         _add(did)
     cited = list(ids)
 
@@ -6626,15 +6626,15 @@ def e1_compose_excerpts_from_loaded_cd_volume(
 
     extra: List[Chunk] = []
     if cited:
-        extra = _e1_fetch_late_aca_chunks(
+        extra = _fetch_late_aca_chunks(
             store, project_id or (pids[0] if pids else ""), cited,
             extra_pids=pids,
         )
-        if _e1_chunks_have_both_operands(extra):
+        if _chunks_have_both_daily_damages_operands(extra):
             ids = cited
         else:
             extra = extra or []
-    if not _e1_chunks_have_both_operands(extra):
+    if not _chunks_have_both_daily_damages_operands(extra):
         try:
             from app.core.projects import documents_matching_title_phrase
             for pid in pids or [project_id]:
@@ -6655,7 +6655,7 @@ def e1_compose_excerpts_from_loaded_cd_volume(
             logger.debug("e1 loaded-volume projects import failed", exc_info=True)
         added = [did for did in ids if did not in set(cited)]
         if added:
-            extra = list(extra or []) + _e1_fetch_late_aca_chunks(
+            extra = list(extra or []) + _fetch_late_aca_chunks(
                 store, project_id or (pids[0] if pids else ""), added[:2],
                 extra_pids=pids,
             )
@@ -6666,9 +6666,9 @@ def e1_compose_excerpts_from_loaded_cd_volume(
     aca_parts: List[str] = []
 
     def _collect(text: str) -> None:
-        if _e1_rate_preference(text) >= 2 and text not in rate_parts:
+        if _daily_rate_preference(text) >= 2 and text not in rate_parts:
             rate_parts.append(text)
-        if _e1_has_standalone_excl_vat(text) and text not in aca_parts:
+        if _has_standalone_excl_vat_aca(text) and text not in aca_parts:
             aca_parts.append(text)
 
     for chunk in extra or []:
@@ -6677,9 +6677,9 @@ def e1_compose_excerpts_from_loaded_cd_volume(
         for chunk in _pair_adjacent_keep_text(
             extra or [],
             lambda t: (
-                _e1_rate_preference(t) >= 2 or _e1_has_standalone_excl_vat(t)
+                _daily_rate_preference(t) >= 2 or _has_standalone_excl_vat_aca(t)
             ),
-            window=_E1_REAL_ACA_PAIR_WINDOW,
+            window=_REAL_ACA_PAIR_WINDOW,
         ):
             _collect(chunk.text or "")
     if not rate_parts or not aca_parts:
@@ -6699,7 +6699,7 @@ def _aca_parts_clause_111_first(parts: List[str]) -> List[str]:
     """Stable-sort ACA excerpt texts so a clause-1.1.1 excl-VAT base leads.
 
     A partial Accepted Contract Amount and the filled clause 1.1.1 both pass
-    ``_e1_has_standalone_excl_vat``; only the 1.1.1 row is the real base. The
+    ``_has_standalone_excl_vat_aca``; only the 1.1.1 row is the real base. The
     rescue caps the joined excerpt at three ACA parts, so without this a run
     of partials pushed the 1.1.1 row out of the window.
     """
@@ -6720,7 +6720,7 @@ def _loaded_cd_chunk_texts(
     store=None,
 ) -> List[str]:
     """Every Contract Data chunk text in the loaded volume, or []."""
-    pids = _e1_scan_project_ids(project_id, extra_pids)
+    pids = _late_scan_project_ids(project_id, extra_pids)
     if store is None:
         try:
             store = get_lexical_store()
@@ -6794,7 +6794,7 @@ def percentage_of_aca_excerpts_from_loaded_cd_volume(
         if extract_named_percentage_particular(query, text):
             if text not in pct_parts:
                 pct_parts.append(text)
-        if _e1_has_standalone_excl_vat(text) and text not in aca_parts:
+        if _has_standalone_excl_vat_aca(text) and text not in aca_parts:
             aca_parts.append(text)
     if not pct_parts or not aca_parts:
         return ""
@@ -6842,7 +6842,7 @@ def milestone_period_excerpts_from_loaded_cd_volume(
         ):
             if text not in rate_parts:
                 rate_parts.append(text)
-        if _e1_has_standalone_excl_vat(text) and text not in aca_parts:
+        if _has_standalone_excl_vat_aca(text) and text not in aca_parts:
             aca_parts.append(text)
     if not rate_parts or not aca_parts:
         return ""
@@ -6888,7 +6888,7 @@ def community_tfc_span_excerpts_from_loaded_cd_volume(
     return "\n\n".join(parts[:6])
 
 
-def _a2_fused_chunk(entry) -> Optional[Chunk]:
+def _fused_entry_chunk(entry) -> Optional[Chunk]:
     if isinstance(entry, tuple) and entry:
         chunk = entry[0]
     else:
@@ -6896,12 +6896,12 @@ def _a2_fused_chunk(entry) -> Optional[Chunk]:
     return chunk if isinstance(chunk, Chunk) else None
 
 
-def _a2_pool_doc_ids_for_late_incl(fused: Dict[str, Tuple]) -> List[str]:
+def _pool_doc_ids_for_late_including_vat(fused: Dict[str, Tuple]) -> List[str]:
     """Contract Data / CoC volume docs already in fused for an A2 scan."""
     doc_ids: List[str] = []
     seen: Set[str] = set()
     for entry in fused.values():
-        chunk = _a2_fused_chunk(entry)
+        chunk = _fused_entry_chunk(entry)
         if chunk is None or not chunk.doc_id or chunk.doc_id in seen:
             continue
         text = chunk.text or ""
@@ -6913,7 +6913,7 @@ def _a2_pool_doc_ids_for_late_incl(fused: Dict[str, Tuple]) -> List[str]:
                 name = ""
         if not (
             filename_looks_like_contract_data(name)
-            or filename_looks_like_e1_rate_volume(name)
+            or filename_looks_like_conditions_volume(name)
             or "accepted contract amount" in _normalize_retrieval_ws(text).lower()
         ):
             continue
@@ -6922,7 +6922,7 @@ def _a2_pool_doc_ids_for_late_incl(fused: Dict[str, Tuple]) -> List[str]:
     return doc_ids
 
 
-def _a2_fetch_late_incl_chunks(
+def _fetch_late_including_vat_chunks(
     store,
     project_id: str,
     doc_ids: List[str],
@@ -6941,7 +6941,7 @@ def _a2_fetch_late_incl_chunks(
     by_id: Dict[str, Chunk] = {}
     allowed = set(doc_ids)
     fetch = getattr(store, "chunks_for_docs", None)
-    pids = _e1_scan_project_ids(project_id, extra_pids, fused)
+    pids = _late_scan_project_ids(project_id, extra_pids, fused)
     if not pids and project_id:
         pids = [project_id]
 
@@ -6977,7 +6977,7 @@ def _a2_fetch_late_incl_chunks(
                     try:
                         extra = fetch(
                             pid, doc_ids,
-                            k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                            k_per_doc=_REAL_ACA_DOC_SCAN,
                             from_end=from_end,
                         )
                     except TypeError:
@@ -6985,7 +6985,7 @@ def _a2_fetch_late_incl_chunks(
                             [] if from_end
                             else fetch(
                                 pid, doc_ids,
-                                k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                                k_per_doc=_REAL_ACA_DOC_SCAN,
                             )
                         )
                 except Exception as exc:  # noqa: BLE001 — extras must not break
@@ -7005,11 +7005,11 @@ def _a2_fetch_late_incl_chunks(
                     try:
                         hits = containing(
                             pid, list(needles),
-                            k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                            k=_REAL_ACA_TEXT_K, doc_ids=doc_ids,
                         )
                     except TypeError:
                         hits = containing(
-                            pid, list(needles), k=_E1_REAL_ACA_TEXT_K,
+                            pid, list(needles), k=_REAL_ACA_TEXT_K,
                         )
                 except Exception as exc:  # noqa: BLE001 — extras must not break
                     logger.warning(
@@ -7040,15 +7040,15 @@ def _rescue_a2_including_vat_from_pool_docs(
         return 0
 
     def _fused_chunk(entry) -> Optional[Chunk]:
-        return _a2_fused_chunk(entry)
+        return _fused_entry_chunk(entry)
 
     fused_chunks = [
         c for c in (_fused_chunk(e) for e in fused.values()) if c is not None
     ]
     if any(chunk_states_aca_including_vat(c.text or "") for c in fused_chunks):
         return 0
-    doc_ids = _a2_pool_doc_ids_for_late_incl(fused)
-    pids = _e1_scan_project_ids(project_id, None, fused)
+    doc_ids = _pool_doc_ids_for_late_including_vat(fused)
+    pids = _late_scan_project_ids(project_id, None, fused)
     if not doc_ids:
         try:
             from app.core.projects import documents_matching_title_phrase
@@ -7070,14 +7070,14 @@ def _rescue_a2_including_vat_from_pool_docs(
             logger.debug("a2 late-incl title listing failed", exc_info=True)
     if not doc_ids:
         return 0
-    extra = _a2_fetch_late_incl_chunks(
+    extra = _fetch_late_including_vat_chunks(
         store, project_id, doc_ids, extra_pids=pids, fused=fused,
     )
     recovered = 0
     for chunk in _pair_adjacent_keep_text(
         extra or [],
         chunk_states_aca_including_vat,
-        window=_E1_REAL_ACA_PAIR_WINDOW,
+        window=_REAL_ACA_PAIR_WINDOW,
     ):
         if chunk.chunk_id in fused:
             continue
@@ -7093,7 +7093,7 @@ def _rescue_a2_including_vat_from_pool_docs(
     return recovered
 
 
-def a2_including_vat_excerpts_from_loaded_cd_volume(
+def including_vat_excerpts_from_loaded_cd_volume(
     query: str,
     project_id: str,
     store=None,
@@ -7111,7 +7111,7 @@ def a2_including_vat_excerpts_from_loaded_cd_volume(
     can state SAR 2,017,680,124.69. Do not invent a figure and do not
     compose delay damages.
     """
-    pids = _e1_scan_project_ids(project_id, extra_pids)
+    pids = _late_scan_project_ids(project_id, extra_pids)
     if not (
         query_is_aca_including_vat_particular(query)
         and (pids or project_id)
@@ -7127,7 +7127,7 @@ def a2_including_vat_excerpts_from_loaded_cd_volume(
 
     for did in doc_ids or []:
         _add(did)
-    for did in e1_doc_ids_from_rag_context(rag_context):
+    for did in doc_ids_from_rag_context(rag_context):
         _add(did)
 
     try:
@@ -7158,14 +7158,14 @@ def a2_including_vat_excerpts_from_loaded_cd_volume(
             logger.debug("a2 loaded-volume store open failed", exc_info=True)
             return ""
 
-    extra = _a2_fetch_late_incl_chunks(
+    extra = _fetch_late_including_vat_chunks(
         store, project_id or (pids[0] if pids else ""), ids, extra_pids=pids,
     )
     parts: List[str] = []
     for chunk in _pair_adjacent_keep_text(
         extra or [],
         chunk_states_aca_including_vat,
-        window=_E1_REAL_ACA_PAIR_WINDOW,
+        window=_REAL_ACA_PAIR_WINDOW,
     ):
         text = chunk.text or ""
         if chunk_states_aca_including_vat(text) and text not in parts:
@@ -7180,7 +7180,7 @@ def a2_including_vat_excerpts_from_loaded_cd_volume(
     return "\n\n".join(parts[:3])
 
 
-def ensure_a2_kept_has_including_vat(
+def ensure_kept_has_including_vat(
     query: str,
     kept: List[Chunk],
     ranked: List[Chunk],
@@ -7272,25 +7272,25 @@ def _rescue_e1_real_aca_from_pool_docs(
         c for c in (_fused_chunk(e) for e in fused.values()) if c is not None
     ]
     has_standalone_aca = any(
-        _e1_has_standalone_excl_vat(c.text or "") for c in fused_chunks
+        _has_standalone_excl_vat_aca(c.text or "") for c in fused_chunks
     )
     has_preferred_rate = any(
-        _e1_rate_preference(c.text or "") >= 2 for c in fused_chunks
+        _daily_rate_preference(c.text or "") >= 2 for c in fused_chunks
     )
     # Do not skip when the only "real ACA" sits inside a 0.015% CoC
     # rate window — that is the live #535 flake (263,175.67/day).
     if has_standalone_aca and has_preferred_rate:
         return 0
-    doc_ids = _e1_pool_doc_ids_for_late_aca(fused)
+    doc_ids = _pool_doc_ids_for_late_aca(fused)
     if not doc_ids:
         return 0
-    extra = _e1_fetch_late_aca_chunks(store, project_id, doc_ids, fused=fused)
+    extra = _fetch_late_aca_chunks(store, project_id, doc_ids, fused=fused)
     recovered = 0
     if not has_standalone_aca:
         for chunk in _pair_adjacent_keep_text(
             extra or [],
             chunk_states_accepted_contract_amount,
-            window=_E1_REAL_ACA_PAIR_WINDOW,
+            window=_REAL_ACA_PAIR_WINDOW,
         ):
             if chunk.chunk_id in fused:
                 continue
@@ -7299,15 +7299,15 @@ def _rescue_e1_real_aca_from_pool_docs(
             if chunk_states_delay_damages_rate(chunk.text or ""):
                 # Rate-base ACA is not the 1.1.1 row. Keep looking.
                 continue
-            fused[chunk.chunk_id] = (chunk, _E1_OPERAND_PIN_SCORE, 0.0)
+            fused[chunk.chunk_id] = (chunk, _DAILY_DAMAGES_OPERAND_PIN_SCORE, 0.0)
             recovered += 1
     if not has_preferred_rate:
         for chunk in extra or []:
             if chunk.chunk_id in fused:
                 continue
-            if _e1_rate_preference(chunk.text or "") < 2:
+            if _daily_rate_preference(chunk.text or "") < 2:
                 continue
-            fused[chunk.chunk_id] = (chunk, _E1_OPERAND_PIN_SCORE, 0.0)
+            fused[chunk.chunk_id] = (chunk, _DAILY_DAMAGES_OPERAND_PIN_SCORE, 0.0)
             recovered += 1
     if recovered:
         logger.info(
@@ -8947,16 +8947,16 @@ def reserve_monetary_base_row(
     )
     if not kept or not (query_needs_a_monetary_base(query) or delay_scenario):
         return False
-    e1 = (
+    daily_damages_ask = (
         query_asks_delay_damages_daily_amount(query)
     )
 
     def _is_money_base(text: str) -> bool:
-        if delay_scenario and not e1:
+        if delay_scenario and not daily_damages_ask:
             # The sum the rate is a percentage OF — not any row with money in
             # it (an insurance deductible is an amount too).
             return chunk_states_accepted_contract_amount(text)
-        if e1:
+        if daily_damages_ask:
             try:
                 from app.lib.construction_formulas_commercial import (
                     chunk_has_real_accepted_contract_amount,
@@ -8969,13 +8969,13 @@ def reserve_monetary_base_row(
                 logger.debug("toy-ACA money-base test failed", exc_info=True)
         if particulars_row_states_an_amount_of_money(text):
             return True
-        return bool(e1 and chunk_states_accepted_contract_amount(text))
+        return bool(daily_damages_ask and chunk_states_accepted_contract_amount(text))
 
     if any(_is_money_base(c.text or "") for c in kept):
         return False
     present = {c.chunk_id for c in kept}
     replace_at = len(kept) - 1
-    if e1:
+    if daily_damages_ask:
         # Live leftover E1: particulars reserved the 0.1% row into the
         # last slot, then this function overwrote it with including-VAT
         # ACA. Prefer a non-rate slot. If every survivor is a rate
@@ -9095,7 +9095,7 @@ def reserve_contract_synonym_row(
     return False
 
 
-def _e1_non_operand_index(
+def _daily_damages_non_operand_index(
     kept: List[Chunk],
     *,
     protect_rate: bool,
@@ -9112,7 +9112,7 @@ def _e1_non_operand_index(
     return None
 
 
-def reserve_e1_compose_operands(
+def reserve_daily_damages_operands(
     query: str,
     kept: List[Chunk],
     ranked: List[Chunk],
@@ -9138,7 +9138,7 @@ def reserve_e1_compose_operands(
     present = {c.chunk_id for c in kept}
 
     if not any(chunk_states_delay_damages_rate(c.text or "") for c in kept):
-        idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+        idx = _daily_damages_non_operand_index(kept, protect_rate=True, protect_aca=True)
         if idx is not None:
             for chunk in ranked:
                 if chunk.chunk_id in present:
@@ -9160,12 +9160,12 @@ def reserve_e1_compose_operands(
     for chunk in ranked:
         if allow is not None and not allow(chunk):
             continue
-        rank = _e1_rate_preference(chunk.text or "")
+        rank = _daily_rate_preference(chunk.text or "")
         if rank > best_rate_rank:
             best_rate_rank = rank
             best_rate = chunk
     kept_rate = max(
-        (_e1_rate_preference(c.text or "") for c in kept), default=-1,
+        (_daily_rate_preference(c.text or "") for c in kept), default=-1,
     )
     if (
         best_rate is not None
@@ -9175,9 +9175,9 @@ def reserve_e1_compose_operands(
         rate_idxs = [
             i for i, chunk in enumerate(kept)
             if chunk_states_delay_damages_rate(chunk.text or "")
-            and _e1_rate_preference(chunk.text or "") < best_rate_rank
+            and _daily_rate_preference(chunk.text or "") < best_rate_rank
         ]
-        idx = rate_idxs[-1] if rate_idxs else _e1_non_operand_index(
+        idx = rate_idxs[-1] if rate_idxs else _daily_damages_non_operand_index(
             kept, protect_rate=True, protect_aca=True,
         )
         if idx is not None:
@@ -9190,14 +9190,14 @@ def reserve_e1_compose_operands(
     for chunk in ranked:
         if allow is not None and not allow(chunk):
             continue
-        rank = _e1_aca_preference(chunk.text or "")
+        rank = _daily_damages_aca_preference(chunk.text or "")
         if rank > best_rank:
             best_rank = rank
             best_chunk = chunk
     if best_chunk is None:
         return changed
 
-    kept_best = max((_e1_aca_preference(c.text or "") for c in kept), default=-1)
+    kept_best = max((_daily_damages_aca_preference(c.text or "") for c in kept), default=-1)
     if best_rank <= kept_best:
         return changed
     if best_chunk.chunk_id in {c.chunk_id for c in kept}:
@@ -9208,13 +9208,13 @@ def reserve_e1_compose_operands(
         worst_i = None
         worst_rank = 99
         for i, chunk in enumerate(kept):
-            rank = _e1_aca_preference(chunk.text or "")
+            rank = _daily_damages_aca_preference(chunk.text or "")
             if 0 <= rank < worst_rank:
                 worst_rank = rank
                 worst_i = i
         idx = worst_i
     if idx is None:
-        idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+        idx = _daily_damages_non_operand_index(kept, protect_rate=True, protect_aca=True)
     if idx is None:
         # Live leftover E1 after #529: toy 8.8 windows occupy every
         # slot as rate operands. Skipping the toy cleared the money
@@ -9234,7 +9234,7 @@ def reserve_e1_compose_operands(
     return True
 
 
-def ensure_e1_kept_can_compose(
+def ensure_kept_can_compose_daily_damages(
     query: str,
     kept: List[Chunk],
     ranked: List[Chunk],
@@ -9275,9 +9275,9 @@ def ensure_e1_kept_can_compose(
         if not _ok(chunk):
             continue
         text = chunk.text or ""
-        if rate is None and _e1_rate_preference(text) >= 2:
+        if rate is None and _daily_rate_preference(text) >= 2:
             rate = chunk
-        if aca is None and _e1_has_standalone_excl_vat(text):
+        if aca is None and _has_standalone_excl_vat_aca(text):
             aca = chunk
         if rate is not None and aca is not None:
             break
@@ -9286,15 +9286,15 @@ def ensure_e1_kept_can_compose(
     changed = False
     present = {c.chunk_id for c in kept}
     if rate.chunk_id not in present:
-        idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+        idx = _daily_damages_non_operand_index(kept, protect_rate=True, protect_aca=True)
         if idx is None:
             idx = len(kept) - 1
         kept[idx] = rate
         present.add(rate.chunk_id)
         changed = True
-    rate.score = max(float(rate.score or 0.0), _E1_OPERAND_PIN_SCORE)
+    rate.score = max(float(rate.score or 0.0), _DAILY_DAMAGES_OPERAND_PIN_SCORE)
     if aca.chunk_id not in present:
-        idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+        idx = _daily_damages_non_operand_index(kept, protect_rate=True, protect_aca=True)
         if idx is None:
             rate_idxs = [
                 i for i, chunk in enumerate(kept)
@@ -9312,7 +9312,7 @@ def ensure_e1_kept_can_compose(
             idx = 0 if idx != 0 else 1
         kept[idx] = aca
         changed = True
-    aca.score = max(float(aca.score or 0.0), _E1_OPERAND_PIN_SCORE)
+    aca.score = max(float(aca.score or 0.0), _DAILY_DAMAGES_OPERAND_PIN_SCORE)
     return changed
 
 
@@ -9338,19 +9338,19 @@ def reserve_matching_particulars_row(
     # asked *value* (rate / Engineer) must be in kept, not merely the
     # label family.
     if any(chunk_answers_asked_particular(query, c.text or "") for c in kept):
-        need_a5_rate = (
+        need_delay_rate = (
             query_asks_for_delay_damages_rate(query)
             and not any(
                 chunk_states_delay_damages_rate(c.text or "") for c in kept
             )
         )
-        need_e1_rate = (
+        need_daily_rate = (
             query_asks_delay_damages_daily_amount(query)
             and not any(
                 chunk_states_delay_damages_rate(c.text or "") for c in kept
             )
         )
-        if not (need_a5_rate or need_e1_rate):
+        if not (need_delay_rate or need_daily_rate):
             return False
     present = {c.chunk_id for c in kept}
     for chunk in ranked:
@@ -9710,9 +9710,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     )
     reserve_matching_particulars_row(query, kept, candidates, allow=_allow)
     reserve_monetary_base_row(query, kept, candidates, allow=_allow)
-    reserve_e1_compose_operands(query, kept, candidates, allow=_allow)
-    ensure_e1_kept_can_compose(query, kept, candidates, allow=_allow)
-    ensure_a2_kept_has_including_vat(query, kept, candidates, allow=_allow)
+    reserve_daily_damages_operands(query, kept, candidates, allow=_allow)
+    ensure_kept_can_compose_daily_damages(query, kept, candidates, allow=_allow)
+    ensure_kept_has_including_vat(query, kept, candidates, allow=_allow)
     for chunk in kept:
         chunk.source_name = _name(chunk.doc_id)
     return kept, noise_filtered
@@ -10525,13 +10525,13 @@ def retrieve_with_filter(
     reserve_monetary_base_row(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
-    reserve_e1_compose_operands(
+    reserve_daily_damages_operands(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
-    ensure_e1_kept_can_compose(
+    ensure_kept_can_compose_daily_damages(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
-    ensure_a2_kept_has_including_vat(
+    ensure_kept_has_including_vat(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
     # Synonym boost survival: a synonym-named Contract Data figure ("contract

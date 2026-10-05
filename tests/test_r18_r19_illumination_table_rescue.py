@@ -151,13 +151,13 @@ def test_rescue_scans_master_corpus_source_pid_not_just_the_ui_pid(monkeypatch):
     """Live 54d017c: attempt 1 found nothing because on master_corpus the table
     chunk is owned by a SOURCE project id, not the UI project id the query runs
     under — chunks_containing_all(ui_pid) returned nothing. The rescue must scan
-    the source pids (via _e1_scan_project_ids), like the E1 rescue does."""
+    the source pids (via _late_scan_project_ids), like the E1 rescue does."""
     UI = "master_corpus"
     SRC = "src-corpus-1"
     # the table lives under the SOURCE pid, never under the UI pid
     table = _chunk("spec-661", WORK_ACTIVITY_TABLE, pid=SRC)
     store = _FakeStore([table])
-    monkeypatch.setattr(ret, "_e1_scan_project_ids",
+    monkeypatch.setattr(ret, "_late_scan_project_ids",
                         lambda pid, *a, **k: [pid, SRC])
     fused = {}
     added = ret._rescue_illumination_table_chunks(R18, UI, fused, store)
@@ -166,13 +166,13 @@ def test_rescue_scans_master_corpus_source_pid_not_just_the_ui_pid(monkeypatch):
 
 
 def test_rescue_reaches_a_general_knowledge_pid_only_via_extra_pids(monkeypatch):
-    """Attempts 1-2 (0/6 live): _e1_scan_project_ids does NOT include the
+    """Attempts 1-2 (0/6 live): _late_scan_project_ids does NOT include the
     general-knowledge pids (gk_ids) that the semantic leg searches and that
     RAG_GENERAL_KNOWLEDGE_PROJECTS holds in prod (two projects). The spec table
     lives under a GK pid; only extra_pids (= gk_ids + fb_id, passed by the call
-    site) reaches it. Stub _e1_scan_project_ids with its real contract: UI pid
+    site) reaches it. Stub _late_scan_project_ids with its real contract: UI pid
     plus whatever extra_pids the caller threads."""
-    monkeypatch.setattr(ret, "_e1_scan_project_ids",
+    monkeypatch.setattr(ret, "_late_scan_project_ids",
                         lambda pid, extra=None, fused=None: [pid] + list(extra or []))
     UI = "master_corpus"
     GK = "gk-project-1"
