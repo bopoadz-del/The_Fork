@@ -543,6 +543,7 @@ class _ContractScope:
         # rows must not occupy the top-k.
         self._delay_rate_in_pool = False
         self._engineer_identity_in_pool = False
+        self._party_role = ""
         self._aca_incl_vat_in_pool = False
         self._tfc_in_pool = False
         # Defects Notification Period ask: PSA / CPM TOC
@@ -597,11 +598,10 @@ class _ContractScope:
                 self._delay_rate_in_pool = any(
                     chunk_states_delay_damages_rate(text) for _n, text in docs
                 )
-            if (
-                query_asks_who_the_engineer_is(self.query)
-            ):
+            self._party_role = asked_party_role(self.query)
+            if self._party_role:
                 self._engineer_identity_in_pool = any(
-                    chunk_states_engineer_identity(text) for _n, text in docs
+                    chunk_names_party(text, self._party_role) for _n, text in docs
                 )
             if (
                 query_asks_for_aca_including_vat(self.query)
@@ -754,7 +754,7 @@ class _ContractScope:
                     ):
                         return False
             if self._engineer_identity_in_pool:
-                if not chunk_states_engineer_identity(chunk_text):
+                if not chunk_names_party(chunk_text, self._party_role):
                     return False
             if self._aca_incl_vat_in_pool:
                 if not chunk_states_aca_including_vat(chunk_text):
@@ -3221,7 +3221,7 @@ def _apply_contract_data_filename_boost(
         return
     want_aca = query_asks_for_accepted_contract_amount(query)
     want_tfc = query_asks_for_time_for_completion(query)
-    want_eng = query_asks_who_the_engineer_is(query)
+    party_role = asked_party_role(query)
     want_daily_damages = query_asks_delay_damages_daily_amount(query)
     want_dnp = query_asks_for_defects_notification_period(query)
     want_pcg = (
@@ -3242,7 +3242,7 @@ def _apply_contract_data_filename_boost(
         # PCG / commencement asks lift only the answering PCG / commencement row.
         if want_tfc and not want_aca and not chunk_states_time_for_completion(text):
             continue
-        if want_eng and not want_aca and not chunk_states_engineer_identity(text):
+        if party_role and not want_aca and not chunk_names_party(text, party_role):
             continue
         if want_daily_damages and not want_aca and not chunk_states_delay_damages_rate(text):
             continue
@@ -3724,8 +3724,9 @@ def _known_particular_row_test(query: str):
         return chunk_states_aca_including_vat
     if query_asks_for_time_for_completion(query):
         return chunk_states_time_for_completion
-    if query_asks_who_the_engineer_is(query):
-        return chunk_states_engineer_identity
+    party_role = asked_party_role(query)
+    if party_role:
+        return lambda text: chunk_names_party(text, party_role)
     if query_asks_delay_damages_daily_amount(query):
         return _chunk_is_daily_damages_operand
     if query_asks_for_defects_notification_period(query):
@@ -3916,11 +3917,17 @@ def recall_labelled_rows(
                 label="labelled-row", bonus=_bonus_for,
             )
         containing = getattr(store, "chunks_containing_all", None)
+        party_role = asked_party_role(query)
+        needle_sets: List[List[str]] = [[label] for label in labels[:_LABELLED_ROW_MAX_LABELS]]
+        # The row that names a party: the role word alone hits every clause
+        # that mentions the role, so pair it with a name ending.
+        needle_sets.extend(list(n) for n in party_name_needle_sets(party_role))
         if callable(containing):
             for pid in text_pids:
-                for label in labels[:_LABELLED_ROW_MAX_LABELS]:
+                for needles in needle_sets:
+                    label = " + ".join(needles)
                     try:
-                        hits = containing(pid, [label], k=_LABELLED_ROW_FETCH_K)
+                        hits = containing(pid, needles, k=_LABELLED_ROW_FETCH_K)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
                             "labelled-row text fetch for %s (%r) failed: %s", pid, label, exc,
@@ -4921,51 +4928,119 @@ def chunk_states_delay_damages_rate(text: str) -> bool:
 
 
 def chunk_states_engineer_identity(text: str) -> bool:
-    """True when the chunk *appoints* the Engineer.
+    """True when the chunk *appoints* the Engineer (the naming row, not the definition)."""
+    return chunk_names_party(text, "engineer")
 
-    A glossary ``"Engineer" means the person appointed…`` and a PSA
-    Client/Consultant party list are lookalikes. The appointment is a
-    filled ``1.3.1 (b) Engineer`` row (or a scanned line with a firm
-    name). Engineer's Representative is D1 / corpus-blocked — do not
-    invent a signatory.
+
+# ── who is a party: the particulars row that names it ─────────────────────
+#
+# "Who is the <defined party>?" -- the Engineer, the Employer, the
+# Contractor, a Representative, the adjudicator. The answer is the
+# particulars row that NAMES the party: a label row whose value is a proper
+# name. The General Conditions clause that DEFINES the term ("'<Party>'
+# means the person named as ... in the Contract Data") repeats every word of
+# the question and wins on cosine; it is a lookalike, not the answer. A text
+# search on the role word alone hits every clause that mentions the role, so
+# a LIMIT cuts the naming row off; the row is fetched by the role together
+# with the words a legal person's name ends in (a naming lexicon).
+_PARTY_ROLE_ASK_RE = re.compile(
+    r"(?i)\b(?:engineer['’]?s\s+representative|employer['’]?s\s+representative|"
+    r"engineer|employer|contractor|"
+    r"dispute\s+(?:avoidance\s+(?:and|/)\s+)?(?:adjudication\s+)?board|adjudicator)\b"
+)
+_PARTY_NAME_ENDINGS = (
+    "limited", "ltd", "llc", "plc", "gmbh", "inc", "company", "corporation",
+    "consult", "partners", "authority", "group",
+)
+_PARTY_LINE_MAX_NEXT = 2
+
+
+def asked_party_role(query: str) -> str:
+    """The defined party a who-is question asks for ("engineer"), or ""."""
+    q = query or ""
+    if not q or _DEFINITION_QUESTION_RE.search(q) or not _CD_WHO_IS_RE.search(q):
+        return ""
+    match = _PARTY_ROLE_ASK_RE.search(q)
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", match.group(0).lower().replace("’", "'"))
+
+
+def _role_pattern(role: str) -> str:
+    """Regex for the role word in a document, not its Representative (unless asked)."""
+    parts = [re.escape(p) for p in role.replace("'s", "").split()]
+    body = r"\s+".join(parts)
+    if "representative" in role:
+        body = body.replace(r"\s+representative", r"['’]?s\s+representative")
+        return rf"\b{body}\b"
+    return rf"\b{body}\b(?!\s*['’]?s\s+representative)"
+
+
+def chunk_defines_role(text: str, role: str) -> bool:
+    """True when the chunk is the definition of the role term ("X" means ...)."""
+    if not role:
+        return False
+    return bool(re.search(
+        rf"(?i)[\"“']?{_role_pattern(role)}[\"”']?\s+(?:means|shall\s+mean|is\s+defined\s+as)\b",
+        text or "",
+    ))
+
+
+def chunk_names_party(text: str, role: str) -> bool:
+    """True when the chunk has a row that NAMES the asked party.
+
+    A filled particulars row whose key is the role and whose value is a
+    proper name; or a scanned line that opens with the role and carries a
+    name on it or the next lines; or "<role> is <Name Ltd>". The definition
+    of the term, a party list that only repeats role words, and the
+    Representative of the asked party are lookalikes.
     """
     t = text or ""
-    if not t:
+    if not t or not role:
         return False
-    for key, val in filled_particulars_rows(t):
-        if _ENGINEER_REP_RE.search(key):
-            continue
-        if _ENGINEER_KEY_RE.search(key) and _looks_like_appointed_party(val):
+    role_rx = re.compile(rf"(?i){_role_pattern(role)}")
+    rows = filled_particulars_rows(t)
+    for key, val in rows:
+        if role_rx.search(key or "") and _looks_like_appointed_party(val):
             return True
-    if _ENGINEER_GLOSSARY_RE.search(t) and not filled_particulars_rows(t):
+    if chunk_defines_role(t, role) and not rows:
         return False
-    lines = (t or "").splitlines()
+    line_rx = re.compile(
+        r"(?im)^[ \t|:]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?[ \t|:]*)?"
+        r"(?:(?:the|name\s+of\s+the)\s+)?"
+        rf"{_role_pattern(role)}[ \t]*[:|–-]?\s*(.*)$"
+    )
+    lines = t.splitlines()
     for i, line in enumerate(lines):
-        m = _SCANNED_ENGINEER_LINE_RE.match(line)
+        m = line_rx.match(line)
         if not m:
             continue
         rest = (m.group(1) or "").strip()
-        nxt = ""
-        nxt2 = ""
-        if i + 1 < len(lines):
-            nxt = lines[i + 1].strip()
-        if i + 2 < len(lines):
-            nxt2 = lines[i + 2].strip()
-        for cand in (
-            rest, nxt, nxt2,
-            f"{rest} {nxt}".strip(),
-            f"{nxt} {nxt2}".strip(),
-        ):
+        following = [lines[j].strip() for j in range(i + 1, min(len(lines), i + 1 + _PARTY_LINE_MAX_NEXT))]
+        nxt = following[0] if following else ""
+        nxt2 = following[1] if len(following) > 1 else ""
+        for cand in (rest, nxt, nxt2, f"{rest} {nxt}".strip(), f"{nxt} {nxt2}".strip()):
             if _looks_like_appointed_party(cand):
                 return True
     blob = _collapse_retrieval_ws(t)
-    for named in _ENGINEER_IS_RE.finditer(blob):
+    is_rx = re.compile(
+        rf"(?i)\b(?:the\s+|name\s+of\s+the\s+)?{_role_pattern(role)}\s*(?:is|are|:)\s+(.{{4,80}})"
+    )
+    for named in is_rx.finditer(blob):
         cand = named.group(1)
         if _looks_like_appointed_party(cand) and (
             _PARTY_FIRM_RE.search(cand) or re.search(r"\b[A-Z]{3,}\b", cand)
         ):
             return True
     return False
+
+
+def party_name_needle_sets(role: str) -> List[Tuple[str, ...]]:
+    """Text-search needles for the row that names ``role``."""
+    word = role.replace("'s", "").split()[0] if role else ""
+    if not word:
+        return []
+    return [(word, ending) for ending in _PARTY_NAME_ENDINGS]
 
 
 def chunk_answers_asked_particular(query: str, text: str) -> bool:
@@ -4985,9 +5060,9 @@ def chunk_answers_asked_particular(query: str, text: str) -> bool:
             or chunk_states_accepted_contract_amount(text)
         ):
             return True
-    if query_asks_who_the_engineer_is(query):
-        if chunk_states_engineer_identity(text):
-            return True
+    party_role = asked_party_role(query)
+    if party_role and chunk_names_party(text, party_role):
+        return True
     if query_asks_for_aca_including_vat(query):
         if chunk_states_aca_including_vat(text):
             return True
@@ -5957,6 +6032,7 @@ def query_wants_contract_data_file(query: str) -> bool:
         query_asks_for_accepted_contract_amount(query)
         or query_asks_for_time_for_completion(query)
         or query_asks_who_the_engineer_is(query)
+        or bool(asked_party_role(query))
         or query_asks_delay_damages_daily_amount(query)
         or (
             query_asks_for_defects_notification_period(query)
@@ -7042,9 +7118,8 @@ def _apply_asked_particular_value_boost(
     want_rate = (
         query_asks_for_delay_damages_rate(query)
     )
-    want_eng = (
-        query_asks_who_the_engineer_is(query)
-    )
+    party_role = asked_party_role(query)
+    want_eng = bool(party_role)
     want_aca = (
         query_asks_for_aca_including_vat(query)
     )
@@ -7060,7 +7135,7 @@ def _apply_asked_particular_value_boost(
         text = chunk.text or ""
         hit = (
             (want_rate and chunk_states_delay_damages_rate(text))
-            or (want_eng and chunk_states_engineer_identity(text))
+            or (want_eng and chunk_names_party(text, party_role))
             or (want_aca and chunk_states_aca_including_vat(text))
             or (want_tfc and chunk_states_time_for_completion(text))
             or (want_dnp and chunk_states_defects_notification_period(text))
