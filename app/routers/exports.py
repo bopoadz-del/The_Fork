@@ -872,7 +872,7 @@ async def export_schedule_from_brief(
     chat 'Schedule (Excel)' download offer.
 
     When ``conversation_id`` is set, the conversation's staged WBS is
-    exported (F-BAT-D H2 / Phase 2 code match). Missing snapshot is 404 —
+    exported (WBS snapshot / Phase 2 code match). Missing snapshot is 404 —
     a template is never substituted. A BOQ-scope WBS ask that would
     otherwise emit the template scaffold is refused with 422.
     """
@@ -1040,10 +1040,10 @@ def _render_answers_docx(
     base_url: str = "",
     heading: str = "Answers",
 ) -> str:
-    """Render A1–A9 (or any collected) chat answers to a client-facing docx.
+    """Render a labelled range (or all collected) chat answers to a client-facing docx.
 
     H1b on ``567147a``: the surface took one ``message_index`` and there was
-    no A1–A9 path, so 'Export A1-A9 answers as a docx report' never produced
+    no answer-range path, so 'Export Q1-Q9 answers as a docx report' never produced
     a file. Same markdown + real footer contract as the single-message path
     (H1/H2 on ``13b2bf7``) — figures stay intact, no literal asterisks, no
     localhost in the footer.
@@ -1253,7 +1253,7 @@ async def export_conversation_schedule(
 ):
     """Export the WBS staged on this conversation — never a fresh scaffold.
 
-    F-BAT-D H2: the chat 'Schedule (Excel)' offer and "Export F1 WBS as
+    WBS export: the chat 'Schedule (Excel)' offer and "Export F1 WBS as
     xlsx" bind here. 404 when no WBS was built in the conversation;
     422 when a BOQ-scope WBS was requested and only a template remains.
     """
@@ -1306,11 +1306,11 @@ async def export_conversation_message(
     scope: str = Query(
         "message",
         pattern="^(message|answers)$",
-        description="message = one turn (default); answers = A1–A9 report",
+        description="message = one turn (default); answers = answer-range report",
     ),
     range: str = Query(
         "",
-        description="Optional A1-A9 (or 1-9) slice when scope=answers",
+        description="Optional Q1-Q9 (or 1-9) slice when scope=answers",
     ),
     request: Request = None,  # type: ignore[assignment]
     auth: Dict[str, Any] = Depends(require_user),
@@ -1318,7 +1318,7 @@ async def export_conversation_message(
     """Export conversation answers as a downloadable file.
 
     Default ``scope=message`` is the one-turn excerpt. ``scope=answers``
-    compiles A1–A9 (or all) chat answers into one report — the live H1
+    compiles a labelled range (or all) of the chat answers into one report — the live H1
     ask, which used to be misread as RFP attachments.
 
     ``docx`` renders markdown; ``xlsx`` turns pipe-tables into worksheets.
