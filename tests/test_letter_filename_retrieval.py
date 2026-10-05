@@ -98,13 +98,13 @@ def test_who_is_the_engineer_is_not_a_letter_ask():
 
 def test_letter_filename_overlaps_named_site_and_party():
     from app.core.rag.retriever import (
-        extract_rescue_terms,
+        distinctive_query_terms,
         filename_looks_like_letter,
         filename_match_bonus,
         filename_query_overlap,
     )
 
-    terms = extract_rescue_terms(D1_QUERY)
+    terms = distinctive_query_terms(D1_QUERY)
     assert filename_looks_like_letter(LETTER_NAME)
     assert not filename_looks_like_letter(VOL5_NAME)
     assert not filename_looks_like_letter(PLOT_NAME)
@@ -119,11 +119,11 @@ def test_letter_filename_overlaps_named_site_and_party():
 
 def test_plot_agreement_filename_loses_to_the_letter():
     from app.core.rag.retriever import (
-        extract_rescue_terms,
+        distinctive_query_terms,
         filename_match_bonus,
     )
 
-    terms = extract_rescue_terms(D1_QUERY)
+    terms = distinctive_query_terms(D1_QUERY)
     letter = filename_match_bonus(LETTER_NAME, terms, letter_query=True)
     plot = filename_match_bonus(PLOT_NAME, terms, letter_query=True)
     handover = filename_match_bonus(HANDOVER_NAME, terms, letter_query=True)
@@ -232,11 +232,11 @@ def test_a_generic_contract_filename_does_not_earn_a_bonus():
     filename bonus would have perturbed unrelated ranking.
     """
     from app.core.rag.retriever import (
-        extract_rescue_terms,
+        distinctive_query_terms,
         filename_match_bonus,
     )
 
-    terms = extract_rescue_terms(PARTICULARS_QUERY)
+    terms = distinctive_query_terms(PARTICULARS_QUERY)
     assert filename_match_bonus(
         "contract.pdf", terms, letter_query=False,
     ) == 0.0
@@ -269,7 +269,7 @@ def project_store(monkeypatch, tmp_path):
 
 
 def test_filename_sql_finds_the_s5_letter_among_vol5_decoys(project_store):
-    from app.core.rag.retriever import extract_rescue_terms
+    from app.core.rag.retriever import distinctive_query_terms
 
     p = project_store.create_project("D1 corpus")
     pid = p["id"]
@@ -283,7 +283,7 @@ def test_filename_sql_finds_the_s5_letter_among_vol5_decoys(project_store):
         pid, "Weekly Report W22 - soils.pdf", size=5,
     )
 
-    terms = extract_rescue_terms(D1_QUERY)
+    terms = distinctive_query_terms(D1_QUERY)
     found = project_store.documents_matching_filename_terms(
         pid, terms, min_terms=2, require_letter=True,
     )
@@ -293,13 +293,13 @@ def test_filename_sql_finds_the_s5_letter_among_vol5_decoys(project_store):
 
 
 def test_filename_sql_require_letter_excludes_the_plot_agreement(project_store):
-    from app.core.rag.retriever import extract_rescue_terms
+    from app.core.rag.retriever import distinctive_query_terms
 
     p = project_store.create_project("D1 decoys")
     pid = p["id"]
     project_store.add_document(pid, PLOT_NAME, size=8)
     project_store.add_document(pid, VOL5_NAME, size=40)
-    terms = extract_rescue_terms(D1_QUERY)
+    terms = distinctive_query_terms(D1_QUERY)
     found = project_store.documents_matching_filename_terms(
         pid, terms, min_terms=2, require_letter=True,
     )

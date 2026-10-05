@@ -1161,7 +1161,7 @@ _TERM_RESCUE_MAX_TERMS = 5     # caps the pair expansion at C(5,2) = 10 clauses
 _TERM_RESCUE_MIN_TERMS = 2     # co-occurrence needs at least a pair
 
 
-def extract_rescue_terms(query: str) -> List[str]:
+def distinctive_query_terms(query: str) -> List[str]:
     """The distinctive content terms of ``query``, most distinctive first.
 
     Proper-noun-shaped terms (capitalised) rank above ordinary words, then
@@ -1195,7 +1195,7 @@ _STEM_SUFFIXES = ("ations", "ation", "ements", "ement", "ings", "ing", "ions",
 _STEM_MIN_CHARS = 5
 
 
-def stem_rescue_term(term: str) -> str:
+def stem_query_term(term: str) -> str:
     """``term`` reduced to the prefix it shares with its own word family."""
     word = (term or "").lower()
     for suffix in _STEM_SUFFIXES:
@@ -1204,7 +1204,7 @@ def stem_rescue_term(term: str) -> str:
     return word
 
 
-def build_rescue_phrases(terms: List[str]) -> List[str]:
+def cooccurrence_pair_phrases(terms: List[str]) -> List[str]:
     """Pairwise co-occurrence phrases for :meth:`VectorStore.identifier_search`.
 
     identifier_search AND-matches the tokens within one phrase and OR-matches
@@ -1216,7 +1216,7 @@ def build_rescue_phrases(terms: List[str]) -> List[str]:
 
     stems: List[str] = []
     for term in terms:
-        stem = stem_rescue_term(term)
+        stem = stem_query_term(term)
         if stem not in stems:
             stems.append(stem)
     return [" ".join(pair) for pair in itertools.combinations(stems, 2)]
@@ -2602,7 +2602,7 @@ def _apply_filename_overlap_boost(
     name_by_id: Dict[str, str],
 ) -> None:
     """In-place: lift chunks whose resolved filename matches the query."""
-    terms = extract_rescue_terms(query)
+    terms = distinctive_query_terms(query)
     if len(terms) < _FILENAME_RESCUE_MIN_TERMS:
         return
     letter_q = query_asks_for_letter_or_signatory(query)
@@ -2616,7 +2616,7 @@ def _apply_filename_overlap_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_filename_matched_docs(
+def _pool_docs_named_by_query(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
@@ -2630,7 +2630,7 @@ def _rescue_filename_matched_docs(
     Failures never raise — the semantic pool stands.
     """
     names: Dict[str, str] = {}
-    terms = extract_rescue_terms(query)
+    terms = distinctive_query_terms(query)
     letter_q = query_asks_for_letter_or_signatory(query)
     if letter_q:
         if len(terms) < _FILENAME_RESCUE_MIN_TERMS:
@@ -2817,7 +2817,7 @@ def chunk_states_document_control_block(text: str) -> bool:
     return document_control_label_count(text) >= 2
 
 
-def _rescue_document_identity_chunks(
+def _pool_named_document_control_block(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
@@ -4415,7 +4415,7 @@ def _rescue_pcg_value_chunks(
     """Pull the Contract Data 4.3.7 / not-required row into ``fused``."""
     if not query_asks_for_parent_company_guarantee(query):
         return 0
-    recovered = _rescue_chunks_matching(
+    recovered = _pool_lexical_hits_matching(
         project_id, fused, store, _PCG_VALUE_RESCUE_PHRASES,
         chunk_states_pcg_contract_data, label="pcg-value",
         bonus=_PCG_HONEST_BONUS,
@@ -4463,7 +4463,7 @@ def _rescue_commencement_date_chunks(
     """Pull the empty / filled Contract Data commencement row into ``fused``."""
     if not query_asks_for_contract_commencement_date(query):
         return 0
-    recovered = _rescue_chunks_matching(
+    recovered = _pool_lexical_hits_matching(
         project_id, fused, store, _COMMENCEMENT_RESCUE_PHRASES,
         chunk_states_commencement_contract_data, label="commencement-date",
         bonus=_COMMENCEMENT_HONEST_BONUS,
@@ -6206,7 +6206,7 @@ def _pair_adjacent_keep_text(
     return out
 
 
-def _rescue_chunks_matching(
+def _pool_lexical_hits_matching(
     project_id: str,
     fused: Dict[str, Tuple],
     store,
@@ -7326,38 +7326,38 @@ def _rescue_asked_particular_value_chunks(
     """Out-of-pool fetch for A2 incl-VAT, A3 TfC, A5 rate, A6 DNP, A9 Engineer."""
     recovered = 0
     if query_asks_for_delay_damages_rate(query):
-        recovered += _rescue_chunks_matching(
+        recovered += _pool_lexical_hits_matching(
             project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
             chunk_states_delay_damages_rate, label="delay-damages-rate",
         )
     if query_asks_delay_damages_daily_amount(query):
-        recovered += _rescue_chunks_matching(
+        recovered += _pool_lexical_hits_matching(
             project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
             chunk_states_delay_damages_rate, label="delay-damages-daily-rate",
         )
-        recovered += _rescue_chunks_matching(
+        recovered += _pool_lexical_hits_matching(
             project_id, fused, store, _ACA_BASE_RESCUE_PHRASES,
             chunk_states_accepted_contract_amount,
             label="delay-damages-daily-aca",
             bonus=0.0,
         )
     if query_asks_who_the_engineer_is(query):
-        recovered += _rescue_chunks_matching(
+        recovered += _pool_lexical_hits_matching(
             project_id, fused, store, _ENGINEER_IDENTITY_RESCUE_PHRASES,
             chunk_states_engineer_identity, label="engineer-identity",
         )
     if query_asks_for_aca_including_vat(query):
-        recovered += _rescue_chunks_matching(
+        recovered += _pool_lexical_hits_matching(
             project_id, fused, store, _ACA_INCL_RESCUE_PHRASES,
             chunk_states_aca_including_vat, label="aca-including-vat",
         )
     if query_asks_for_time_for_completion(query):
-        recovered += _rescue_chunks_matching(
+        recovered += _pool_lexical_hits_matching(
             project_id, fused, store, _TFC_RESCUE_PHRASES,
             chunk_states_time_for_completion, label="time-for-completion",
         )
     if query_asks_for_defects_notification_period(query):
-        recovered += _rescue_chunks_matching(
+        recovered += _pool_lexical_hits_matching(
             project_id, fused, store, _DNP_RESCUE_PHRASES,
             chunk_states_defects_notification_period,
             label="defects-notification-period",
@@ -8400,7 +8400,7 @@ def _apply_part_summary_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_part_summary_chunks(
+def _pool_page_total_rows(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
@@ -8426,7 +8426,7 @@ def _rescue_part_summary_chunks(
     def _keep(text: str) -> bool:
         return chunk_states_part_summary_total(text, refs)
 
-    recovered = _rescue_chunks_matching(
+    recovered = _pool_lexical_hits_matching(
         project_id, fused, store,
         ("part summary", *refs, "total this page"),
         _keep, label="part-summary",
@@ -8539,7 +8539,7 @@ def _rescue_rate_only_item_chunks(
     def _keep(text: str) -> bool:
         return chunk_states_rate_only_item(text, codes)
 
-    recovered = _rescue_chunks_matching(
+    recovered = _pool_lexical_hits_matching(
         project_id, fused, store, tuple(codes),
         _keep, label="rate-only-item",
     )
@@ -9581,7 +9581,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         c.chunk_id: (c, c.score or 0.0, 0.0) for c in candidates
     }
     extra_lex_pids = _general_knowledge_project_ids()
-    filename_names = _rescue_filename_matched_docs(
+    filename_names = _pool_docs_named_by_query(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
@@ -9604,7 +9604,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
-    _rescue_document_identity_chunks(
+    _pool_named_document_control_block(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
@@ -9633,7 +9633,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _rescue_rate_only_item_chunks(
         query, project_id, fused_lex, store,
     )
-    _rescue_part_summary_chunks(
+    _pool_page_total_rows(
         query, project_id, fused_lex, store,
     )
     _rescue_spec_precedence_list_neighbors(
@@ -10074,9 +10074,9 @@ def retrieve_with_filter(
     #      one document in 227, no semantic pull, k*4 candidates). Only a
     #      lexical lookup can recover it, so that runs when — and only when —
     #      pass (a) found nothing, keeping the extra SQL off the healthy path.
-    rescue_terms = extract_rescue_terms(query)
+    rescue_terms = distinctive_query_terms(query)
     if len(rescue_terms) >= _TERM_RESCUE_MIN_TERMS:
-        pairs = build_rescue_phrases(rescue_terms)
+        pairs = cooccurrence_pair_phrases(rescue_terms)
 
         def _pair_fraction(text: str) -> float:
             """Fraction of term PAIRS co-occurring in ``text``. Graduated:
@@ -10189,7 +10189,7 @@ def retrieve_with_filter(
     # Letter / named-party filename rescue (D1). Runs EVEN WHEN term rescue
     # already found place-name overlap in Volume 5 — that in-pool hit is
     # what used to skip the out-of-pool fetch of the actual letter.
-    filename_names = _rescue_filename_matched_docs(
+    filename_names = _pool_docs_named_by_query(
         query,
         project_id,
         fused,
@@ -10235,7 +10235,7 @@ def retrieve_with_filter(
         extra_pids=extra_rescue_pids,
     )
     # B6: number / revision / author of a document the question names.
-    _rescue_document_identity_chunks(
+    _pool_named_document_control_block(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
     )
@@ -10270,7 +10270,7 @@ def retrieve_with_filter(
     # F-BAT-D H3 / B3: Part Summary footer for page d/3/1 loses to
     # D110 / D290.1 line items. Project-only so a GK rate note cannot
     # impersonate the client's page total.
-    _rescue_part_summary_chunks(query, project_id, fused, store)
+    _pool_page_total_rows(query, project_id, fused, store)
     # C1: Sub-Clause 1.5.1(d) intro ends "as follows"; the precedence
     # list is the next same-doc chunk. Project-only so a FIDIC note
     # cannot impersonate the client's Specification order.

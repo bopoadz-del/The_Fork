@@ -5959,7 +5959,7 @@ def _graft_deterministic_cost_calc(
         return text
 
 
-def _rescue_deterministic_cost_calc(
+def _cost_calc_line_from_tool_result(
     messages: list[dict[str, Any]] | None,
 ) -> str:
     """Calculator line when this ask's cost tool already succeeded."""
@@ -6098,7 +6098,7 @@ def _cost_grounding_gate(
             # cost calculator this turn is the figure — do not leave the
             # refusal in its place.
             if _answer_is_no_rate_refusal(text):
-                rescued = _rescue_deterministic_cost_calc(messages)
+                rescued = _cost_calc_line_from_tool_result(messages)
                 if rescued:
                     return rescued
             return text  # not a cost/rate answer — leave it alone
@@ -6115,7 +6115,7 @@ def _cost_grounding_gate(
         grounded = _cg_grounded_numbers(rag_context, messages)
         if all(_cg_is_grounded(v, grounded) for _, v in figs):
             return text
-        rescued = _rescue_deterministic_cost_calc(messages)
+        rescued = _cost_calc_line_from_tool_result(messages)
         if rescued:
             return rescued
         _LOG.warning(
