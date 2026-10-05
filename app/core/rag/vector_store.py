@@ -167,6 +167,119 @@ def _sanitize_websearch_query(query: str) -> str:
     return " or ".join(tokens)
 
 
+# ── Bounded BM25 (exact top-k without ranking every matching row) ─────────
+#
+# The bag-of-words tsquery above matches most of a large project: measured on
+# live, "commencement date stated agreement pump station works" matched 57,069
+# of the master corpus's 118,665 chunks. ``ORDER BY ts_rank LIMIT k`` then has
+# to read every one of those tsvectors (most are TOASTed), twice -- once for
+# ``@@`` and once for ``ts_rank`` -- which was ~155k buffers (1.2 GB) per call
+# and ~80% of all the database reading one question did.
+#
+# The top-k does not need every match ranked. ``text_search`` is
+# ``to_tsvector('english', text)``: every position carries weight D (0.1), and
+# for an OR query ``ts_rank`` sums, per matched query lexeme, a term that is
+# below 0.1 however often the lexeme occurs (0.1 * sum(1/j^2) / (pi^2/6)), then
+# divides by the number of distinct query lexemes n. So a chunk matching m of
+# the n lexemes ranks strictly below m * 0.1 / n. Once k chunks with rank >= tau
+# are in hand, a chunk can only enter the top-k if it matches more than
+# tau * n / 0.1 lexemes -- and "matches at least t of n lexemes" is something
+# the GIN index can answer without touching the heap for the rest.
+#
+# ``_bm25_bounded`` ranks exactly the chunks the GIN index admits for a
+# threshold t, and accepts the result only when the k-th rank it found proves
+# no excluded chunk could beat it. Otherwise it widens t, and in the end falls
+# back to the full scan. The result is identical to ranking every match.
+
+# Upper bound of one matched lexeme's contribution to ``ts_rank`` for an
+# unweighted tsvector (weight D = 0.1), with a margin for float4 rounding.
+_TS_RANK_TERM_CAP = 0.1 * (1 + 1e-4)
+# Most OR-of-AND groups one candidate tsquery may hold. The GIN index checks
+# every group per candidate row, so a much larger tsquery costs more CPU than
+# the reads it saves (measured on live: 600 groups took 1.2 s, 120 took 0.2 s
+# for the same 26k buffers).
+_BM25_MAX_CONJUNCTIONS = 120
+# First threshold tried. On live the proving threshold was 4-5 lexemes for
+# questions of 6 to 17 lexemes; starting higher only adds rounds.
+_BM25_START_THRESHOLD = 5
+# Most bounded attempts, and most attempts that came back with fewer than k
+# rows (a small or empty project), before the full scan answers instead.
+_BM25_MAX_ROUNDS = 6
+_BM25_MAX_SHORT_ROUNDS = 2
+# One operand of a tsquery's text form: a quoted lexeme with no weight/prefix.
+_TSQUERY_LEXEME_RE = re.compile(r"^'((?:[^']|'')+)'$")
+
+
+def tsquery_or_lexemes(tsquery_text: Optional[str]) -> Optional[List[str]]:
+    """Distinct lexemes of a tsquery that is a plain OR of lexemes.
+
+    ``"'commenc' | 'date'"`` -> ``['commenc', 'date']``; an empty query ->
+    ``[]``; anything else (a phrase from a compound token, ``&``, ``!``, a
+    weight or prefix marker) -> ``None``, which the caller answers with the
+    full scan. Distinct, because ``ts_rank`` divides by the number of
+    distinct operands.
+    """
+    raw = (tsquery_text or "").strip()
+    if not raw:
+        return []
+    out: Set[str] = set()
+    for part in raw.split(" | "):
+        m = _TSQUERY_LEXEME_RE.match(part.strip())
+        if not m:
+            return None
+        out.add(m.group(1).replace("''", "'"))
+    return sorted(out)
+
+
+def _tsquery_literal(lexeme: str) -> str:
+    return "'" + lexeme.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def bm25_candidate_tsquery(
+    lexemes: List[str], t: int, frequency: Optional[Dict[str, float]] = None,
+) -> Optional[str]:
+    """A tsquery matched by every chunk holding at least ``t`` of ``lexemes``.
+
+    A chunk with ``t`` of the ``n`` lexemes holds at least ``j`` of any
+    ``n - t + j`` of them, so OR-ing the ``j``-subsets of the ``n - t + j``
+    rarest lexemes admits all such chunks while the common lexemes stay out
+    of the index lookup. The largest ``j`` (up to 3) whose subset count fits
+    ``_BM25_MAX_CONJUNCTIONS`` is used. ``frequency`` only orders the lexemes
+    (rare first); it never changes which chunks qualify.
+    """
+    from itertools import combinations
+    from math import comb
+
+    n = len(lexemes)
+    if n == 0 or t < 1 or t > n:
+        return None
+    freq = frequency or {}
+    order = sorted(lexemes, key=lambda x: (freq.get(x, 0.0), x))
+    for j in (3, 2, 1):
+        if j > t:
+            continue
+        r = n - t + j
+        if comb(r, j) > _BM25_MAX_CONJUNCTIONS:
+            continue
+        groups = (
+            " & ".join(_tsquery_literal(x) for x in combo)
+            for combo in combinations(order[:r], j)
+        )
+        return " | ".join(f"({g})" for g in groups)
+    return None
+
+
+def bm25_rank_bound_holds(kth_rank: float, n_lexemes: int, t: int) -> bool:
+    """True when no chunk with fewer than ``t`` lexemes can reach ``kth_rank``.
+
+    Such a chunk ranks below ``(t - 1) * cap / n``; when that is at most the
+    k-th rank already found, it cannot displace any of the k.
+    """
+    if n_lexemes <= 0:
+        return False
+    return (t - 1) * _TS_RANK_TERM_CAP / n_lexemes <= kth_rank
+
+
 # ── Public types ──────────────────────────────────────────────────────────
 
 
@@ -319,7 +432,14 @@ def _enable_iterative_scan(session) -> None:
         _ITERATIVE_SCAN_SUPPORTED = False
         return
     try:
-        session.execute(text(f"SET LOCAL hnsw.iterative_scan = {_ITERATIVE_SCAN_MODE}"))
+        stmt = text(f"SET LOCAL hnsw.iterative_scan = {_ITERATIVE_SCAN_MODE}")
+        if _ITERATIVE_SCAN_SUPPORTED:
+            session.execute(stmt)
+        else:
+            # First probe in a savepoint: a failed SET aborts the transaction,
+            # and the search that follows on this session would fail with it.
+            with session.begin_nested():
+                session.execute(stmt)
         _ITERATIVE_SCAN_SUPPORTED = True
     except Exception as exc:  # noqa: BLE001 — recall optimisation, not a gate
         if _ITERATIVE_SCAN_SUPPORTED is None:
@@ -495,6 +615,35 @@ def _ensure_hnsw_index(eng, table_name: str) -> None:
         )
 
 
+def _ensure_trigram_index(eng, table_name: str) -> None:
+    """Ensure the ``pg_trgm`` GIN index on ``lower(text)`` exists.
+
+    ``chunks_containing_all`` and ``identifier_search`` filter on
+    ``LOWER(text) LIKE '%needle%'``. A btree cannot serve a leading wildcard,
+    so without this the project's whole text is read to find a rare phrase
+    (~48k buffers per call on the live master corpus). Alembic 0022 creates
+    it for the tables present at deploy; namespaced tables created later get
+    it here. Never raises -- a missing index costs reads, not correctness.
+    """
+    try:
+        with eng.begin() as conn:
+            present = conn.execute(
+                text("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'")
+            ).first()
+            if present is None:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        with eng.begin() as conn:
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS {table_name}_text_trgm "
+                f"ON {table_name} USING gin (lower(text) gin_trgm_ops)"
+            ))
+    except Exception:  # noqa: BLE001 — substring reads fall back to the project scan
+        logger.warning(
+            "could not ensure the trigram index on %s (substring recall will "
+            "read the project's text until it exists)", table_name, exc_info=True,
+        )
+
+
 def table_already_exists(exc: BaseException) -> bool:
     """True when a CREATE TABLE lost a race rather than genuinely failing.
 
@@ -613,6 +762,7 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
                     exc_info=True,
                 )
             _ensure_hnsw_index(eng, table_name)
+            _ensure_trigram_index(eng, table_name)
         _INITIALIZED_NAMESPACES.add(init_key)
 
 
@@ -1098,28 +1248,46 @@ class VectorStore:
             return []
         per = max(1, int(k_per_doc or 12))
         off = max(0, int(offset or 0))
+        cls = self._rag_chunk_cls
         try:
             with self._lock:
                 with self._session_factory()() as session:
-                    stmt = (
-                        select(self._rag_chunk_cls)
-                        .where(
-                            self._rag_chunk_cls.project_id == project_id,
-                            self._rag_chunk_cls.doc_id.in_(unique),
-                        )
-                        .order_by(
-                            self._rag_chunk_cls.doc_id,
-                            self._rag_chunk_cls.chunk_index,
-                        )
-                    )
                     # A caller's ids come from a filename lookup; they are not
                     # a licence to read a retired document (live d8d9573: the
                     # superseded Contract Data came back as results #3-#5).
-                    hidden = self._hidden_doc_ids(session, project_id)
-                    rows = [
-                        r for r in session.scalars(stmt).all()
-                        if r.doc_id not in hidden
-                    ]
+                    # Hidden-ness is per document, so dropping those ids up
+                    # front is the same as dropping their rows afterwards.
+                    hidden = self._hidden_doc_ids_among(session, project_id, unique)
+                    visible = [d for d in unique if d not in hidden]
+                    if not visible:
+                        return []
+                    where = (cls.project_id == project_id, cls.doc_id.in_(visible))
+                    if all_rows:
+                        stmt = (
+                            select(*self._chunk_row_columns())
+                            .where(*where)
+                            .order_by(cls.doc_id, cls.chunk_index)
+                        )
+                    else:
+                        # The per-document window is cut in SQL, so only the
+                        # rows asked for are read and sent -- not the whole
+                        # volume to be sliced here (a 1,200-chunk volume read
+                        # in full for a 12-row window, several times a turn).
+                        order = cls.chunk_index.desc() if from_end else cls.chunk_index
+                        pos = func.row_number().over(
+                            partition_by=cls.doc_id, order_by=order,
+                        ).label("pos")
+                        inner = (
+                            select(*self._chunk_row_columns(), pos)
+                            .where(*where)
+                            .subquery()
+                        )
+                        stmt = (
+                            select(*[inner.c[c.key] for c in self._chunk_row_columns()])
+                            .where(inner.c.pos > off, inner.c.pos <= off + per)
+                            .order_by(inner.c.doc_id, inner.c.chunk_index)
+                        )
+                    rows = session.execute(stmt).all()
         except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
             logger.warning(
                 "chunks_for_docs failed for project=%s docs=%s: %s",
@@ -1127,48 +1295,67 @@ class VectorStore:
             )
             return []
 
-        def _as_chunk(r) -> Chunk:
-            return Chunk(
-                chunk_id=r.chunk_id,
-                project_id=r.project_id,
-                doc_id=r.doc_id,
-                chunk_index=int(r.chunk_index),
-                text=r.text or "",
-                score=0.0,
-                knowledge_layer=getattr(r, "knowledge_layer", None),
-                authority=getattr(r, "authority", None),
-                page=getattr(r, "page", None),
-            )
+        chunks = [self._row_as_chunk(r) for r in rows]
+        if all_rows or not from_end:
+            return chunks
+        # from_end keeps the caller's document order, each window ascending.
+        by_doc: Dict[str, List[Chunk]] = {}
+        for c in chunks:
+            by_doc.setdefault(c.doc_id, []).append(c)
+        return [c for did in unique for c in by_doc.get(did, [])]
 
-        if all_rows:
-            return [_as_chunk(r) for r in rows]
-        if from_end:
-            by_doc: Dict[str, List] = {}
-            for r in rows:
-                by_doc.setdefault(r.doc_id, []).append(r)
-            out: List[Chunk] = []
-            for did in unique:
-                group = by_doc.get(did, [])
-                end = len(group) - off
-                if end <= 0:
-                    continue
-                start = max(0, end - per)
-                out.extend(_as_chunk(r) for r in group[start:end])
-            return out
-        skipped: Dict[str, int] = {}
-        taken: Dict[str, int] = {}
-        out = []
-        for r in rows:
-            sk = skipped.get(r.doc_id, 0)
-            if sk < off:
-                skipped[r.doc_id] = sk + 1
-                continue
-            n = taken.get(r.doc_id, 0)
-            if n >= per:
-                continue
-            taken[r.doc_id] = n + 1
-            out.append(_as_chunk(r))
-        return out
+    def _chunk_row_columns(self) -> tuple:
+        """Every chunk column a read returns -- never the embedding.
+
+        The embedding is ~1.5 KB per row stored out of line; loading the
+        whole row (``select(cls)``) read it from TOAST for every chunk of a
+        document only for it to be dropped.
+        """
+        cls = self._rag_chunk_cls
+        return (
+            cls.chunk_id, cls.project_id, cls.doc_id, cls.chunk_index, cls.text,
+            cls.knowledge_layer, cls.authority, cls.page,
+        )
+
+    @staticmethod
+    def _row_as_chunk(r) -> Chunk:
+        return Chunk(
+            chunk_id=r.chunk_id,
+            project_id=r.project_id,
+            doc_id=r.doc_id,
+            chunk_index=int(r.chunk_index),
+            text=r.text or "",
+            score=0.0,
+            knowledge_layer=getattr(r, "knowledge_layer", None),
+            authority=getattr(r, "authority", None),
+            page=getattr(r, "page", None),
+        )
+
+    def _hidden_doc_ids_among(
+        self, session: Session, project_id: str, doc_ids: List[str],
+    ) -> Set[str]:
+        """``_hidden_doc_ids`` restricted to ``doc_ids`` -- primary-key probes
+        instead of reading every document row of the project."""
+        if not doc_ids or not self._docs_visibility_ready(session):
+            return set()
+        try:
+            from app.core.ingest_status import NO_CHUNK_STATUSES
+
+            rows = session.execute(
+                select(Document.id).where(
+                    Document.id.in_(list(doc_ids)),
+                    Document.project_id == project_id,
+                    or_(
+                        Document.retrieval_visible.is_(False),
+                        Document.ingest_status.in_(sorted(NO_CHUNK_STATUSES)),
+                    ),
+                )
+            ).scalars().all()
+        except SQLAlchemyError:
+            session.rollback()
+            self._visibility_ready = False
+            return set()
+        return {str(r) for r in rows}
 
     def chunks_containing_all(
         self,
@@ -1317,7 +1504,7 @@ class VectorStore:
             with self._lock:
                 with self._session_factory()() as session:
                     stmt = (
-                        select(self._rag_chunk_cls)
+                        select(*self._chunk_row_columns())
                         .where(
                             self._rag_chunk_cls.project_id == project_id,
                             or_(*clauses),
@@ -1327,9 +1514,9 @@ class VectorStore:
                             self._rag_chunk_cls.chunk_index,
                         )
                     )
-                    hidden = self._hidden_doc_ids(session, project_id)
+                    hidden = self._hidden_doc_ids_among(session, project_id, list(wanted))
                     rows = [
-                        r for r in session.scalars(stmt).all()
+                        r for r in session.execute(stmt).all()
                         if r.doc_id not in hidden
                     ]
         except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
@@ -1338,20 +1525,7 @@ class VectorStore:
                 project_id, list(wanted), exc,
             )
             return []
-        return [
-            Chunk(
-                chunk_id=r.chunk_id,
-                project_id=r.project_id,
-                doc_id=r.doc_id,
-                chunk_index=int(r.chunk_index),
-                text=r.text or "",
-                score=0.0,
-                knowledge_layer=getattr(r, "knowledge_layer", None),
-                authority=getattr(r, "authority", None),
-                page=getattr(r, "page", None),
-            )
-            for r in rows
-        ]
+        return [self._row_as_chunk(r) for r in rows]
 
     def search(
         self,
@@ -1703,29 +1877,15 @@ class VectorStore:
         if not safe_query:
             return []
         table = self._table_name
-        vis = ""
         try:
             with self._lock:
                 with self._session_factory()() as session:
+                    vis = ""
                     if self._docs_visibility_ready(session):
                         vis = self._hidden_doc_sql("c")
-                    sql = text(
-                        f"""
-                        SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
-                               c.text, c.knowledge_layer, c.authority, c.page,
-                               ts_rank(c.text_search, q) AS rank
-                        FROM {table} c, websearch_to_tsquery('english', :q) AS q
-                        WHERE c.text_search @@ q
-                          AND c.project_id = :project_id
-                          {vis}
-                        ORDER BY rank DESC
-                        LIMIT :k
-                        """
+                    rows = self._bm25_postgres_rows(
+                        session, project_id, safe_query, int(k), vis,
                     )
-                    rows = session.execute(
-                        sql,
-                        {"q": safe_query, "project_id": project_id, "k": k},
-                    ).all()
         except SQLAlchemyError as e:
             # Deliberately broader than OperationalError. A missing
             # ``text_search`` column raises ProgrammingError (UndefinedColumn),
@@ -1754,6 +1914,109 @@ class VectorStore:
             )
             for r in rows
         ]
+
+    def _bm25_select(self, where: str, vis: str) -> str:
+        """The BM25 statement over ``where``; ranks by the FULL query ``q``.
+
+        ``chunk_id`` breaks rank ties so the top-k is one fixed set rather
+        than whichever tied rows a scan happened to reach first.
+        """
+        return (
+            "SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index, "
+            "c.text, c.knowledge_layer, c.authority, c.page, "
+            "ts_rank(c.text_search, q) AS rank "
+            f"FROM {self._table_name} c, websearch_to_tsquery('english', :q) AS q "
+            f"WHERE {where} AND c.project_id = :project_id {vis} "
+            "ORDER BY rank DESC, c.chunk_id LIMIT :k"
+        )
+
+    def _bm25_postgres_rows(
+        self, session: Session, project_id: str, safe_query: str, k: int, vis: str,
+    ) -> list:
+        params = {"q": safe_query, "project_id": project_id, "k": k}
+        tsq = session.execute(
+            text("SELECT websearch_to_tsquery('english', :q)::text"), {"q": safe_query},
+        ).scalar()
+        lexemes = tsquery_or_lexemes(tsq)
+        if lexemes == []:
+            # Every word is a stopword: nothing can match. Asking anyway reads
+            # every tsvector in the project to learn that.
+            return []
+        if lexemes and len(lexemes) > 1 and k > 0:
+            rows = self._bm25_bounded(session, params, lexemes, vis)
+            if rows is not None:
+                return rows
+        return session.execute(
+            text(self._bm25_select("c.text_search @@ q", vis)), params,
+        ).all()
+
+    def _bm25_bounded(
+        self, session: Session, params: Dict[str, Any], lexemes: List[str], vis: str,
+    ) -> Optional[list]:
+        """Exact top-k ranked over GIN-admitted candidates only, or ``None``.
+
+        See the module notes above ``_TS_RANK_TERM_CAP``. A round at threshold
+        ``t`` ranks every chunk holding at least ``t`` lexemes (and possibly
+        others); it is the answer when ``k`` rows came back and the k-th rank
+        proves nothing outside the candidates could beat it. Otherwise ``t``
+        drops by one. ``None`` sends the caller to the full scan.
+        """
+        n = len(lexemes)
+        k = params["k"]
+        freq = self._lexeme_frequencies(session)
+        sql = text(self._bm25_select("c.text_search @@ CAST(:cand AS tsquery)", vis))
+        t = max(2, min(_BM25_START_THRESHOLD, (n + 1) // 2))
+        rounds = short = 0
+        while t >= 2 and rounds < _BM25_MAX_ROUNDS:
+            cand = bm25_candidate_tsquery(lexemes, t, freq)
+            if cand is None:
+                t -= 1
+                continue
+            rounds += 1
+            rows = session.execute(sql, {**params, "cand": cand}).all()
+            if len(rows) >= k:
+                if bm25_rank_bound_holds(float(rows[k - 1].rank), n, t):
+                    return rows
+            else:
+                short += 1
+                if short >= _BM25_MAX_SHORT_ROUNDS:
+                    return None
+            t -= 1
+        return None
+
+    _LEXEME_FREQ_TTL_S = 3600.0
+
+    def _lexeme_frequencies(self, session: Session) -> Dict[str, float]:
+        """Planner statistics' lexeme frequencies for ``text_search``.
+
+        Only orders candidate lexemes rarest-first (cheaper index lookups);
+        correctness never depends on it, so any failure yields ``{}``.
+        Cached per store for an hour -- statistics move with ANALYZE, not
+        per request.
+        """
+        import time as _time
+
+        cached = getattr(self, "_lexeme_freq_cache", None)
+        now = _time.monotonic()
+        if cached is not None and now - cached[0] < self._LEXEME_FREQ_TTL_S:
+            return cached[1]
+        freq: Dict[str, float] = {}
+        try:
+            row = session.execute(
+                text(
+                    "SELECT most_common_elems::text::text[], most_common_elem_freqs "
+                    "FROM pg_stats WHERE schemaname = current_schema() "
+                    "AND tablename = :t AND attname = 'text_search'"
+                ),
+                {"t": self._table_name},
+            ).first()
+            if row and row[0] and row[1]:
+                freq = {str(lx): float(f) for lx, f in zip(row[0], row[1])}
+        except SQLAlchemyError:
+            session.rollback()
+            logger.debug("lexeme statistics unavailable for %s", self._table_name, exc_info=True)
+        self._lexeme_freq_cache = (now, freq)
+        return freq
 
     def _bm25_sqlite(
         self, project_id: str, query: str, k: int
