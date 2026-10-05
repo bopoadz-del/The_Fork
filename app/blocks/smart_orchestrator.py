@@ -1,7 +1,7 @@
 """Smart Orchestrator Block - 58-action keyword router for construction workflows.
 
 The runtime action list is built by prepending PROCEDURE_ROUTING_ADDITIONS
-(17 procedure-specific actions, PRC-301..PRC-606) to the in-file ACTION_PATTERNS
+(17 procedure-kind actions from the catalogue) to the in-file ACTION_PATTERNS
 list. Six action names appear in both lists; their keyword
 lists are MERGED at scoring time so neither source loses coverage.
 Net unique actions: 17 + 47 smart_orch − 6 collisions = 58
@@ -281,6 +281,16 @@ class SmartOrchestratorBlock(UniversalBlock):
             or (input_data if isinstance(input_data, str) else "")
         )
         session_context = data.get("session_context", {})
+        # A procedure code the user typed ("XYZ-101") carries no meaning in
+        # the product. Resolve it at run time against the project's own
+        # document names and let keyword matching see that document's kind.
+        match_message = user_message
+        _pid = (session_context or {}).get("project_id") if isinstance(session_context, dict) else None
+        if _pid and user_message:
+            from app.core import procedure_catalogue as _pc
+
+            if _pc.has_code(user_message):
+                match_message = _pc.expand_codes(user_message, _pc.live_document_names(_pid))
         file_type = (
             data.get("file_type")
             or params.get("file_type")
@@ -312,7 +322,7 @@ class SmartOrchestratorBlock(UniversalBlock):
                 max_actions = int(params.get("max_actions", self.config.get("max_actions", 5)))
                 # Keep keyword secondary matches as supporting context but
                 # surface the learned pick as primary.
-                matched_secondary = self._match_actions(user_message, file_type)
+                matched_secondary = self._match_actions(match_message, file_type)
                 secondary = [m for m in matched_secondary if m["action"] != action][:max_actions - 1]
                 action_queue.extend(m["action"] for m in secondary)
 
@@ -353,7 +363,7 @@ class SmartOrchestratorBlock(UniversalBlock):
                 }
             # else: model not loaded OR low confidence → fall through to keyword
 
-        matched = self._match_actions(user_message, file_type)
+        matched = self._match_actions(match_message, file_type)
         max_actions = int(params.get("max_actions", self.config.get("max_actions", 5)))
         action_queue = [m["action"] for m in matched[:max_actions]]
 
@@ -640,7 +650,7 @@ class SmartOrchestratorBlock(UniversalBlock):
         # Pre-1.1.0 the matcher skipped any ACTION_PATTERNS entry whose
         # action name had already been seen — that silently dropped the
         # second occurrence's keyword list. Real example: PROCEDURE_ROUTING
-        # owns `safety_compliance_audit` with PRC-406 / HSE / stop-work /
+        # owns `safety_compliance_audit` with HSE-audit / stop-work /
         # near-miss keywords, while smart_orchestrator's own list adds the
         # everyday phrasings `safety`, `hse`, `osha`, `ppe`, `toolbox`,
         # `risk assessment`, `hazard`. The skip dropped all seven, so

@@ -1,12 +1,12 @@
-# PRC-501 — Design Reviews & Acceptance
+# Design Review and Acceptance Procedure
 
 ## Scope
 
-PRC-501 governs the review and acceptance of design documents within the construction programme. It applies to all design submissions from consultants, architects, and engineers.
+The design review and acceptance procedure governs the review and acceptance of design documents within the construction programme. It applies to all design submissions from consultants, architects, and engineers.
 
 ## Valid Design Review Statuses
 
-Only these statuses are permitted on design documents under PRC-501:
+Only these statuses are permitted on design documents under the design review procedure:
 
 - `FOR_COMMENT` — issued for review and feedback
 - `ACCEPTANCE` — accepted for use without further comment
@@ -26,11 +26,11 @@ These statuses are contractually prohibited on design documents and must never a
 
 ### Why APPROVED Is Forbidden
 
-The word `APPROVED` carries contractual liability. It implies that the reviewer has accepted the design and assumes responsibility for its content. PRC-501 explicitly prohibits this word on design documents to preserve the contractor's liability for design correctness. Use `accepted`, `for comment`, or `buy-off` instead.
+The word `APPROVED` carries contractual liability. It implies that the reviewer has accepted the design and assumes responsibility for its content. The design review procedure explicitly prohibits this word on design documents to preserve the contractor's liability for design correctness. Use `accepted`, `for comment`, or `buy-off` instead.
 
 ### What This Means In Practice
 
-- A QA officer who stamps a structural drawing `APPROVED` is non-compliant with PRC-501. The drawing must be re-stamped with one of the valid statuses.
+- A QA officer who stamps a structural drawing `APPROVED` is non-compliant with the design review procedure. The drawing must be re-stamped with one of the valid statuses.
 - A Lead Engineer cannot use `APPROVED` regardless of seniority — the prohibition applies to all signatories.
 - The same rule applies to `APPROVAL` and `SIGN_OFF`.
 
@@ -44,11 +44,11 @@ The 7-day figure is **calendar days**, not business days. Weekends and public ho
 
 ### Maximum Distribution Period
 
-PRC-501 recommends a maximum distribution period of 14 calendar days. Distributing too far in advance encourages stakeholders to defer review and can dilute attention.
+The design review procedure recommends a maximum distribution period of 14 calendar days. Distributing too far in advance encourages stakeholders to defer review and can dilute attention.
 
 ### Common Misconception
 
-The minimum review period is **not 30 days**. Some teams cite 30 days from other procedures or contract clauses; PRC-501 is explicit on 7 calendar days minimum.
+The minimum review period is **not 30 days**. Some teams cite 30 days from other procedures or contract clauses; the design review procedure is explicit on 7 calendar days minimum.
 
 ### Worked Example
 
@@ -58,6 +58,6 @@ If the pack is distributed only 3 calendar days before the workshop, the worksho
 
 ## Related Procedures
 
-- PRC-502 — Design Directives and Employer Approval
-- PRC-606 — Variation Orders vs Request for Modification (RFM)
-- PRC-402 — Non-Conformance Reports (NCR)
+- Design directive procedure — Design Directives and Employer Approval
+- Change management procedure — Variation Orders vs Request for Modification (RFM)
+- Non-conformance procedure — Non-Conformance Reports (NCR)

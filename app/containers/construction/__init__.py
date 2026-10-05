@@ -675,16 +675,16 @@ class ConstructionContainer(
                 "status": "error",
                 "error": f"Unknown procedure action: {action}",
             }
-        meta = procedure_metadata(action)
-        delegate = meta.get("delegate_action")
         data = input_data if isinstance(input_data, dict) else {}
         p = dict(params or {})
+        meta = procedure_metadata(action, project_id=data.get("project_id") or p.get("project_id"))
+        delegate = meta.get("delegate_action")
         needs_file = delegate in {"qa_qc_inspection", "drawing_qto", "bim_analysis"}
         has_file = bool(
             data.get("file_path") or p.get("file_path") or data.get("spec_file") or p.get("spec_file")
         )
         # Gate rfi_generator: only delegate when runnable issues exist.
-        # Normalize singular `issue` → issues list; otherwise keep PRC metadata.
+        # Normalize singular `issue` → issues list; otherwise keep procedure metadata.
         if delegate == "rfi_generator":
             issues = normalize_rfi_issues(data, p)
             if not issues:

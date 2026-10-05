@@ -283,7 +283,7 @@ queries:
     feature: rfp_management
     project: master_corpus
     # Mirrors feature_matrix must-cover rfp_management prompt 1 (hint-only
-    # PRC-602). Structural: section headings + RFP/tender vocabulary.
+    # request_for_proposals). Structural: section headings + RFP/tender vocabulary.
     prompt: "prepare an RFP for the landscaping subcontract package"
     answer_expect:
       - '(?m)^(?:#{1,6}\s+\S|(?:\*\*)?\d+(?:\.\d+)*[.)]?\s+[A-Z])'

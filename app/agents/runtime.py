@@ -6209,7 +6209,7 @@ def gate_cost_answer(
 
 # ── Standards advisory (ADVISORY, never blocks) ─────────────────────────────
 # Highlights a deviation from a critical construction standard (e.g. 'APPROVED'
-# used on a design document, PRC-501) by APPENDING a note — it never rejects,
+# used on a design document, design review procedure) by APPENDING a note — it never rejects,
 # edits, or halts the answer. Operators bend rules deliberately in the field; the
 # platform's job is to flag the deviation so the choice is informed, not to
 # enforce a stop. Flag STANDARDS_ADVISORY (default on); never raises. This is the
@@ -6218,13 +6218,12 @@ def _standards_advisory_enabled() -> bool:
     return os.getenv("STANDARDS_ADVISORY", "1") not in ("0", "false", "False", "")
 
 
-# PRC-501 flags the word APPROVED on design documents. A lighting answer
+# The design review procedure flags the word APPROVED on design documents. A lighting answer
 # that quotes "subject to the Engineer's approval" also contains "design"
 # and "document", and the answer-only scan appended this note to a
 # question that never asked about design-document wording.
 _DESIGN_STATUS_QUESTION_RE = re.compile(
-    r"(?i)\bPRC-\s*501\b"
-    r"|\bdesign\s+(?:review|document|drawing|package|submission|status)"
+    r"(?i)\bdesign\s+(?:review|document|drawing|package|submission|status)"
     r"|\b(?:drawing|document)\s+status"
     r"|\b(?:approved|approval|approve)\b"
     r"|\bsign[- ]?off\b"
@@ -6232,7 +6231,7 @@ _DESIGN_STATUS_QUESTION_RE = re.compile(
 
 
 def _standards_note_relevant(question: str | None) -> bool:
-    """True when the PRC-501 note is about this question.
+    """True when the design-review note is about this question.
 
     No question keeps the historical answer-only scan. A non-empty
     question that is not about design-document status does not get the
@@ -6260,7 +6259,16 @@ def _standards_advisory(text: str, question: str | None = None) -> str:
             if rid in seen:
                 continue
             seen.add(rid)
-            proc = v.get("procedure", "")
+            # The live procedure document's code when the corpus has one,
+            # else the catalogue kind's label -- never a shipped code.
+            kind = str(v.get("procedure") or "").split("/")[0]
+            pid = v.get("procedure_id") or kind
+            if pid == kind and kind:
+                from app.core.procedure_catalogue import label as _proc_label
+
+                proc = _proc_label(kind)
+            else:
+                proc = pid
             msg = v.get("violation_message") or v.get("rule", "")
             lines.append(f"> - **{proc}** — {msg}" if proc else f"> - {msg}")
         if not lines:

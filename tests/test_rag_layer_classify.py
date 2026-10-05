@@ -26,7 +26,7 @@ def test_gk_contract_reference_is_contractual():
 
 
 def test_gk_procedure_is_company_rules():
-    assert L.classify("curated_kb", "prc_501_procedures.md") == (
+    assert L.classify("curated_kb", "design_review_procedure.md") == (
         "company_rules", "policy")
 
 
@@ -64,3 +64,19 @@ def test_empty_docname_is_safe():
     layer, auth = L.classify("client_infra_pack_1", "")
     assert layer == "project_record"
     assert auth in L.AUTHORITIES
+
+
+@pytest.mark.parametrize("name", [
+    "XYZ-101_Change Control.pdf",
+    "qrs_330 HSE Audit.docx",
+    "ABC 204 - Site Logistics Form.xlsx",
+])
+def test_a_controlled_company_document_is_company_rules_by_its_code_shape(name):
+    """No organisation's code prefix is listed: any leading controlled-document
+    code followed by a title marks a company procedure/template/form."""
+    assert L.classify("curated_kb", name) == ("company_rules", "policy")
+
+
+def test_a_contract_id_is_not_a_controlled_document_code():
+    layer, _auth = L.classify("curated_kb", "AB-2001-101_Vol 1.pdf")
+    assert layer == "shared_domain"

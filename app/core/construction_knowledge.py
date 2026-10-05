@@ -49,7 +49,7 @@ def _load_db() -> Dict:
 
 
 def get_procedure(procedure_id: str) -> Optional[Dict]:
-    """Return the full procedure dict for a given PRC number e.g. 'PRC-402'."""
+    """Return the catalogue record for a procedure kind, e.g. ``"non_conformance"``."""
     db = _load_db()
     return db.get("procedures", {}).get(procedure_id)
 
@@ -70,7 +70,7 @@ CRITICAL_RULES = {
     "no_approved_on_design": {
         "rule": "Never use 'APPROVED' on design documents.",
         "correct": ["accepted", "for comment", "buy-off"],
-        "procedure": "PRC-501",
+        "procedure": "design_review",
         "violation_message": (
             "The word 'APPROVED' is contractually prohibited on design documents. "
             "Use 'accepted', 'for comment', or 'buy-off' instead."
@@ -79,64 +79,69 @@ CRITICAL_RULES = {
 
     "no_work_before_dd_approval": {
         "rule": "No work may proceed on any instruction until the Design Directive has Employer approval.",
-        "procedure": "PRC-502",
+        "procedure": "design_directive",
         "violation_message": (
             "Work cannot proceed on this instruction. "
-            "A Design Directive (DD) must be approved by the Employer first (PRC-502)."
+            "A Design Directive (DD) must be approved by the Employer first (design directive procedure)."
         ),
     },
 
     "rfm_not_vo": {
         "rule": "An RFM is an instruction only - NOT a Variation Order. Only a signed VO changes the contract.",
-        "procedure": "PRC-606",
+        "procedure": "change_management",
         "violation_message": (
             "An RFM (Request for Modification) is an instruction, not a contract amendment. "
-            "A signed Variation Order (VO) is required to change the contract (PRC-606)."
+            "A signed Variation Order (VO) is required to change the contract (change management procedure)."
         ),
     },
 
     "stop_work_resumption": {
         "rule": "No work resumption after STOP WORK without PMC Project Director written sign-off.",
-        "procedure": "PRC-406",
+        "procedure": "hse_audit",
         "violation_message": (
             "Work cannot resume after a STOP WORK order without the PMC Project Director's "
-            "written sign-off (PRC-406)."
+            "written sign-off (HSE audit and inspection procedure)."
         ),
     },
 
     "payment_form_controlled": {
-        "rule": "Payment Request Form is a controlled document. Cannot be modified without VP Programme Management approval.",
-        "procedure": "PRC-605",
+        "rule": "Payment Request Form is a controlled document. Cannot be modified without programme-management approval.",
+        "procedure": "interim_payment",
         "violation_message": (
             "The Payment Request Form is a controlled document and cannot be modified "
-            "without VP Programme Management approval (PRC-605)."
+            "without programme-management approval (interim payment procedure)."
         ),
     },
 
     "ncr_not_ir": {
         "rule": "An NCR (non-conformance) and an Inspection Rejection (IR) are different.",
-        "procedure": "PRC-402/PRC-405",
+        "procedure": "non_conformance/inspection_request",
         "violation_message": (
-            "An Inspection Rejection (PRC-405) is a routine hold that may or may not "
-            "escalate to an NCR. An NCR (PRC-402) is a formal non-conformance record."
+            "An Inspection Rejection (inspection request procedure) is a routine hold that may or may not "
+            "escalate to an NCR. An NCR (non-conformance procedure) is a formal non-conformance record."
         ),
     },
 
     "design_review_min_distribution": {
         "rule": "Design review package must be distributed at least 7 calendar days before the workshop.",
-        "procedure": "PRC-501",
+        "procedure": "design_review",
         "violation_message": (
             "The design review package must be distributed a minimum of 7 calendar days "
-            "before the workshop date (PRC-501)."
+            "before the workshop date (design review and acceptance procedure)."
         ),
     },
 }
 
 
-def enforce_critical_rules(text: str) -> List[Dict]:
+def enforce_critical_rules(text: str, document_names: Optional[List[str]] = None) -> List[Dict]:
     """
     Scan text for critical rule violations.
-    Returns a list of violation dicts: {rule_id, message, procedure}.
+    Returns a list of violation dicts: {rule_id, message, procedure, procedure_id}.
+
+    ``procedure`` is the catalogue kind. ``procedure_id`` is the live
+    procedure document's own code when ``document_names`` (the active
+    project's documents, read at run time) contains one of that kind, else
+    the kind id.
     """
     violations = []
     text_lower = text.lower()
@@ -153,6 +158,12 @@ def enforce_critical_rules(text: str) -> List[Dict]:
                 **CRITICAL_RULES["no_approved_on_design"]
             })
 
+    if violations:
+        from app.core.procedure_catalogue import resolve_procedure
+
+        for v in violations:
+            kind = str(v.get("procedure") or "").split("/")[0]
+            v["procedure_id"] = resolve_procedure(kind, document_names)["procedure_id"]
     return violations
 
 
@@ -186,7 +197,7 @@ def generate_doc_number(doc_type: str, sequence: int, year: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
-# DESIGN REVIEW VALIDATION (PRC-501)
+# DESIGN REVIEW VALIDATION (design review and acceptance procedure)
 # ---------------------------------------------------------------------------
 
 VALID_DESIGN_STATUSES = {"FOR_COMMENT", "ACCEPTANCE", "BUY_OFF", "PENDING_DEBRIEF", "SUPERSEDED"}
@@ -202,7 +213,7 @@ def validate_design_status(status: str) -> Tuple[bool, str]:
     if s in FORBIDDEN_DESIGN_STATUSES:
         return (
             False,
-            f"'{status}' is forbidden on design documents (PRC-501). "
+            f"'{status}' is forbidden on design documents (design review and acceptance procedure). "
             f"Use one of: {', '.join(VALID_DESIGN_STATUSES)}"
         )
     if s not in VALID_DESIGN_STATUSES:
@@ -216,7 +227,7 @@ def validate_design_status(status: str) -> Tuple[bool, str]:
 
 def check_review_timeline(distribution_date: str, workshop_date: str) -> Tuple[bool, str]:
     """
-    Check that the review distribution period meets PRC-501 requirements.
+    Check that the review distribution period meets the design review procedure.
     distribution_date and workshop_date: 'YYYY-MM-DD' strings.
     Returns (compliant, message).
     """
@@ -229,13 +240,13 @@ def check_review_timeline(distribution_date: str, workshop_date: str) -> Tuple[b
             return (
                 False,
                 f"Only {delta} calendar days between distribution and workshop. "
-                f"PRC-501 requires minimum 7 days. Workshop must be no earlier than "
+                f"The design review procedure requires minimum 7 days. Workshop must be no earlier than "
                 f"{(dist + timedelta(days=7)).isoformat()}."
             )
         if delta > 14:
             return (
                 True,
-                f"Distribution period is {delta} days. PRC-501 maximum is 14 days - "
+                f"Distribution period is {delta} days. The design review procedure maximum is 14 days - "
                 f"consider whether the package can be issued closer to the workshop."
             )
         return True, f"Timeline compliant: {delta} calendar days distribution period."
@@ -244,7 +255,7 @@ def check_review_timeline(distribution_date: str, workshop_date: str) -> Tuple[b
 
 
 # ---------------------------------------------------------------------------
-# NCR VALIDATION (PRC-402)
+# NCR VALIDATION (non-conformance procedure)
 # ---------------------------------------------------------------------------
 
 VALID_NCR_DISPOSITIONS = {"USE_AS_IS", "REPAIR", "REJECT", "CONCESSION"}
@@ -259,7 +270,7 @@ def validate_ncr_disposition(disposition: str) -> Tuple[bool, str]:
     if d not in VALID_NCR_DISPOSITIONS:
         return (
             False,
-            f"'{disposition}' is not a valid NCR disposition (PRC-402). "
+            f"'{disposition}' is not a valid NCR disposition (non-conformance procedure). "
             f"Valid options: {', '.join(VALID_NCR_DISPOSITIONS)}"
         )
     descriptions = {
@@ -283,12 +294,12 @@ def next_ncr_status(current_status: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# RISK SCORING (PRC-302)
+# RISK SCORING (risk management procedure)
 # ---------------------------------------------------------------------------
 
 def score_risk(probability: int, impact: int) -> Dict:
     """
-    Score a risk per PRC-302 methodology.
+    Score a risk per the risk management procedure methodology.
     probability: 1-5, impact: 1-5
     Returns dict with score, band, and formatted statement.
     """
@@ -312,7 +323,7 @@ def score_risk(probability: int, impact: int) -> Dict:
 
 
 # ---------------------------------------------------------------------------
-# PAYMENT CALCULATIONS (PRC-605)
+# PAYMENT CALCULATIONS (interim payment procedure)
 # ---------------------------------------------------------------------------
 
 def calculate_payment(
@@ -323,7 +334,7 @@ def calculate_payment(
     contract_value: float = 0.0,
 ) -> Dict:
     """
-    Calculate net payment due per PRC-605.
+    Calculate net payment due per the interim payment procedure.
     """
     if claimed_amount < 0 or certified_amount < 0:
         return {"error": "claimed_amount and certified_amount must be >= 0."}
@@ -459,7 +470,7 @@ def calculate_evm(
 
 
 # ---------------------------------------------------------------------------
-# TENDER EVALUATION (PRC-603)
+# TENDER EVALUATION (tender analysis procedure)
 # ---------------------------------------------------------------------------
 
 def evaluate_tender(
@@ -467,7 +478,7 @@ def evaluate_tender(
     weights: Optional[Dict] = None,
 ) -> Dict:
     """
-    Score and rank tender submissions per PRC-603.
+    Score and rank tender submissions per the tender analysis procedure.
 
     tenderers: list of dicts, each with:
         {
@@ -504,7 +515,7 @@ def evaluate_tender(
         "ranked_tenderers": ranked,
         "recommended": ranked[0] if ranked else None,
         "weights_applied": weights,
-        "procedure": "PRC-603",
+        "procedure": "tender_analysis",
     }
 
 
@@ -528,7 +539,7 @@ class ConstructionKnowledge:
         num = ck.generate_doc_number("NCR", 1, year=2024)  # -> "NCR-2024-001"
 
         # Get full procedure rules
-        proc = ck.get_procedure("PRC-402")  # -> dict with all NCR rules
+        proc = ck.get_procedure("non_conformance")  # -> dict with all NCR rules
 
         # Score a risk
         risk = ck.score_risk(4, 3)  # -> {score: 12, band: "RED", ...}

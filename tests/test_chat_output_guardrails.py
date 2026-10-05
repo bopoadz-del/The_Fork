@@ -40,7 +40,7 @@ def _stub_llm_key(monkeypatch):
 
 
 def test_looks_like_internal_tool_json_detects_tool_call_shape():
-    raw = json.dumps({"name": "search_project_documents", "arguments": {"query": "PRC-501"}})
+    raw = json.dumps({"name": "search_project_documents", "arguments": {"query": "XYZ-501"}})
     assert _looks_like_internal_tool_json(raw) is True
 
     raw_list = json.dumps([{"type": "function", "function": {"name": "foo", "arguments": "{}"}}])
@@ -157,7 +157,7 @@ async def test_chat_replaces_raw_tool_json_with_fallback(monkeypatch):
         allowed_blocks=[],
     )
 
-    raw_tool = json.dumps({"name": "search_project_documents", "arguments": {"query": "PRC-501", "top_k": 20}})
+    raw_tool = json.dumps({"name": "search_project_documents", "arguments": {"query": "XYZ-501", "top_k": 20}})
 
     async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
@@ -170,7 +170,7 @@ async def test_chat_replaces_raw_tool_json_with_fallback(monkeypatch):
 
     monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
 
-    result = await agent.chat("What is PRC-501?")
+    result = await agent.chat("What is XYZ-501?")
     assert result["status"] == "success"
     assert raw_tool not in result["answer"]
     assert result["answer"] in (_EMPTY_RESPONSE_FALLBACK, _TOOL_FORMAT_FALLBACK)

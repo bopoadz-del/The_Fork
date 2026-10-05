@@ -55,18 +55,32 @@ def load_source_lines() -> List[str]:
 # Bullets in the file start with "- ". A bullet may be wrapped across the
 # next physical line(s) (continuation lines start with two spaces, or
 # any non-empty line that does not itself begin with "- " and is not a
-# header). Sections are introduced by an UPPERCASE TITLE LINE — for the
-# PRC sections, the title also embeds the procedure code in parens like
-# "(PRC-501)". We key sections by their full title.
+# header). Sections are introduced by an UPPERCASE TITLE LINE. A section is
+# a PROCEDURE section when its title names a procedure kind of the shipped
+# catalogue (app.core.procedure_catalogue) -- the prompt carries no procedure
+# codes, so sections are tagged by kind id. We key sections by their full title.
 
 
-_PRC_TITLE_RE = re.compile(r"\(PRC-(\d+[A-Z]?)\)")
-_PRC_MENTION_RE = re.compile(r"PRC-(\d+[A-Z]?)")
-_TEM_MENTION_RE = re.compile(r"TEM-(\d+)")
+def _kind_for_title(title: str) -> str:
+    from app.core.procedure_catalogue import kind_for_name
+
+    return kind_for_name(title) or ""
+
+
+def _template_titles() -> Dict[str, str]:
+    """``{template_kind: title}`` for every template the catalogue names."""
+    from app.core.procedure_catalogue import procedures
+
+    out: Dict[str, str] = {}
+    for rec in procedures().values():
+        for tkind, title in (rec.get("templates") or {}).items():
+            # "Project Decision Note (PDN)" is cited as "Project Decision Note".
+            out[tkind] = re.sub(r"\s*\([^)]*\)\s*$", "", title).strip()
+    return out
 
 
 def parse_sections() -> Dict[str, Dict[str, object]]:
-    """Return {section_title: {"prc": "PRC-501"|None, "bullets": [str, ...]}}.
+    """Return {section_title: {"prc": "<procedure kind>"|"", "bullets": [str, ...]}}.
 
     Bullets are returned with leading "- " stripped and continuation
     lines joined with a single space. Section order is preserved by
@@ -90,13 +104,9 @@ def parse_sections() -> Dict[str, Dict[str, object]]:
         flush_bullet()
         if current_title and current_bullets:
             sections[current_title] = {
-                "prc": _extract_prc(current_title),
+                "prc": _kind_for_title(current_title),
                 "bullets": list(current_bullets),
             }
-
-    def _extract_prc(title: str) -> str:
-        m = _PRC_TITLE_RE.search(title)
-        return f"PRC-{m.group(1)}" if m else ""
 
     for raw in lines:
         line = raw.rstrip()
@@ -149,13 +159,13 @@ def _row(instruction: str, response: str, source: str) -> Dict[str, str]:
     }
 
 
-def _all_prcs_in_source() -> List[str]:
-    """Every PRC code mentioned anywhere in the file, in first-mention order."""
+def _all_kinds_in_source() -> List[str]:
+    """Every procedure kind with a section in the file, in file order."""
     seen: Dict[str, None] = {}
-    for m in _PRC_MENTION_RE.finditer(load_source_text()):
-        code = f"PRC-{m.group(1)}"
-        if code not in seen:
-            seen[code] = None
+    for body in parse_sections().values():
+        kind = body.get("prc")
+        if kind and kind not in seen:
+            seen[kind] = None
     return list(seen)
 
 
@@ -171,43 +181,35 @@ def _section_for_prc(prc: str, sections: Dict[str, Dict[str, object]]) -> Tuple[
 
 def gen_prc_procedures() -> Iterator[Dict[str, str]]:
     sections = parse_sections()
-    # Iterate over sections that have a PRC code, in file order.
+    # Iterate over procedure sections, in file order.
     for title, body in sections.items():
         prc = body["prc"]
         if not prc:
             continue
         bullets = body["bullets"]
-        # Strip the parenthetical "(PRC-xxx)" for a clean topic label.
-        topic = _PRC_TITLE_RE.sub("", title).strip()
+        topic = title.strip()
+        templates = _template_titles()
         for idx, bullet in enumerate(bullets, start=1):
-            # Tag the row with the owning PRC, plus any *other* PRC
-            # codes mentioned in the bullet itself so coverage tests
-            # see PRC-603A, cross-refs to PRC-606 from PRC-502, etc.
-            extra_prcs = sorted(
-                {f"PRC-{m.group(1)}" for m in _PRC_MENTION_RE.finditer(bullet)}
-                - {prc}
-            )
-            tag_codes = [prc] + extra_prcs
-            tag = ":".join(tag_codes) + f":bullet{idx}"
+            tag = f"{prc}:bullet{idx}"
             # Angle 1: open-ended "what does the procedure say".
             yield _row(
-                f"What does procedure {prc} ({topic}) say about item {idx}?",
+                f"What does the {topic.title()} procedure say about item {idx}?",
                 bullet,
                 tag,
             )
             # Angle 2: governance framing — which procedure governs this fact.
             yield _row(
                 f"Which procedure governs the following requirement: \"{_short(bullet)}\"?",
-                f"This is governed by {prc} ({topic}). The exact requirement is: {bullet}",
+                f"This is governed by the {topic.title()} procedure. The exact requirement is: {bullet}",
                 tag,
             )
-            # Angle 3 (conditional): if the bullet mentions a TEM doc,
-            # ask "what TEM form covers ...".
-            tems = _TEM_MENTION_RE.findall(bullet)
-            if tems:
+            # Angle 3 (conditional): if the bullet names a controlled form or
+            # template from the catalogue, ask which form is referenced.
+            low = bullet.lower()
+            if any(title_.lower() in low for title_ in templates.values()):
                 yield _row(
-                    f"Under {prc}, which TEM form is referenced in the requirement about "
-                    f"\"{_short(bullet)}\"?",
+                    f"Under the {topic.title()} procedure, which controlled form is referenced "
+                    f"in the requirement about \"{_short(bullet)}\"?",
                     bullet,
                     tag,
                 )
@@ -315,7 +317,7 @@ def gen_critical_rules() -> Iterator[Dict[str, str]]:
 # ── gen_document_numbering ─────────────────────────────────────────────────
 #
 # Mine the DOCUMENT NUMBERING CONVENTIONS section (bullets like
-# "RFI: RFI-[4-digit number] e.g. RFI-0042") plus every TEM-xxx and
+# "RFI: RFI-[4-digit number] e.g. RFI-0042") plus every catalogue form/template and
 # MNL/PRC reference appearing elsewhere — but only emit rows for
 # numbering items the file actually documents.
 
@@ -328,13 +330,10 @@ def _doc_numbering_bullets() -> List[str]:
     return []
 
 
-def _tems_in_source() -> List[str]:
-    seen: Dict[str, None] = {}
-    for m in _TEM_MENTION_RE.finditer(load_source_text()):
-        code = f"TEM-{m.group(1)}"
-        if code not in seen:
-            seen[code] = None
-    return list(seen)
+def _templates_in_source() -> List[str]:
+    """Catalogue templates whose title appears in the source, in kind order."""
+    text = load_source_text().lower()
+    return [k for k, title in sorted(_template_titles().items()) if title.lower() in text]
 
 
 def gen_document_numbering() -> Iterator[Dict[str, str]]:
@@ -359,37 +358,38 @@ def gen_document_numbering() -> Iterator[Dict[str, str]]:
             tag,
         )
 
-    # TEM-xxx references — each TEM appears in some PRC section bullet
-    # or in a section title. Find the bullet (or title) that mentions
-    # it and quote that verbatim.
+    # Controlled forms / templates: each catalogue template the prompt names
+    # appears in some procedure bullet or section title. Quote that verbatim.
     sections = parse_sections()
-    tem_to_bullet: Dict[str, Tuple[str, str]] = {}
+    titles = _template_titles()
+    form_to_bullet: Dict[str, Tuple[str, str]] = {}
     for title, body in sections.items():
-        # Title-level TEMs (e.g. "DESIGN RACI MATRIX (TEM-503)").
-        for m in _TEM_MENTION_RE.finditer(title):
-            code = f"TEM-{m.group(1)}"
-            if code not in tem_to_bullet:
-                tem_to_bullet[code] = (title, title)
-        for bullet in body["bullets"]:
-            for m in _TEM_MENTION_RE.finditer(bullet):
-                code = f"TEM-{m.group(1)}"
-                if code not in tem_to_bullet:
-                    tem_to_bullet[code] = (title, bullet)
-    for tem in sorted(tem_to_bullet):
-        title, bullet = tem_to_bullet[tem]
-        tag = f"numbering:{tem}"
+        for tkind, ttitle in titles.items():
+            if tkind in form_to_bullet:
+                continue
+            if ttitle.lower() in title.lower():
+                form_to_bullet[tkind] = (title, title)
+                continue
+            for bullet in body["bullets"]:
+                if ttitle.lower() in bullet.lower():
+                    form_to_bullet[tkind] = (title, bullet)
+                    break
+    for tkind in sorted(form_to_bullet):
+        title, bullet = form_to_bullet[tkind]
+        name = titles[tkind]
+        tag = f"numbering:{tkind}"
         yield _row(
-            f"What does the construction-expert prompt say about controlled form {tem}?",
+            f"What does the construction-expert prompt say about the {name}?",
             bullet,
             tag,
         )
         yield _row(
-            f"In which procedure section does {tem} appear and what is it used for?",
+            f"In which procedure section does the {name} appear and what is it used for?",
             bullet,
             tag,
         )
         yield _row(
-            f"Quote the sentence from the construction-expert prompt that references {tem}.",
+            f"Quote the sentence from the construction-expert prompt that references the {name}.",
             bullet,
             tag,
         )

@@ -195,7 +195,7 @@ _BIDDERS = [
      "hse_score": 80, "local_content_score": 75},
 ]
 _TENDER_ASK = (
-    "Per PRC-603, evaluate the following three balanced bidders: "
+    "Per XYZ-603, evaluate the following three balanced bidders: "
     "Bidder A — technical 85, commercial 75, HSE 90, local content 60; "
     "Bidder B — technical 78, commercial 82, HSE 85, local content 70; "
     "Bidder C — technical 70, commercial 88, HSE 80, local content 75. "

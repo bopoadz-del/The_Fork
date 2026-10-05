@@ -14,6 +14,13 @@ from .helpers import _parse_money_str, _safe_float, _safe_iso_date
 logger = logging.getLogger(__name__)
 
 
+def _project_id_of(input_data: Any, params: Optional[Dict]) -> Optional[str]:
+    """Active project id from the action input or params, if the caller sent one."""
+    data = input_data if isinstance(input_data, dict) else {}
+    pid = data.get("project_id") or (params or {}).get("project_id")
+    return str(pid) if pid else None
+
+
 def _om_outline_from_text(text: str) -> Optional[Dict[str, Any]]:
     """O&M outline from the operator brief — no invented equipment tags."""
     t = text or ""
@@ -2139,7 +2146,7 @@ class ConstructionDocumentsMixin:
         }
 
     async def wir_form(self, input_data: Any, params: Dict) -> Dict:
-        """Draft a Work Inspection Request from operator facts (PRC-405).
+        """Draft a Work Inspection Request from operator facts (inspection request procedure).
 
         Live M15: a named WIR template plus pour facts used to search-loop
         and return an empty bubble because ``inspection_request`` delegated
@@ -2214,13 +2221,13 @@ class ConstructionDocumentsMixin:
         scope = " — ".join(scope_bits)
 
         from app.core.procedure_actions import procedure_metadata
-        meta = procedure_metadata("inspection_request")
+        meta = procedure_metadata("inspection_request", project_id=_project_id_of(input_data, params))
 
         return {
             "status": "success",
             "action": "wir_form",
             "execution_mode": "drafted",
-            "procedure_id": "PRC-405",
+            "procedure_id": meta["procedure_id"],
             "wir_number": wir_number,
             "issued": False,
             "template": template,
@@ -2250,7 +2257,7 @@ class ConstructionDocumentsMixin:
             ),
             "procedure_context": {
                 "orchestrator_action": "inspection_request",
-                "procedure_id": "PRC-405",
+                "procedure_id": meta["procedure_id"],
                 "execution_mode": "delegated",
                 "delegate_action": "wir_form",
                 "procedure_title": meta.get("procedure_title") or "",
@@ -2439,7 +2446,7 @@ class ConstructionDocumentsMixin:
         }
 
     async def job_requisition(self, input_data: Any, params: Dict) -> Dict:
-        """Draft a PRC-601 job requisition from operator facts.
+        """Draft a job requisition from operator facts.
 
         Live M6: contracts-manager called wir_form then Groq 413'd. This
         drafts the JR from the stated scope (NOC, poles, signage) without
@@ -2494,12 +2501,12 @@ class ConstructionDocumentsMixin:
             "Works described in the operator message"
         )
         from app.core.procedure_actions import procedure_metadata
-        meta = procedure_metadata("job_requisition")
+        meta = procedure_metadata("job_requisition", project_id=_project_id_of(input_data, params))
         return {
             "status": "success",
             "action": "job_requisition",
             "execution_mode": "drafted",
-            "procedure_id": "PRC-601",
+            "procedure_id": meta["procedure_id"],
             "jr_number": "DRAFT-JR",
             "issued": False,
             "title": (
@@ -2528,7 +2535,7 @@ class ConstructionDocumentsMixin:
             ),
             "procedure_context": {
                 "orchestrator_action": "job_requisition",
-                "procedure_id": "PRC-601",
+                "procedure_id": meta["procedure_id"],
                 "execution_mode": "delegated",
                 "delegate_action": "job_requisition",
                 "procedure_title": meta.get("procedure_title") or "",
@@ -2536,7 +2543,7 @@ class ConstructionDocumentsMixin:
         }
 
     async def rfp_draft(self, input_data: Any, params: Dict) -> Dict:
-        """Draft a PRC-602 RFP / invitation from operator facts.
+        """Draft an RFP / invitation from operator facts.
 
         Live M14: the model called wir_form (refused) then Groq 413'd.
         """
@@ -2574,7 +2581,7 @@ class ConstructionDocumentsMixin:
             f"radius cluster and install a {option_s}."
         )
         from app.core.procedure_actions import procedure_metadata
-        meta = procedure_metadata("rfp_management")
+        meta = procedure_metadata("rfp_management", project_id=_project_id_of(input_data, params))
         invitation = (
             "INVITATION TO TENDER\n\n"
             "You are invited to submit a proposal for a stormwater "
@@ -2587,7 +2594,7 @@ class ConstructionDocumentsMixin:
             "status": "success",
             "action": "rfp_draft",
             "execution_mode": "drafted",
-            "procedure_id": "PRC-602",
+            "procedure_id": meta["procedure_id"],
             "rfp_number": "DRAFT-RFP",
             "issued": False,
             "title": "RFP — stormwater manhole-rationalisation subcontract",
@@ -2602,7 +2609,7 @@ class ConstructionDocumentsMixin:
             "evaluation_method": (
                 "Technical compliance with the accepted alternative (GRP or "
                 "closed channel), programme impact on remaining manhole collars, "
-                "HSE, then commercial. Award recommendation follows PRC-603."
+                "HSE, then commercial. Award recommendation follows the tender analysis procedure."
             ),
             "key_dates_note": (
                 "Key dates are to be confirmed against the approved programme "
@@ -2616,7 +2623,7 @@ class ConstructionDocumentsMixin:
             ),
             "procedure_context": {
                 "orchestrator_action": "rfp_management",
-                "procedure_id": "PRC-602",
+                "procedure_id": meta["procedure_id"],
                 "execution_mode": "delegated",
                 "delegate_action": "rfp_draft",
                 "procedure_title": meta.get("procedure_title") or "",

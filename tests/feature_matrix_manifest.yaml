@@ -170,7 +170,7 @@ features:
   - action: rfp_management
     feature: RFP production
     class: must
-    handler: hint-only (PRC-602)
+    handler: hint-only (request_for_proposals)
     prompts:
       - text: "prepare an RFP for the landscaping subcontract package"
         expect_route: [rfp_management, job_requisition]
@@ -221,15 +221,15 @@ features:
 
   - action: design_review_workflow
     class: coverage
-    handler: hint-only (PRC-501)
+    handler: hint-only (design_review)
     prompts:
-      - text: "what statuses can a design review package come back with under PRC-501?"
+      - text: "what statuses can a design review package come back with under the design review procedure?"
         expect_route: [design_review_workflow]
     min_chars: 200
 
   - action: design_directive
     class: coverage
-    handler: hint-only (PRC-502)
+    handler: hint-only (design_directive)
     prompts:
       - text: "draft a design directive instructing the consultant to revise the parking layout"
         expect_route: [design_directive]
@@ -238,7 +238,7 @@ features:
     project: "FIXTURE — Operations Pack"
     needs: RFI register (synthetic_rfi_register.xlsx — seed_fixtures --synthetic)
     class: coverage
-    handler: hint-only (PRC-301)
+    handler: hint-only (request_for_information)
     prompts:
       - text: "how many RFIs are open and which ones are overdue?"
         expect_route: [rfi_management, rfi_generator]
@@ -254,7 +254,7 @@ features:
 
   - action: work_package_control
     class: coverage
-    handler: hint-only (PRC-303)
+    handler: hint-only (work_package_control)
     prompts:
       - text: "give me the work package register status - which packages are overdue?"
         expect_route: [work_package_control]
@@ -262,21 +262,21 @@ features:
 
   - action: qa_audit
     class: coverage
-    handler: hint-only (PRC-401)
+    handler: hint-only (quality_audit)
     prompts:
       - text: "set up a quality audit programme for the piling subcontractor"
         expect_route: [qa_audit, qa_qc_inspection]
 
   - action: ncr_management
     class: coverage
-    handler: hint-only (PRC-402)
+    handler: hint-only (non_conformance)
     prompts:
       - text: "raise an NCR for out-of-tolerance column verticality on level 3 and suggest the disposition"
         expect_route: [ncr_management, qa_qc_inspection]
 
   - action: handover_management
     class: coverage
-    handler: hint-only (PRC-404)
+    handler: hint-only (handover)
     prompts:
       - text: "what are the prerequisites for practical completion and the DLP obligations?"
         expect_route: [handover_management]
@@ -299,7 +299,7 @@ features:
 
   - action: job_requisition
     class: coverage
-    handler: hint-only (PRC-601)
+    handler: hint-only (job_requisition)
     prompts:
       - text: "start a job requisition and prequalification shortlist for the ELV package"
         expect_route: [job_requisition, rfp_management]
@@ -314,7 +314,7 @@ features:
 
   - action: contract_award
     class: coverage
-    handler: hint-only (PRC-604)
+    handler: hint-only (contract_award)
     prompts:
       - text: "what goes into the letter of award and which bonds do we need before signing?"
         expect_route: [contract_award, process_contract]

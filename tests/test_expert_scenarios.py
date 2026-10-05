@@ -11,8 +11,7 @@ import re
 
 from scripts.generate_expert_scenarios import (
     SOURCE_FILE,
-    _PRC_MENTION_RE,
-    _all_prcs_in_source,
+    _all_kinds_in_source,
     gen_critical_rules,
     gen_document_numbering,
     gen_formulas_and_timeframes,
@@ -77,21 +76,24 @@ def test_critical_rules_quote_source_verbatim():
     )
 
 
-# ── PRC coverage: every PRC code mentioned in source appears in some tag ──
+# ── Procedure coverage: every procedure-kind section appears in some tag ──
 
 
 def test_prc_procedures_cover_all_mentions():
-    prcs = _all_prcs_in_source()
-    assert prcs, "expected at least one PRC code in the source file"
+    """Every procedure section of the prompt (tagged by catalogue kind --
+    the prompt ships no procedure codes) has rows tagged with its kind."""
+    prcs = _all_kinds_in_source()
+    from app.core.procedure_catalogue import procedures
+
+    assert set(prcs) == set(procedures()), f"every catalogue kind needs its section: {prcs}"
     rows = generate_all()
     missing = []
     for prc in prcs:
-        # Match the code as a token in the source tag (avoid PRC-603A
-        # being satisfied by PRC-603 — anchor on ":" or end of string).
+        # Match the kind as a token in the source tag (anchor on ":" or end).
         pattern = re.compile(rf"(?:^|:){re.escape(prc)}(?::|$)")
         if not any(pattern.search(r["source"]) for r in rows):
             missing.append(prc)
-    assert not missing, f"PRC codes with no source-tag coverage: {missing}"
+    assert not missing, f"procedure kinds with no source-tag coverage: {missing}"
 
 
 # ── Per-generator floor checks ────────────────────────────────────────────
@@ -142,7 +144,7 @@ def test_timeframes_include_seven_calendar_days():
     rows = list(gen_formulas_and_timeframes())
     text = " ".join(r["response"] for r in rows)
     assert "7 calendar days" in text, (
-        "expected the PRC-501 minimum-distribution timeframe to appear verbatim "
+        "expected the design-review minimum-distribution timeframe to appear verbatim "
         "in some formulas_and_timeframes response"
     )
 

@@ -85,7 +85,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # cost-calculator graft (#737) sits above _aca_claim_amount, and the
     # duplicate look-ahead phrase tuple removal (#731) shifts the same
     # handler by -6. Same ValueError return — only the line moved.
-    "app/agents/runtime.py:6311": "baseline 2026-09-10",
+    "app/agents/runtime.py:6319": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
@@ -100,8 +100,8 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/blocks/primavera_parser.py:344": "baseline 2026-09-10",
     "app/blocks/primavera_parser.py:359": "baseline 2026-09-10",
     "app/blocks/safety_world_detector.py:65": "baseline 2026-09-10",
-    "app/blocks/smart_orchestrator.py:567": "baseline 2026-09-10",
-    "app/blocks/smart_orchestrator.py:588": "baseline 2026-09-10",
+    "app/blocks/smart_orchestrator.py:577": "baseline 2026-09-10",
+    "app/blocks/smart_orchestrator.py:598": "baseline 2026-09-10",
     "app/blocks/validation_pipeline.py:159": "baseline 2026-09-10",
     "app/blocks/voice.py:43": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:145": "baseline 2026-09-10",

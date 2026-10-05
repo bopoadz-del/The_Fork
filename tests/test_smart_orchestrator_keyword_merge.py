@@ -118,16 +118,16 @@ def test_previously_dropped_keywords_now_route(phrase: str, expected_action: str
 
 
 def test_safety_top_match_includes_both_prc_and_everyday_keywords():
-    """A message that fires BOTH a PROCEDURE keyword (PRC-406) and a
+    """A message that fires BOTH a PROCEDURE keyword (hse audit) and a
     smart_orch-unique keyword (toolbox) must surface both in
     keywords_matched — proving the merged_patterns dict carries the
     full union, not just the first source's list."""
-    result = _run("Reviewing the PRC-406 toolbox talk findings from yesterday.")
+    result = _run("Reviewing the hse audit toolbox talk findings from yesterday.")
     matched = result.get("matched_actions") or []
     safety = next((m for m in matched if m["action"] == "safety_compliance_audit"), None)
     assert safety is not None, f"safety_compliance_audit missing from {matched}"
     kws = set(safety["keywords_matched"])
-    assert "PRC-406" in kws, f"PROCEDURE keyword PRC-406 not in {kws}"
+    assert "hse audit" in kws, f"PROCEDURE keyword 'hse audit' not in {kws}"
     assert "toolbox" in kws, f"smart_orch keyword toolbox not in {kws}"
 
 
@@ -139,3 +139,32 @@ def test_risk_register_no_keyword_regression():
     result = _run("Populate the risk register with the new findings.")
     matched_actions = [m["action"] for m in (result.get("matched_actions") or [])]
     assert "risk_register_auto_populate" in matched_actions
+
+
+def test_a_typed_procedure_code_routes_by_the_live_documents_kind(monkeypatch):
+    """No document code is shipped in routing. A code the user types is
+    resolved at run time against the project's own document names and
+    routes by that document's kind."""
+    from app.core import procedure_catalogue
+
+    names = ["XYZ-101_Change Control.pdf", "XYZ-240 Design Review.docx"]
+    monkeypatch.setattr(procedure_catalogue, "live_document_names", lambda pid: names if pid == "p_syn" else [])
+    block = SmartOrchestratorBlock()
+    result = asyncio.run(block.process({
+        "user_message": "Summarise XYZ-101 for the site team",
+        "session_context": {"project_id": "p_syn"},
+    }))
+    actions = [m["action"] for m in (result.get("matched_actions") or [])]
+    assert "change_order_impact" in actions, actions
+    # Without the project's documents the bare code means nothing.
+    result = asyncio.run(block.process({"user_message": "Summarise XYZ-101 for the site team"}))
+    actions = [m["action"] for m in (result.get("matched_actions") or [])]
+    assert "change_order_impact" not in actions, actions
+
+
+def test_routing_ships_no_document_codes():
+    import re
+
+    for _action, keywords in ACTION_PATTERNS:
+        for kw in keywords:
+            assert not re.fullmatch(r"[A-Z]{2,6}-\d{3,4}[A-Z]?", kw), kw
