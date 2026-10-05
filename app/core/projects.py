@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.ingest_status import EXTRACTOR_VERSION, INDEXED, NO_CHUNK_STATUSES, TOMBSTONED
 from app.core.models import Document, IngestionJob, Project, ProjectFact
-from app.core.system_projects import general_knowledge_env, primary_general_knowledge_project
+from app.core.system_projects import GENERAL_KNOWLEDGE_PROJECT_DEFAULT, general_knowledge_env, primary_general_knowledge_project
 
 import logging
 
@@ -68,7 +68,7 @@ _ADMIN_APPROVED_ORIGIN = "admin_drive_approved"
 
 #: Default for ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` when the env var is unset.
 #: The retriever reads it from here rather than carrying its own copy.
-DEFAULT_GENERAL_KNOWLEDGE_PROJECTS = "training_material"
+DEFAULT_GENERAL_KNOWLEDGE_PROJECTS = GENERAL_KNOWLEDGE_PROJECT_DEFAULT
 
 
 def general_knowledge_project_ids() -> frozenset[str]:
