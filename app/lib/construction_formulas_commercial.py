@@ -1693,7 +1693,7 @@ def compose_stated_total_follow_up(current: str, prior: str) -> dict | None:
     """Price a "that total" follow-up from the earlier element's count.
 
     The current ask has the waste and the rate. The count and the
-    per-element size are in ``prior`` ("24 pile caps, each 2.5 m by …").
+    per-element size are in ``prior`` ("N elements, each L m by …").
     One cap (7.5 m³) is the miss. No rate in the follow-up → None.
     Kill-switch ``COMPOSE_USER_PRICED_TAKEOFF=0`` returns None.
     The waste is the percentage this ask states. Silence is 0 here —

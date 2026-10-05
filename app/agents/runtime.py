@@ -2796,7 +2796,7 @@ def answer_contains_routing_preamble(text: str) -> bool:
         return True
     return bool(_ROUTING_PREAMBLE_LINE_RE.search(text))
 
-# Per-excerpt retrieval telemetry, e.g. "[doc_id=cbca195d chunk=11 score=2.199
+# Per-excerpt retrieval telemetry, e.g. "[doc_id=0a1b2c3d chunk=11 score=2.199
 # src=...]". Internal by construction: the user never asked for a cosine.
 _RETRIEVAL_MARKER_RE = re.compile(
     r"\[doc_id=[^\]\s]+\s+chunk=\d+\s+score=", re.IGNORECASE
@@ -4107,8 +4107,8 @@ _CITATION_QUOTED_RE = re.compile(
 )
 
 # doc_id form gpt-oss also emits when it wants to be technically precise:
-#   [doc_id=3496d239, chunk 65, score 0.697]
-#   [doc_id=3496d239 chunk=65 score=0.697]    (the RAG-injection header style)
+#   [doc_id=4e5f6a7b, chunk 65, score 0.697]
+#   [doc_id=4e5f6a7b chunk=65 score=0.697]    (the RAG-injection header style)
 # Match either separator style; capture (doc_id, chunk_index). The chunk
 # is REQUIRED here — a bare [doc_id=...] would be ambiguous.
 _CITATION_DOCID_RE = re.compile(
@@ -8153,7 +8153,7 @@ def _postprocess_answer(
     # Cost gate: calc succeeded, force_synthesis emitted 0 tokens.
     # Volume-only recover is not a priced take-off — compose from the ask.
     text = _graft_composed_user_priced_takeoff(text, messages)
-    # "Add waste to that total and price it" continues from the prior
+    # "Add a waste allowance and price the total" continues from the prior
     # count (24 caps / 180 m³), not from one element the tool just recomputed.
     text = _graft_stated_total_follow_up(text, messages)
     # Live ~27d6940: user-supplied M#=Nd + common start is arithmetic.
@@ -15183,7 +15183,7 @@ def _inject_user_ask_into_construction_calc_args(
     numbers. D7: never invent a figure that is not in the ask. Existing
     text/formula/message win so a later retry with real params is kept.
 
-    A follow-up ("add 7% waste to that total and price it") has no
+    A follow-up ("add a waste allowance and price the total") has no
     geometry. The count lives on the previous operator turn. Carry that
     text as ``prior_text`` so concrete_volume multiplies by it instead
     of pricing one element. Explicit dims on this call are not replaced.

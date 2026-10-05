@@ -188,7 +188,7 @@ _ELEMENT_COUNT_RE = re.compile(
     r"(?:(?:pad|strip|isolated)\s+)?"
     r"(?:pile[\s-]?caps?|footings?|pads?|bases?|columns?|piers?)\b",
 )
-# "2.5 m by 2.5 m by 1.2 m" — the live pile-cap seed. The x-chain above
+# "3 m by 2 m by 0.9 m" — a dimension chain. The x-chain above
 # does not see "by".
 _BY_CHAIN_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)\s*m\s+by\s+"
@@ -220,7 +220,7 @@ def unit_dims_metres(text: str) -> tuple[float, float, float] | None:
 def follow_up_refers_to_stated_total(text: str) -> bool:
     """True when this ask adjusts a total named in an earlier turn.
 
-    "Add 7% waste to that total and price it…" carries the rate and the
+    "Add a waste allowance and price the total…" carries the rate and the
     waste, not the 24 caps. An ask that restates the geometry is not a
     continuation — its own dimensions are the operands.
     """

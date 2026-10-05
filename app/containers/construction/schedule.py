@@ -186,7 +186,7 @@ _MONTHS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
 }
-# "Blinding 15 Sep to 25 Sep 2026" / "Rebar fixing 2026-09-28 - 2026-10-02".
+# "Activity A 3 Mar to 9 Mar 2031" / "Activity B 2031-03-12 - 2031-03-16".
 _ACTIVITY_LINE_RE = re.compile(
     r"(?P<name>[A-Za-z][A-Za-z0-9 /&'\-]{1,60}?)\s+"
     r"(?P<d1>\d{1,2}\s+[A-Za-z]{3,9}(?:\s+\d{4})?|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})"
@@ -312,8 +312,8 @@ def _stated_look_ahead_date(text: str) -> str | None:
 
     "Today is 21 September", "Today's date is 21 September",
     "as of today, 21 September", "as at 21 September",
-    "from 21 September 2026". Activity spans ("15 Sep to 25 Sep",
-    "from 15 Sep to 25 Sep") are not a stated today. Year comes from the
+    "from 21 September 2026". Activity spans ("3 Mar to 9 Mar",
+    "from 3 Mar to 9 Mar") are not a stated today. Year comes from the
     token, else a year already in the schedule text, else the clock year.
     """
     raw = text or ""

@@ -151,7 +151,7 @@ class UpdateDocumentRequest(BaseModel):
 
     Master Corpus rag_backfill stubs have ``drive_file_id: null``. The
     service-account name-search cannot see anyone-with-link files, so an
-    owner/admin PATCH is how we attach the live id (e.g. ocr1exec →
+    owner/admin PATCH is how we attach the live id (e.g. <doc-id> →
     ``11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI``). Preview then hydrates via
     ``files.get`` / public download.
     """

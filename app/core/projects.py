@@ -1142,7 +1142,7 @@ def _local_plaintext_size(path: str) -> int:
 def _resolve_drive_id_by_filename(doc: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     """Fill a missing drive_file_id from an exact Drive filename match.
 
-    Live Master Corpus cites (e.g. ``ocr1exec``) were inserted by
+    Live Master Corpus cites (e.g. ``<doc-id>``) were inserted by
     ``rag_render_bulk_ingest`` with ``drive_file_id: null`` and a stale
     Windows ``file_path``. The PDF still exists on Drive under
     ``original_name``. Persist the id on success so later hydrates skip
