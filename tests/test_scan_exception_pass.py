@@ -88,16 +88,66 @@ def test_removing_the_planted_pass_clears_the_scanner(tmp_path):
     assert scan_exception_pass.scan(tmp_path) == []
 
 
-def test_an_allowlisted_line_with_a_reason_is_ignored(tmp_path, monkeypatch):
-    (tmp_path / "ok.py").write_text(
-        "try:\n    x()\nexcept Exception:\n    pass\n", encoding="utf-8"
-    )
+_ONE_PASS = "def f():\n    try:\n        x()\n    except Exception:\n        pass\n"
+_TWO_PASSES = _ONE_PASS + "    try:\n        y()\n    except Exception:\n        pass\n"
+
+
+def _allow(key: str, count: int = 1, reason: str = "fixture") -> dict:
+    return {key: {"count": count, "reason": reason}}
+
+
+def test_an_allowlisted_function_with_a_reason_is_ignored(tmp_path, monkeypatch):
+    (tmp_path / "ok.py").write_text(_ONE_PASS, encoding="utf-8")
     monkeypatch.setattr(
         scan_exception_pass,
         "ALLOWLIST",
-        {"ok.py:3": "fixture — proves the named-reason hatch works"},
+        _allow("ok.py::f", reason="fixture — proves the named-reason hatch works"),
     )
     assert scan_exception_pass.scan(tmp_path) == []
+
+
+def test_an_allowlist_entry_without_a_reason_allows_nothing(tmp_path, monkeypatch):
+    (tmp_path / "ok.py").write_text(_ONE_PASS, encoding="utf-8")
+    monkeypatch.setattr(scan_exception_pass, "ALLOWLIST", _allow("ok.py::f", reason=" "))
+    assert scan_exception_pass.scan(tmp_path) == ["ok.py:4"]
+
+
+# ── keyed by function, not line ───────────────────────────────────────────
+
+
+def test_unrelated_lines_above_an_allowlisted_handler_do_not_fail(tmp_path, monkeypatch):
+    """Mutation killed: keying the allowlist by ``path:line`` again.
+
+    An edit above the handler moves its line. Under line keys the same,
+    already-baselined handler then reads as new and the build goes red.
+    """
+    mod = tmp_path / "mod.py"
+    mod.write_text(_ONE_PASS, encoding="utf-8")
+    monkeypatch.setattr(scan_exception_pass, "ALLOWLIST", _allow("mod.py::f"))
+    assert scan_exception_pass.scan(tmp_path) == []
+    mod.write_text("import os\n\n\n# unrelated\nX = 1\n\n" + _ONE_PASS, encoding="utf-8")
+    assert scan_exception_pass.scan(tmp_path) == []
+
+
+def test_a_new_handler_beyond_the_functions_count_fails(tmp_path, monkeypatch):
+    """Mutation killed: a function key that admits any number of sites."""
+    (tmp_path / "mod.py").write_text(_TWO_PASSES, encoding="utf-8")
+    monkeypatch.setattr(scan_exception_pass, "ALLOWLIST", _allow("mod.py::f"))
+    findings = scan_exception_pass.scan(tmp_path)
+    assert findings, "a second silent handler in a 1-count function slipped through"
+    assert all(f.startswith("mod.py:") and "mod.py::f" in f for f in findings), findings
+
+
+def test_sites_resolve_to_their_qualified_function():
+    src = (
+        "try:\n    a()\nexcept Exception:\n    pass\n"
+        "class C:\n    def m(self):\n        try:\n            b()\n"
+        "        except Exception:\n            pass\n"
+        "def outer():\n    def inner():\n        try:\n            c()\n"
+        "        except Exception:\n            pass\n"
+    )
+    sites = scan_exception_pass.exception_pass_sites(ast.parse(src))
+    assert sites == [(3, "<module>"), (9, "C.m"), (15, "outer.inner")]
 
 
 # ── the walk must actually visit the tree ─────────────────────────────────
@@ -162,7 +212,10 @@ def test_the_tree_is_clean_right_now():
 
 def test_allowlist_entries_must_name_a_reason():
     """An allowlist without a reason is how a swallow becomes invisible."""
-    for key, reason in scan_exception_pass.ALLOWLIST.items():
+    for key, entry in scan_exception_pass.ALLOWLIST.items():
+        assert "::" in key, f"ALLOWLIST[{key!r}] is not keyed path::function"
+        assert isinstance(entry["count"], int) and entry["count"] > 0, key
+        reason = entry["reason"]
         assert isinstance(reason, str) and reason.strip(), (
             f"ALLOWLIST[{key!r}] has no named reason — fix the handler "
             "or write why it must stay"
