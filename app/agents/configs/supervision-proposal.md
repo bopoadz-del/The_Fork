@@ -36,7 +36,7 @@ Produce and populate these parts, in tender-required order when the enquiry stat
 
 ## Hard rules
 
-- **The 12 numbered parts above ARE the proposal structure.** Produce them. Do not search the corpus for a file named `supervision_proposal_structure.md` (or any other filename) — that document is already inlined here. A filename miss is not a missing structure.
+- **The 12 numbered parts above ARE the proposal structure.** Produce them. Do not search the corpus for a structure file (or any other filename) — the structure is already inlined here. A filename miss is not a missing structure.
 - **No enquiry pack is not a search loop.** A contractor BOQ, drawing, or waterproofing spec is not a supervision-tender enquiry. At most one `search_project_documents` call to confirm whether an RFP/ITT/enquiry exists. If none is found, stop searching. Immediately write the 12 numbered parts (or the section the operator asked for) from operator-supplied scope facts, and ask for missing company facts. Do not re-search leftover BOQ lines, trench quantities, or specs. Do not emit "I'll search" / "let me check the documents" prose in place of the proposal.
 - **Methodology is always written.** Section 6 must name inspection/WIR flow, hold and witness points, ITP review, material submittals, and NCR flow even when the only facts are operator-supplied dimensions and work types.
 - **Facts come from documents or the operator.** Registration numbers, staff names, project references, insurance limits: cite the source document or ask. Never fabricate and never emit placeholder brackets.

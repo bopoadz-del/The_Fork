@@ -3,9 +3,9 @@
 THE INCIDENT (gate battery ``13b2bf7``, 2026-08-31, question F2). The WBS
 answer closed with::
 
-    BOQ context: Bill 03 - Demolition and Site Clearance (DD-2022-175)
+    BOQ context: Bill 03 - Example Works (AB-2001-101)
 
-on a DD-2023-118 project. Three literal checks, not inference:
+on a project whose contract is AB-2002-202. Three literal checks, not inference:
 
 * ``generate_wbs`` (``app/containers/construction/schedule.py:2235``)
   documents itself "Deterministic template-based: no LLM"; its body contains
@@ -33,7 +33,7 @@ edits the attribution only — an answer's content is never rewritten by it.
 SCOPE, stated so the edges are known rather than discovered:
 
 * Attributions are policed; content claims are not. "Clause 8.8.1 says X" is
-  the numeric/­retrieval guards' business. "Source: DD-2022-175" is this one's.
+  the numeric/­retrieval guards' business. "Source: AB-2001-101" is this one's.
 * When the turn read the corpus at all, only the attribution surface is
   policed (Source lines, ``BOQ context:`` fragments, parenthesised ids), so a
   working answer that discusses a contract in prose is never mangled.
@@ -78,7 +78,7 @@ UNVERIFIED_NOTE = (
 # PREFIX-YEAR-SEQ, identical in shape to
 # ``app.core.rag.retriever._CONTRACT_DOC_ID_RE`` so an id this module strips
 # is exactly an id that module would have scoped on. Not a \b pattern:
-# underscore-glued filenames ("DD-2023-118_Vol 1.pdf") must still match.
+# underscore-glued filenames ("AB-2002-202_Vol 1.pdf") must still match.
 _CONTRACT_ID_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{2,}-\d{4}-\d+)(?![A-Za-z0-9])")
 
 # The F2 form, and the general "BOQ context: ..." attribution it belongs to.
@@ -114,7 +114,7 @@ _ATTRIB_CUE_ID_RE = re.compile(
 )
 
 # A parenthesised id directly after a name is an attribution:
-# "Bill 03 - Demolition and Site Clearance (DD-2022-175)".
+# "Bill 03 - Example Works (AB-2001-101)".
 _PAREN_ID_RE = re.compile(
     r"[ \t]*\((?:(?:from|per|source|ref\.?|see)[ \t]+)?"
     r"([A-Za-z]{2,}-\d{4}-\d+)\)",
@@ -275,8 +275,8 @@ class Evidence:
 
         ``citable_only`` narrows to records whose class may back a claim
         about this project. It matters because a filename can CONTAIN a
-        contract id: ``DD-2023-118 Contract Template Vol 4.pdf`` is a
-        template, and letting its name back a bare ``Source: DD-2023-118``
+        contract id: ``AB-2002-202 Contract Template Vol 4.pdf`` is a
+        template, and letting its name back a bare ``Source: AB-2002-202``
         is the template-as-contract defect arriving by the back door -- the id
         would be rescued by the
         very document that must not lend it.
@@ -425,7 +425,7 @@ def _strip_boq_attributions(text: str, ev: Evidence) -> tuple[str, list[str]]:
 
 
 def _strip_paren_ids(text: str, allowed: set[str]) -> tuple[str, list[str]]:
-    """Remove "(DD-2022-175)" when no record names that contract."""
+    """Remove "(AB-2001-101)" when no record names that contract."""
     removed: list[str] = []
 
     def repl(m: re.Match[str]) -> str:
@@ -438,7 +438,7 @@ def _strip_paren_ids(text: str, allowed: set[str]) -> tuple[str, list[str]]:
 
 
 def _strip_cued_ids(text: str, allowed: set[str]) -> tuple[str, list[str]]:
-    """Strip "per DD-2022-175" / "as set out in DD-2022-175" in running prose.
+    """Strip "per AB-2001-101" / "as set out in AB-2001-101" in running prose.
 
     Only reached when NOTHING read the corpus this turn: with no retrieval and
     no corpus-reading tool, an id the operator did not name has no possible

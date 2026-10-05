@@ -89,7 +89,7 @@ def ret(monkeypatch):
         UNPRICED: [_chunk("uc", UNPRICED, 0.0, COVER_UNPRICED, 3)],
     }
     names = {PRICED: PRICED_NAME, UNPRICED: UNPRICED_NAME,
-             TEMPLATE: "TEM-637_CONTRACT TEMPLATE.docx"}
+             TEMPLATE: "QRS-637_CONTRACT TEMPLATE.docx"}
     seen = {}
 
     def fake_filename_terms(pid, terms, *, min_terms=2, require_letter=False,

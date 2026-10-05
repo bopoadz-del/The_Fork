@@ -423,13 +423,6 @@ def test_postprocess_e1_cannot_answer_with_the_toy_ten_million_aca():
     assert "10,000,000.00" not in out.split("\n", 1)[0]
 
 
-def test_toy_aca_kill_switch_restores_electing_ten_million(monkeypatch):
-    monkeypatch.setenv("COMPOSE_REJECT_E1_TOY_ACA", "0")
-    # Example language is ignored; 10M is first in the excl-VAT bucket.
-    both = "\n\n".join((TOY_EXAMPLE_WINDOW, NET_ACA_ROW))
-    assert parse_accepted_contract_amount(both) == (TOY_ACA, "SAR")
-
-
 # Live leftover E1 after #529: Contract Data template "insert" / a
 # neighboring "for example" 8.8 window stained the filled excl-VAT
 # ACA as a toy. Rescue then dropped it, compose had no money operand,
@@ -578,17 +571,6 @@ def test_postprocess_e1_cannot_answer_with_015_when_cd_rate_is_present():
     assert "upload your priced BOQ" not in posted.lower()
     assert "263,175.67" not in posted
     assert "0.015%" not in posted.split("\n", 1)[0]
-
-
-def test_lookalike_rate_kill_switch_restores_electing_015(monkeypatch):
-    monkeypatch.setenv("COMPOSE_REJECT_E1_LOOKALIKE_RATE", "0")
-    assert parse_delay_damages_rate_percent(COC_015_WINDOW) == 0.015
-    out = compose_delay_damages_daily_from_excerpts(
-        LIVE_E1, "\n\n".join((COC_015_WINDOW, NET_ACA_ROW)),
-    )
-    assert out is not None
-    assert out["rate_percent"] == 0.015
-    assert out["daily_amount"] == LOOKALIKE_DAILY
 
 
 # Live leftover E1 after #536 (fdd60275): sources stayed on Contract Data

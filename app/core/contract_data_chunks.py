@@ -441,7 +441,7 @@ def filled_particulars_rows(chunk: str) -> list[tuple[str, str]]:
     Used by the unnamed-contract election so it can require that the
     *asked* label's value is filled, not merely that the window contains
     some other filled sibling plus the label as an unfilled key. Live
-    Time for Completion / delay-rate asks on a two-year corpus: a DD-2022-175 window with a filled
+    Time for Completion / delay-rate asks on a two-year corpus: an earlier-year window with a filled
     Accepted Contract Amount and a bare Time for Completion key used to
     lock the pool to the wrong year.
 

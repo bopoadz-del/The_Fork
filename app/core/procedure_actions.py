@@ -1,4 +1,4 @@
-"""Procedure orchestrator actions → PRC metadata and optional delegate handlers.
+"""Procedure orchestrator actions → catalogue metadata and optional delegate handlers.
 
 SmartOrchestratorBlock routes user language to procedure-specific action names
 (design_review_workflow, rfi_management, …). ConstructionContainer.route must
@@ -10,21 +10,21 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-# orchestrator action → (PRC id, optional ConstructionContainer delegate action)
+# orchestrator action → (procedure kind, optional ConstructionContainer delegate action)
 PROCEDURE_ACTION_MAP: Dict[str, Tuple[str, Optional[str]]] = {
-    "design_review_workflow": ("PRC-501", None),
-    "design_directive": ("PRC-502", None),
-    "rfi_management": ("PRC-301", "rfi_generator"),
-    "work_package_control": ("PRC-303", None),
-    "qa_audit": ("PRC-401", "qa_qc_inspection"),
+    "design_review_workflow": ("design_review", None),
+    "design_directive": ("design_directive", None),
+    "rfi_management": ("request_for_information", "rfi_generator"),
+    "work_package_control": ("work_package_control", None),
+    "qa_audit": ("quality_audit", "qa_qc_inspection"),
     # NCR and PC cert are CDE / operator writes — metadata only. Do not
     # collapse onto qa_qc_inspection / commissioning_checklist templates.
-    "ncr_management": ("PRC-402", None),
-    "handover_management": ("PRC-404", None),
-    "inspection_request": ("PRC-405", "wir_form"),
-    "job_requisition": ("PRC-601", "job_requisition"),
-    "rfp_management": ("PRC-602", "rfp_draft"),
-    "contract_award": ("PRC-604", None),
+    "ncr_management": ("non_conformance", None),
+    "handover_management": ("handover", None),
+    "inspection_request": ("inspection_request", "wir_form"),
+    "job_requisition": ("job_requisition", "job_requisition"),
+    "rfp_management": ("request_for_proposals", "rfp_draft"),
+    "contract_award": ("contract_award", None),
 }
 
 # Keys commonly present on procedure records but not in the generic statuses/rules shape.
@@ -59,28 +59,42 @@ def is_procedure_action(action: str) -> bool:
     return action in PROCEDURE_ACTION_MAP
 
 
-def procedure_metadata(action: str) -> Dict[str, Any]:
+def procedure_metadata(
+    action: str,
+    project_id: Optional[str] = None,
+    document_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Return honest metadata-only payload for a procedure action.
 
-    Preserves the raw procedure record (and schema-specific fields) so callers
-    see PRC-501 review_statuses / forbidden_term / timeline / workflow / raci
-    and PRC-404 prerequisites / handover_documents — not empty guidance.
+    Preserves the raw catalogue record (and schema-specific fields) so callers
+    see the design-review review_statuses / forbidden_term / timeline /
+    workflow / raci and the handover prerequisites / handover_documents — not
+    empty guidance.
+
+    ``procedure_id`` is resolved at run time: the code of the active project's
+    own procedure document of this kind when one exists (``document_names``,
+    else the project's documents), otherwise the kind id.
     """
     from app.core.construction_knowledge import ConstructionKnowledge
+    from app.core.procedure_catalogue import live_document_names, resolve_procedure
 
-    prc_id, delegate = PROCEDURE_ACTION_MAP.get(action, (None, None))
-    if not prc_id:
+    kind, delegate = PROCEDURE_ACTION_MAP.get(action, (None, None))
+    if not kind:
         return {
             "status": "error",
             "error": f"Unknown procedure action: {action}",
         }
     ck = ConstructionKnowledge()
-    proc = ck.get_procedure(prc_id) or {}
+    proc = ck.get_procedure(kind) or {}
+    names = document_names if document_names is not None else live_document_names(project_id)
+    resolved = resolve_procedure(kind, names)
     payload: Dict[str, Any] = {
         "status": "success",
         "action": action,
         "execution_mode": "metadata_only",
-        "procedure_id": prc_id,
+        "procedure_id": resolved["procedure_id"],
+        "procedure_kind": kind,
+        "procedure_document": resolved["procedure_document"],
         "procedure_title": proc.get("title", ""),
         "purpose": proc.get("purpose", ""),
         "roles": proc.get("roles") or {},
@@ -122,5 +136,5 @@ def normalize_rfi_issues(data: Dict[str, Any], params: Optional[Dict] = None) ->
 
 
 def resolve_procedure_route(action: str) -> Tuple[str, Optional[str]]:
-    """Return (prc_id, delegate_action) for an orchestrator procedure action."""
+    """Return (procedure kind, delegate_action) for an orchestrator procedure action."""
     return PROCEDURE_ACTION_MAP.get(action, (None, None))  # type: ignore[return-value]

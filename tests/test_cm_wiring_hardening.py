@@ -28,15 +28,15 @@ def test_procedure_metadata_is_honest_not_fake_execution():
     meta = procedure_metadata("design_review_workflow")
     assert meta["status"] == "success"
     assert meta["execution_mode"] == "metadata_only"
-    assert meta["procedure_id"] == "PRC-501"
+    assert meta["procedure_id"] == "design_review"
     assert "fabricated" in meta["note"].lower() or "guidance" in meta["note"].lower()
 
 
-def test_procedure_metadata_preserves_prc501_schema_fields():
-    """PRC-501 uses review_statuses / forbidden_term / timeline / workflow / raci — not statuses/rules."""
+def test_procedure_metadata_preserves_design_review_schema_fields():
+    """The design review kind uses review_statuses / forbidden_term / timeline / workflow / raci — not statuses/rules."""
     meta = procedure_metadata("design_review_workflow")
     assert meta["status"] == "success"
-    assert meta["procedure_id"] == "PRC-501"
+    assert meta["procedure_id"] == "design_review"
     assert meta.get("forbidden_term")
     assert "APPROVED" in str(meta["forbidden_term"])
     assert isinstance(meta.get("review_statuses"), dict) and meta["review_statuses"]
@@ -49,11 +49,11 @@ def test_procedure_metadata_preserves_prc501_schema_fields():
     assert proc.get("review_statuses") == meta["review_statuses"]
 
 
-def test_procedure_metadata_preserves_prc404_schema_fields():
-    """PRC-404 uses prerequisites / handover_documents — not statuses/rules."""
+def test_procedure_metadata_preserves_handover_schema_fields():
+    """The handover kind uses prerequisites / handover_documents — not statuses/rules."""
     meta = procedure_metadata("handover_management")
     assert meta["status"] == "success"
-    assert meta["procedure_id"] == "PRC-404"
+    assert meta["procedure_id"] == "handover"
     assert isinstance(meta.get("prerequisites"), list) and meta["prerequisites"]
     assert isinstance(meta.get("handover_documents"), list) and meta["handover_documents"]
     proc = meta.get("procedure") or {}
@@ -97,7 +97,7 @@ async def test_inspection_request_delegates_to_wir_form():
 
 @pytest.mark.asyncio
 async def test_rfi_management_without_issues_returns_metadata_only():
-    """No runnable issues → keep PRC-301 guidance; do not empty-delegate to rfi_generator."""
+    """No runnable issues → keep RFI procedure guidance; do not empty-delegate to rfi_generator."""
     from app.containers.construction import ConstructionContainer
 
     result = await ConstructionContainer().route(
@@ -105,7 +105,7 @@ async def test_rfi_management_without_issues_returns_metadata_only():
     )
     assert result.get("status") == "success"
     assert result.get("execution_mode") == "metadata_only"
-    assert result.get("procedure_id") == "PRC-301"
+    assert result.get("procedure_id") == "request_for_information"
     assert result.get("procedure_title")
     assert result.get("rules") or result.get("statuses") or result.get("procedure")
     assert result.get("procedure_context") is None
@@ -189,3 +189,17 @@ def test_schedule_generator_shim_docstring_declares_delegation():
     mod_doc = sg.__doc__ or ""
     assert "shim" in mod_doc.lower() or "delegate" in mod_doc.lower()
     assert "generate_wbs" in mod_doc.lower()
+
+
+def test_procedure_id_is_the_live_documents_own_code_when_the_corpus_has_one():
+    """The shipped catalogue carries no codes. When the project's own
+    procedure document of that kind exists, its code is the procedure_id;
+    otherwise the neutral kind id is."""
+    names = ["Site Diary.pdf", "XYZ-240 Design Review and Acceptance.pdf"]
+    meta = procedure_metadata("design_review_workflow", document_names=names)
+    assert meta["procedure_id"] == "XYZ-240"
+    assert meta["procedure_kind"] == "design_review"
+    assert meta["procedure_document"] == "XYZ-240 Design Review and Acceptance.pdf"
+    meta = procedure_metadata("design_review_workflow", document_names=["Site Diary.pdf"])
+    assert meta["procedure_id"] == "design_review"
+    assert meta["procedure_document"] is None

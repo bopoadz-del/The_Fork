@@ -459,7 +459,7 @@ def test_p3b_honest_lux_stays_unattributed_to_dubai_municipality():
     ), out
     assert re.search(r"project requirement", out, re.IGNORECASE), out
     assert "Standards note" not in out
-    assert "PRC-501" not in out
+    assert "design review and acceptance procedure" not in out
 
 
 def test_kill_switch_leaves_the_misattribution():

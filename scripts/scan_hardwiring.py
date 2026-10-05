@@ -45,6 +45,18 @@ Usage:
         # + battery question text, case ids, expected figures, live document
         #   names / reference codes and project ids (DATABASE_URL, read-only),
         #   all read at run time and never baselined
+
+Leakage rules worth knowing (see the comments at each constant):
+  * CASE-ID honours ``PROBE_LINE_ALLOWLIST`` (a case id that is also a genuine
+    domain token -- a paper size, a bar size, a spreadsheet cell).
+  * PROJECT-ID: system namespaces are declared once in ``SYSTEM_PROJECTS``
+    (``SYSTEM_PROJECTS_REGISTRY``) and exempt only there; every other live
+    project id is a customer project and always fails.
+  * DOCUMENT-NAME: a name of four+ words or carrying a digit is caught as a
+    phrase; a name of three or fewer plain words is domain vocabulary and is
+    caught only in its file-name form.
+  * DOCUMENT-ID: a live document id (its first 8 characters, word-bounded)
+    in product text fails -- a row id is a photograph of one corpus.
 """
 from __future__ import annotations
 
@@ -104,7 +116,17 @@ PROBE_LINE_ALLOWLIST: dict[tuple[str, str, str], str] = {
         "Excel cell G3 as a chart anchor, not a probe ID",
     ("app/lib/pm_excel.py", "G4", "=SUM(G4:G{"):
         "Excel cell G4 in a SUM range formula, not a probe ID",
+    ("app/core/doc_index.py", "A3", "1250 pt ≈ just over A3)"):
+        "ISO 216 A3 sheet size as a page-size threshold, not a probe ID",
+    ("app/lib/boq_ref_codes.py", "T12", "(T12 is a 12 mm bar;"):
+        "T12 = 12 mm high-yield rebar designation (BS 8666), not a probe ID",
+    ("app/lib/boq_ref_codes.py", "T12", "T12, C30, C30/37,"):
+        "T12 = 12 mm rebar designation in a table of real numeric codes, not a probe ID",
 }
+#: The same allowlist serves the run-time CASE-ID check (``--cases``): a
+#: battery case id that collides with a genuine domain token is skipped on that
+#: line only. Entries are for genuine domain meanings, each with its reason --
+#: never for a reference to a probe.
 
 
 def repo_root() -> Path:
@@ -248,6 +270,17 @@ def scan(root: Path | None = None) -> list[str]:
 
 #: Where product text lives: code, agent prompts, and config.
 TEXT_ROOTS = ("app", "config")
+
+#: SYSTEM NAMESPACES vs CUSTOMER PROJECTS. A project the product itself
+#: creates or defaults to (the general-knowledge layer, the master-corpus
+#: alias) is declared ONCE, in ``SYSTEM_PROJECTS`` in this file, and the rest
+#: of the product refers to it by constant. The PROJECT-ID check reads that
+#: registry at run time and exempts a declared id ONLY inside the registry
+#: file; the same literal anywhere else is still a finding ("define it once").
+#: Every live project id NOT declared there is a customer project and fails
+#: wherever it appears, the registry file included. This is a rule about the
+#: kind of id, not a per-id exception: the scanner names no project.
+SYSTEM_PROJECTS_REGISTRY = "app/core/system_projects.py"
 TEXT_SUFFIXES = (".py", ".md", ".yaml", ".yml", ".json", ".txt")
 _WORD = re.compile(r"[a-z0-9]+")
 _REF_CODE = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2,}[-_][A-Z0-9]+(?:[-_][A-Z0-9]+)+(?![A-Za-z0-9])")
@@ -296,7 +329,7 @@ def load_cases(path: str) -> dict[str, dict[str, list[str]]]:
 
 
 def load_live_names() -> dict[str, list[str]]:
-    """Document names and project ids from the live database (read-only)."""
+    """Document names, document ids and project ids from the live database (read-only)."""
     import sqlalchemy as sa
 
     url = os.environ.get("DATABASE_URL", "")
@@ -306,9 +339,10 @@ def load_live_names() -> dict[str, list[str]]:
     with sa.create_engine(url).connect() as c:
         c.execute(sa.text("SET TRANSACTION READ ONLY"))
         names = [r[0] for r in c.execute(sa.text("SELECT DISTINCT original_name FROM documents")) if r[0]]
+        doc_ids = [r[0] for r in c.execute(sa.text("SELECT id FROM documents")) if r[0]]
         projects = [r[0] for r in c.execute(sa.text("SELECT id FROM projects")) if r[0]]
         c.rollback()
-    return {"documents": names, "projects": projects}
+    return {"documents": names, "document_ids": doc_ids, "projects": projects}
 
 
 def _words(text: str) -> list[str]:
@@ -328,6 +362,64 @@ def _distinctive(fig: str) -> bool:
     return len(fig.replace(".", "").lstrip("0").rstrip("0")) >= 5
 
 
+def _distinctive_name(words: list[str]) -> bool:
+    """A live document name that identifies one document even as prose.
+
+    Four or more words, or a word carrying a digit ("Zeta 2031 Handbook").
+    A name of three or fewer plain words ("Conditions of Contract",
+    "Professional Indemnity Insurance") is the domain's own vocabulary: the
+    phrase in a comment or prompt is not a reference to that file, so only its
+    file-name form counts (see ``_file_name_forms``).
+    """
+    return len(words) >= 4 or any(ch.isdigit() for w in words for ch in w)
+
+
+def _file_name_forms(name: str) -> set[str]:
+    """The spellings that can only mean the file: the full name with its
+    extension, and the stem when the stem joins its words with ``_`` / ``-``."""
+    stem = os.path.splitext(name)[0]
+    forms = {name.strip()}
+    if re.search(r"[A-Za-z0-9][_-][A-Za-z0-9]", stem):
+        forms.add(stem.strip())
+    return {f for f in forms if f}
+
+
+def system_project_ids(root: Path | None = None) -> set[str]:
+    """Project ids the PRODUCT declares as its own system namespaces.
+
+    Read at run time from ``SYSTEM_PROJECTS`` in ``SYSTEM_PROJECTS_REGISTRY``
+    (AST only, never imported): a dict whose keys are string literals or
+    module-level names bound to string literals. Missing file -> no system ids.
+    """
+    root = (Path(root) if root is not None else repo_root()).resolve()
+    p = root / SYSTEM_PROJECTS_REGISTRY
+    if not p.is_file():
+        return set()
+    try:
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return set()
+    names: dict[str, str] = {}
+    out: set[str] = set()
+    for node in tree.body:
+        target, value = None, None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            target, value = node.targets[0].id, node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target, value = node.target.id, node.value
+        if target is None or value is None:
+            continue
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            names[target] = value.value
+        elif target == "SYSTEM_PROJECTS" and isinstance(value, ast.Dict):
+            for k in value.keys:
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    out.add(k.value)
+                elif isinstance(k, ast.Name) and k.id in names:
+                    out.add(names[k.id])
+    return out
+
+
 def leakage_findings(cases: dict | None = None, live: dict | None = None,
                      root: Path | None = None) -> list[str]:
     """Battery text, case ids, expected figures, live names and project ids in product text."""
@@ -341,7 +433,9 @@ def leakage_findings(cases: dict | None = None, live: dict | None = None,
                    if _distinctive(_plain_number(m))}
         for rel, text in files:
             for cid, rx in ids.items():
-                if rx.search(text):
+                frags = _allowlisted_fragments(rel, cid)
+                lines = (ln for ln in text.splitlines() if not any(fr in ln for fr in frags))
+                if any(rx.search(ln) for ln in lines):
                     findings.append(f"CASE-ID {rel}: {cid}")
             hit = {q_grams[g] for g in _ngrams(_words(text), 8) if g in q_grams}
             for cid in sorted(hit):
@@ -350,28 +444,50 @@ def leakage_findings(cases: dict | None = None, live: dict | None = None,
             for fig in sorted(nums & set(figures)):
                 findings.append(f"EXPECTED-FIGURE {rel}: {fig} ({figures[fig]})")
     if live:
-        doc_seqs = {}
+        doc_seqs: dict[str, str] = {}
+        file_forms: dict[str, str] = {}
         codes = set()
         for name in live.get("documents", []):
             stem = os.path.splitext(name)[0]
             w = _words(stem)
             if len(w) >= 3 and len(" ".join(w)) >= 15:
-                doc_seqs[" ".join(w)] = name
+                if _distinctive_name(w):
+                    doc_seqs[" ".join(w)] = name
+                else:
+                    for form in _file_name_forms(name):
+                        file_forms[form] = name
             codes.update(_REF_CODE.findall(stem))
+        system_ids = system_project_ids(root)
         projects = {p: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(p) + r"(?![A-Za-z0-9_])")
                     for p in live.get("projects", []) if len(p) >= 6}
         code_rx = {c: re.compile(r"(?<![A-Za-z0-9])" + re.escape(c) + r"(?![A-Za-z0-9])") for c in codes}
+        # A live document id is named by its first 8 characters (ids are
+        # uuid4()[:8]; a longer id is matched on the same prefix). Shorter
+        # ids are too likely to collide with ordinary hex and are skipped.
+        id_rx = {d[:8]: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(d[:8]) + r"(?![A-Za-z0-9_])")
+                 for d in (str(x) for x in live.get("document_ids", [])) if len(d) >= 8}
+        form_rx = {f: re.compile(r"(?<![A-Za-z0-9])" + re.escape(f) + r"(?![A-Za-z0-9])", re.IGNORECASE)
+                   for f in file_forms}
         for rel, text in files:
             norm = " " + " ".join(_words(text)) + " "
             for seq, name in doc_seqs.items():
                 if f" {seq} " in norm:
                     findings.append(f"DOCUMENT-NAME {rel}: {name}")
+            for form, rx in form_rx.items():
+                if rx.search(text):
+                    findings.append(f"DOCUMENT-NAME {rel}: {file_forms[form]}")
             for c, rx in code_rx.items():
                 if rx.search(text):
                     findings.append(f"DOCUMENT-REF {rel}: {c}")
-            for p, rx in projects.items():
+            for d, rx in id_rx.items():
                 if rx.search(text):
-                    findings.append(f"PROJECT-ID {rel}: {p}")
+                    findings.append(f"DOCUMENT-ID {rel}: {d}")
+            for p, rx in projects.items():
+                if p in system_ids and rel == SYSTEM_PROJECTS_REGISTRY:
+                    continue  # the one place a system namespace is declared
+                if rx.search(text):
+                    note = " (system project: use the registry constant)" if p in system_ids else ""
+                    findings.append(f"PROJECT-ID {rel}: {p}{note}")
     return sorted(set(findings))
 
 

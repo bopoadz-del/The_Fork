@@ -1125,7 +1125,7 @@ def _build_calculator_registry() -> "Dict[str, Any]":
         reg[_name] = _obj
     # Also expose the reporting / commercial / procurement / risk calculators
     # that live in construction_knowledge (EVM, IPC payment, tender scoring,
-    # PRC-302 risk). REFERENCED, not copied — construction_knowledge stays the
+    # risk scoring). REFERENCED, not copied — construction_knowledge stays the
     # single source of that maths; construction_calc just makes them callable
     # (they were tested but 0-caller). Optional import: if unavailable, the
     # engineering calculators above still work.

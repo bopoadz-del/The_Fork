@@ -94,8 +94,10 @@ def test_real_baseline_is_a_ceiling_with_no_stale_keys():
     every baselined key still exists (a deleted form must be removed by
     regenerating the baseline, never left behind as a stale allowance)."""
     sh = _load()
+    # The file must exist (an absent file would read as "nothing allowed" and
+    # hide a broken path); an EMPTY baseline is the goal state, not an error.
+    assert (sh.repo_root() / sh.BASELINE_PATH).is_file(), "baseline missing: run --write-baseline"
     base_syms, base_probes = sh.load_baseline()
-    assert base_syms or base_probes, "baseline missing: run --write-baseline"
     # Ceiling: the gate itself is green against main.
     assert sh.scan() == []
     # No stale keys: every grandfathered form is still present.
@@ -137,3 +139,108 @@ def test_run_time_inputs_catch_battery_text_names_and_project_ids(tmp_path):
     assert not [f for f in found if "clean.py" in f]
     assert scan_hw.leakage_findings(cases={"QQ1": {"questions": [], "expected": ["2500 kg"]}},
                                     live=None, root=tmp_path) == []  # 2500: not distinctive
+
+
+def test_leakage_case_id_honours_the_line_allowlist(tmp_path: Path):
+    """A battery case id that is ALSO a domain token (an Excel cell, a paper
+    size) is skipped on the allowlisted (file, id, fragment) line only -- the
+    same id on another line or in another file is still a CASE-ID finding."""
+    sh = _load()
+    pkg = tmp_path / "app" / "lib"
+    pkg.mkdir(parents=True)
+    (pkg / "pm_excel.py").write_text('ws.add_chart(chart, "G3")\n', encoding="utf-8")
+    (pkg / "other.py").write_text('ws.add_chart(chart, "G3")\n', encoding="utf-8")
+    cases = {"G3": {"questions": [], "expected": []}}
+    found = sh.leakage_findings(cases=cases, live=None, root=tmp_path)
+    assert found == ["CASE-ID app/lib/other.py: G3"]
+    (pkg / "pm_excel.py").write_text('ws.add_chart(chart, "G3")\n# tuned for G3\n', encoding="utf-8")
+    found = sh.leakage_findings(cases=cases, live=None, root=tmp_path)
+    assert "CASE-ID app/lib/pm_excel.py: G3" in found
+
+
+def _registry_tree(tmp_path: Path) -> Path:
+    core = tmp_path / "app" / "core"
+    core.mkdir(parents=True)
+    (core / "system_projects.py").write_text(
+        'SHARED_REFERENCE_PROJECT = "zz_shared_reference"\n'
+        "SYSTEM_PROJECTS = {\n"
+        '    SHARED_REFERENCE_PROJECT: "product-seeded reference layer",\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    return core
+
+
+def test_system_project_registry_is_read_at_run_time(tmp_path: Path):
+    """System namespaces are declared once in the registry; customer projects
+    are not. The registry ids come from the registry file itself (AST), not
+    from the scanner."""
+    sh = _load()
+    _registry_tree(tmp_path)
+    assert sh.system_project_ids(tmp_path) == {"zz_shared_reference"}
+    assert sh.system_project_ids(tmp_path / "nowhere") == set()
+
+
+def test_project_id_check_exempts_only_registry_declared_system_ids(tmp_path: Path):
+    """A customer project id in product text is flagged anywhere. A system id
+    declared in the registry and used via its constant is not -- but the same
+    id written as a literal outside the registry is (define it once)."""
+    sh = _load()
+    core = _registry_tree(tmp_path)
+    (core / "uses_constant.py").write_text(
+        "from app.core.system_projects import SHARED_REFERENCE_PROJECT\n"
+        "PID = SHARED_REFERENCE_PROJECT\n",
+        encoding="utf-8",
+    )
+    (core / "customer.py").write_text("PID = 'acme_tower_2'\n", encoding="utf-8")
+    live = {"documents": [], "projects": ["acme_tower_2", "zz_shared_reference"]}
+    found = sh.leakage_findings(cases=None, live=live, root=tmp_path)
+    assert found == ["PROJECT-ID app/core/customer.py: acme_tower_2"]
+
+    (core / "scattered.py").write_text("PID = 'zz_shared_reference'\n", encoding="utf-8")
+    found = sh.leakage_findings(cases=None, live=live, root=tmp_path)
+    assert any(f.startswith("PROJECT-ID app/core/scattered.py: zz_shared_reference") for f in found)
+    # A customer id cannot hide in the registry file either.
+    (core / "system_projects.py").write_text(
+        (core / "system_projects.py").read_text(encoding="utf-8") + "# acme_tower_2\n",
+        encoding="utf-8",
+    )
+    found = sh.leakage_findings(cases=None, live=live, root=tmp_path)
+    assert "PROJECT-ID app/core/system_projects.py: acme_tower_2" in found
+
+
+def test_generic_document_name_is_flagged_only_in_its_file_name_form(tmp_path: Path):
+    """A live name of three or fewer plain words ("terms of engagement") is
+    ordinary vocabulary: prose using the phrase is not a document name. Its
+    file-name form (with the extension, or with its own ``_``/``-`` joins) still
+    is. A distinctive name (four+ words, or carrying a digit) is still caught
+    as a phrase."""
+    sh = _load()
+    pkg = tmp_path / "app"
+    pkg.mkdir()
+    (pkg / "prose.py").write_text("# notice under the Terms of Engagement clause\n", encoding="utf-8")
+    (pkg / "fname.py").write_text("# see terms_of_engagement for the clause\n", encoding="utf-8")
+    (pkg / "fext.py").write_text("# open Terms of Engagement.PDF first\n", encoding="utf-8")
+    (pkg / "digit.py").write_text("# the zeta 2031 handbook says\n", encoding="utf-8")
+    live = {"documents": ["terms_of_engagement.pdf", "Terms of Engagement.pdf", "Zeta 2031 Handbook.pdf"],
+            "projects": []}
+    found = sh.leakage_findings(cases=None, live=live, root=tmp_path)
+    files = {f.split()[1].rstrip(":") for f in found if f.startswith("DOCUMENT-NAME")}
+    assert files == {"app/fname.py", "app/fext.py", "app/digit.py"}
+
+
+def test_live_document_ids_in_product_text_are_flagged(tmp_path: Path):
+    """A live document id (or its 8-char prefix), word-bounded, in product text
+    is a DOCUMENT-ID finding; the same hex run inside a longer token is not."""
+    sh = _load()
+    pkg = tmp_path / "app"
+    pkg.mkdir()
+    (pkg / "seed.py").write_text('STALE = "c0ffee12"\n', encoding="utf-8")
+    (pkg / "prefix.py").write_text("# see doc 7e57ab1e for the copy\n", encoding="utf-8")
+    (pkg / "inside.py").write_text('SHA = "00c0ffee1299"\n', encoding="utf-8")
+    live = {"documents": [], "projects": [], "document_ids": ["c0ffee12", "7e57ab1e-9f00-4c1d-8e2a-1234567890ab", "abc"]}
+    found = sh.leakage_findings(cases=None, live=live, root=tmp_path)
+    assert found == [
+        "DOCUMENT-ID app/prefix.py: 7e57ab1e",
+        "DOCUMENT-ID app/seed.py: c0ffee12",
+    ]

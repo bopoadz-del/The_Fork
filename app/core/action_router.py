@@ -192,21 +192,21 @@ ACTION_HINTS: dict[str, str] = {
         "execute step-by-step.",
     "health_check":
         "The user is asking about system status. Be brief and factual.",
-    # Procedure routing (PRC-301..PRC-606) — metadata-first; delegate when runnable.
+    # Procedure routing (catalogue kinds) — metadata-first; delegate when runnable.
     "design_review_workflow":
-        "The user is asking about design review / acceptance (PRC-501). "
+        "The user is asking about design review / acceptance. "
         "Never use 'APPROVED' on design documents — use accepted/for comment/buy-off.",
     "rfi_management":
-        "The user is managing RFIs (PRC-301). Focus on open/overdue counts, "
+        "The user is managing RFIs. Focus on open/overdue counts, "
         "required-by dates, and factual responses — RFIs are not design changes.",
     "ncr_management":
-        "The user is raising or tracking NCRs (PRC-402). Cover disposition, "
+        "The user is raising or tracking NCRs. Cover disposition, "
         "corrective action, and closure — do not invent NCR numbers.",
     "handover_management":
-        "The user is asking about practical completion / handover (PRC-404). "
+        "The user is asking about practical completion / handover. "
         "Cover prerequisites, DLP, snag lists, and O&M without fabricating certs.",
     "inspection_request":
-        "The user wants an inspection request / WIR (PRC-405). Write the full form: "
+        "The user wants an inspection request / WIR. Write the full form: "
         "scope, mix/volume, hold and witness points, and signatories. Do not stop "
         "at 'let me search'. Do not claim an IR was issued without data.",
     "wir_form":

@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.ingest_status import EXTRACTOR_VERSION, INDEXED, NO_CHUNK_STATUSES, TOMBSTONED
 from app.core.models import Document, IngestionJob, Project, ProjectFact
+from app.core.system_projects import GENERAL_KNOWLEDGE_PROJECT_DEFAULT, general_knowledge_env, primary_general_knowledge_project
 
 import logging
 
@@ -46,9 +48,6 @@ class DuplicateContentError(ValueError):
         )
 
 
-# Live D1 letter pair. Seed is a no-op when either id is absent.
-D1_STALE_DOC_ID = "b5033ec2"
-D1_LIVE_DOC_ID = "93982d45"
 
 # ── pilot master-corpus alias ───────────────────────────────────────────────
 # Per-project Drive approval/indexing is not pilot-ready. Expose the existing
@@ -61,25 +60,26 @@ MASTER_CORPUS_SOURCE_PROJECT_ID = os.getenv(
 )
 MASTER_CORPUS_NAME = os.getenv("MASTER_CORPUS_NAME", "Master Corpus")
 
-# Boot-seeded general-knowledge origin. Live rows (curated_kb, training_material)
-# were created with this before the shared-platform grant existed.
+# Boot-seeded general-knowledge origin. Seeded general-knowledge rows were
+# created with this before the shared-platform grant existed.
 _SYSTEM_SEED_ORIGIN = "system_seed"
 _ADMIN_APPROVED_ORIGIN = "admin_drive_approved"
 
 
 #: Default for ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` when the env var is unset.
 #: The retriever reads it from here rather than carrying its own copy.
-DEFAULT_GENERAL_KNOWLEDGE_PROJECTS = "training_material"
+DEFAULT_GENERAL_KNOWLEDGE_PROJECTS = GENERAL_KNOWLEDGE_PROJECT_DEFAULT
 
 
 def general_knowledge_project_ids() -> frozenset[str]:
     """Configured always-on general-knowledge project ids.
 
     Same ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` env that ``knowledge_seed``,
-    layered RAG, and the retriever use. Default first id is historically
-    ``training_material``. Empty / whitespace entries are dropped.
+    layered RAG, and the retriever use. Default is the product's
+    general-knowledge project (``app.core.system_projects``). Empty /
+    whitespace entries are dropped.
     """
-    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", DEFAULT_GENERAL_KNOWLEDGE_PROJECTS)
+    raw = general_knowledge_env()
     return frozenset(p.strip() for p in raw.split(",") if p.strip())
 
 
@@ -109,9 +109,9 @@ def ui_project_id(project_id: Optional[str]) -> Optional[str]:
     """The project id export URLs and owner gates must use.
 
     Chat remaps ``MASTER_CORPUS_PROJECT_ID`` (``master_corpus``) to
-    ``MASTER_CORPUS_SOURCE_PROJECT_ID`` (live: ``drive_archive``) so RAG
+    ``MASTER_CORPUS_SOURCE_PROJECT_ID`` (the backing source project) so RAG
     hits the backing corpus. That remapped id is not a user-visible
-    project: ``get_project('drive_archive')`` 404s for a signed-in user
+    project: ``get_project(<source id>)`` 404s for a signed-in user
     on Master Corpus. Reverse-map the source back to the
     alias. Any other id is returned unchanged.
     """
@@ -882,7 +882,7 @@ def delete_project(project_id: str) -> bool:
 _PURGE_PROTECTED_IDS = {
     MASTER_CORPUS_PROJECT_ID,
     MASTER_CORPUS_SOURCE_PROJECT_ID,
-    os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material").split(",")[0].strip(),
+    primary_general_knowledge_project(),
 }
 
 
@@ -1142,7 +1142,7 @@ def _local_plaintext_size(path: str) -> int:
 def _resolve_drive_id_by_filename(doc: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     """Fill a missing drive_file_id from an exact Drive filename match.
 
-    Live Master Corpus cites (e.g. ``ocr1exec``) were inserted by
+    Live Master Corpus cites (e.g. ``<doc-id>``) were inserted by
     ``rag_render_bulk_ingest`` with ``drive_file_id: null`` and a stale
     Windows ``file_path``. The PDF still exists on Drive under
     ``original_name``. Persist the id on success so later hydrates skip
@@ -1662,32 +1662,60 @@ def backfill_chunk_counts_from_table(
     }
 
 
-def seed_d1_letter_supersede() -> Dict[str, Any]:
-    """Ops helper: hide ``b5033ec2`` behind ``93982d45`` when both exist.
+# A copy marker an operator's re-upload adds to the same file name:
+# "Letter (1).docx", "Letter - Copy.docx", "Letter copy 2.docx".
+_COPY_MARKER_RE = re.compile(r"(?:\s*[-_]?\s*\bcopy\b(?:\s*\d+)?|\s*\(\d+\))+$", re.IGNORECASE)
 
-    No-op (and never a delete) when either id is missing. Same seed as
-    migration 0017 so a late-arriving corrected copy can be wired after
-    deploy.
+
+def _duplicate_name_key(original_name: str) -> str:
+    """Name identity for "the same document uploaded again".
+
+    Extension, case, runs of whitespace/underscores and trailing copy markers
+    are ignored; nothing else is.
+    """
+    stem = os.path.splitext((original_name or "").strip())[0]
+    stem = _COPY_MARKER_RE.sub("", stem)
+    return re.sub(r"[\s_]+", " ", stem).strip().lower()
+
+
+def supersede_older_duplicates(
+    project_id: Optional[str] = None, *, apply: bool = False,
+) -> Dict[str, Any]:
+    """Hide older uploads behind the newest copy of the same document.
+
+    The structural rule a stale extract needs: within one project, visible
+    documents whose names agree under ``_duplicate_name_key`` are copies of one
+    document, and the most recently uploaded copy is the live one. Each older
+    copy is pointed at it with ``supersede_document`` (reversible, never a
+    delete). Dry-run unless ``apply``: returns the planned ``pairs`` either way.
+    ``project_id=None`` scans every project.
     """
     _ensure_db()
-    stale = get_document(D1_STALE_DOC_ID)
-    live = get_document(D1_LIVE_DOC_ID)
-    if stale is None or live is None:
-        return {
-            "applied": False,
-            "stale_id": D1_STALE_DOC_ID,
-            "live_id": D1_LIVE_DOC_ID,
-            "stale_present": stale is not None,
-            "live_present": live is not None,
-        }
-    updated = supersede_document(D1_STALE_DOC_ID, D1_LIVE_DOC_ID)
-    return {
-        "applied": True,
-        "stale_id": D1_STALE_DOC_ID,
-        "live_id": D1_LIVE_DOC_ID,
-        "superseded_by": (updated or {}).get("superseded_by"),
-        "retrieval_visible": (updated or {}).get("retrieval_visible"),
-    }
+    with SessionLocal() as session:
+        stmt = select(Document).where(Document.superseded_by.is_(None))
+        if project_id:
+            stmt = stmt.where(Document.project_id == project_id)
+        rows = [
+            d for d in session.scalars(stmt).all()
+            if d.retrieval_visible is None or d.retrieval_visible
+        ]
+    groups: Dict[Tuple[str, str], List[Any]] = {}
+    for d in rows:
+        key = _duplicate_name_key(d.original_name or "")
+        if key:
+            groups.setdefault((d.project_id, key), []).append(d)
+    pairs: List[Dict[str, str]] = []
+    for docs in groups.values():
+        if len(docs) < 2:
+            continue
+        docs.sort(key=lambda d: (d.uploaded_at is not None, d.uploaded_at, d.id))
+        live = docs[-1]
+        pairs.extend({"stale_id": d.id, "live_id": live.id} for d in docs[:-1])
+    pairs.sort(key=lambda pr: (pr["live_id"], pr["stale_id"]))
+    if apply:
+        for pr in pairs:
+            supersede_document(pr["stale_id"], pr["live_id"])
+    return {"applied": bool(apply), "project_id": project_id, "pairs": pairs}
 
 
 def documents_matching_filename_terms(

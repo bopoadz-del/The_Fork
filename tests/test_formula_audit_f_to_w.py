@@ -1059,7 +1059,7 @@ class TestRoiCalculator:
 
 
 class TestScoreRisk:
-    """PRC-302: score = P×I on 1–5. GREEN ≤4, AMBER ≤9, else RED."""
+    """Risk scoring: score = P×I on 1–5. GREEN ≤4, AMBER ≤9, else RED."""
 
     def test_red_and_green_edges(self):
         red = _ok("score_risk", probability=4, impact=5)

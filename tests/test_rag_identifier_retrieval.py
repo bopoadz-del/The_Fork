@@ -43,8 +43,8 @@ def test_extract_identifiers_detects_common_reference_patterns():
     ids = extract_query_identifiers('What is the status of VO Ref 31?')
     assert any("vo" in i and "31" in i for i in ids)
 
-    ids = extract_query_identifiers('Is APPROVED valid per PRC-501?')
-    assert any("prc-501" in i for i in ids)
+    ids = extract_query_identifiers('Is APPROVED valid per XYZ-501?')
+    assert any("xyz-501" in i for i in ids)
 
     ids = extract_query_identifiers('Show drawing IP-INF-054-0000-JCB-DWG-LI-200-0001056-04')
     assert any("ip-inf-054" in i for i in ids)
@@ -128,9 +128,9 @@ def test_extract_identifiers_excludes_measurement_units():
     ) == []
 
     # ...but real document reference codes are UNTOUCHED (identifier lane intact).
-    for code in ("prc-501", "ip-inf-054", "d999.46", "ncr-007", "12-a", "13.1"):
+    for code in ("xyz-501", "ip-inf-054", "d999.46", "ncr-007", "12-a", "13.1"):
         assert not _looks_like_unit(code), code
-    assert any("prc-501" in i for i in extract_query_identifiers("valid per PRC-501?"))
+    assert any("xyz-501" in i for i in extract_query_identifiers("valid per XYZ-501?"))
     assert any("d999.46" in i for i in extract_query_identifiers("BOQ item D999.46"))
     assert any("ip-inf-054" in i for i in
                extract_query_identifiers("Show drawing IP-INF-054-0000-JCB-DWG"))

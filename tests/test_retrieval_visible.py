@@ -20,8 +20,8 @@ from app.core.rag.vector_store import VectorStore, reset_store_cache
 
 
 PROJECT_ID = "p_vis"
-STALE_ID = "b5033ec2"
-LIVE_ID = "93982d45"
+STALE_ID = "5a1e0001"
+LIVE_ID = "5a1e0002"
 QUERY = "D1LETTER signatory token"
 STALE_TEXT = "D1LETTER signatory token stale extract yours sincerely"
 LIVE_TEXT = "D1LETTER signatory token corrected extract yours sincerely"
