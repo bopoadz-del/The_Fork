@@ -87,3 +87,36 @@ def test_real_baseline_is_a_ceiling_with_no_stale_keys():
     stale_probes = sorted(k for k in base_probes if k not in probes)
     assert not stale_syms, f"stale baseline symbols (regenerate): {stale_syms}"
     assert not stale_probes, f"stale baseline probe keys (regenerate): {stale_probes}"
+
+
+def test_run_time_inputs_catch_battery_text_names_and_project_ids(tmp_path):
+    """Battery question text, case ids, distinctive expected figures, live
+    document names / reference codes and project ids are caught in code,
+    prompts and config -- read from inputs given at run time, never baselined."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("scan_hw", "scripts/scan_hardwiring.py")
+    scan_hw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scan_hw)
+
+    (tmp_path / "app" / "agents" / "configs").mkdir(parents=True)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "app" / "clean.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "app" / "leaky.py").write_text(
+        "# fixes ZQ7: how many pallets of blue widgets fit inside the north hangar today\n"
+        "TOTAL = 918273.64\nPID = 'acme_tower_2'\n", encoding="utf-8")
+    (tmp_path / "app" / "agents" / "configs" / "agent.md").write_text(
+        "Always cite Quarterly Pallet Audit Northern Hangar Report first.", encoding="utf-8")
+    (tmp_path / "config" / "x.yaml").write_text("ref: QPA-HNG-0042-REV\n", encoding="utf-8")
+
+    cases = {"ZQ7": {"questions": ["How many pallets of blue widgets fit inside the north hangar today?"],
+                     "expected": ["918,273.64 pallets"]}}
+    live = {"documents": ["Quarterly Pallet Audit Northern Hangar Report.pdf", "QPA-HNG-0042-REV.pdf"],
+            "projects": ["acme_tower_2"]}
+
+    found = scan_hw.leakage_findings(cases=cases, live=live, root=tmp_path)
+    kinds = {f.split()[0] for f in found}
+    assert kinds == {"CASE-ID", "QUESTION-TEXT", "EXPECTED-FIGURE", "DOCUMENT-NAME", "DOCUMENT-REF", "PROJECT-ID"}
+    assert not [f for f in found if "clean.py" in f]
+    assert scan_hw.leakage_findings(cases={"QQ1": {"questions": [], "expected": ["2500 kg"]}},
+                                    live=None, root=tmp_path) == []  # 2500: not distinctive
