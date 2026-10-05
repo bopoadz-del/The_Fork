@@ -14,7 +14,7 @@ _logger = logging.getLogger(__name__)
 def _boq_pdf_max_mb(filename: str = "") -> float:
     """Parse-refuse ceiling, aligned with the OCR plaintext gate.
 
-    The live priced BOQ (doc 20ac033d) is ~26.9 MB plaintext / ~28 MB
+    A live scanned priced BOQ is ~26.9 MB plaintext / ~28 MB
     recorded — above the old hardcoded ``BOQ_PDF_MAX_MB=20`` and already
     inside the 32 MB OCR gate. Leftover dashboard ``BOQ_PDF_MAX_MB=20``
     or ``PDF_OCR_MAX_SIZE_MB=25`` must not re-refuse it. BOQ-named files

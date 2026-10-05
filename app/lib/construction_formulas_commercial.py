@@ -1405,7 +1405,7 @@ def _window_is_whole_of_works_rate(blob: str) -> bool:
     """True when the window is the whole-of-Works daily rate, not a Milestone.
 
     A per-milestone delay-damages ask: a packed particulars row said "per Milestone"
-    and then "Delay Damages (for the whole of the Works): 0.1%". First-
+    and then the whole-of-Works delay-damages rate (0.1%). First-
     percent parse elected 0.1% and composed the whole-of-Works product.
     The Contract Data milestone rate is a different, smaller percentage.
     """

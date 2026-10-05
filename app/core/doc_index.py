@@ -101,8 +101,8 @@ _DEFAULT_PDF_OCR_MAX_SIZE_MB = 32.0
 # higher cap via PDF_OCR_BOQ_PAGE_CAP.
 _DEFAULT_PDF_OCR_PAGE_CAP = 80
 _DEFAULT_PDF_OCR_BOQ_PAGE_CAP = 160
-# Admin / force-OCR budget. The live priced BOQ (20ac033d) is 370 pages;
-# 160 left later CESMM rows (D599.5 / D549.2) unindexed even when OCR ran.
+# Admin / force-OCR budget. A live scanned priced BOQ ran to 370 pages;
+# 160 left later CESMM rows unindexed even when OCR ran.
 _DEFAULT_PDF_OCR_FORCE_PAGE_CAP = 400
 # Isolated page-batch size for large scans. A timeout/OOM on pages 41-60
 # then keeps pages 1-40 instead of ZERO_CHUNK'ing the whole document.
@@ -2760,9 +2760,9 @@ def _ifc_census(file_path: str, filename: str) -> list[str]:
 def _scanned_pdf_missing_ocr(ext: str, meta: dict[str, Any]) -> bool:
     """True when a PDF had empty body pages and OCR was never invoked.
 
-    Live reindex of 20ac033d returned status=ok with 6 cover-page chunks
+    A live reindex of a scanned priced BOQ returned status=ok with 6 cover-page chunks
     because the finer chunker recast the text layer + VERIFIED-TOTAL GUARD
-    as success. Item codes D599.5 / D549.2 were never in the extract.
+    as success. Its item codes were never in the extract.
 
     OCR that ran and returned empty (a genuinely blank digital page) is
     not this failure — ``ocr_attempts > 0`` means the trigger fired.

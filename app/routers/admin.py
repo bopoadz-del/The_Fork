@@ -266,7 +266,7 @@ async def admin_doc_reindex(
         True,
         description=(
             "OCR empty-text pages even when a leftover size gate would skip "
-            "them. Required for scanned priced BOQs (20ac033d)."
+            "them. Required for scanned priced BOQs."
         ),
     ),
     auth: dict = Depends(require_api_key),
