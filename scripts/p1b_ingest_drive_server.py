@@ -822,6 +822,10 @@ def main() -> int:
         _emb.reset_embedder_cache()
         _vs.reset_store_cache()
 
+    # The run id exists before the first log line, knowledge phase included.
+    run_id = uuid.uuid4().hex[:12]
+    set_run_id(run_id)
+
     # Admin-added reference works first. They need no Drive, so this phase
     # runs whether or not Drive is configured; one shard does it, so
     # concurrent shards never index the same book twice.
@@ -854,8 +858,6 @@ def main() -> int:
         log(f"ERROR: {exc}")
         return 1
 
-    run_id = uuid.uuid4().hex[:12]
-    set_run_id(run_id)
     t0_global = time.monotonic()
 
     evidence_dir = resolve_evidence_dir()
