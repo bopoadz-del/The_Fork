@@ -138,10 +138,62 @@ def test_scoped_reingest_ignores_unrelated_sha(monkeypatch, tmp_path):
     ) == old["id"]
 
 
-def test_seed_d1_is_noop_when_ids_absent(monkeypatch, tmp_path):
-    projects, _users = _reload(monkeypatch, tmp_path)
+def _add(projects, pid, name, payload, *, days_ago=0):
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.db import SessionLocal
+    from app.core.models import Document
+
+    doc = projects.add_document(
+        project_id=pid,
+        original_name=name,
+        stored_as=name,
+        file_path=f"/tmp/{name}",
+        size=len(payload),
+        content_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+    if days_ago:
+        with SessionLocal() as session:
+            row = session.get(Document, doc["id"])
+            row.uploaded_at = datetime.now(timezone.utc) - timedelta(days=days_ago)
+            session.commit()
+    return doc
+
+
+def test_older_copy_of_the_same_document_is_superseded_by_the_newer(monkeypatch, tmp_path):
+    """A corrected copy uploaded under the same name hides the older extract.
+
+    Structural, from document metadata: same project, same name once case,
+    spacing and copy markers ("(1)", "- Copy") are ignored -> the newest upload
+    is live and every older one points at it. Dry-run unless ``apply``."""
+    projects, users = _reload(monkeypatch, tmp_path)
     projects.init_db()
-    report = projects.seed_d1_letter_supersede()
-    assert report["applied"] is False
-    assert report["stale_present"] is False
-    assert report["live_present"] is False
+    pid = _project(projects, users)["id"]
+    stale = _add(projects, pid, "Example Letter.docx", b"stale extract", days_ago=3)
+    live = _add(projects, pid, "example letter (1).docx", b"corrected extract")
+    other = _add(projects, pid, "Unrelated Memo.docx", b"memo", days_ago=5)
+
+    plan = projects.supersede_older_duplicates(pid)
+    assert plan["applied"] is False
+    assert plan["pairs"] == [{"stale_id": stale["id"], "live_id": live["id"]}]
+    assert projects.get_document(stale["id"])["retrieval_visible"] is True
+
+    done = projects.supersede_older_duplicates(pid, apply=True)
+    assert done["applied"] is True
+    assert projects.get_document(stale["id"])["retrieval_visible"] is False
+    assert projects.get_document(stale["id"])["superseded_by"] == live["id"]
+    assert projects.get_document(live["id"])["retrieval_visible"] is True
+    assert projects.get_document(other["id"])["retrieval_visible"] is True
+    # Idempotent: nothing left to supersede.
+    assert projects.supersede_older_duplicates(pid, apply=True)["pairs"] == []
+
+
+def test_supersede_older_duplicates_is_a_noop_on_distinct_names(monkeypatch, tmp_path):
+    projects, users = _reload(monkeypatch, tmp_path)
+    projects.init_db()
+    pid = _project(projects, users)["id"]
+    _add(projects, pid, "Letter A.docx", b"a")
+    _add(projects, pid, "Letter B.docx", b"b")
+    assert projects.supersede_older_duplicates(pid, apply=True) == {
+        "applied": True, "project_id": pid, "pairs": [],
+    }

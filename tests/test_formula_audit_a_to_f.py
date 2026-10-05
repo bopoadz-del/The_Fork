@@ -325,7 +325,7 @@ def test_audit_calculate_interim_payment():
 # ── 12 calculate_payment ───────────────────────────────────────────────────
 
 def test_audit_calculate_payment():
-    """PRC-605 / FIDIC 14.3 this-period: retention = certified × rate;
+    """Interim payment procedure / FIDIC 14.3 this-period: retention = certified × rate;
     net = certified − retention. Default rate 5% (fraction).
     Hand: certified 90,000 × 0.05 = 4,500 held; net = 85,500;
           disputed = 100,000 − 90,000 = 10,000.
@@ -928,7 +928,7 @@ def test_audit_electrical_installation_sequence():
 
 
 def test_audit_evaluate_tender():
-    """PRC-603 weighted score: 0.45 tech + 0.45 comm + 0.07 HSE + 0.03 local.
+    """Tender analysis weighted score: 0.45 tech + 0.45 comm + 0.07 HSE + 0.03 local.
     Hand:
       A: 85×0.45 + 75×0.45 + 90×0.07 + 60×0.03 = 80.10
       B: 78×0.45 + 82×0.45 + 85×0.07 + 70×0.03 = 80.05

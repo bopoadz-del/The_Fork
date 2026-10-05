@@ -17,7 +17,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -266,7 +266,7 @@ async def admin_doc_reindex(
         True,
         description=(
             "OCR empty-text pages even when a leftover size gate would skip "
-            "them. Required for scanned priced BOQs (20ac033d)."
+            "them. Required for scanned priced BOQs."
         ),
     ),
     auth: dict = Depends(require_api_key),
@@ -463,7 +463,8 @@ def admin_restore_archived_project(project_id: str,
     """Restore an ARCHIVED project to active — the missing undo for Delete.
 
     2026-07-26: the sidebar cleanup archived the REAL corpus projects
-    (client_infra_pack_1, drive_archive) along with the duplicate shells, and
+    (a client corpus project and the master-corpus source) along with the
+    duplicate shells, and
     archive hides a project from retrieval — corpus-project chat silently
     degraded with no way back from the UI or API. Restore flips status to
     'active'; pass hide_from_sidebar=true to keep the row out of the sidebar
@@ -1213,7 +1214,7 @@ def admin_corpus_collections(
 
     Read-only. Issues one COUNT(*) per project + one GROUP BY for folder
     breakdown — bounded by the number of distinct project_ids. Designed
-    for the 70 GB drive_archive corpus where the operator needs to see
+    for a 70 GB master-corpus source where the operator needs to see
     what's actually in there grouped by source folder.
 
     Works on both Postgres production and SQLite dev / pilot.
@@ -1331,8 +1332,8 @@ def admin_corpus_collections(
         alias_entry["is_master_corpus_alias"] = True
         collections.append(alias_entry)
 
-    # Largest first so the eye lands on drive_archive immediately when it
-    # exists.
+    # Largest first so the eye lands on the master-corpus source immediately
+    # when it exists.
     collections.sort(key=lambda c: (-c["chunks"], -c["documents"], c["project_id"]))
 
     return {
@@ -1349,7 +1350,7 @@ def admin_corpus_collections(
 #
 # Accepts a JSON payload of projects/documents/chunks and inserts them
 # into the production tables. Designed for operator loads (the original
-# drive_archive migration, the dd-2023-118 Vol 3 backfill) where direct
+# master-corpus migration, a single-contract volume backfill) where direct
 # psycopg from outside the Render perimeter is blocked by the pgsql
 # ipAllowList default.
 #
@@ -1610,7 +1611,7 @@ def admin_corpus_delete_docs(
     """Export or delete a specific list of documents from one corpus.
 
     Purpose: prune project-specific content that was indexed into a general
-    corpus (e.g. company procedure folders in ``drive_archive``) without
+    corpus (e.g. company procedure folders in the master-corpus source) without
     touching the rest. Operates on an explicit ``doc_ids`` list scoped to one
     ``project_id`` — it never deletes a whole project and never cascades.
 
@@ -1728,7 +1729,7 @@ def admin_corpus_reconcile(
 ):
     """Detect (and optionally repair) chunks stored under the wrong project_id.
 
-    The drive_archive migration wrote chunks via ``/v1/admin/corpus/bulk-insert``
+    The master-corpus migration wrote chunks via ``/v1/admin/corpus/bulk-insert``
     using a per-document destination project_id. If the manifest mapped a
     document to project A but the chunk rows were stamped with project B,
     direct search on project A returns 0 results while project B returns chunks
@@ -2270,3 +2271,76 @@ def admin_sweep_plaintext(
     from app.core.file_crypto import sweep_stale_plaintext
 
     return {"status": "ok", **sweep_stale_plaintext(max_age_seconds)}
+
+
+@router.post("/v1/admin/knowledge/documents", status_code=201)
+async def admin_add_knowledge_document(
+    background_tasks: BackgroundTasks,
+    response: Response,
+    file: UploadFile = File(...),
+    auth: dict = Depends(require_api_key),
+):
+    """Add a reference work to the general-knowledge layer (admin only).
+
+    Codes, standards and contract-form guides are knowledge every project
+    reads, not one project's record. The file is stored in the configured
+    general-knowledge project with ``provenance: admin_knowledge`` -- never
+    ``user_upload``, which the layered RAG files under the uploader's own
+    session layer -- and indexed by the platform's pipeline and embedder.
+    The same content twice returns the existing document (200), not a copy.
+    """
+    _require_admin(auth)
+    import hashlib
+    import uuid
+
+    from app.core import compressed, doc_index, projects as store, upload_limits
+    from app.core.ingest_status import TEXT_BEARING_EXTS
+    from app.core.system_projects import primary_general_knowledge_project
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    gk = primary_general_knowledge_project()
+    if not gk:
+        raise HTTPException(409, "No general-knowledge project is configured.")
+
+    name = os.path.basename((file.filename or "").replace("\\", "/")).strip()
+    if not name or name in (".", ".."):
+        raise HTTPException(400, "Invalid filename")
+    if compressed.is_compressed(name, compressed.head_of(file.file)):
+        raise HTTPException(415, compressed.COMPRESSED_UPLOAD_DETAIL)
+    if os.path.splitext(name.lower())[1] not in TEXT_BEARING_EXTS:
+        raise HTTPException(415, "Only text-bearing formats go into the knowledge base.")
+
+    if not store.get_project(gk):
+        from sqlalchemy.exc import IntegrityError
+
+        ensure_user_exists(SYSTEM_USER_ID, role="admin")
+        try:
+            store.create_project("General Knowledge", user_id=SYSTEM_USER_ID,
+                                 project_id=gk, origin="admin_drive_approved")
+        except IntegrityError:
+            # The row exists already: the boot seed creates the same project
+            # concurrently, or get_project hides it. Either way it is there.
+            logger.info("general-knowledge project %s already exists", gk)
+
+    max_size = upload_limits.max_document_bytes()
+    data_dir = os.getenv("DATA_DIR", "./data")
+    os.makedirs(data_dir, exist_ok=True)
+    stored_as = f"{str(uuid.uuid4())[:8]}_{name}"
+    filepath = os.path.join(data_dir, stored_as)
+    try:
+        size = file_crypto.write_document_stream(filepath, file.file, max_bytes=max_size)
+    except file_crypto.UploadTooLarge as exc:
+        raise HTTPException(413, f"File too large. Max is {exc.limit} bytes.") from exc
+
+    sha = hashlib.sha256(file_crypto.read_document(filepath)).hexdigest()
+    existing = store.find_document_by_sha(gk, sha)
+    if existing:
+        os.remove(filepath)
+        response.status_code = 200
+        return {"status": "exists", "document": existing}
+
+    doc = store.add_document(gk, name, stored_as, filepath, size, content_sha256=sha,
+                             metadata={"provenance": "admin_knowledge",
+                                       "uploader_id": auth.get("user_id")})
+    background_tasks.add_task(doc_index.maybe_eager_index, gk, doc["id"])
+    return {"status": "indexing", "document": doc}

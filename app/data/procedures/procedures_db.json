@@ -1,10 +1,14 @@
 {
-  "version": "1.0",
-  "description": "Industry-standard construction procedure knowledge base for platform validation and workflow logic. Codes (PRC-301..PRC-606, TEM-501..TEM-510) are the platform's internal procedure scheme, applicable across construction programmes.",
-
+  "version": "2.0",
+  "description": "Generic construction procedure catalogue, keyed by procedure KIND. It ships no document codes or document titles of any organisation: a live procedure document's own code is resolved at run time from the corpus (app.core.procedure_catalogue).",
   "procedures": {
-
-    "PRC-301": {
+    "request_for_information": {
+      "kind": "request_for_information",
+      "label": "request for information procedure",
+      "match_phrases": [
+        "request for information",
+        "rfi"
+      ],
       "title": "Request for Information",
       "category": "project_controls",
       "purpose": "Control and resolve technical enquiries from Prime Contractor",
@@ -16,16 +20,33 @@
         "responder": "Delivery Manager",
         "logger": "Document Controller"
       },
-      "required_fields": ["rfi_number", "subject", "technical_query", "required_by_date", "response", "closure_date"],
-      "statuses": ["OPEN", "RESPONDED", "CLOSED", "OVERDUE"],
+      "required_fields": [
+        "rfi_number",
+        "subject",
+        "technical_query",
+        "required_by_date",
+        "response",
+        "closure_date"
+      ],
+      "statuses": [
+        "OPEN",
+        "RESPONDED",
+        "CLOSED",
+        "OVERDUE"
+      ],
       "rules": [
         "RFI is a technical enquiry only - NOT a design change request",
         "Every RFI must be logged in the Document Control System",
         "Response must be factual"
       ]
     },
-
-    "PRC-302": {
+    "risk_management": {
+      "kind": "risk_management",
+      "label": "risk management procedure",
+      "match_phrases": [
+        "risk management",
+        "risk register"
+      ],
       "title": "Risk Management",
       "category": "project_controls",
       "purpose": "Identify, record, and manage programme and project risks",
@@ -39,33 +60,100 @@
       },
       "risk_format": "If [condition] Then [impact]",
       "scoring": {
-        "probability_scale": [1, 2, 3, 4, 5],
-        "impact_scale": [1, 2, 3, 4, 5],
+        "probability_scale": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "impact_scale": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
         "score_formula": "probability * impact",
-        "thresholds": {"green": [1, 4], "amber": [5, 9], "red": [10, 25]}
+        "thresholds": {
+          "green": [
+            1,
+            4
+          ],
+          "amber": [
+            5,
+            9
+          ],
+          "red": [
+            10,
+            25
+          ]
+        }
       },
-      "impact_categories": ["Cost", "Time", "Quality", "Safety", "Reputation"],
+      "impact_categories": [
+        "Cost",
+        "Time",
+        "Quality",
+        "Safety",
+        "Reputation"
+      ],
       "review_cadence": "Monthly with client",
-      "system": "PMWeb Risk Register"
+      "system": "project risk register"
     },
-
-    "PRC-303": {
+    "work_package_control": {
+      "kind": "work_package_control",
+      "label": "work package control procedure",
+      "match_phrases": [
+        "work package"
+      ],
       "title": "Work Package Control",
       "category": "project_controls",
       "purpose": "Track and control work packages",
       "document_prefix": "WP",
-      "template": "TEM-303",
-      "required_fields": ["wp_number", "description", "planned_start", "actual_start", "planned_completion", "actual_completion", "percent_complete", "responsible_party"],
-      "statuses": ["NOT_STARTED", "IN_PROGRESS", "COMPLETE", "OVERDUE", "ON_HOLD"]
+      "template": "work_package_control_register",
+      "required_fields": [
+        "wp_number",
+        "description",
+        "planned_start",
+        "actual_start",
+        "planned_completion",
+        "actual_completion",
+        "percent_complete",
+        "responsible_party"
+      ],
+      "statuses": [
+        "NOT_STARTED",
+        "IN_PROGRESS",
+        "COMPLETE",
+        "OVERDUE",
+        "ON_HOLD"
+      ],
+      "templates": {
+        "work_package_control_register": "Work Package Control Register"
+      }
     },
-
-    "PRC-401": {
+    "quality_audit": {
+      "kind": "quality_audit",
+      "label": "quality assurance audit procedure",
+      "match_phrases": [
+        "quality assurance audit",
+        "qa audit",
+        "quality audit"
+      ],
       "title": "Project Quality Assurance Audit",
       "category": "quality",
       "purpose": "PMC performs QA audits on Consultants and Contractors QA/QC Programs",
       "cadence": "As scheduled per audit plan",
-      "finding_severity": ["Critical", "Major", "Minor", "Observation"],
-      "auto_ncr_trigger": ["Critical", "Major"],
+      "finding_severity": [
+        "Critical",
+        "Major",
+        "Minor",
+        "Observation"
+      ],
+      "auto_ncr_trigger": [
+        "Critical",
+        "Major"
+      ],
       "roles": {
         "process_owner": "PMC QA/QC Manager / PQR",
         "approver": "Employer's Representative",
@@ -73,8 +161,14 @@
         "informed": "PMC Delivery Manager / Concerned Manager / Engineer"
       }
     },
-
-    "PRC-402": {
+    "non_conformance": {
+      "kind": "non_conformance",
+      "label": "non-conformance procedure",
+      "match_phrases": [
+        "non-conformance",
+        "non conformance",
+        "ncr"
+      ],
       "title": "Construction Non-Conformance Reporting",
       "category": "quality",
       "purpose": "Disposition of Contractor NCRs",
@@ -92,11 +186,18 @@
       },
       "roles": {
         "initiator": "Supervision Consultant (Engineer)",
-        "signatory": ["PMC Delivery/Construction Manager", "Supervision Consultant"],
+        "signatory": [
+          "PMC Delivery/Construction Manager",
+          "Supervision Consultant"
+        ],
         "approver": "Employer's Representative",
         "action": "Contractor",
-        "participant": ["PMC Project QA/QC Manager"],
-        "informed": ["PMC Contracts Manager"]
+        "participant": [
+          "PMC Project QA/QC Manager"
+        ],
+        "informed": [
+          "PMC Contracts Manager"
+        ]
       },
       "workflow": [
         "Supervision Consultant raises NCR",
@@ -108,26 +209,49 @@
         "Supervision Consultant verifies closure",
         "NCR closed"
       ],
-      "statuses": ["RAISED", "ACKNOWLEDGED", "DISPOSITION_PROPOSED", "DISPOSITION_REVIEWED", "APPROVED", "IMPLEMENTING", "VERIFYING", "CLOSED"]
+      "statuses": [
+        "RAISED",
+        "ACKNOWLEDGED",
+        "DISPOSITION_PROPOSED",
+        "DISPOSITION_REVIEWED",
+        "APPROVED",
+        "IMPLEMENTING",
+        "VERIFYING",
+        "CLOSED"
+      ]
     },
-
-    "PRC-403": {
+    "testing_commissioning": {
+      "kind": "testing_commissioning",
+      "label": "testing and commissioning procedure",
+      "match_phrases": [
+        "testing and commissioning",
+        "testing & commissioning",
+        "commissioning"
+      ],
       "title": "Testing & Commissioning",
       "category": "quality",
       "purpose": "Define testing and commissioning process per contract requirements",
       "scopes": {
         "rides": {
           "performer": "Vendor",
-          "witness": "PMC Rides Director/Manager",
+          "witness": "PMC specialist systems manager",
           "approver": "Independent Certifier"
         },
         "mep_infrastructure_building": {
           "performer": "Contractor",
-          "witness": ["Supervision Consultant", "PMC"],
+          "witness": [
+            "Supervision Consultant",
+            "PMC"
+          ],
           "approver": "Supervision Consultant"
         }
       },
-      "test_statuses": ["PASS", "FAIL", "CONDITIONAL_PASS", "PENDING_WITNESSING"],
+      "test_statuses": [
+        "PASS",
+        "FAIL",
+        "CONDITIONAL_PASS",
+        "PENDING_WITNESSING"
+      ],
       "hold_point_types": {
         "WITNESS_POINT": "PMC/SC must witness. Work may NOT proceed without witnessing.",
         "HOLD_POINT": "Requires explicit release by all signatories.",
@@ -138,14 +262,18 @@
         "Un-witnessed witness points must be escalated to PMC"
       ]
     },
-
-    "PRC-404": {
+    "handover": {
+      "kind": "handover",
+      "label": "handover procedure",
+      "match_phrases": [
+        "handover"
+      ],
       "title": "Handover Procedure",
       "category": "quality",
       "purpose": "Formal handover of completed works from Contractor to Employer",
       "prerequisites": [
-        "All T&C complete with passing results (PRC-403)",
-        "All NCRs closed (PRC-402)",
+        "All T&C complete with passing results (testing and commissioning procedure)",
+        "All NCRs closed (non-conformance procedure)",
         "All punch list items cleared",
         "As-built drawings issued",
         "O&M manuals submitted",
@@ -159,8 +287,14 @@
         "Handover register signed by all parties"
       ]
     },
-
-    "PRC-405": {
+    "inspection_request": {
+      "kind": "inspection_request",
+      "label": "inspection request procedure",
+      "match_phrases": [
+        "inspection procedure",
+        "inspection request",
+        "construction inspection"
+      ],
       "title": "Construction Inspection Procedure",
       "category": "quality",
       "purpose": "Process for Contractor Inspection Requests",
@@ -170,10 +304,14 @@
         "standard": "24 hours minimum",
         "structural_hold_point": "48 hours minimum"
       },
-      "result_options": ["ACCEPTED", "REJECTED", "CONDITIONAL"],
+      "result_options": [
+        "ACCEPTED",
+        "REJECTED",
+        "CONDITIONAL"
+      ],
       "result_rules": {
         "REJECTED": "Contractor must re-submit IR",
-        "CONDITIONAL": "NCR raised under PRC-402"
+        "CONDITIONAL": "NCR raised under the non-conformance procedure"
       },
       "roles": {
         "process_owner": "PMC Delivery Manager",
@@ -182,8 +320,14 @@
         "approver": "Employer's Representative"
       }
     },
-
-    "PRC-406": {
+    "hse_audit": {
+      "kind": "hse_audit",
+      "label": "HSE audit and inspection procedure",
+      "match_phrases": [
+        "hse audit",
+        "hse inspection",
+        "hse"
+      ],
       "title": "HSE Audit and Inspection Procedure",
       "category": "hse",
       "purpose": "HSE audits and inspections across the project",
@@ -191,15 +335,26 @@
         "inspections": "Monthly",
         "formal_audits": "Quarterly"
       },
-      "risk_categories": ["FATALITY_RISK", "SERIOUS_INJURY_RISK", "MINOR_INJURY_RISK", "ENVIRONMENTAL", "NEAR_MISS"],
+      "risk_categories": [
+        "FATALITY_RISK",
+        "SERIOUS_INJURY_RISK",
+        "MINOR_INJURY_RISK",
+        "ENVIRONMENTAL",
+        "NEAR_MISS"
+      ],
       "stop_work": {
         "who_can_issue": "Any team member",
         "trigger": "Immediate life-safety risk",
         "resumption_authority": "PMC Project Director written sign-off required"
       }
     },
-
-    "PRC-501": {
+    "design_review": {
+      "kind": "design_review",
+      "label": "design review and acceptance procedure",
+      "match_phrases": [
+        "design review",
+        "design acceptance"
+      ],
       "title": "Design Reviews & Acceptance",
       "category": "design",
       "purpose": "Review, comment, and accept design documentation",
@@ -215,47 +370,82 @@
         "workshop_duration_days": "1-2"
       },
       "templates": {
-        "TEM-501": "Design Review Schedule",
-        "TEM-502": "Design Review Comments Schedule",
-        "TEM-503": "Roles & Responsibility Matrix",
-        "TEM-504": "Design Package Acceptance Form",
-        "TEM-505": "Project Decision Note (PDN)",
-        "TEM-506": "Design Coordination Meeting Sample",
-        "TEM-507": "Generic Design Progress Evaluation",
-        "TEM-508": "DM Exceptions Justification Report",
-        "TEM-509": "Workshop Design Decision Approval Form",
-        "TEM-510": "Design Directive PMWeb Form"
+        "design_review_schedule": "Design Review Schedule",
+        "design_review_comments_schedule": "Design Review Comments Schedule",
+        "roles_responsibility_matrix": "Roles & Responsibility Matrix",
+        "design_package_acceptance_form": "Design Package Acceptance Form",
+        "project_decision_note": "Project Decision Note (PDN)",
+        "design_coordination_meeting_record": "Design Coordination Meeting Record",
+        "design_progress_evaluation": "Design Progress Evaluation",
+        "design_exceptions_justification_report": "Design Exceptions Justification Report",
+        "workshop_design_decision_form": "Workshop Design Decision Approval Form",
+        "design_directive_form": "Design Directive Form"
       },
       "acceptance_forms": {
-        "standard": "TEM-504",
-        "decision_note": "TEM-505",
-        "workshop": "TEM-509"
+        "standard": "design_package_acceptance_form",
+        "decision_note": "project_decision_note",
+        "workshop": "workshop_design_decision_form"
       },
       "workflow": [
-        "PMT prepares Design Review Schedule (TEM-501)",
+        "PMT prepares Design Review Schedule",
         "Designer issues Design Package (min 7 cal days before workshop)",
         "All reviewers prepare marked-up sets independently",
         "Design Review Workshop (1-2 days): Creative Consultant leads creative; PMT leads technical/commercial",
-        "Compile & distribute Design Review Comments (TEM-502)",
+        "Compile & distribute Design Review Comments",
         "Designer amends design per agreed comments",
         "PMT reviews and recommends acceptance",
-        "Employer signs Design Package Acceptance Form (TEM-504)",
+        "Employer signs Design Package Acceptance Form",
         "Issue for IP Review & Approvals"
       ],
       "raci": {
-        "Employer": {"code": "A", "meaning": "Acceptance authority"},
-        "PMT": {"code": "P/PR", "meaning": "Preparation and Primary Review"},
-        "Creative Consultant": {"code": "PR", "meaning": "Primary Review on creative elements"},
-        "Cost Consultant": {"code": "C", "meaning": "Comment"},
-        "Operator": {"code": "C", "meaning": "Comment"},
-        "Statutory Bodies / 3rd Party Inspector": {"code": "I", "meaning": "Informed"},
-        "Turnkey Contractor": {"code": "P", "meaning": "Preparation"},
-        "3rd Party Contractors / Suppliers": {"code": "P", "meaning": "Preparation"}
+        "Employer": {
+          "code": "A",
+          "meaning": "Acceptance authority"
+        },
+        "PMT": {
+          "code": "P/PR",
+          "meaning": "Preparation and Primary Review"
+        },
+        "Creative Consultant": {
+          "code": "PR",
+          "meaning": "Primary Review on creative elements"
+        },
+        "Cost Consultant": {
+          "code": "C",
+          "meaning": "Comment"
+        },
+        "Operator": {
+          "code": "C",
+          "meaning": "Comment"
+        },
+        "Statutory Bodies / 3rd Party Inspector": {
+          "code": "I",
+          "meaning": "Informed"
+        },
+        "Turnkey Contractor": {
+          "code": "P",
+          "meaning": "Preparation"
+        },
+        "3rd Party Contractors / Suppliers": {
+          "code": "P",
+          "meaning": "Preparation"
+        }
       },
-      "design_phases": ["General/All Phases", "Feasibility", "Concept Design", "Schematic Design", "Detailed Design", "Construction Documents"]
+      "design_phases": [
+        "General/All Phases",
+        "Feasibility",
+        "Concept Design",
+        "Schematic Design",
+        "Detailed Design",
+        "Construction Documents"
+      ]
     },
-
-    "PRC-502": {
+    "design_directive": {
+      "kind": "design_directive",
+      "label": "design directive procedure",
+      "match_phrases": [
+        "design directive"
+      ],
       "title": "Design Directives",
       "category": "design",
       "purpose": "Formal instructions from PMT to Contractor/Consultant for design changes",
@@ -268,10 +458,15 @@
         "implementer": "Head of Design Management",
         "executor": "Delivery Manager(s)"
       },
-      "integration": "Must be used alongside PRC-606 (Change Management) when scope or cost is affected"
+      "integration": "Must be used alongside the change management procedure when scope or cost is affected"
     },
-
-    "PRC-601": {
+    "job_requisition": {
+      "kind": "job_requisition",
+      "label": "job requisition and prequalification procedure",
+      "match_phrases": [
+        "job requisition",
+        "prequalification"
+      ],
       "title": "Tendering - Job Requisition and Prequalifications",
       "category": "procurement",
       "purpose": "Obtain Job Requisition Number and issue Request for Proposal",
@@ -284,8 +479,13 @@
         "executor": "Contracts Manager"
       }
     },
-
-    "PRC-602": {
+    "request_for_proposals": {
+      "kind": "request_for_proposals",
+      "label": "request for proposals procedure",
+      "match_phrases": [
+        "request for proposal",
+        "rfp"
+      ],
       "title": "Tendering - Request for Proposals",
       "category": "procurement",
       "purpose": "Issue formal tenders to prequalified contractors/consultants",
@@ -299,34 +499,77 @@
         "Compliance Schedules"
       ]
     },
-
-    "PRC-603": {
+    "tender_analysis": {
+      "kind": "tender_analysis",
+      "label": "tender analysis and recommendation procedure",
+      "match_phrases": [
+        "tender analysis",
+        "tender evaluation"
+      ],
       "title": "Tendering - Tender Analysis and Recommendation",
       "category": "procurement",
       "purpose": "Evaluate tender submissions and recommend contract award",
       "evaluation_criteria": {
-        "technical": {"weight_min": 0.40, "weight_max": 0.50, "components": ["methodology", "programme", "resources"]},
-        "commercial": {"weight_min": 0.40, "weight_max": 0.50, "components": ["price", "schedule_of_rates"]},
-        "hse": {"weight_min": 0.05, "weight_max": 0.10},
-        "local_content_sustainability": {"weight_min": 0.0, "weight_max": 0.10}
+        "technical": {
+          "weight_min": 0.4,
+          "weight_max": 0.5,
+          "components": [
+            "methodology",
+            "programme",
+            "resources"
+          ]
+        },
+        "commercial": {
+          "weight_min": 0.4,
+          "weight_max": 0.5,
+          "components": [
+            "price",
+            "schedule_of_rates"
+          ]
+        },
+        "hse": {
+          "weight_min": 0.05,
+          "weight_max": 0.1
+        },
+        "local_content_sustainability": {
+          "weight_min": 0.0,
+          "weight_max": 0.1
+        }
       },
       "deliverable": "Tender Evaluation Report (TER) with scored matrix and recommendation",
-      "rap_variant": "PRC-603A - Rapid Approval Process for below-threshold awards"
+      "rap_variant": "Rapid approval variant for below-threshold awards"
     },
-
-    "PRC-604": {
+    "contract_award": {
+      "kind": "contract_award",
+      "label": "contract award procedure",
+      "match_phrases": [
+        "contract award",
+        "letter of award"
+      ],
       "title": "Tendering - Approval and Contract Award",
       "category": "procurement",
       "purpose": "Formal approval and contract award",
-      "award_package": ["Letter of Award (LOA)", "Signed Contract", "Performance Bond", "Advance Payment Bond", "Insurance certificates"],
+      "award_package": [
+        "Letter of Award (LOA)",
+        "Signed Contract",
+        "Performance Bond",
+        "Advance Payment Bond",
+        "Insurance certificates"
+      ],
       "approval_levels": {
         "below_threshold": "Delivery Manager",
         "above_threshold": "Project Director + Employer's Representative",
         "major_threshold": "Board level"
       }
     },
-
-    "PRC-605": {
+    "interim_payment": {
+      "kind": "interim_payment",
+      "label": "interim payment procedure",
+      "match_phrases": [
+        "interim payment",
+        "payment request",
+        "payment certificate"
+      ],
       "title": "Interim Payments",
       "category": "commercial",
       "purpose": "Processing contractor and consultant payment requests",
@@ -353,14 +596,20 @@
         "release_100pct": "At end of Defects Liability Period (DLP)"
       },
       "rules": [
-        "Payment Request Form is a controlled document - cannot be modified without VP Programme Management approval",
+        "Payment Request Form is a controlled document - cannot be modified without programme-management approval",
         "All PRs must be registered through Document Control",
         "Disputed amounts must be identified separately",
         "Undisputed portion must be paid on time regardless of disputes"
       ]
     },
-
-    "PRC-606": {
+    "change_management": {
+      "kind": "change_management",
+      "label": "change management procedure",
+      "match_phrases": [
+        "change management",
+        "change control",
+        "variation"
+      ],
       "title": "Change Management",
       "category": "commercial",
       "purpose": "Control scope, price, and programme changes",
@@ -394,11 +643,10 @@
         "Contract account updated",
         "Planning notified for programme impact"
       ],
-      "integration": "Changes affecting design direction must also trigger a Design Directive (DD) under PRC-502",
+      "integration": "Changes affecting design direction must also trigger a Design Directive (DD) under the design directive procedure",
       "critical_rule": "An RFM is an instruction - only a signed Variation Order (VO) changes the contract"
     }
   },
-
   "document_numbering": {
     "RFI": "RFI-{:04d}",
     "NCR": "NCR-{year}-{:03d}",
@@ -410,12 +658,15 @@
     "DD": "DD-{:03d}",
     "PR": "PR-{:04d}"
   },
-
   "forbidden_terms": {
     "design_approval": {
       "forbidden": "APPROVED",
-      "correct_alternatives": ["accepted", "for comment", "buy-off"],
-      "reason": "Contractually prohibited on design documents per PRC-501"
+      "correct_alternatives": [
+        "accepted",
+        "for comment",
+        "buy-off"
+      ],
+      "reason": "Contractually prohibited on design documents per the design review and acceptance procedure"
     }
   }
 }

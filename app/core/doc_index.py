@@ -91,9 +91,9 @@ _PDF_OCR_THRESHOLD = 30
 # (e.g. 450 MB) OOM the 2 GB Render worker during fitz load / OCR.
 _DEFAULT_PDF_MAX_SIZE_MB = 100.0
 # For PDFs above this size, do NOT run OCR — only extract any existing text
-# layer. 25 MB was too tight: the live priced BOQ (doc 20ac033d,
-# IP-INF-053-…-BOQ-… (Priced).pdf) is ~28 MB and is a scan, so item codes
-# (D599.5, D549.2) never entered the search index. 32 MB covers that file
+# layer. 25 MB was too tight: a live priced BOQ (a scanned ~28 MB
+# "...-BOQ-... (Priced).pdf") is a scan, so its item codes
+# never entered the search index. 32 MB covers that file
 # with headroom; page-at-a-time OCR + isolated children still bound memory.
 _DEFAULT_PDF_OCR_MAX_SIZE_MB = 32.0
 # Default OCR page budget. 40 left later demolition items unindexed
@@ -101,8 +101,8 @@ _DEFAULT_PDF_OCR_MAX_SIZE_MB = 32.0
 # higher cap via PDF_OCR_BOQ_PAGE_CAP.
 _DEFAULT_PDF_OCR_PAGE_CAP = 80
 _DEFAULT_PDF_OCR_BOQ_PAGE_CAP = 160
-# Admin / force-OCR budget. The live priced BOQ (20ac033d) is 370 pages;
-# 160 left later CESMM rows (D599.5 / D549.2) unindexed even when OCR ran.
+# Admin / force-OCR budget. A live scanned priced BOQ ran to 370 pages;
+# 160 left later CESMM rows unindexed even when OCR ran.
 _DEFAULT_PDF_OCR_FORCE_PAGE_CAP = 400
 # Isolated page-batch size for large scans. A timeout/OOM on pages 41-60
 # then keeps pages 1-40 instead of ZERO_CHUNK'ing the whole document.
@@ -615,6 +615,7 @@ def _extract_pdf(
     ocr_pages = 0
     ocr_attempts = 0
     empty_text_pages = 0
+    pages_read = 0
     truncated = False
     chars = 0
     text_truncated = False
@@ -662,6 +663,7 @@ def _extract_pdf(
                     if _MAX_EXTRACT_CHARS > 0 and chars >= _MAX_EXTRACT_CHARS:
                         text_truncated = True
                         break
+                    pages_read += 1
                     page_text = (page.get_text() or "").strip()
                     # Always keep any real text layer — never discard digital
                     # text in favour of OCR.
@@ -683,7 +685,14 @@ def _extract_pdf(
                         elif page_cap > 0:
                             truncated = True
                     if plumber is not None and i < len(plumber.pages):
-                        table_md = _pdf_tables_markdown(plumber.pages[i])
+                        plumber_page = plumber.pages[i]
+                        try:
+                            table_md = _pdf_tables_markdown(plumber_page)
+                        finally:
+                            # pdfplumber keeps every page's parsed layout until
+                            # the page is closed: unreleased, a 161-page code
+                            # book held ~1.3 GB and tripped the memory guard.
+                            plumber_page.close()
                         if table_md:
                             parts.append(table_md)
                             chars += len(table_md)
@@ -736,7 +745,8 @@ def _extract_pdf(
                     partial_meta["ocr_attempts"] = ocr_attempts
                 if empty_text_pages:
                     partial_meta["empty_text_pages"] = empty_text_pages
-                if empty_text_pages > 0 and ocr_attempts == 0:
+                partial_meta["pages_read"] = pages_read
+                if _mostly_without_text(empty_text_pages, pages_read) and ocr_attempts == 0:
                     partial_meta["ocr_required"] = True
                 return "\n".join(parts), partial_meta
             # Nothing salvageable. Surface it as the memory failure it is
@@ -756,7 +766,8 @@ def _extract_pdf(
         meta["ocr_attempts"] = ocr_attempts
     if empty_text_pages:
         meta["empty_text_pages"] = empty_text_pages
-    if empty_text_pages > 0 and ocr_attempts == 0:
+    meta["pages_read"] = pages_read
+    if _mostly_without_text(empty_text_pages, pages_read) and ocr_attempts == 0:
         # Cover-only extract: finer chunker can still emit 6 chunks and look
         # like success. Callers must not report that as an indexed body.
         # A single blank digital page that we *did* OCR (attempted, empty
@@ -869,6 +880,7 @@ def _extract_pdf_batched(
     ocr_used = 0
     ocr_attempts = 0
     empty_text_pages = 0
+    pages_read = 0
     for start in range(0, n_pages, batch):
         end = min(start + batch, n_pages)
         remaining = max(0, budget - ocr_attempts)
@@ -883,6 +895,7 @@ def _extract_pdf_batched(
         ocr_used += int((bmeta or {}).get("ocr_pages") or 0)
         ocr_attempts += int((bmeta or {}).get("ocr_attempts") or 0)
         empty_text_pages += int((bmeta or {}).get("empty_text_pages") or 0)
+        pages_read += int((bmeta or {}).get("pages_read") or 0)
         for key in (
             "ocr_low_quality",
             "ocr_truncated",
@@ -908,7 +921,8 @@ def _extract_pdf_batched(
         meta["ocr_attempts"] = ocr_attempts
     if empty_text_pages:
         meta["empty_text_pages"] = empty_text_pages
-    if empty_text_pages > 0 and ocr_attempts == 0:
+    meta["pages_read"] = pages_read
+    if _mostly_without_text(empty_text_pages, pages_read) and ocr_attempts == 0:
         meta["ocr_required"] = True
     return "\n".join(parts), meta
 
@@ -2511,11 +2525,10 @@ def _boq_chunks_for_document(
 # exactly as `_boq_chunks_for_document` does for priced line items.
 
 _DRAWING_NAME_RE = re.compile(
-    # `DWG` is the drawing token in the JCB/the client document-code convention
-    # that names most of this corpus:
-    #   IP-INF-053-0000-JCB-DWG-TM-200-1000005-A.pdf   <- drawing
-    #   IP-INF-053-0000-JCB-BOQ-CA-000007-B_...pdf     <- NOT a drawing
-    #   IP-INF-053-0000-JCB-SPC-IF-000013-B_SOPR.pdf   <- NOT a drawing
+    # `DWG` is the drawing token in hyphenated document-code conventions:
+    #   AB-CDE-001-0000-XYZ-DWG-TM-200-0000001-A.pdf   <- drawing
+    #   AB-CDE-001-0000-XYZ-BOQ-CA-000001-B_...pdf     <- NOT a drawing
+    #   AB-CDE-001-0000-XYZ-SPC-IF-000001-B_Spec.pdf   <- NOT a drawing
     # `\b` is WRONG here: underscore is a word character, so `\bdrawing\b`
     # does not match `drawing_tm_200.pdf` — a real filename from the corpus.
     # These lookarounds treat `_`, `-`, `.` and space alike as separators.
@@ -2758,17 +2771,37 @@ def _ifc_census(file_path: str, filename: str) -> list[str]:
     return _ifc_step_census_chunk(file_path, filename)
 
 
+def _mostly_without_text(empty_text_pages: int, pages_read: int) -> bool:
+    """True when at least half the pages read had no usable text layer.
+
+    A scan is mostly image pages. A text-layer reference book with full-page
+    figures or maps has a few empty pages among hundreds of text pages; those
+    are missing figures, not a missing body. ``pages_read`` 0 (unknown, e.g. an
+    older extractor's metadata) keeps the old any-empty-page rule.
+    """
+    if empty_text_pages <= 0:
+        return False
+    if pages_read <= 0:
+        return True
+    return empty_text_pages * 2 >= pages_read
+
+
 def _scanned_pdf_missing_ocr(ext: str, meta: dict[str, Any]) -> bool:
     """True when a PDF had empty body pages and OCR was never invoked.
 
-    Live reindex of 20ac033d returned status=ok with 6 cover-page chunks
+    A live reindex of a scanned priced BOQ returned status=ok with 6 cover-page chunks
     because the finer chunker recast the text layer + VERIFIED-TOTAL GUARD
-    as success. Item codes D599.5 / D549.2 were never in the extract.
+    as success. Its item codes were never in the extract.
 
     OCR that ran and returned empty (a genuinely blank digital page) is
     not this failure — ``ocr_attempts > 0`` means the trigger fired.
     """
     if (ext or "").lower() != ".pdf":
+        return False
+    pages_read = int(meta.get("pages_read") or 0)
+    if pages_read and not _mostly_without_text(int(meta.get("empty_text_pages") or 0), pages_read):
+        # Most pages carry a text layer: the body is indexed; any image-only
+        # pages are figures, whether or not OCR was skipped for size.
         return False
     if int(meta.get("ocr_pages") or 0) > 0:
         return False
@@ -3385,7 +3418,7 @@ def _search_project_documents_sync(
     over the ``chunks`` Postgres table) so the agent's tool sees the
     SAME chunks the RAG injection layer sees. Pre-PR-94 this used a
     separate TF-IDF-over-JSON-blobs path that did not query the migrated
-    drive_archive corpus, causing tool results to be empty while the
+    master-corpus source, causing tool results to be empty while the
     injected RAG context contained the right answer (PR #93 migration
     surfaced the gap).
 

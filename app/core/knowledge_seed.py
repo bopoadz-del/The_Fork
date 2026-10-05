@@ -1,5 +1,5 @@
 """Idempotent boot-time seeding of bundled knowledge docs into the RAG
-general-knowledge project (``training_material`` by default).
+general-knowledge project (``app.core.system_projects`` default).
 
 The markdown files in ``docs/knowledge/`` (CESMM/POMI units reference, FIDIC
 contracts reference, procedures, etc.) are bundled into the image (see the
@@ -25,8 +25,9 @@ KNOWLEDGE_DIR = os.path.join(_ROOT, "docs", "knowledge")
 
 
 def _gk_project_id() -> str:
-    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
-    return next((p.strip() for p in raw.split(",") if p.strip()), "")
+    from app.core.system_projects import primary_general_knowledge_project
+
+    return primary_general_knowledge_project()
 
 
 def _heal_gk_share(store, project_id: str) -> None:

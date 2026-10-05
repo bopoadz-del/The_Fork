@@ -2,13 +2,13 @@
 
 A live answer-report export ask (Master Corpus / theshovel.ai), exactly::
 
-    Export A1-A9 answers as a docx report
+    Export Q1-Q9 answers as a docx report
 
-Expected: a downloadable Word file of the A1–A9 *chat answers*, with a
+Expected: a downloadable Word file of the Q1–Q9 *chat answers*, with a
 real page footer carrying the live URL, figures intact.
 
-Actual on ``567147a``: no docx landed. ``A1-A9`` is identifier-shaped
-(``extract_query_identifiers`` keeps ``a1-a9``), retrieval treated it as
+Actual on ``567147a``: no docx landed. ``Q1-Q9`` is identifier-shaped
+(``extract_query_identifiers`` keeps ``q1-q9``), retrieval treated it as
 RFP appendix / attachment codes, and the turn listed those documents
 instead of compiling the conversation.
 
@@ -22,9 +22,10 @@ import os
 import re
 from typing import Any, Iterable, Optional
 
-# A1-A9 / A1 to A9 / A1–A9. The letter is the battery label, not a file.
+# Q1-Q5 / B2 to B4 / K1–K3: the user's own one-letter label for the turns,
+# any letter, the same letter (or none) on the second number. Not a file code.
 _ANSWER_RANGE_RE = re.compile(
-    r"\bA\s*(\d{1,2})\s*(?:[-–—]|to)\s*A?\s*(\d{1,2})\b",
+    r"\b(?P<label>[A-Z])\s*(?P<start>\d{1,2})\s*(?:[-–—]|to)\s*(?:(?P=label))?\s*(?P<end>\d{1,2})\b",
     re.IGNORECASE,
 )
 
@@ -44,7 +45,7 @@ _ANSWERS_OR_CONVO_RE = re.compile(
 )
 
 # RFP / tender attachment listing — the live misroute. An export that
-# names those packages is not an A1–A9 answer report, unless it also
+# names those packages is not an answer-range report, unless it also
 # explicitly asks for chat *answers*.
 _RFP_ATTACH_RE = re.compile(
     r"\b(rfp|request\s+for\s+proposal|invitation\s+to\s+tender|"
@@ -80,14 +81,16 @@ def answer_report_export_enabled() -> bool:
 
 
 def parse_answer_report_range(text: str) -> Optional[tuple[int, int]]:
-    """Return 1-based ``(start, end)`` for ``A1-A9`` / ``1-9``, or None."""
+    """Return 1-based ``(start, end)`` for ``Q1-Q5`` / ``1-5``, or None."""
     raw = text or ""
     m = _ANSWER_RANGE_RE.search(raw)
-    if not m:
+    if m:
+        start, end = int(m.group("start")), int(m.group("end"))
+    else:
         m = re.search(r"\b(\d{1,2})\s*[-–—]\s*(\d{1,2})\b", raw)
-    if not m:
-        return None
-    start, end = int(m.group(1)), int(m.group(2))
+        if not m:
+            return None
+        start, end = int(m.group(1)), int(m.group(2))
     if start > end:
         start, end = end, start
     start = max(1, min(start, 99))
@@ -99,10 +102,10 @@ def message_wants_answer_report(text: str) -> bool:
     """True when the turn wants a docx of conversation answers, not files.
 
     Positive: the live export ask; 'export this conversation as a Word
-    document'; 'save answers A1 to A9 as docx'.
+    document'; 'save answers B2 to B4 as docx'.
 
     Negative: RFP/attachment listing; a single-letter code lookup
-    ('what does A1 of the RFP say'); generic 'give me a docx copy'
+    ('what does Q1 of the RFP say'); generic 'give me a docx copy'
     (last-message UI button); a Contract Data question (who is the Engineer).
     """
     raw = text or ""
@@ -116,8 +119,8 @@ def message_wants_answer_report(text: str) -> bool:
         return False
     if _RFP_ATTACH_RE.search(raw) and not _ANSWERS_OR_CONVO_RE.search(raw):
         return False
-    if _ANSWER_RANGE_RE.search(raw):
-        return True
+    # A labelled range alone ("S1-S5") may be sheets or items; it is an answer
+    # report only when the turn also speaks of answers / the conversation.
     return bool(_ANSWERS_OR_CONVO_RE.search(raw))
 
 
@@ -127,10 +130,10 @@ def export_workspace_project_id(
 ) -> str:
     """UI/workspace project id for an export URL — never the RAG backing id.
 
-    Live H1: chat remaps ``master_corpus`` → ``drive_archive`` before the
-    agent runs. Stamping that remapped id into
+    Chat remaps ``master_corpus`` → the master-corpus source project
+    before the agent runs. Stamping that remapped id into
     ``/v1/projects/{id}/conversations/.../export`` 404s
-    (``Project 'drive_archive' not found``). Prefer the ``ws-{ui_pid}``
+    (``Project '<source id>' not found``). Prefer the ``ws-{ui_pid}``
     conversation prefix, then reverse-map the master-corpus source.
     """
     from app.core.projects import MASTER_CORPUS_PROJECT_ID, ui_project_id
@@ -179,7 +182,7 @@ def compose_answer_report_reply(
     if not pairs:
         return (
             "There are no prior answers in this conversation to export. "
-            "Ask the questions first, then export A1–A9 as a docx report."
+            "Ask the questions first, then export the answers (e.g. Q1–Q5) as a docx report."
         )
     first = pairs[0]["label"]
     last = pairs[-1]["label"]

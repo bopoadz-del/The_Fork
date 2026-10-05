@@ -68,7 +68,7 @@ REAL_NON_DRAWINGS = [
     "IP-INF-053-0000-JCB-SPC-IF-000013-B_SOPR.pdf",
     "NF-053-0000-JCB-PLN-DE-000006-A_Post-appointment BIM Execution Plan.pdf",
     "DD-2022-175 - Volume 1 - Conditions of Contract.pdf",
-    "PRC-301 Request for Information.pdf",
+    "XYZ-301 Request for Information.pdf",
 ]
 
 

@@ -10,7 +10,7 @@ Two battery failures, one cause. Both are in
   ``Schedule 10: Not Used``. Nothing in the context said which excerpt was
   the contract and which was a standard form, so the model blended them.
 * **Delay-rate ask (F-KB-1)** — asked for the Delay Damages, it reproduced
-  ``docs/knowledge/fidic_2017_administration.md`` almost verbatim instead of
+  a shipped ``docs/knowledge/`` FIDIC reference almost verbatim instead of
   the project's own figure at 8.8.1, which neighbouring asks prove is retrievable.
   The knowledge base answered a question the corpus could answer better.
 

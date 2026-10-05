@@ -62,21 +62,21 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # handlers — only the line numbers moved. No new silent returns.
     # Re-indexed 2026-09-27: dewatering drawdown guard in
     # _message_wants_cash_flow added 5 lines. Same handlers below it.
-    "app/agents/runtime.py:649": "baseline 2026-09-10",
-    "app/agents/runtime.py:967": "baseline 2026-09-10",
+    "app/agents/runtime.py:647": "baseline 2026-09-10",
+    "app/agents/runtime.py:965": "baseline 2026-09-10",
     # Re-indexed 2026-09-27: stated look-ahead date passed in predispatch.
     # Same handlers — only the line numbers moved. No new silent returns.
     # Shifted again the same day: dewatering drawdown guard in
     # _message_wants_cash_flow added 5 lines below these handlers.
     # Re-indexed 2026-09-28: duplicate look-ahead phrase tuple removed
     # from runtime (the router owns the detector). Same handlers, -6 lines.
-    "app/agents/runtime.py:2213": "baseline 2026-09-10",
-    "app/agents/runtime.py:2219": "baseline 2026-09-10",
-    "app/agents/runtime.py:2282": "baseline 2026-09-10",
-    "app/agents/runtime.py:2288": "baseline 2026-09-10",
-    "app/agents/runtime.py:2972": "baseline 2026-09-10",
-    "app/agents/runtime.py:3996": "baseline 2026-09-10",
-    "app/agents/runtime.py:5352": "baseline 2026-09-10",
+    "app/agents/runtime.py:2211": "baseline 2026-09-10",
+    "app/agents/runtime.py:2217": "baseline 2026-09-10",
+    "app/agents/runtime.py:2280": "baseline 2026-09-10",
+    "app/agents/runtime.py:2286": "baseline 2026-09-10",
+    "app/agents/runtime.py:2970": "baseline 2026-09-10",
+    "app/agents/runtime.py:3994": "baseline 2026-09-10",
+    "app/agents/runtime.py:5350": "baseline 2026-09-10",
     # Re-indexed 2026-09-25: standards-note relevance helper inserted above
     # _aca_claim_amount. Same ValueError return — only the line moved.
     # Re-indexed 2026-09-27 with the look-ahead predispatch date pass,
@@ -85,7 +85,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # cost-calculator graft (#737) sits above _aca_claim_amount, and the
     # duplicate look-ahead phrase tuple removal (#731) shifts the same
     # handler by -6. Same ValueError return — only the line moved.
-    "app/agents/runtime.py:6313": "baseline 2026-09-10",
+    "app/agents/runtime.py:6319": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:405": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:419": "baseline 2026-09-10",
     "app/blocks/bim_extractor.py:603": "baseline 2026-09-10",
@@ -100,8 +100,8 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/blocks/primavera_parser.py:344": "baseline 2026-09-10",
     "app/blocks/primavera_parser.py:359": "baseline 2026-09-10",
     "app/blocks/safety_world_detector.py:65": "baseline 2026-09-10",
-    "app/blocks/smart_orchestrator.py:567": "baseline 2026-09-10",
-    "app/blocks/smart_orchestrator.py:588": "baseline 2026-09-10",
+    "app/blocks/smart_orchestrator.py:577": "baseline 2026-09-10",
+    "app/blocks/smart_orchestrator.py:598": "baseline 2026-09-10",
     "app/blocks/validation_pipeline.py:159": "baseline 2026-09-10",
     "app/blocks/voice.py:43": "baseline 2026-09-10",
     "app/containers/construction/__init__.py:145": "baseline 2026-09-10",
@@ -123,14 +123,14 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/core/doc_index.py:405": "baseline 2026-09-10",
     # Re-indexed 2026-09-28: quarantine head probe above _extract_pdf
     # and the Office gate shifted these same handlers. No new silent returns.
-    "app/core/doc_index.py:985": "baseline 2026-09-10",
-    "app/core/doc_index.py:1007": "baseline 2026-09-10",
-    "app/core/doc_index.py:1096": "baseline 2026-09-10",
+    "app/core/doc_index.py:999": "baseline 2026-09-10",
+    "app/core/doc_index.py:1021": "baseline 2026-09-10",
+    "app/core/doc_index.py:1110": "baseline 2026-09-10",
     # Re-indexed 2026-09-28: drawing wiring plaintext open added 5 lines
     # above this handler. Same handler. No new silent return.
     # Shifted again the same day: the recoverable-skip helper sits above
     # _ifc_step_census_chunk. Same empty return. No new silent return.
-    "app/core/doc_index.py:2704": "baseline 2026-09-10",
+    "app/core/doc_index.py:2717": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:333": "baseline 2026-09-10",
     "app/core/rag/vector_store.py:1816": "baseline 2026-09-10",
     "app/infra/monitoring.py:324": "baseline 2026-09-10",

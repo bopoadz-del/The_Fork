@@ -107,11 +107,11 @@ def test_design_statuses_separates_valid_and_forbidden():
         hits = [r for r in rows if valid in r["instruction"]]
         assert hits, f"missing row for valid status {valid}"
         assert "valid" in hits[0]["response"].lower()
-    # Every forbidden status produces a rejection citing PRC-501.
+    # Every forbidden status produces a rejection citing the design review procedure.
     for forb in ck.FORBIDDEN_DESIGN_STATUSES:
         hits = [r for r in rows if forb in r["instruction"]]
         assert hits, f"missing row for forbidden status {forb}"
-        assert "PRC-501" in hits[0]["response"]
+        assert "design review and acceptance procedure" in hits[0]["response"]
 
 
 # ── check_review_timeline — boundary correctness ─────────────────────────
@@ -120,7 +120,7 @@ def test_design_statuses_separates_valid_and_forbidden():
 def test_review_timeline_boundary_seven_days_is_compliant():
     rows = list(gen_review_timeline())
     # The 7-day window case must mark the timeline compliant — that is
-    # exactly the PRC-501 minimum.
+    # exactly the design-review minimum.
     seven = [r for r in rows if "2026-01-08" in r["instruction"]]
     assert seven
     assert "compliant" in seven[0]["response"].lower()

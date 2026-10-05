@@ -16,9 +16,8 @@ logger = logging.getLogger(__name__)
 
 _STEEL_DENSITY = 7850.0  # kg/m^3
 
-# Live UI pack E4 (Master Corpus / theshovel.ai):
-#   "Concrete volume for a raft 30x20x1.5 m including your documented waste
-#    factor." → net 900 m3; documented waste is 5% (× 1.05) → 945 m3.
+# A raft-volume ask that says to include the documented waste factor:
+#   L x W x T m net, documented waste 5% (x 1.05) on top.
 # Leftover L6 aliased unnamed L×W×D to excavation_volume (bank only, no
 # waste). A concrete/raft ask must pin concrete_volume and this factor.
 # Kill switch: APPLY_DOCUMENTED_WASTE=0 restores the FAIL (net 900).
@@ -189,7 +188,7 @@ _ELEMENT_COUNT_RE = re.compile(
     r"(?:(?:pad|strip|isolated)\s+)?"
     r"(?:pile[\s-]?caps?|footings?|pads?|bases?|columns?|piers?)\b",
 )
-# "2.5 m by 2.5 m by 1.2 m" — the live pile-cap seed. The x-chain above
+# "3 m by 2 m by 0.9 m" — a dimension chain. The x-chain above
 # does not see "by".
 _BY_CHAIN_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)\s*m\s+by\s+"
@@ -221,7 +220,7 @@ def unit_dims_metres(text: str) -> tuple[float, float, float] | None:
 def follow_up_refers_to_stated_total(text: str) -> bool:
     """True when this ask adjusts a total named in an earlier turn.
 
-    "Add 7% waste to that total and price it…" carries the rate and the
+    "Add a waste allowance and price the total…" carries the rate and the
     waste, not the 24 caps. An ask that restates the geometry is not a
     continuation — its own dimensions are the operands.
     """
@@ -1064,7 +1063,7 @@ def resource_line_cost(
     }
 
 
-# Live A2-2: "What is the weight of 12 tonnes of Y16 bars in metres run?"
+# A metres-run-from-bar-mass ask (N tonnes of a named bar size).
 _METRES_RUN_ASK_RE = re.compile(
     r"(?i)metres?\s+run|meters?\s+run|"
     r"(?:tonnes?|tons?|kg).{0,40}(?:y|t|h)?\d{1,2}.{0,40}(?:metr|length|run)|"

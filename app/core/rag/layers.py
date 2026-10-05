@@ -49,9 +49,17 @@ def authority_rank(name: str) -> int:
 # ── ingest-time classification ─────────────────────────────────────────────
 
 def _gk_project_ids() -> set:
-    """Projects treated as the shared general-knowledge layer (curated_kb)."""
+    """Projects treated as the shared general-knowledge layer (env-configured)."""
     raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     return {p.strip() for p in raw.split(",") if p.strip()}
+
+# A controlled company document (procedure, template, form) is named with a
+# leading document code followed by its title: "XYZ-101_Change Control.pdf",
+# "qrs_330 HSE Audit.docx". The shape is the signal -- no organisation's code
+# prefix is listed. A contract id ("AB-2001-101_Vol 1") is not this shape: its
+# digits run into another hyphenated group, not a title, and a year
+# in a name ("<standard>_2017_<topic>") is not a document number.
+_CONTROLLED_DOC_CODE = r"^\s*[a-z]{2,6}[\s_-](?!(?:19|20)\d\d(?!\d))\d{3,4}[a-z]?[\s_.-]+[a-z(]"
 
 # Doc-name -> authority, checked in this order (first hit wins). The label is
 # what the doc IS, not where it lives: a priced BOQ is commercial whether it's a
@@ -64,7 +72,7 @@ _AUTHORITY_PATTERNS = (
                r"\bplan\b|detail|\bsection\b|elevation|\bdesign\b"),
     ("commercial", r"\bboq\b|bill of quant|\brate\b|priced|tender|\bcost\b|"
                    r"estimat|valuation|\bipc\b|\bipa\b|payment|budget|cash[\s_-]?flow"),
-    ("policy", r"procedure|\bprc[\s_-]|\btem[\s_-]|policy|method statement|"
+    ("policy", _CONTROLLED_DOC_CODE + r"|procedure|policy|method statement|"
                r"\bmethod\b|specification|\bspec\b|standard|\bcode\b|manual|"
                r"guideline|template|workflow|checklist"),
     ("operational", r"report|\blog\b|minutes|daily|weekly|\brfi\b|\bncr\b|"
@@ -86,7 +94,7 @@ _LAYER_DEFAULT_AUTHORITY = {
 }
 
 _COMPANY_RULE_NAME_RE = re.compile(
-    r"procedure|\bprc[\s_-]|\btem[\s_-]|template|policy|workflow|guideline",
+    _CONTROLLED_DOC_CODE + r"|procedure|template|policy|workflow|guideline",
     re.IGNORECASE,
 )
 

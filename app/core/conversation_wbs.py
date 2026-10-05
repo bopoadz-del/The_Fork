@@ -70,7 +70,7 @@ def message_wants_wbs_export(text: str) -> bool:
     'export this schedule as xlsx'.
 
     Negative: 'generate a high-level WBS…' (build, not export);
-    'produce the schedule'; A1–A9 answer-report exports; BOQ-to-Excel.
+    'produce the schedule'; answer-range report exports; BOQ-to-Excel.
     """
     raw = text or ""
     if not raw.strip():

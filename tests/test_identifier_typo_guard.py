@@ -70,7 +70,7 @@ def test_other_digit_typos_are_ignored(query):
         ("what is in IP-INF-054-0000-JCB-DWG-ST-100-0000951-05",
          "ip-inf-054-0000-jcb-dwg-st-100-0000951-05"),
         ("show me drawing D999.46", "d999.46"),
-        ("what does PRC-501 say", "prc-501"),
+        ("what does XYZ-501 say", "xyz-501"),
         ("give me RFI 42", "rfi 42"),
         ("VO Ref 31 status", "vo 31"),
         ("clause 13.1 of the contract", "clause 13.1"),
