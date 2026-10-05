@@ -433,7 +433,7 @@ def _enable_iterative_scan(session) -> None:
         return
     try:
         stmt = text(f"SET LOCAL hnsw.iterative_scan = {_ITERATIVE_SCAN_MODE}")
-        if _ITERATIVE_SCAN_SUPPORTED:
+        if _ITERATIVE_SCAN_SUPPORTED or not hasattr(session, "begin_nested"):
             session.execute(stmt)
         else:
             # First probe in a savepoint: a failed SET aborts the transaction,
