@@ -1082,6 +1082,32 @@ def asks_about_own_project(query: str) -> bool:
     return bool(_OWN_PROJECT_FRAME_RE.search(query or ""))
 
 
+def question_framed_in_project(query: str, project_id: str, scored, names: Dict[str, str]) -> bool:
+    """True when the question is asked INSIDE the active project.
+
+    Either it speaks of its own project ("this contract", "the project
+    specification") or it carries a reference code that names one of the
+    project's own candidate documents. A code that merely appears in a
+    project document's TEXT (a specification citing a standard) does not frame
+    the question in the project. ``names`` caches resolved document names.
+    """
+    if asks_about_own_project(query):
+        return True
+    codes = [i for i in extract_query_identifiers(query)
+             if re.search(r"[a-z]", i) and re.search(r"\d", i)]
+    if not codes:
+        return False
+    for _score, chunk in scored:
+        if chunk.project_id != project_id:
+            continue
+        if chunk.doc_id not in names:
+            names[chunk.doc_id] = _doc_name_for_id(chunk.doc_id) or ""
+        low = (names.get(chunk.doc_id) or "").lower()
+        if any(code in low for code in codes):
+            return True
+    return False
+
+
 def _keep_project_layer_first(query: str, project_id: str, scored, gk_id_set) -> None:
     """Project layer ahead of general knowledge for a project-framed question.
 
@@ -10004,6 +10030,11 @@ def retrieve_with_filter(
     if gk_margin is not None:
         project_scores = [s for s, c in scored if c.project_id == project_id]
         if project_scores:
+            # Outside a project, general knowledge competes on merit: it enters
+            # whenever its raw score is the best match (margin 0, the lexical
+            # fold still applies). The margin protects project questions only.
+            if not question_framed_in_project(query, project_id, scored, filename_names):
+                gk_margin = 0.0
             bar = max(project_scores) + gk_margin
 
             def _margin_score(s: float, c: Chunk) -> float:
