@@ -180,7 +180,7 @@ jobs:
         run: python scripts/mutation_probes.py
 
       - name: Redis-backed tests
-        # The tests that need a live Redis (session-store roundtrip, /v1/health
+        # The tests that need a live Redis (session-store roundtrip, the health route
         # redis.connected) run here against the redis service container.
         #
         # REDIS_URL is set for THIS step only, never for the main test run:
