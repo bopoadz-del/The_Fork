@@ -6399,12 +6399,13 @@ def _graft_asked_contract_particular(
             including_vat_excerpts_from_loaded_cd_volume,
             extract_aca_including_vat,
             extract_defects_notification_period,
-            extract_engineer_identity,
+            asked_party_role,
+            extract_party_name,
             extract_time_for_completion_days,
+            party_role_title,
             query_asks_delay_damages_daily_amount,
             query_asks_for_defects_notification_period,
             query_asks_for_time_for_completion,
-            query_asks_who_the_engineer_is,
             query_is_aca_including_vat_particular,
         )
         user = _latest_operator_ask(messages)
@@ -6501,7 +6502,7 @@ def _graft_asked_contract_particular(
             withheld_answer_line,
         )
         if party_names_withheld() and (
-            query_asks_who_a_party_is(user) or query_asks_who_the_engineer_is(user)
+            query_asks_who_a_party_is(user) or asked_party_role(user)
         ):
             line = withheld_answer_line(user)
             body = (text or "").strip()
@@ -6515,16 +6516,17 @@ def _graft_asked_contract_particular(
             ):
                 return line
             return f"{line}\n\n{body}"
-        if query_asks_who_the_engineer_is(user):
-            name = extract_engineer_identity(rag)
+        party_role = asked_party_role(user)
+        if party_role:
+            name = extract_party_name(rag, party_role)
             if not name:
                 return text
-            line = f"The Engineer is {name}."
+            line = f"The {party_role_title(party_role)} is {name}."
             if name.lower() in (text or "").lower() and not _MISSING_PARTICULAR_RE.search(
                 text or "",
             ):
                 return text
-            # Engineer ask: JACOBS / CH2M split across two tokens.
+            # A firm name split across two tokens.
             tokens = [t for t in re.split(r"[^A-Za-z0-9]+", name) if len(t) >= 4]
             if tokens and all(t.lower() in (text or "").lower() for t in tokens):
                 if not _MISSING_PARTICULAR_RE.search(text or ""):
