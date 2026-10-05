@@ -1065,6 +1065,43 @@ _GK_STOPWORDS = frozenset({
 DOC_LOOKUP_INTENTS = frozenset({"document_lookup", "project_lookup", "doc_qa"})
 CALC_KB_INTENTS = frozenset({"calculation", "standards", "knowledge"})
 
+#: A question framed in the asker's OWN project: a deictic / possessive frame
+#: on a project-record noun ("this contract", "the project specification",
+#: "our drawings", "under the contract"). Generic English framing, no corpus
+#: words. Such a question is answered from the project layer first.
+_OWN_PROJECT_FRAME_RE = re.compile(
+    r"\b(?:this|the|our|my)\s+(?:project\s+)?"
+    r"(?:contract|project|site|specifications?|specs?|drawings?|works|tender|"
+    r"scope|boq|bill\s+of\s+quantities|particular\s+conditions|contract\s+data)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_about_own_project(query: str) -> bool:
+    """True when the question speaks of its own project / contract."""
+    return bool(_OWN_PROJECT_FRAME_RE.search(query or ""))
+
+
+def _keep_project_layer_first(query: str, project_id: str, scored, gk_id_set) -> None:
+    """Project layer ahead of general knowledge for a project-framed question.
+
+    No general-knowledge chunk may outrank the active project's best chunk:
+    each GK score is capped just below it, so the project clause leads and the
+    code or handbook clause on the same topic still follows as context. A
+    layer rule -- it reads only which project a chunk belongs to. Projects with
+    no candidate are left alone (the GK-only fallback keeps working).
+    """
+    if not asks_about_own_project(query):
+        return
+    project_scores = [s for s, c in scored if c.project_id == project_id]
+    if not project_scores:
+        return
+    ceiling = max(project_scores) - 1e-6
+    for i, (score, chunk) in enumerate(scored):
+        if chunk.project_id in gk_id_set and score > ceiling:
+            chunk.score = round(ceiling, 6)
+            scored[i] = (ceiling, chunk)
+
 
 def _knob_float(name: str) -> Optional[float]:
     """Env-driven ranking knob. Unset/blank/unparsable means OFF (None) so a
@@ -10040,6 +10077,11 @@ def retrieve_with_filter(
                 new_score = score + bonus
                 chunk.score = round(new_score, 6)
                 scored[i] = (new_score, chunk)
+
+    # Project layer first for a project-framed lookup question (after every
+    # boost, so nothing below can lift a GK chunk back over the project).
+    if knobs_apply:
+        _keep_project_layer_first(query, project_id, scored, gk_id_set)
 
     # Sort by fused score descending; active-project chunks naturally come
     # first when scores are equal because they were inserted first.
