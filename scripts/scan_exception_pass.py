@@ -24,8 +24,9 @@ import ast
 import os
 import sys
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, TypedDict
+from typing import TypedDict
 
 # Same vendor / worktree dirs ``audit_stubs.py`` refuses to walk. ``tests/``
 # is skipped separately (the same deviation audit_stubs documents): a
