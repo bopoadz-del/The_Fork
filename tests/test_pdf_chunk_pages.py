@@ -267,3 +267,14 @@ def test_sources_panel_cites_the_page():
     sources = runtime._build_sources_from_audit(audit, "The synthetic handbook says so.")
     assert sources and sources[0]["page_or_section"] == "p. 88"
     assert sources[0]["page"] == 88
+
+
+def test_index_chunks_hands_the_pages_to_the_store(store, monkeypatch):
+    st, embedder = store
+    from app.core.rag import retriever
+
+    monkeypatch.setattr(retriever, "available", lambda: True)
+    monkeypatch.setattr(retriever, "get_store", lambda dim=None: st)
+    texts = ["epsilon synthetic", "zeta synthetic"]
+    assert retriever.index_chunks("p2", "d4", texts, pages=[7, None]) == 2
+    assert [c.page for c in st.chunks_for_docs("p2", ["d4"])] == [7, None]

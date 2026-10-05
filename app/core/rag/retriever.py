@@ -10261,9 +10261,12 @@ def index_chunks(
         name, is_user_upload = _doc_name_and_provenance(doc_id)
         knowledge_layer, authority = layers.classify(
             project_id, name, is_user_upload=is_user_upload)
+    # Pages go to the store only when some are known, so a store (or a test
+    # double) written before pages existed keeps working for non-PDF sources.
+    extra = {"pages": list(pages)} if pages and any(pages) else {}
     return store.upsert_chunks(
         project_id, doc_id, chunks, embeddings,
-        knowledge_layer=knowledge_layer, authority=authority, pages=pages)
+        knowledge_layer=knowledge_layer, authority=authority, **extra)
 
 
 def _doc_name_and_provenance(doc_id: str) -> tuple:
