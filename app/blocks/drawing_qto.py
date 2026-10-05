@@ -3,7 +3,7 @@
 V1.2 swaps the text-extraction path from pdfplumber to PyMuPDF (fitz).
 pdfplumber was a 80-180s/drawing bottleneck on dense CAD PDFs; fitz
 returns the same span-level data in a fraction of the time. The
-font-size buckets, candidate filters, JCB regex, place-name blocklist,
+font-size buckets, candidate filters, drawing-number regex, place-name blocklist,
 cross-ref extraction, multi-page combine, fallback chains, and the
 chunk-builder are unchanged.
 
@@ -54,10 +54,10 @@ DISCIPLINE_FULL: dict[str, str] = {
     "IF": "Infrastructure",
 }
 
-# JCB-DWG drawing-number pattern (one consultant's numbering convention).
+# Long hyphenated drawing-number shape (any originator code).
 # Two token orders both appear in the wild:
-#   AB-CDE-001-0000-JCB-DWG-TM-200-0000001-A   (TM/SG/EL/TL sheets)
-#   AB-CDE-001-JCB-0000-DWG-WS-600-0000001-C   (WS sheets — tokens 4-5 swapped)
+#   AB-CDE-001-0000-KLM-DWG-TM-200-0000001-A   (zone, then originator)
+#   AB-CDE-001-KLM-0000-DWG-WS-600-0000001-C   (tokens 4-5 swapped)
 # Accept both by alternation. Shorter fallback covers project-specific
 # schemes that don't use the full two-group prefix.
 _DWG_NUMBER_FULL = re.compile(
@@ -68,22 +68,46 @@ _DWG_NUMBER_FULL = re.compile(
 _DWG_NUMBER_SHORT = re.compile(r"[A-Z]{2,}-[A-Z]{2,}-\d{2,}-[A-Z0-9]+")
 
 
-def _is_full_jcb(s: str) -> bool:
-    """True iff ``s`` looks like a complete JCB drawing-number — has both
-    'JCB' and 'DWG' tokens and at least 8 hyphens.
+_DN_SEGMENT_RE = re.compile(r"[A-Z0-9]+")
+
+
+def _is_full_drawing_number(s: str | None) -> bool:
+    """True iff ``s`` has the SHAPE of a complete long-form drawing number.
+
+    Structural, never an originator's code: nine or more hyphen-separated
+    segments, each a run of letters/digits, with at least two numeric and at
+    least three alphabetic segments (project/package letters, originator,
+    document type, discipline). A half-match cut from a title-block fragment
+    ("AB-CDE-001-KLM") has too few segments; a title has spaces.
 
     Used by both the title-block band-preference pick (in ``_process_page``)
-    and the rescue path (in ``_extract_drawing_text``). Lifted to module
-    scope so both callers can share the same predicate.
+    and the rescue path (in ``_extract_drawing_text``).
     """
     if not s:
         return False
-    u = s.upper()
-    return "JCB" in u and "DWG" in u and u.count("-") >= 8
+    segs = s.strip().upper().split("-")
+    if len(segs) < 9 or not all(_DN_SEGMENT_RE.fullmatch(x) for x in segs):
+        return False
+    return sum(x.isdigit() for x in segs) >= 2 and sum(x.isalpha() for x in segs) >= 3
+
+
+def _revision_from_number_tail(dn: str | None) -> str | None:
+    """The revision carried as the last hyphenated token, or None.
+
+    A revision is a short code (``A``, ``C2``, ``P01``). A pure number is a
+    sheet sequence, and a three-letter word is a code token left by a
+    truncated number (originator, document type), never a revision.
+    """
+    tail = (dn or "").rsplit("-", 1)[-1]
+    if not (1 <= len(tail) <= 3 and re.fullmatch(r"[A-Z0-9]+", tail)):
+        return None
+    if tail.isdigit() or (len(tail) == 3 and tail.isalpha()):
+        return None
+    return tail
 
 
 def _strip_doubled_letter_prefix(dn: str) -> str:
-    """Strip stray leading characters that fall outside a clean JCB-style
+    """Strip stray leading characters that fall outside a clean hyphenated
     drawing-number prefix.
 
     Bug observed in pilot: ST sheet returned ``AAB-CDE-001-...`` because
@@ -91,13 +115,13 @@ def _strip_doubled_letter_prefix(dn: str) -> str:
     regex `[A-Z]{2,}-[A-Z]{2,}-...` legitimately accepted ``XAAB`` (or in
     a leading position, ``AAB``). A negative-lookbehind in the regex does
     not help: at string start there's no preceding char, so
-    ``XIIP-INF-...`` produces ``IIP-...`` and ``IIP-INF-...`` produces
-    ``IIP-...`` again.
+    ``XAAB-CDE-...`` produces ``AAB-...`` and ``AAB-CDE-...`` produces
+    ``AAB-...`` again.
 
     Strategy: peel one leading char at a time as long as the remainder
-    still matches the same full-or-short JCB pattern. The minimum first
-    token in the the client project corpus is the 2-letter ``IP`` prefix, so this stops
-    once the first token shrinks to that length. Single-pass over the
+    still matches the same full-or-short pattern. The pattern's minimum
+    first token is two letters, so this stops once the first token shrinks
+    to that length. Single-pass over the
     string; cheap and pattern-aware.
     """
     if not dn:
@@ -105,7 +129,7 @@ def _strip_doubled_letter_prefix(dn: str) -> str:
     candidate = dn
     while len(candidate) > 2 and candidate[0].isalpha():
         peeled = candidate[1:]
-        # Only peel while the remainder STILL parses as a JCB drawing
+        # Only peel while the remainder STILL parses as a drawing
         # number with the same suffix. Use fullmatch to make sure we're
         # not accidentally shrinking past the prefix.
         if (_DWG_NUMBER_FULL.fullmatch(peeled) or
@@ -729,8 +753,8 @@ class DrawingQTOBlock(UniversalBlock):
                         total_chars += len(chars)
                         # Save raw full-page text for drawing-number fallback
                         # rescue (Bug 2: when title-block extractor returned a
-                        # half-match like "AB-CDE-001-JCB" we re-scan the full
-                        # page for a proper JCB-DWG pattern).
+                        # half-match like "AB-CDE-001-KLM" we re-scan the full
+                        # page for a complete drawing number).
                         page_full_raw_texts.append(
                             "".join(c["text"] for c in chars)
                         )
@@ -801,21 +825,19 @@ class DrawingQTOBlock(UniversalBlock):
             )[:100]
 
         tb = dict(primary["title_block"])
-        # Bug 2: reject drawing-number matches that aren't a full JCB
-        # drawing-number on this corpus. The short fallback regex
-        # sometimes grabs a half-match ("AB-CDE-001-JCB") from a random
-        # title-block fragment. Two valid full forms exist in the wild:
-        #   ...-0000-JCB-DWG-...   (TM/SG/EL/TL token order)
-        #   ...-JCB-0000-DWG-...   (WS token order, tokens 4-5 swapped)
-        # Both contain BOTH "JCB" and "DWG" as separate tokens. If the
-        # current value lacks either, re-scan the full page raw text.
+        # Bug 2: reject drawing-number matches that aren't a complete long
+        # drawing number. The short fallback regex sometimes grabs a
+        # half-match ("AB-CDE-001-KLM") from a random title-block fragment.
+        # Completeness is judged by shape (``_is_full_drawing_number``), in
+        # either token order and for any originator code; if the current
+        # value is incomplete, re-scan the full page raw text.
         current_dn = tb.get("drawing_number")
 
-        if current_dn and not _is_full_jcb(current_dn):
+        if current_dn and not _is_full_drawing_number(current_dn):
             rescued = None
             for raw in page_full_raw_texts:
                 m = _DWG_NUMBER_FULL.search(raw)
-                if m and _is_full_jcb(m.group(0)):
+                if m and _is_full_drawing_number(m.group(0)):
                     # Phase 1.7: strip leading doubled-letter artifacts
                     # (e.g. ``IIP-INF-...`` -> ``IP-INF-...``).
                     rescued = _strip_doubled_letter_prefix(m.group(0))
@@ -843,13 +865,10 @@ class DrawingQTOBlock(UniversalBlock):
                 self._discipline_from_number(tb["drawing_number"])
             )
         if not tb.get("revision") and tb.get("drawing_number"):
-            tail = tb["drawing_number"].rsplit("-", 1)[-1]
-            if 1 <= len(tail) <= 3 and re.fullmatch(r"[A-Z0-9]+", tail):
-                # Don't accept obviously non-revision tails like "JCB" or
-                # pure 6-7 digit sequence numbers.
-                if tail not in ("JCB", "DWG") and not tail.isdigit():
-                    tb["revision"] = tail
-        # Phase 1.5 fallback: many JCB filenames carry the revision as a
+            rev = _revision_from_number_tail(tb["drawing_number"])
+            if rev:
+                tb["revision"] = rev
+        # Phase 1.5 fallback: many drawing filenames carry the revision as a
         # trailing letter (e.g. ...-1000005-A.pdf). When title-block parse
         # and drawing-number-tail extraction both miss it, look at the
         # filename. Single uppercase letter immediately before the .pdf
@@ -918,7 +937,7 @@ class DrawingQTOBlock(UniversalBlock):
         # drawing number ahead of the title-block one, so a plain
         # ``_DWG_NUMBER_FULL.search()`` returns the wrong number. The
         # bottom-band match is the title-block's own number — prefer it
-        # when it parses as a full JCB. Safe because the band IS the
+        # when it parses as a full drawing number. Safe because the band IS the
         # title-block region by spatial definition; widening was only
         # needed to harvest title/scale/date labels.
         band_raw = "".join(c["text"] for c in title_block_chars)
@@ -948,7 +967,7 @@ class DrawingQTOBlock(UniversalBlock):
 
         title_block = self._extract_title_block(title_block_chars, page)
 
-        # If the bottom-15% band yielded a valid full JCB number, prefer
+        # If the bottom-15% band yielded a valid full drawing number, prefer
         # it over the (possibly contaminated) widened-zone match. Clear
         # discipline/revision so the downstream re-derive at
         # ``_extract_drawing_text`` lines 667-689 re-fills them from the
@@ -957,7 +976,7 @@ class DrawingQTOBlock(UniversalBlock):
         # overwrite of ``drawing_number``.
         if (
             band_dn
-            and _is_full_jcb(band_dn)
+            and _is_full_drawing_number(band_dn)
             and title_block.get("drawing_number") != band_dn
         ):
             title_block["drawing_number"] = band_dn
@@ -1091,7 +1110,7 @@ class DrawingQTOBlock(UniversalBlock):
             disc, disc_full = self._discipline_from_number(dn)
             result["discipline"] = disc
             result["discipline_full"] = disc_full
-            # Last hyphenated token of the JCB pattern is the revision
+            # Last hyphenated token of the long pattern is the revision
             tail = dn.rsplit("-", 1)[-1]
             if 1 <= len(tail) <= 3 and re.fullmatch(r"[A-Z0-9]+", tail):
                 result["revision"] = tail
@@ -1218,10 +1237,10 @@ class DrawingQTOBlock(UniversalBlock):
 
     @staticmethod
     def _discipline_from_number(dn: str) -> tuple[str, str]:
-        """Extract the 2-letter discipline code from a JCB-DWG drawing
-        number and look up the human-readable name."""
-        # JCB pattern places discipline 7th segment (e.g. ...-DWG-TM-200-...).
-        # Fallback: any 2-letter segment that matches the table.
+        """Extract the 2-letter discipline code from a long hyphenated
+        drawing number and look up the human-readable name."""
+        # The long form places discipline after the document-type token
+        # (e.g. ...-DWG-TM-200-...). Any 2-letter segment in the table wins.
         parts = dn.split("-")
         for p in parts:
             if p in DISCIPLINE_FULL:
@@ -1294,7 +1313,7 @@ class DrawingQTOBlock(UniversalBlock):
         return notes, dimensions, filtered, dedup_dropped
 
     # --- Step 4: cross-ref extraction --------------------------------------
-    # Sheet-identifier shape: either a JCB-style hyphenated number
+    # Sheet-identifier shape: either a long hyphenated number
     # (3+ tokens) OR a short sheet number (2-4 digits like "02", "10", "1234").
     # Loose `[A-Z0-9-]+` over-matched on SG (1755 hits) so we lock this down.
     _SHEET_ID_RE = re.compile(
