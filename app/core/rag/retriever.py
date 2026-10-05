@@ -5040,53 +5040,24 @@ def chunk_answers_asked_particular(query: str, text: str) -> bool:
     )
 
 
-# Combined GC+Contract Data volumes put Sub-Clause 8.8 at chunks 9–11
-# and the filled 1.1.1 excl-VAT row in a later appendix. identifier_search
-# LIMIT and first-N chunks_for_docs stay on the 8.8 toy windows.
-# #532/#533 prefix-400 + last-400 + ``1.1.1``+``excluding`` needles still
-# miss a middle-of-volume scanned row (live 77a96ac: top-k stayed on
-# chunks 9–11). Walk every chunk of those docs.
-_REAL_ACA_DOC_SCAN = 400
-# Walk mid-volume windows up to this index. A daily-amount ask after
-# #541: a store that caps k_per_doc at 400 (and ignores all_rows)
-# never sees chunk 500 of a 1200-row combined volume via prefix+tail.
-_REAL_ACA_MID_SCAN_MAX = 8000
-_REAL_ACA_TEXT_K = 400
-_REAL_ACA_PAIR_WINDOW = 3
-# Pin rescued 0.1% / excl-VAT rows above Cosine 9–11 (~0.95) so
-# apply_token_cap cannot drop them. A daily-amount ask after #538: sources
-# stayed on chunks 9–11 (3 HIGH) because late-scan operands entered
-# fused at score 0.0 and the cap kept the refuse-prone windows.
-_DAILY_DAMAGES_OPERAND_PIN_SCORE = 2.4
-_E1_REAL_ACA_TEXT_NEEDLES = (
-    # Scanned 1.1.1 rows split "Accepted\\nContract\\nAmount" — a
-    # contiguous "accepted contract amount" LIKE misses. Clause +
-    # excl-VAT tokens still hit the filled appendix and skip 8.8 toys.
-    ("1.1.1", "excluding"),
-    ("1.1.1", "accepted"),
-    ("excl", "vat"),
-    ("accepted", "vat"),
-    # Daily-amount ask after #535: recover Contract Data 0.1% of
-    # Contract Price when top-k is the CoC 0.015%-of-ACA restatement.
-    # "%" is stripped by chunks_containing_all — use price tokens.
-    ("damages", "price"),
-    ("delay", "price"),
-    # Scanned 0.1% of Contract Price — "%" is stripped by
-    # chunks_containing_all, so the decimal + price tokens remain.
-    ("0.1", "price"),
-    ("0.1", "calendar"),
-)
-# Live Wave-1 A2 on 9ad62cc: identifier_search + first-N neighbors
-# stay on Contract Data chunk #0 (delay damages × a partial ACA).
-# Scanned 1.1.1 including-VAT sits later in the same volume.
-_A2_INCL_TEXT_NEEDLES = (
-    ("1.1.1", "including"),
-    ("including", "vat"),
-    ("accepted", "including"),
-    ("amount", "including"),
-    ("incl", "vat"),
-    ("1.1.1", "vat"),
-)
+# ── rows deep inside a pooled document ────────────────────────────────────
+#
+# A bound volume (conditions and particulars together) puts the clause that
+# MENTIONS a particular near its start and the row that STATES it in a later
+# appendix. identifier_search LIMIT and a first-N chunks_for_docs both stay on
+# the early windows, so the stated row never enters the pool. When the
+# question's row is not pooled, the volumes already in the pool are read
+# whole: every row, or -- for a store that caps a fetch -- prefix, tail and
+# fixed windows across the middle, then a text match on the words of the
+# asked labels (a scanned label is split across lines, so its words are
+# matched one by one, never as a phrase).
+_DOC_SCAN_WINDOW = 400
+_DOC_SCAN_MAX = 8000
+_DOC_TEXT_SCAN_K = 400
+_ROW_PAIR_WINDOW = 3
+# Pin pooled composition operands above the early windows' cosine so the
+# token cap cannot drop them.
+_OPERAND_PIN_SCORE = 2.4
 _ASKED_PARTICULAR_VALUE_BONUS = 2.0
 _TFC_DAYS_RE = re.compile(r"(?i)\b(\d{2,4})\s+(?:calendar\s+|working\s+)?days\b")
 _TFC_PERMIT_TRACKER_RE = re.compile(
@@ -6289,26 +6260,40 @@ def _doc_owner_project_ids(doc_ids: List[str]) -> List[str]:
     return out
 
 
-def _fetch_late_aca_chunks(
+def label_word_needle_sets(labels: Iterable[str]) -> List[Tuple[str, ...]]:
+    """One AND-set of words per label, for a text match that survives line splits.
+
+    A scanned label prints "Accepted\\nContract\\nAmount"; a phrase match
+    misses it, a match on each word does not. Words shorter than three
+    characters are dropped (the store ignores them).
+    """
+    out: List[Tuple[str, ...]] = []
+    for label in labels:
+        words = tuple(w for w in re.findall(r"[a-z0-9]+", (label or "").lower()) if len(w) >= 3)
+        if words and words not in out:
+            out.append(words)
+    return out
+
+
+def _scan_whole_documents(
     store,
     project_id: str,
     doc_ids: List[str],
     extra_pids: Optional[Iterable[str]] = None,
     fused: Optional[Dict[str, Tuple]] = None,
+    *,
+    needle_sets: Iterable[Tuple[str, ...]] = (),
+    done=None,
 ) -> List[Chunk]:
-    """Every chunk of the rate-window docs, then text-match / prefix / tail.
+    """Every chunk of ``doc_ids`` this store will give, then a word match.
 
-    Daily-amount ask on 77a96ac (#533): top-k stayed on Contract Data
-    8.8 chunks 9–11. Prefix-400 + last-400 miss a middle appendix;
-    ``1.1.1``+``excluding`` LIKE misses ``excl. VAT`` without a clause
-    number. ``chunks_for_docs`` already loads the file — keep every row.
-
-    Daily-amount ask after #537: a store that accepts ``all_rows`` but
-    still returns first-N, plus CoC 8.8 windows that already cite a
-    real ACA, used to early-exit before the middle 0.1% / excl-VAT
-    rows. Skip prefix/tail/needles only when BOTH compose operands
-    are already in hand. Also retry the cited chunk owners — the UI
-    project id is not always the row owner on Master Corpus.
+    Reads each document whole (``all_rows``); for a store that ignores that
+    or caps a fetch, a very large first-N, then prefix and tail windows,
+    then fixed windows across the middle. ``done(chunks)`` -- when given --
+    stops the walk as soon as the chunks in hand answer; without it the walk
+    always runs to the end. Finally, ``needle_sets`` are matched as text
+    inside the same documents. The row owner is not always the UI project,
+    so the owners of the cited documents are tried too.
     """
     by_id: Dict[str, Chunk] = {}
     allowed = set(doc_ids)
@@ -6325,130 +6310,102 @@ def _fetch_late_aca_chunks(
             return
         by_id.setdefault(chunk.chunk_id, chunk)
 
+    def _answered() -> bool:
+        return bool(done) and done(by_id.values())
+
+    def _fetch(pid: str, **kwargs) -> List[Chunk]:
+        try:
+            return list(fetch(pid, doc_ids, **kwargs) or [])
+        except TypeError:
+            return []
+        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+            logger.warning("whole-document scan %r for %s failed: %s", kwargs, pid, exc)
+            return []
+
     if callable(fetch):
         for pid in pids:
-            extra = []
-            try:
-                extra = fetch(pid, doc_ids, all_rows=True)
-            except TypeError:
-                extra = []
-            except Exception as exc:  # noqa: BLE001 — extras must not break
-                logger.warning(
-                    "e1 late-ACA full scan for %s failed: %s", pid, exc,
-                )
-                extra = []
-            for chunk in extra or []:
+            for chunk in _fetch(pid, all_rows=True):
                 _keep(chunk)
-            # A store that accepts all_rows but still returns first-N
-            # (ignored kwarg) looks done after 12 pointer / 0.015%
-            # windows. Fall through to a huge k_per_doc so operands
-            # anywhere in the loaded volume still enter. Live leftover
-            # Daily-amount ask after #537: chunks 9–11 + BOQ refuse, 0.1% / excl-VAT
-            # sitting mid-volume.
-            if not _chunks_have_both_daily_damages_operands(by_id.values()):
-                try:
-                    extra = fetch(pid, doc_ids, k_per_doc=1_000_000)
-                except TypeError:
-                    extra = []
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "e1 late-ACA wide scan for %s failed: %s", pid, exc,
-                    )
-                    extra = []
-                for chunk in extra or []:
+            # A store that ignores all_rows returns first-N: ask for everything.
+            if not _answered():
+                for chunk in _fetch(pid, k_per_doc=1_000_000):
                     _keep(chunk)
-            # Only skip prefix/tail/needles when the loaded volume
-            # already has Contract Data 0.1% AND standalone excl-VAT.
-            # A first-N window that merely cites a real ACA (live
-            # 9–11 / 0.015%+ACA) is not enough — that was the #537
-            # flake: compose rejected the lookalike and the gate
-            # refused.
-            if _chunks_have_both_daily_damages_operands(by_id.values()):
+            if _answered():
                 return list(by_id.values())
             for from_end in (False, True):
-                try:
-                    try:
-                        extra = fetch(
-                            pid, doc_ids,
-                            k_per_doc=_REAL_ACA_DOC_SCAN,
-                            from_end=from_end,
-                        )
-                    except TypeError:
-                        extra = (
-                            [] if from_end
-                            else fetch(
-                                pid, doc_ids,
-                                k_per_doc=_REAL_ACA_DOC_SCAN,
-                            )
-                        )
-                except Exception as exc:  # noqa: BLE001 — extras must not break
-                    logger.warning(
-                        "e1 late-ACA %s scan for %s failed: %s",
-                        "tail" if from_end else "prefix", pid, exc,
-                    )
-                    extra = []
-                for chunk in extra or []:
+                got = _fetch(pid, k_per_doc=_DOC_SCAN_WINDOW, from_end=from_end)
+                if not got and not from_end:
+                    got = _fetch(pid, k_per_doc=_DOC_SCAN_WINDOW)
+                for chunk in got:
                     _keep(chunk)
-            if _chunks_have_both_daily_damages_operands(by_id.values()):
+            if _answered():
                 return list(by_id.values())
-            # Mid-volume windows: prefix-400 + last-400 miss chunk 500
-            # of a 1200-row volume when the store also caps k_per_doc
-            # (k=1_000_000 still returns first-400). Walk offset=400,
-            # 800, … until both operands exist. TypeError means the
-            # store has no offset — fall through to needles.
-            offset = _REAL_ACA_DOC_SCAN
-            while offset < _REAL_ACA_MID_SCAN_MAX:
+            # Windows across the middle, for a store that caps k_per_doc.
+            offset = _DOC_SCAN_WINDOW
+            while offset < _DOC_SCAN_MAX:
                 try:
-                    extra = fetch(
-                        pid, doc_ids,
-                        k_per_doc=_REAL_ACA_DOC_SCAN,
-                        offset=offset,
-                    )
+                    got = list(fetch(
+                        pid, doc_ids, k_per_doc=_DOC_SCAN_WINDOW, offset=offset,
+                    ) or [])
                 except TypeError:
                     break
-                except Exception as exc:  # noqa: BLE001 — extras must not break
+                except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "e1 late-ACA mid-window scan offset=%s for %s failed: %s",
+                        "whole-document window offset=%s for %s failed: %s",
                         offset, pid, exc,
                     )
                     break
-                got = list(extra or [])
                 if not got:
                     break
                 for chunk in got:
                     _keep(chunk)
-                if _chunks_have_both_daily_damages_operands(by_id.values()):
+                if _answered():
                     return list(by_id.values())
-                if len(got) < _REAL_ACA_DOC_SCAN:
+                if len(got) < _DOC_SCAN_WINDOW:
                     break
-                offset += _REAL_ACA_DOC_SCAN
+                offset += _DOC_SCAN_WINDOW
 
     containing = getattr(store, "chunks_containing_all", None)
     if callable(containing):
         for pid in pids:
-            for needles in _E1_REAL_ACA_TEXT_NEEDLES:
+            for needles in needle_sets:
                 try:
                     try:
                         hits = containing(
-                            pid, list(needles),
-                            k=_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                            pid, list(needles), k=_DOC_TEXT_SCAN_K, doc_ids=doc_ids,
                         )
                     except TypeError:
-                        hits = containing(
-                            pid, list(needles), k=_REAL_ACA_TEXT_K,
-                        )
+                        hits = containing(pid, list(needles), k=_DOC_TEXT_SCAN_K)
                 except Exception as exc:  # noqa: BLE001 — extras must not break
-                    logger.warning(
-                        "e1 late-ACA text scan for %s failed: %s", pid, exc,
-                    )
+                    logger.warning("whole-document text scan for %s failed: %s", pid, exc)
                     hits = []
                 for chunk in hits or []:
                     _keep(chunk)
-            if _chunks_have_both_daily_damages_operands(by_id.values()):
+            if _answered():
                 return list(by_id.values())
     return list(by_id.values())
 
 
+# The operands of a delay-damages daily amount: the rate row and the sum it
+# is a share of. Contract-particular names, matched word by word.
+_DAILY_DAMAGES_OPERAND_LABELS = (
+    "delay damages", "contract price", "accepted contract amount",
+)
+
+
+def _scan_documents_for_operands(
+    store,
+    project_id: str,
+    doc_ids: List[str],
+    extra_pids: Optional[Iterable[str]] = None,
+    fused: Optional[Dict[str, Tuple]] = None,
+) -> List[Chunk]:
+    """Whole-document scan that stops once both daily-amount operands are in hand."""
+    return _scan_whole_documents(
+        store, project_id, doc_ids, extra_pids, fused,
+        needle_sets=label_word_needle_sets(_DAILY_DAMAGES_OPERAND_LABELS),
+        done=_chunks_have_both_daily_damages_operands,
+    )
 _RAG_CONTEXT_DOC_ID_RE = re.compile(r"\[doc_id=([^\]\s]+)")
 
 
@@ -6512,7 +6469,7 @@ def daily_damages_excerpts_from_loaded_cd_volume(
 
     extra: List[Chunk] = []
     if cited:
-        extra = _fetch_late_aca_chunks(
+        extra = _scan_documents_for_operands(
             store, project_id or (pids[0] if pids else ""), cited,
             extra_pids=pids,
         )
@@ -6541,7 +6498,7 @@ def daily_damages_excerpts_from_loaded_cd_volume(
             logger.debug("e1 loaded-volume projects import failed", exc_info=True)
         added = [did for did in ids if did not in set(cited)]
         if added:
-            extra = list(extra or []) + _fetch_late_aca_chunks(
+            extra = list(extra or []) + _scan_documents_for_operands(
                 store, project_id or (pids[0] if pids else ""), added[:2],
                 extra_pids=pids,
             )
@@ -6565,7 +6522,7 @@ def daily_damages_excerpts_from_loaded_cd_volume(
             lambda t: (
                 _daily_rate_preference(t) >= 2 or _has_standalone_excl_vat_aca(t)
             ),
-            window=_REAL_ACA_PAIR_WINDOW,
+            window=_ROW_PAIR_WINDOW,
         ):
             _collect(chunk.text or "")
     if not rate_parts or not aca_parts:
@@ -6782,200 +6739,102 @@ def _fused_entry_chunk(entry) -> Optional[Chunk]:
     return chunk if isinstance(chunk, Chunk) else None
 
 
-def _pool_doc_ids_for_late_including_vat(fused: Dict[str, Tuple]) -> List[str]:
-    """Contract Data / CoC volume docs already in fused for an A2 scan."""
+_DEEP_ROW_TITLE_KINDS = _PARTICULARS_KIND_PHRASES + ("conditions of contract",)
+_DEEP_ROW_MAX_LABELS = 4
+
+
+def _pooled_documents_for_deep_rows(fused: Dict[str, Tuple], phrases: List[str]) -> List[str]:
+    """Pooled documents worth reading whole for an asked particular.
+
+    A particulars or conditions volume by name, or a document whose pooled
+    chunk mentions an asked particular without stating it.
+    """
     doc_ids: List[str] = []
-    seen: Set[str] = set()
     for entry in fused.values():
         chunk = _fused_entry_chunk(entry)
-        if chunk is None or not chunk.doc_id or chunk.doc_id in seen:
+        if chunk is None or not chunk.doc_id or chunk.doc_id in doc_ids:
             continue
-        text = chunk.text or ""
         name = getattr(chunk, "source_name", "") or ""
         if not name:
             try:
                 name = _doc_name_for_id(chunk.doc_id) or ""
             except Exception:  # noqa: BLE001 — filename is optional
                 name = ""
-        if not (
+        blob = _normalize_retrieval_ws(chunk.text or "").lower()
+        if (
             filename_looks_like_contract_data(name)
             or filename_looks_like_conditions_volume(name)
-            or "accepted contract amount" in _normalize_retrieval_ws(text).lower()
+            or any(p and p in blob for p in phrases)
         ):
-            continue
-        seen.add(chunk.doc_id)
-        doc_ids.append(chunk.doc_id)
+            doc_ids.append(chunk.doc_id)
     return doc_ids
 
 
-def _fetch_late_including_vat_chunks(
-    store,
-    project_id: str,
-    doc_ids: List[str],
-    extra_pids: Optional[Iterable[str]] = None,
-    fused: Optional[Dict[str, Tuple]] = None,
-) -> List[Chunk]:
-    """Every chunk of the A2 CD volume — do not stop on a partial ACA.
-
-    ACA including-VAT ask on 9ad62cc / 396cc7b: chunk #0 stated delay damages
-    × SAR 39,098,392.98. That figure is a real money amount, so the daily-amount
-    late-scan early-return (any non-toy ACA) would keep first-N and
-    miss SAR 2,017,680,124.69. Always also run prefix / tail / incl
-    needles. Retry cited chunk owners — Master Corpus UI id is not
-    always the row owner.
-    """
-    by_id: Dict[str, Chunk] = {}
-    allowed = set(doc_ids)
-    fetch = getattr(store, "chunks_for_docs", None)
-    pids = _late_scan_project_ids(project_id, extra_pids, fused)
-    if not pids and project_id:
-        pids = [project_id]
-
-    def _keep(chunk: Chunk) -> None:
-        if chunk.doc_id and chunk.doc_id not in allowed:
-            return
-        by_id.setdefault(chunk.chunk_id, chunk)
-
-    if callable(fetch):
-        for pid in pids:
-            extra = []
+def _particulars_documents_by_title(pids: List[str]) -> List[str]:
+    """Documents whose upload name says they are particulars / conditions."""
+    out: List[str] = []
+    try:
+        from app.core.projects import documents_matching_title_phrase
+    except Exception:  # noqa: BLE001 — listing is optional
+        logger.debug("particulars title listing unavailable", exc_info=True)
+        return out
+    for pid in pids:
+        if not pid:
+            continue
+        for phrase in _DEEP_ROW_TITLE_KINDS:
             try:
-                extra = fetch(pid, doc_ids, all_rows=True)
-            except TypeError:
-                try:
-                    extra = fetch(pid, doc_ids, k_per_doc=1_000_000)
-                except TypeError:
-                    extra = []
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "a2 late-incl full scan for %s failed: %s", pid, exc,
-                    )
-                    extra = []
-            except Exception as exc:  # noqa: BLE001 — extras must not break
-                logger.warning(
-                    "a2 late-incl full scan for %s failed: %s", pid, exc,
-                )
-                extra = []
-            for chunk in extra or []:
-                _keep(chunk)
-            for from_end in (False, True):
-                try:
-                    try:
-                        extra = fetch(
-                            pid, doc_ids,
-                            k_per_doc=_REAL_ACA_DOC_SCAN,
-                            from_end=from_end,
-                        )
-                    except TypeError:
-                        extra = (
-                            [] if from_end
-                            else fetch(
-                                pid, doc_ids,
-                                k_per_doc=_REAL_ACA_DOC_SCAN,
-                            )
-                        )
-                except Exception as exc:  # noqa: BLE001 — extras must not break
-                    logger.warning(
-                        "a2 late-incl %s scan for %s failed: %s",
-                        "tail" if from_end else "prefix", pid, exc,
-                    )
-                    extra = []
-                for chunk in extra or []:
-                    _keep(chunk)
-
-    containing = getattr(store, "chunks_containing_all", None)
-    if callable(containing):
-        for pid in pids:
-            for needles in _A2_INCL_TEXT_NEEDLES:
-                try:
-                    try:
-                        hits = containing(
-                            pid, list(needles),
-                            k=_REAL_ACA_TEXT_K, doc_ids=doc_ids,
-                        )
-                    except TypeError:
-                        hits = containing(
-                            pid, list(needles), k=_REAL_ACA_TEXT_K,
-                        )
-                except Exception as exc:  # noqa: BLE001 — extras must not break
-                    logger.warning(
-                        "a2 late-incl text scan for %s failed: %s", pid, exc,
-                    )
-                    hits = []
-                for chunk in hits or []:
-                    _keep(chunk)
-    return list(by_id.values())
+                matches = documents_matching_title_phrase(pid, phrase) or []
+            except Exception:  # noqa: BLE001 — listing is optional
+                matches = []
+            for doc in matches:
+                did = doc.get("id") or ""
+                if did and did not in out:
+                    out.append(did)
+    return out
 
 
-def _rescue_a2_including_vat_from_pool_docs(
+def recall_rows_deep_in_pooled_documents(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
 ) -> int:
-    """Surface a filled including-VAT ACA that sits past first-N chunk #0.
+    """Pool the asked particular's row when it sits past the early windows.
 
-    Live Wave-1 A2 on 9ad62cc: cosine / filename rescue kept Contract
-    Data chunk #0 (delay damages × a partial ACA). Identifier search
-    + first-24 neighbors never reached the filled 1.1.1 including-VAT
-    row.
+    For a particular whose row shape is known: when no pooled chunk states
+    it, the pooled particulars / conditions volumes (or those that mention
+    the particular) are read whole and the rows that state it are pooled
+    with the asked-value bonus. A daily amount is two rows and has its own
+    pass (``recall_composition_operands``).
     """
-    if not (
-        query_is_aca_including_vat_particular(query)
-    ):
+    test = _known_particular_row_test(query)
+    if test is None or query_asks_delay_damages_daily_amount(query):
         return 0
-
-    def _fused_chunk(entry) -> Optional[Chunk]:
-        return _fused_entry_chunk(entry)
-
-    fused_chunks = [
-        c for c in (_fused_chunk(e) for e in fused.values()) if c is not None
-    ]
-    if any(chunk_states_aca_including_vat(c.text or "") for c in fused_chunks):
+    if not query_wants_contract_data_file(query):
         return 0
-    doc_ids = _pool_doc_ids_for_late_including_vat(fused)
+    fused_chunks = [c for c in (_fused_entry_chunk(e) for e in fused.values()) if c is not None]
+    if any(test(c.text or "") for c in fused_chunks):
+        return 0
+    phrases = list(_asked_particular_key_phrases(query))
+    doc_ids = _pooled_documents_for_deep_rows(fused, phrases)
     pids = _late_scan_project_ids(project_id, None, fused)
     if not doc_ids:
-        try:
-            from app.core.projects import documents_matching_title_phrase
-            for pid in pids or [project_id]:
-                if not pid:
-                    continue
-                for phrase in ("contract data", "conditions of contract"):
-                    try:
-                        matches = documents_matching_title_phrase(
-                            pid, phrase,
-                        ) or []
-                    except Exception:  # noqa: BLE001 — listing is optional
-                        matches = []
-                    for doc in matches:
-                        did = doc.get("id") or ""
-                        if did and did not in doc_ids:
-                            doc_ids.append(did)
-        except Exception:  # noqa: BLE001 — fused doc_ids may still be enough
-            logger.debug("a2 late-incl title listing failed", exc_info=True)
+        doc_ids = _particulars_documents_by_title(pids or [project_id])
     if not doc_ids:
         return 0
-    extra = _fetch_late_including_vat_chunks(
+    labels = asked_row_labels(query)[:_DEEP_ROW_MAX_LABELS]
+    extra = _scan_whole_documents(
         store, project_id, doc_ids, extra_pids=pids, fused=fused,
+        needle_sets=label_word_needle_sets(labels),
     )
     recovered = 0
-    for chunk in _pair_adjacent_keep_text(
-        extra or [],
-        chunk_states_aca_including_vat,
-        window=_REAL_ACA_PAIR_WINDOW,
-    ):
-        if chunk.chunk_id in fused:
-            continue
-        if not chunk_states_aca_including_vat(chunk.text or ""):
+    for chunk in _pair_adjacent_keep_text(extra or [], test, window=_ROW_PAIR_WINDOW):
+        if chunk.chunk_id in fused or not test(chunk.text or ""):
             continue
         fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
         recovered += 1
     if recovered:
-        logger.info(
-            "a2 late-incl scan recovered %d chunk(s) past Contract Data chunk #0",
-            recovered,
-        )
+        logger.info("deep-row recall pooled %d chunk(s) past the early windows", recovered)
     return recovered
 
 
@@ -6988,14 +6847,13 @@ def including_vat_excerpts_from_loaded_cd_volume(
     doc_ids: Optional[List[str]] = None,
     extra_pids: Optional[Iterable[str]] = None,
 ) -> str:
-    """Join including-VAT ACA rows from the loaded CD volume.
+    """Join including-VAT ACA rows from the loaded particulars volume.
 
-    Live Wave-1 A2 on 9ad62cc / 396cc7b: top-k stayed on Contract Data
-    chunk #0 (delay damages × SAR 39,098,392.98). When the filled
-    including-VAT row exists later in the same loaded volume — possibly
-    owned by a cited source project, not the UI id — return it so graft
-    can state SAR 2,017,680,124.69. Do not invent a figure and do not
-    compose delay damages.
+    The top-k can stay on the volume's early windows (a delay-damages clause
+    restating some other amount). When the filled including-VAT row exists
+    later in the same loaded volume -- possibly owned by a cited source
+    project, not the UI id -- return it so the graft can state it. Never
+    invents a figure and never composes delay damages.
     """
     pids = _late_scan_project_ids(project_id, extra_pids)
     if not (
@@ -7021,19 +6879,19 @@ def including_vat_excerpts_from_loaded_cd_volume(
         for pid in pids or [project_id]:
             if not pid:
                 continue
-            for phrase in ("contract data", "conditions of contract"):
+            for phrase in _DEEP_ROW_TITLE_KINDS:
                 try:
                     matches = documents_matching_title_phrase(pid, phrase) or []
                 except Exception:  # noqa: BLE001 — listing is optional
                     logger.debug(
-                        "a2 loaded-volume title listing failed for %r",
+                        "loaded-volume title listing failed for %r",
                         phrase, exc_info=True,
                     )
                     matches = []
                 for doc in matches:
                     _add(doc.get("id") or "")
     except Exception:  # noqa: BLE001 — rag doc_ids may still be enough
-        logger.debug("a2 loaded-volume projects import failed", exc_info=True)
+        logger.debug("loaded-volume projects import failed", exc_info=True)
 
     if not ids:
         return ""
@@ -7041,17 +6899,18 @@ def including_vat_excerpts_from_loaded_cd_volume(
         try:
             store = get_lexical_store()
         except Exception:  # noqa: BLE001 — never break a turn over the store
-            logger.debug("a2 loaded-volume store open failed", exc_info=True)
+            logger.debug("loaded-volume store open failed", exc_info=True)
             return ""
 
-    extra = _fetch_late_including_vat_chunks(
+    extra = _scan_whole_documents(
         store, project_id or (pids[0] if pids else ""), ids, extra_pids=pids,
+        needle_sets=label_word_needle_sets(asked_row_labels(query)[:_DEEP_ROW_MAX_LABELS]),
     )
     parts: List[str] = []
     for chunk in _pair_adjacent_keep_text(
         extra or [],
         chunk_states_aca_including_vat,
-        window=_REAL_ACA_PAIR_WINDOW,
+        window=_ROW_PAIR_WINDOW,
     ):
         text = chunk.text or ""
         if chunk_states_aca_including_vat(text) and text not in parts:
@@ -7118,88 +6977,89 @@ def ensure_kept_has_including_vat(
     return True
 
 
-def _rescue_e1_real_aca_from_pool_docs(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-) -> int:
-    """Surface a filled excl-VAT ACA that sits past first-N on an 8.8 doc.
+def _daily_damages_operands():
+    """The operands of a delay-damages daily amount, as (name, is_pooled, admits).
 
-    Daily-amount ask after #530: identifier_search for ``accepted contract
-    amount excluding vat`` matches the 8.8 worked-example windows (chunks
-    9–11) and LIMIT returns those first. ``chunks_for_docs`` then takes
-    the first 24/40 by index — still the Conditions body — so the filled
-    1.1.1 row never enters fused. Compose skips the toy 10M and the cost
-    gate refuses. #532 scanned the first 400 of those docs; live still
-    missed an appendix past that prefix. Text-match + last-N tail on
-    rate-window / Contract Data docs already in-pool.
+    ``is_pooled(text)`` says a pooled chunk already supplies the operand;
+    ``admits(text)`` says a scanned chunk supplies it.
     """
-    if not (
-        query_asks_delay_damages_daily_amount(query)
-    ):
-        return 0
     try:
         from app.lib.construction_formulas_commercial import (
             chunk_has_real_accepted_contract_amount,
         )
     except Exception:  # noqa: BLE001 — never break a turn over an import
-        logger.debug("e1 late-ACA import failed", exc_info=True)
-        return 0
+        logger.debug("composition operand import failed", exc_info=True)
+        return []
 
-    def _fused_chunk(entry) -> Optional[Chunk]:
-        if isinstance(entry, tuple) and entry:
-            chunk = entry[0]
-        else:
-            chunk = entry
-        return chunk if isinstance(chunk, Chunk) else None
+    def _base_admits(text: str) -> bool:
+        # The sum the rate is a share of, stated as its own row -- not a rate
+        # window that restates some amount.
+        return (
+            chunk_states_accepted_contract_amount(text)
+            and chunk_has_real_accepted_contract_amount(text)
+            and not chunk_states_delay_damages_rate(text)
+        )
 
-    fused_chunks = [
-        c for c in (_fused_chunk(e) for e in fused.values()) if c is not None
+    return [
+        ("base", _has_standalone_excl_vat_aca, _base_admits),
+        ("rate", lambda text: _daily_rate_preference(text) >= 2,
+         lambda text: _daily_rate_preference(text) >= 2),
     ]
-    has_standalone_aca = any(
-        _has_standalone_excl_vat_aca(c.text or "") for c in fused_chunks
-    )
-    has_preferred_rate = any(
-        _daily_rate_preference(c.text or "") >= 2 for c in fused_chunks
-    )
-    # Do not skip when the only "real ACA" sits inside a 0.015% CoC
-    # rate window — that is the live #535 flake (263,175.67/day).
-    if has_standalone_aca and has_preferred_rate:
+
+
+def composition_operands_for(query: str):
+    """The operands a question's composition needs, or [] when it composes nothing."""
+    if query_asks_delay_damages_daily_amount(query):
+        return _daily_damages_operands()
+    return []
+
+
+def recall_composition_operands(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+) -> int:
+    """Pool every operand a composition needs, read from the documents in the pool.
+
+    A computed answer (a daily amount = a rate x the sum it is a share of)
+    needs every operand row in the context, and each operand is a row of a
+    particulars / conditions volume that is often past the early windows the
+    store returns first. When an operand is missing from the pool, the
+    pooled documents that hold the other operand -- or any pooled
+    particulars / conditions volume -- are read whole and the missing
+    operand's rows are pooled, pinned above the early windows so the token
+    cap keeps them. An operand already pooled is not fetched again.
+    """
+    operands = composition_operands_for(query)
+    if not operands:
+        return 0
+    fused_chunks = [c for c in (_fused_entry_chunk(e) for e in fused.values()) if c is not None]
+    missing = [
+        (name, admits) for name, is_pooled, admits in operands
+        if not any(is_pooled(c.text or "") for c in fused_chunks)
+    ]
+    if not missing:
         return 0
     doc_ids = _pool_doc_ids_for_late_aca(fused)
     if not doc_ids:
         return 0
-    extra = _fetch_late_aca_chunks(store, project_id, doc_ids, fused=fused)
+    extra = _scan_documents_for_operands(store, project_id, doc_ids, fused=fused)
     recovered = 0
-    if not has_standalone_aca:
-        for chunk in _pair_adjacent_keep_text(
-            extra or [],
-            chunk_states_accepted_contract_amount,
-            window=_REAL_ACA_PAIR_WINDOW,
-        ):
-            if chunk.chunk_id in fused:
+    for name, admits in missing:
+        # A row whose label and value were split across chunks is joined back.
+        candidates = (
+            _pair_adjacent_keep_text(extra or [], chunk_states_accepted_contract_amount,
+                                     window=_ROW_PAIR_WINDOW)
+            if name == "base" else list(extra or [])
+        )
+        for chunk in candidates:
+            if chunk.chunk_id in fused or not admits(chunk.text or ""):
                 continue
-            if not chunk_has_real_accepted_contract_amount(chunk.text or ""):
-                continue
-            if chunk_states_delay_damages_rate(chunk.text or ""):
-                # Rate-base ACA is not the 1.1.1 row. Keep looking.
-                continue
-            fused[chunk.chunk_id] = (chunk, _DAILY_DAMAGES_OPERAND_PIN_SCORE, 0.0)
-            recovered += 1
-    if not has_preferred_rate:
-        for chunk in extra or []:
-            if chunk.chunk_id in fused:
-                continue
-            if _daily_rate_preference(chunk.text or "") < 2:
-                continue
-            fused[chunk.chunk_id] = (chunk, _DAILY_DAMAGES_OPERAND_PIN_SCORE, 0.0)
+            fused[chunk.chunk_id] = (chunk, _OPERAND_PIN_SCORE, 0.0)
             recovered += 1
     if recovered:
-        logger.info(
-            "e1 late-operand scan recovered %d chunk(s) past first-N 8.8 windows",
-            recovered,
-        )
+        logger.info("composition-operand recall pooled %d chunk(s)", recovered)
     return recovered
 
 
@@ -9006,7 +8866,7 @@ def ensure_kept_can_compose_daily_damages(
         kept[idx] = rate
         present.add(rate.chunk_id)
         changed = True
-    rate.score = max(float(rate.score or 0.0), _DAILY_DAMAGES_OPERAND_PIN_SCORE)
+    rate.score = max(float(rate.score or 0.0), _OPERAND_PIN_SCORE)
     if aca.chunk_id not in present:
         idx = _daily_damages_non_operand_index(kept, protect_rate=True, protect_aca=True)
         if idx is None:
@@ -9026,7 +8886,7 @@ def ensure_kept_can_compose_daily_damages(
             idx = 0 if idx != 0 else 1
         kept[idx] = aca
         changed = True
-    aca.score = max(float(aca.score or 0.0), _DAILY_DAMAGES_OPERAND_PIN_SCORE)
+    aca.score = max(float(aca.score or 0.0), _OPERAND_PIN_SCORE)
     return changed
 
 
@@ -9318,12 +9178,8 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
-    _rescue_e1_real_aca_from_pool_docs(
-        query, project_id, fused_lex, store,
-    )
-    _rescue_a2_including_vat_from_pool_docs(
-        query, project_id, fused_lex, store,
-    )
+    recall_composition_operands(query, project_id, fused_lex, store)
+    recall_rows_deep_in_pooled_documents(query, project_id, fused_lex, store)
     _pool_page_total_rows(
         query, project_id, fused_lex, store,
     )
@@ -9902,8 +9758,10 @@ def retrieve_with_filter(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
     )
-    _rescue_e1_real_aca_from_pool_docs(query, project_id, fused, store)
-    _rescue_a2_including_vat_from_pool_docs(query, project_id, fused, store)
+    # Rows past the early windows of a pooled volume: every operand a
+    # composition needs, and the asked particular's own row.
+    recall_composition_operands(query, project_id, fused, store)
+    recall_rows_deep_in_pooled_documents(query, project_id, fused, store)
     # Page-total ask: the page's summary footer loses to the item lines on
     # the same page. Project-only so a reference rate note cannot
     # impersonate the client's page total.

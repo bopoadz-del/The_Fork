@@ -851,8 +851,8 @@ def test_e1_surfaces_late_excl_vat_when_id_search_returns_only_8_8_toys(
 def test_e1_late_aca_helper_scans_past_first_n_on_rate_docs():
     """Direct: fused has only 8.8 toys; first-400 misses chunk 450."""
     from app.core.rag.retriever import (
-        _REAL_ACA_DOC_SCAN,
-        _rescue_e1_real_aca_from_pool_docs,
+        _DOC_SCAN_WINDOW,
+        recall_composition_operands,
     )
     from app.lib.construction_formulas_commercial import (
         chunk_has_real_accepted_contract_amount,
@@ -902,13 +902,13 @@ def test_e1_late_aca_helper_scans_past_first_n_on_rate_docs():
     )
     prefix24 = _Store().chunks_for_docs(ACTIVE, [GC_DOC], k_per_doc=24)
     prefix400 = _Store().chunks_for_docs(
-        ACTIVE, [GC_DOC], k_per_doc=_REAL_ACA_DOC_SCAN,
+        ACTIVE, [GC_DOC], k_per_doc=_DOC_SCAN_WINDOW,
     )
     assert all(c.chunk_index < LATE_ACA_INDEX for c in prefix24)
     assert all(c.chunk_index < LATE_ACA_INDEX for c in prefix400)
     # #532 cap: a bigger first-N still misses the live appendix.
-    assert _REAL_ACA_DOC_SCAN < LATE_ACA_INDEX
-    recovered = _rescue_e1_real_aca_from_pool_docs(
+    assert _DOC_SCAN_WINDOW < LATE_ACA_INDEX
+    recovered = recall_composition_operands(
         LIVE_E1, ACTIVE, fused, _Store(),
     )
     assert recovered >= 1
@@ -943,7 +943,7 @@ def _late_aca_all_chunks():
 
 def test_e1_late_aca_text_match_recovers_when_prefix_and_tail_miss():
     """Needles scoped to the rate-window doc find 1.1.1 past first-400."""
-    from app.core.rag.retriever import _rescue_e1_real_aca_from_pool_docs
+    from app.core.rag.retriever import recall_composition_operands
     from app.lib.construction_formulas_commercial import (
         chunk_has_real_accepted_contract_amount,
     )
@@ -976,7 +976,7 @@ def test_e1_late_aca_text_match_recovers_when_prefix_and_tail_miss():
             return out[: max(1, int(k or 20))]
 
     fused = {c.chunk_id: (c, c.score or 0.0, 0.0) for c in toys}
-    recovered = _rescue_e1_real_aca_from_pool_docs(
+    recovered = recall_composition_operands(
         LIVE_E1, ACTIVE, fused, _TextOnly(),
     )
     assert recovered >= 1
@@ -989,8 +989,8 @@ def test_e1_late_aca_text_match_recovers_when_prefix_and_tail_miss():
 def test_e1_late_aca_tail_recovers_when_text_match_is_absent():
     """Last-N of the same volume surfaces the appendix when LIKE is missing."""
     from app.core.rag.retriever import (
-        _REAL_ACA_DOC_SCAN,
-        _rescue_e1_real_aca_from_pool_docs,
+        _DOC_SCAN_WINDOW,
+        recall_composition_operands,
     )
     from app.lib.construction_formulas_commercial import (
         chunk_has_real_accepted_contract_amount,
@@ -1014,10 +1014,10 @@ def test_e1_late_aca_tail_recovers_when_text_match_is_absent():
 
     fused = {c.chunk_id: (c, c.score or 0.0, 0.0) for c in toys}
     prefix = _TailOnly().chunks_for_docs(
-        ACTIVE, [GC_DOC], k_per_doc=_REAL_ACA_DOC_SCAN, from_end=False,
+        ACTIVE, [GC_DOC], k_per_doc=_DOC_SCAN_WINDOW, from_end=False,
     )
     assert all(c.chunk_index < LATE_ACA_INDEX for c in prefix)
-    recovered = _rescue_e1_real_aca_from_pool_docs(
+    recovered = recall_composition_operands(
         LIVE_E1, ACTIVE, fused, _TailOnly(),
     )
     assert recovered >= 1
@@ -1060,15 +1060,15 @@ def test_live_scanned_excl_vat_is_a_real_e1_money_operand():
 
 def test_e1_533_prefix_tail_needles_miss_middle_excl_vat():
     """#533 hole: first-400, last-400, and 1.1.1+excluding all miss."""
-    from app.core.rag.retriever import _REAL_ACA_DOC_SCAN
+    from app.core.rag.retriever import _DOC_SCAN_WINDOW
 
     all_chunks, _toys, aca = _middle_aca_all_chunks()
     rows = sorted(
         [c for c in all_chunks if c.doc_id == GC_DOC],
         key=lambda c: c.chunk_index,
     )
-    prefix = rows[:_REAL_ACA_DOC_SCAN]
-    tail = rows[-_REAL_ACA_DOC_SCAN:]
+    prefix = rows[:_DOC_SCAN_WINDOW]
+    tail = rows[-_DOC_SCAN_WINDOW:]
     assert all(c.chunk_index != MIDDLE_ACA_INDEX for c in prefix)
     assert all(c.chunk_index != MIDDLE_ACA_INDEX for c in tail)
     assert aca.chunk_index == MIDDLE_ACA_INDEX
@@ -1079,7 +1079,7 @@ def test_e1_533_prefix_tail_needles_miss_middle_excl_vat():
 
 def test_e1_full_doc_scan_surfaces_middle_excl_vat_when_533_misses():
     """Walk every chunk of the 8.8 doc — not prefix, tail, or 1.1.1 LIKE."""
-    from app.core.rag.retriever import _rescue_e1_real_aca_from_pool_docs
+    from app.core.rag.retriever import recall_composition_operands
     from app.lib.construction_formulas_commercial import (
         chunk_has_real_accepted_contract_amount,
     )
@@ -1114,7 +1114,7 @@ def test_e1_full_doc_scan_surfaces_middle_excl_vat_when_533_misses():
             return out[: max(1, int(k or 20))]
 
     fused = {c.chunk_id: (c, c.score or 0.0, 0.0) for c in toys}
-    recovered = _rescue_e1_real_aca_from_pool_docs(
+    recovered = recall_composition_operands(
         LIVE_E1, ACTIVE, fused, _Live533Hole(),
     )
     assert recovered >= 1
@@ -1138,7 +1138,7 @@ def test_e1_excl_vat_needles_recover_when_all_rows_and_prefix_tail_miss():
     When all_rows is absent (TypeError / empty), excl+vat LIKE must
     still surface the middle row so compose can state SAR/day.
     """
-    from app.core.rag.retriever import _rescue_e1_real_aca_from_pool_docs
+    from app.core.rag.retriever import recall_composition_operands
     from app.lib.construction_formulas_commercial import (
         chunk_has_real_accepted_contract_amount,
     )
@@ -1173,7 +1173,7 @@ def test_e1_excl_vat_needles_recover_when_all_rows_and_prefix_tail_miss():
             return out[: max(1, int(k or 20))]
 
     fused = {c.chunk_id: (c, c.score or 0.0, 0.0) for c in toys}
-    recovered = _rescue_e1_real_aca_from_pool_docs(
+    recovered = recall_composition_operands(
         LIVE_E1, ACTIVE, fused, _NeedlesOnly(),
     )
     assert recovered >= 1
@@ -1364,7 +1364,7 @@ def test_coc_015_window_is_not_a_standalone_e1_money_row():
 
 def test_e1_535_scan_does_not_early_exit_on_015_rate_window_aca():
     """#535 regression: all-chunk scan still runs when 9–11 cite excl-VAT."""
-    from app.core.rag.retriever import _rescue_e1_real_aca_from_pool_docs
+    from app.core.rag.retriever import recall_composition_operands
     from app.lib.construction_formulas_commercial import (
         chunk_has_real_accepted_contract_amount,
     )
@@ -1393,7 +1393,7 @@ def test_e1_535_scan_does_not_early_exit_on_015_rate_window_aca():
         chunk_has_real_accepted_contract_amount(c.text or "")
         for c, _s, _b in fused.values()
     )
-    recovered = _rescue_e1_real_aca_from_pool_docs(
+    recovered = recall_composition_operands(
         LIVE_E1, ACTIVE, fused, _Store(),
     )
     assert recovered >= 1
@@ -1495,7 +1495,7 @@ def test_e1_retrieve_015_top_k_still_composes_point_one(monkeypatch):
 
 def test_e1_loaded_cd_rows_kill_refuse_even_when_top_k_is_toys():
     """(a) excl-VAT ACA in loaded Contract Data rows must not refuse."""
-    from app.core.rag.retriever import _rescue_e1_real_aca_from_pool_docs
+    from app.core.rag.retriever import recall_composition_operands
     from app.lib.construction_formulas_commercial import (
         chunk_has_real_accepted_contract_amount,
     )
@@ -1520,7 +1520,7 @@ def test_e1_loaded_cd_rows_kill_refuse_even_when_top_k_is_toys():
         chunk_has_real_accepted_contract_amount(c.text or "")
         for c, _s, _b in fused.values()
     )
-    recovered = _rescue_e1_real_aca_from_pool_docs(
+    recovered = recall_composition_operands(
         LIVE_E1, ACTIVE, fused, _LoadedRows(),
     )
     assert recovered >= 1
@@ -1799,10 +1799,10 @@ def test_e1_pointer_window_qualifies_doc_without_filename():
 
 def test_e1_fetch_does_not_early_exit_when_all_rows_is_ignored():
     """First-N 0.015%+ACA is not enough — walk until both operands exist."""
-    from app.core.rag.retriever import _fetch_late_aca_chunks
+    from app.core.rag.retriever import _scan_documents_for_operands
 
     all_chunks, _lookalikes, rate, aca = _015_early_exit_all_chunks()
-    extra = _fetch_late_aca_chunks(
+    extra = _scan_documents_for_operands(
         _ignore_all_rows_store(all_chunks), ACTIVE, [GC_DOC],
     )
     texts = [c.text or "" for c in extra]
@@ -1988,7 +1988,7 @@ def test_e1_pool_falls_back_to_fused_doc_ids_when_ocr_fails_qualify():
     from app.core.rag.retriever import (
         _doc_qualifies_for_late_aca_scan,
         _pool_doc_ids_for_late_aca,
-        _rescue_e1_real_aca_from_pool_docs,
+        recall_composition_operands,
     )
 
     windows = [
@@ -2005,7 +2005,7 @@ def test_e1_pool_falls_back_to_fused_doc_ids_when_ocr_fails_qualify():
     assert _pool_doc_ids_for_late_aca(fused) == [GC_DOC]
 
     all_chunks, _w, _rate, _aca = _refuse_prone_volume_chunks()
-    recovered = _rescue_e1_real_aca_from_pool_docs(
+    recovered = recall_composition_operands(
         LIVE_E1, ACTIVE, fused, _ignore_all_rows_store(all_chunks),
     )
     assert recovered >= 1
@@ -2223,7 +2223,7 @@ def test_e1_cap_noise_is_pointer_or_015_not_operands():
 
 def test_e1_capped_k_prefix_tail_miss_middle_operands():
     """#541 hole: k-cap 400 + ignore all_rows misses chunk 500 of 1200."""
-    from app.core.rag.retriever import _REAL_ACA_DOC_SCAN
+    from app.core.rag.retriever import _DOC_SCAN_WINDOW
 
     all_chunks, _windows, rate, aca = _refuse_prone_volume_chunks()
     store = _capped_k_store(all_chunks)
@@ -2231,14 +2231,14 @@ def test_e1_capped_k_prefix_tail_miss_middle_operands():
         ACTIVE, [GC_DOC], k_per_doc=1_000_000, from_end=False,
     )
     tail = store.chunks_for_docs(
-        ACTIVE, [GC_DOC], k_per_doc=_REAL_ACA_DOC_SCAN, from_end=True,
+        ACTIVE, [GC_DOC], k_per_doc=_DOC_SCAN_WINDOW, from_end=True,
     )
     assert all(c.chunk_index != MIDDLE_ACA_INDEX for c in prefix)
     assert all(c.chunk_index != CD_RATE_INDEX for c in prefix)
     assert all(c.chunk_index != MIDDLE_ACA_INDEX for c in tail)
     assert all(c.chunk_index != CD_RATE_INDEX for c in tail)
     mid = store.chunks_for_docs(
-        ACTIVE, [GC_DOC], k_per_doc=_REAL_ACA_DOC_SCAN, offset=400,
+        ACTIVE, [GC_DOC], k_per_doc=_DOC_SCAN_WINDOW, offset=400,
     )
     assert any(c.chunk_id == rate.chunk_id for c in mid)
     assert any(c.chunk_id == aca.chunk_id for c in mid)
@@ -2246,10 +2246,10 @@ def test_e1_capped_k_prefix_tail_miss_middle_operands():
 
 def test_e1_fetch_mid_window_recovers_when_k_is_capped():
     """Refuse-prone 9–11 + k-cap 400 must still surface 0.1% and excl-VAT."""
-    from app.core.rag.retriever import _fetch_late_aca_chunks
+    from app.core.rag.retriever import _scan_documents_for_operands
 
     all_chunks, _windows, rate, aca = _refuse_prone_volume_chunks()
-    extra = _fetch_late_aca_chunks(
+    extra = _scan_documents_for_operands(
         _capped_k_store(all_chunks), ACTIVE, [GC_DOC],
     )
     texts = [c.text or "" for c in extra]
@@ -2267,10 +2267,10 @@ def test_e1_fetch_mid_window_recovers_when_k_is_capped():
 
 def test_e1_fetch_mid_window_recovers_015_top_k_when_k_is_capped():
     """CoC 0.015% 9–11 + k-cap 400 must still compose 0.1%, not 263175.67."""
-    from app.core.rag.retriever import _fetch_late_aca_chunks
+    from app.core.rag.retriever import _scan_documents_for_operands
 
     all_chunks, _windows, rate, aca = _015_early_exit_all_chunks()
-    extra = _fetch_late_aca_chunks(
+    extra = _scan_documents_for_operands(
         _capped_k_store(all_chunks), ACTIVE, [GC_DOC],
     )
     excerpts = "\n\n".join(c.text or "" for c in extra)
