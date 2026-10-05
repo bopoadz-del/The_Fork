@@ -134,20 +134,6 @@ def test_correctly_spelled_query_also_finds_it(corpus):
     assert "structural-general-notes.pdf" in [c.doc_id for c in chunks]
 
 
-def test_the_lexical_rescue_is_what_recovers_it(corpus, monkeypatch):
-    """Documents the mechanism: with the rescue disabled, the fake embedder's
-    hash vectors miss the document — which is precisely the production
-    behaviour this fix removes."""
-    monkeypatch.setenv("RAG_TERM_RESCUE", "0")
-    without = [c.doc_id for c in _retrieve("Saudi buiding code")]
-
-    monkeypatch.setenv("RAG_TERM_RESCUE", "1")
-    with_rescue = [c.doc_id for c in _retrieve("Saudi buiding code")]
-
-    assert "structural-general-notes.pdf" not in without
-    assert "structural-general-notes.pdf" in with_rescue
-
-
 def test_a_single_common_term_does_not_drag_in_the_whole_corpus(corpus):
     """The rescue matches on term CO-OCCURRENCE. A query sharing one ordinary
     word with every document must not return everything — that would trade a

@@ -23,7 +23,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.conversation_wbs import (
-    H2_EXPORT_ASK,
     clear_conversation_wbs,
     conversation_schedule_export_descriptor,
     fulfill_wbs_export,
@@ -41,6 +40,9 @@ from app.lib.boq_schedule import (
 )
 from app.main import app
 from tests.conftest import requires_construction_kit
+
+# Verbatim live H2 ask (UI-PHYS "Question (ask exactly)").
+H2_EXPORT_ASK = "Export F1 WBS as xlsx"
 
 H = {"Authorization": "Bearer cb_dev_key"}
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

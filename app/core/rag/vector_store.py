@@ -680,28 +680,38 @@ class VectorStore:
         return self._visibility_ready
 
     def _hidden_doc_sql(self, chunk_alias: str = "c") -> str:
-        """AND-clause that hides ``retrieval_visible = false`` rows.
+        """AND-clause that hides chunks no reader may see.
 
-        Chunks with no documents row stay visible (NOT EXISTS). Dialect-
-        split because SQLite stores the boolean as 0/1.
+        Hidden: ``retrieval_visible = false``, or a document whose status is
+        one of ``ingest_status.NO_CHUNK_STATUSES`` (failed, empty, tombstoned,
+        quarantined ...). Chunks with no documents row stay visible (NOT
+        EXISTS). Dialect-split because SQLite stores the boolean as 0/1.
         """
         if self._visibility_ready is not True:
             return ""
+        from app.core.ingest_status import NO_CHUNK_STATUSES
+
         flag = "IS FALSE" if self._use_pgvector else "= 0"
+        barred = ", ".join(f"'{s}'" for s in sorted(NO_CHUNK_STATUSES))
         return (
             f" AND NOT EXISTS (SELECT 1 FROM documents d "
             f"WHERE d.id = {chunk_alias}.doc_id "
-            f"AND d.retrieval_visible {flag})"
+            f"AND (d.retrieval_visible {flag} OR d.ingest_status IN ({barred})))"
         )
 
     def _hidden_doc_ids(self, session: Session, project_id: str) -> Set[str]:
         if not self._docs_visibility_ready(session):
             return set()
         try:
+            from app.core.ingest_status import NO_CHUNK_STATUSES
+
             rows = session.execute(
                 select(Document.id).where(
                     Document.project_id == project_id,
-                    Document.retrieval_visible.is_(False),
+                    or_(
+                        Document.retrieval_visible.is_(False),
+                        Document.ingest_status.in_(sorted(NO_CHUNK_STATUSES)),
+                    ),
                 )
             ).scalars().all()
         except SQLAlchemyError:
@@ -1032,12 +1042,12 @@ class VectorStore:
         stays first-N so existing callers are unchanged.
 
         ``all_rows=True`` returns every chunk of those docs (the SQL
-        already loads them). Leftover E1: a filled 1.1.1 excl-VAT row
+        already loads them). Daily delay damages: a filled 1.1.1 excl-VAT row
         can sit in the middle of a combined volume, past first-400 and
         before last-400, so prefix+tail still miss.
 
         ``offset`` skips that many rows per file (from the start, or
-        from the end when ``from_end``). Leftover E1 after #541: a
+        from the end when ``from_end``). After #541: a
         store that ignores ``all_rows`` and caps ``k_per_doc`` at 400
         still misses chunk 500 of a 1200-row volume; windowed offsets
         walk the middle.

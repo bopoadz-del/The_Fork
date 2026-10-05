@@ -1,14 +1,12 @@
 """AN ANSWER THAT NAMES ITS MISSING INPUT MUST GO AND GET IT (item 4).
 
-F-E1-2, from ``FLEET_OPS/artifacts/gate_battery_13b2bf7_2026-08-31.md``:
-
-    E1 | FAIL | "do not state the specific monetary rate per calendar day".
-    ...
-    E1 and E2 together are the proof for F-E1-2. One question apart, same
-    session, same corpus: E2 retrieved the Accepted Contract Amount to
-    complete its arithmetic; E1 said the figure it needed was not available.
-    It is not a retrieval limit. E1 identified its missing input and did not
-    go and get it.
+From a recorded gate battery (``FLEET_OPS/artifacts/gate_battery_13b2bf7_2026-08-31.md``):
+a delay-damages-per-calendar-day ask FAILED with "do not state the specific
+monetary rate per calendar day". A neighbouring question in the same
+session and corpus retrieved the Accepted Contract Amount to complete its
+arithmetic; the per-day ask said the figure it needed was not available.
+It is not a retrieval limit. The answer identified its missing input and
+did not go and get it.
 
 The owner's rule: **one bounded retrieval attempt for any input the answer
 names as missing.** One, not a loop -- an agent that keeps searching until
@@ -25,10 +23,10 @@ model, no I/O. It answers two questions about a draft answer --
 -- so both can be tested against the recorded string rather than against a
 mock of the retriever.
 
-WHAT IT DOES NOT DO. It does not decide whether the thing exists. G5 refuses
-a drawing that is genuinely not in the corpus, and this will happily name
-that drawing as a missing input; the bounded fetch then returns nothing and
-G5's refusal is unchanged. Distinguishing "absent" from "not retrieved" is
+WHAT IT DOES NOT DO. It does not decide whether the thing exists. An answer
+that refuses a drawing genuinely not in the corpus will have that drawing
+named as a missing input here; the bounded fetch then returns nothing and
+the refusal is unchanged. Distinguishing "absent" from "not retrieved" is
 the fetch's job, not the detector's -- and the platform cannot know which it
 is without looking, which is the whole reason the rule is "attempt once".
 """

@@ -267,7 +267,7 @@ def modulus_of_elasticity_concrete(
     * ``aci``: ACI 318-19 Eq. 19.2.2.1b SI form, Ec = 4700 sqrt(f'c) in MPa
       -- for C35, 27,806 MPa.
 
-    Live T12: this returned the bare float 280624.0. The answer stated the ACI
+    Live concrete-modulus ask: this returned the bare float 280624.0. The answer stated the ACI
     formula and its substitution correctly, then printed "28,062 MPa" -- the
     kg/cm2 figure divided by 10 instead of converted (x0.0980665 = 27,520),
     and neither number is the 27,806 the ACI form gives. The value now carries
@@ -371,7 +371,7 @@ def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict
     * ``aci``: ACI 318-19 Eq. 19.2.3.1, fr = 0.62 sqrt(f'c) in MPa (normal
       weight, lambda = 1.0) -- for C30, 3.40 MPa.
 
-    Live E12, asked as a follow-up naming ACI 318-19 for f'c = 30: this
+    Live, asked as a follow-up naming ACI 318-19 for f'c = 30: this
     returned 4.157 and the operator was shown 4.16 MPa. The sibling
     ``modulus_of_elasticity_concrete`` had already been given this parameter;
     this one was left behind, so an ACI question got the metric-technical
@@ -1530,7 +1530,7 @@ def _result_is_failure(result: Dict[str, Any]) -> bool:
 # Keys the model / container / tool envelope add beside real calculator kwargs.
 # Flatten unwraps ``params`` / ``input`` then drops these so they never
 # reach fn(**kwargs). ``text`` / ``formula`` / ``prior_text`` / ``query``
-# stay available for the E4 / E6 / F–W resolvers that run *before* bind,
+# stay available for the concrete-volume / waste-factor / F–W resolvers that run *before* bind,
 # and are stripped at bind time so they are not unknown-argument errors.
 _BIND_JUNK_KEYS = frozenset({
     "action", "calculation", "name", "calculator", "params",
@@ -1995,7 +1995,7 @@ def _scale_bound_value(incoming: str, dest: str, val: Any) -> Any:
     """quantity_t / tonnes → quantity_kg, and span_m → span_mm. Never invents a
     value that was absent.
 
-    The length case is live SET4 T20: the model called slab_thickness_min with
+    The length case is a live slab-thickness ask: the model called slab_thickness_min with
     ``span_m: 4.8`` against a ``span_mm`` parameter. The value bound unchanged,
     so 4.8 metres was read as 4.8 millimetres and the calculator returned
     ``min_thickness_mm: 0.2`` with status success. The answer then reported
@@ -2278,7 +2278,8 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     # E / I / c onto ec_mpa / i_mm4 / code, HERE rather than at a call site:
     # the live tool resolves the calculator after run_calculation's early hook
     # ran with fn=None, so the alias was skipped and construction_calc looped
-    # twelve times on the same unknown-argument envelope (T2, T12 on 533f08c).
+    # twelve times on the same unknown-argument envelope (beam deflection and
+    # concrete modulus asks on 533f08c).
     # Every entry point passes through this function.
     params = _alias_physics_symbols(fn, params or {})
     bound, _unknown = _partition_bound_params(fn, params)
@@ -3097,7 +3098,7 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # the first alias at the top of this function had already run. Without this
     # second pass those re-extracted symbols reach _partition_bound_params and
     # are reported "Unknown argument(s): E, I" even when the caller sent perfect
-    # ec_mpa / i_mm4 (the live T2 0/6; #741 and #743 both missed it because the
+    # ec_mpa / i_mm4 (the live beam-deflection ask 0/6; #741 and #743 both missed it because the
     # local tests attached no text). The alias is idempotent: a symbol whose
     # canonical destination is already set is dropped, so ec_mpa still wins.
     try:

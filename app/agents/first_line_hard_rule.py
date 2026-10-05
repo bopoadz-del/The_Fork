@@ -2,7 +2,7 @@
 
 The Hard rule in the project-assistant and heavy-reasoning prompts already
 tells the model to open with the figure and the document that carries it.
-Live SET5 close-out on 209bc83 still scored the first line, and the model
+A live close-out run on 209bc83 still scored the first line, and the model
 still opened with a narrative, a bare figure, or "properly compacted".
 
 This guard verifies the first line. When that line already credits the

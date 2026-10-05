@@ -125,7 +125,6 @@ def ret(monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DOCUMENT_IDENTITY_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     retriever._seen_filename_lookup = seen
     return retriever
@@ -351,8 +350,3 @@ def test_require_all_still_skips_a_retired_document(project_store):
         pid, ["bill", "priced", "quantities"], require_all=True,
     )
     assert [d["id"] for d in found] == [new["id"]]
-
-
-def test_kill_switch(ret, monkeypatch):
-    monkeypatch.setenv("RAG_DOCUMENT_IDENTITY_RESCUE", "0")
-    assert not any("Prepared by:" in t for t in _texts(ret, B6))

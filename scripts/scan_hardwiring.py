@@ -40,6 +40,11 @@ Usage:
     python scripts/scan_hardwiring.py                 # CI check (exit 1 on new)
     python scripts/scan_hardwiring.py --write-baseline  # regenerate after cleanup
     python scripts/scan_hardwiring.py --list          # print current inventory
+    python scripts/scan_hardwiring.py --strict        # ignore the baseline: any form fails
+    python scripts/scan_hardwiring.py --cases <battery.py|.json> --live-names --strict
+        # + battery question text, case ids, expected figures, live document
+        #   names / reference codes and project ids (DATABASE_URL, read-only),
+        #   all read at run time and never baselined
 """
 from __future__ import annotations
 
@@ -85,6 +90,22 @@ PROBE_IDS: tuple[str, ...] = (
 _PROBE_RES = {pid: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(pid) + r"(?![A-Za-z0-9_])")
               for pid in PROBE_IDS}
 
+#: Lines whose probe-ID match is NOT a probe ID. Keyed by (file, probe ID,
+#: a fragment of the matching line), never by line number, so the entry
+#: follows the line when code above it moves. Narrow on purpose: only a
+#: line in that file that contains that exact fragment is skipped, and only
+#: for that probe ID -- the same ID elsewhere on another line still counts.
+PROBE_LINE_ALLOWLIST: dict[tuple[str, str, str], str] = {
+    ("app/blocks/bim.py", "A3", "(A0|A1|A2|A3|A4)"):
+        "ISO 216 drawing sheet sizes (A0-A4), not a probe ID",
+    ("app/containers/construction/__init__.py", "R1", "R1+R2 < design"):
+        "BS 7671 continuity test R1+R2 (conductor resistances), not a probe ID",
+    ("app/lib/pm_excel.py", "G3", '"G3")'):
+        "Excel cell G3 as a chart anchor, not a probe ID",
+    ("app/lib/pm_excel.py", "G4", "=SUM(G4:G{"):
+        "Excel cell G4 in a SUM range formula, not a probe ID",
+}
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
@@ -129,11 +150,26 @@ def _symbol_findings(rel: str, tree: ast.AST) -> list[str]:
     return out
 
 
+def _allowlisted_fragments(rel: str, pid: str) -> list[str]:
+    return [frag for (f, p, frag) in PROBE_LINE_ALLOWLIST if f == rel and p == pid]
+
+
 def _probe_counts(rel: str, text: str) -> dict[str, int]:
-    """``rel::probe::ID -> occurrences`` for every probe ID present in the file."""
+    """``rel::probe::ID -> occurrences`` for every probe ID present in the file.
+
+    A line covered by ``PROBE_LINE_ALLOWLIST`` for that ID is not counted.
+    """
     out: dict[str, int] = {}
     for pid, rx in _PROBE_RES.items():
-        n = len(rx.findall(text))
+        frags = _allowlisted_fragments(rel, pid)
+        if frags:
+            n = sum(
+                len(rx.findall(line))
+                for line in text.splitlines()
+                if not any(frag in line for frag in frags)
+            )
+        else:
+            n = len(rx.findall(text))
         if n:
             out[f"{rel}::probe::{pid}"] = n
     return out
@@ -199,7 +235,175 @@ def scan(root: Path | None = None) -> list[str]:
     return findings
 
 
+# ── run-time inputs: the battery, the live corpus ─────────────────────────────
+#
+# The forms above are structural. Hardwiring also hides as plain data: a
+# battery question pasted into a prompt, an expected figure as a constant, a
+# live document's name or reference number, a project id. Those are not known
+# to the repo, so they are read at RUN TIME: ``--cases FILE`` (the owner's
+# battery: a ``CASES = {id: (questions, check, expected)}`` .py, or JSON
+# ``{"cases": [{"id", "questions", "expected"}]}``) and ``--live-names``
+# (document names + project ids read from DATABASE_URL, read-only). Findings
+# from these inputs are never baselined: any one fails.
+
+#: Where product text lives: code, agent prompts, and config.
+TEXT_ROOTS = ("app", "config")
+TEXT_SUFFIXES = (".py", ".md", ".yaml", ".yml", ".json", ".txt")
+_WORD = re.compile(r"[a-z0-9]+")
+_REF_CODE = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2,}[-_][A-Z0-9]+(?:[-_][A-Z0-9]+)+(?![A-Za-z0-9])")
+#: A figure distinctive enough to identify one expected answer: at least five
+#: significant digits (263,175.67; 80892), not a round quantity like 2500.
+_BIG_NUMBER = re.compile(r"(?<![\d.,])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\d.,])\d+(?:\.\d+)?")
+
+
+def iter_product_text(root: Path | None = None):
+    """Yield (relpath, text) for product code, agent prompts and config."""
+    root = (Path(root) if root is not None else repo_root()).resolve()
+    for top in TEXT_ROOTS:
+        base = root / top
+        if not base.is_dir():
+            continue
+        for dirpath, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            for name in files:
+                if not name.endswith(TEXT_SUFFIXES):
+                    continue
+                p = Path(dirpath) / name
+                rel = p.relative_to(root).as_posix()
+                if "/tests/" in f"/{rel}" or "/knowledge/" in f"/{rel}":
+                    continue  # knowledge content is data the RAG serves, not code
+                yield rel, p.read_text(encoding="utf-8", errors="ignore")
+
+
+def load_cases(path: str) -> dict[str, dict[str, list[str]]]:
+    """``{case_id: {"questions": [...], "expected": [...]}}`` from the battery file."""
+    src = Path(path).read_text(encoding="utf-8")
+    if path.endswith(".json"):
+        return {c["id"]: {"questions": list(c.get("questions", [])), "expected": [str(c.get("expected", ""))]}
+                for c in json.loads(src)["cases"]}
+    out: dict[str, dict[str, list[str]]] = {}
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "CASES" for t in node.targets) \
+                and isinstance(node.value, ast.Dict):
+            for k, v in zip(node.value.keys, node.value.values):
+                if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
+                    continue
+                strings = [n.value for n in ast.walk(v) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+                questions = [s for s in strings if len(s.split()) >= 6]
+                expected = [s for s in strings if s not in questions]
+                out[k.value] = {"questions": questions, "expected": expected}
+    return out
+
+
+def load_live_names() -> dict[str, list[str]]:
+    """Document names and project ids from the live database (read-only)."""
+    import sqlalchemy as sa
+
+    url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        raise SystemExit("--live-names needs DATABASE_URL")
+    url = url.replace("postgres://", "postgresql+psycopg://", 1).replace("postgresql://", "postgresql+psycopg://", 1)
+    with sa.create_engine(url).connect() as c:
+        c.execute(sa.text("SET TRANSACTION READ ONLY"))
+        names = [r[0] for r in c.execute(sa.text("SELECT DISTINCT original_name FROM documents")) if r[0]]
+        projects = [r[0] for r in c.execute(sa.text("SELECT id FROM projects")) if r[0]]
+        c.rollback()
+    return {"documents": names, "projects": projects}
+
+
+def _words(text: str) -> list[str]:
+    return _WORD.findall(text.lower())
+
+
+def _ngrams(words: list[str], n: int) -> set[tuple[str, ...]]:
+    return {tuple(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+
+def _plain_number(s: str) -> str:
+    s = s.replace(",", "")
+    return s.rstrip("0").rstrip(".") if "." in s else s
+
+
+def _distinctive(fig: str) -> bool:
+    return len(fig.replace(".", "").lstrip("0").rstrip("0")) >= 5
+
+
+def leakage_findings(cases: dict | None = None, live: dict | None = None,
+                     root: Path | None = None) -> list[str]:
+    """Battery text, case ids, expected figures, live names and project ids in product text."""
+    files = list(iter_product_text(root))
+    findings: list[str] = []
+    if cases:
+        ids = {cid: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(cid) + r"(?![A-Za-z0-9_])") for cid in cases}
+        q_grams = {g: cid for cid, c in cases.items() for q in c["questions"] for g in _ngrams(_words(q), 8)}
+        figures = {_plain_number(m): cid for cid, c in cases.items()
+                   for e in c["expected"] for m in _BIG_NUMBER.findall(e)
+                   if _distinctive(_plain_number(m))}
+        for rel, text in files:
+            for cid, rx in ids.items():
+                if rx.search(text):
+                    findings.append(f"CASE-ID {rel}: {cid}")
+            hit = {q_grams[g] for g in _ngrams(_words(text), 8) if g in q_grams}
+            for cid in sorted(hit):
+                findings.append(f"QUESTION-TEXT {rel}: battery question of {cid}")
+            nums = {_plain_number(m) for m in _BIG_NUMBER.findall(text)}
+            for fig in sorted(nums & set(figures)):
+                findings.append(f"EXPECTED-FIGURE {rel}: {fig} ({figures[fig]})")
+    if live:
+        doc_seqs = {}
+        codes = set()
+        for name in live.get("documents", []):
+            stem = os.path.splitext(name)[0]
+            w = _words(stem)
+            if len(w) >= 3 and len(" ".join(w)) >= 15:
+                doc_seqs[" ".join(w)] = name
+            codes.update(_REF_CODE.findall(stem))
+        projects = {p: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(p) + r"(?![A-Za-z0-9_])")
+                    for p in live.get("projects", []) if len(p) >= 6}
+        code_rx = {c: re.compile(r"(?<![A-Za-z0-9])" + re.escape(c) + r"(?![A-Za-z0-9])") for c in codes}
+        for rel, text in files:
+            norm = " " + " ".join(_words(text)) + " "
+            for seq, name in doc_seqs.items():
+                if f" {seq} " in norm:
+                    findings.append(f"DOCUMENT-NAME {rel}: {name}")
+            for c, rx in code_rx.items():
+                if rx.search(text):
+                    findings.append(f"DOCUMENT-REF {rel}: {c}")
+            for p, rx in projects.items():
+                if rx.search(text):
+                    findings.append(f"PROJECT-ID {rel}: {p}")
+    return sorted(set(findings))
+
+
+def _arg(flag: str) -> str | None:
+    if flag in sys.argv:
+        i = sys.argv.index(flag)
+        return sys.argv[i + 1] if i + 1 < len(sys.argv) else None
+    return None
+
+
 def main() -> int:
+    cases_path = _arg("--cases")
+    if cases_path or "--live-names" in sys.argv:
+        found = leakage_findings(
+            cases=load_cases(cases_path) if cases_path else None,
+            live=load_live_names() if "--live-names" in sys.argv else None,
+        )
+        for item in found:
+            sys.stdout.write(f"  {item}\n")
+        sys.stdout.write(f"LEAKAGE: {len(found)} finding(s) from run-time inputs\n")
+        if found:
+            return 1
+        if "--strict" not in sys.argv:
+            return 0
+    if "--strict" in sys.argv:
+        symbols, probes = inventory()
+        for k in sorted(symbols):
+            sys.stdout.write(f"  {k}\n")
+        for k in sorted(probes):
+            sys.stdout.write(f"  {k} x{probes[k]}\n")
+        sys.stdout.write(f"STRICT: {len(symbols)} symbols + {len(probes)} probe-id keys (baseline ignored)\n")
+        return 1 if (symbols or probes) else 0
     if "--write-baseline" in sys.argv:
         p = write_baseline()
         symbols, probes = inventory()

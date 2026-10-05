@@ -210,7 +210,6 @@ def _install_c2_corpus(monkeypatch, *, spec_in_semantic: bool, rescue_docs=None)
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_SPEC_TITLE_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -231,15 +230,6 @@ def test_c2_lifts_a_buried_titled_spec_already_in_the_pool(monkeypatch):
     chunks, _ = ret.retrieve_with_filter(C2_ASK, ACTIVE, k=5)
     assert chunks[0].doc_id == SPEC_DOC
     assert "DGDAX-DGD-PMO-SPE-012650" in chunks[0].text
-
-
-def test_kill_switch_restores_demolition_first_when_spec_is_out_of_pool(monkeypatch):
-    ret = _install_c2_corpus(monkeypatch, spec_in_semantic=False)
-    monkeypatch.setenv("RAG_SPEC_TITLE_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(C2_ASK, ACTIVE, k=5)
-    assert chunks
-    assert chunks[0].doc_id == DEMO_DOC
-    assert "DGDAX-DGD-PMO-SPE-012650" not in " ".join(c.text for c in chunks)
 
 
 def test_mutation_title_bonus_is_what_lifts_the_spec(monkeypatch):
@@ -334,7 +324,6 @@ def test_real_store_cosine_prefers_demolition_until_the_title_bonus(project_stor
 
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
-    monkeypatch.delenv("RAG_SPEC_TITLE_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     _emb.reset_embedder_cache()
     _vs.reset_store_cache()
@@ -350,11 +339,6 @@ def test_real_store_cosine_prefers_demolition_until_the_title_bonus(project_stor
     store.upsert_chunks(pid, spec["id"], [SPEC_TEXT], e.encode([SPEC_TEXT]))
     store.upsert_chunks(pid, demo["id"], [DEMO_TEXT], e.encode([DEMO_TEXT]))
 
-    monkeypatch.setenv("RAG_SPEC_TITLE_RESCUE", "0")
-    baseline, _ = ret.retrieve_with_filter(C2_ASK, pid, k=5)
-    assert baseline[0].doc_id == demo["id"], [c.doc_id for c in baseline]
-
-    monkeypatch.delenv("RAG_SPEC_TITLE_RESCUE", raising=False)
     fixed, _ = ret.retrieve_with_filter(C2_ASK, pid, k=5)
     assert fixed[0].doc_id == spec["id"]
     assert "012650" in (fixed[0].source_name or "")
@@ -423,7 +407,6 @@ def _install_c2_vol2_corpus(monkeypatch, *, register_in_semantic: bool):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_SPEC_TITLE_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -481,12 +464,3 @@ def test_chunks_containing_all_finds_the_register_among_section_decoys(project_s
     texts = " ".join(c.text for c in hits)
     assert "SPE-012650" in texts
     assert all("SPE-" in (c.text or "") for c in hits)
-
-
-def test_c2_kill_switch_restores_the_vol2_section(monkeypatch):
-    ret = _install_c2_vol2_corpus(monkeypatch, register_in_semantic=False)
-    monkeypatch.setenv("RAG_SPEC_TITLE_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(C2_ASK, ACTIVE, k=5)
-    assert chunks
-    assert "SECTION 012650" in chunks[0].text
-    assert "DGDAX-DGD-PMO-SPE-012650" not in " ".join(c.text for c in chunks)

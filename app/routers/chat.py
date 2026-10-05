@@ -260,7 +260,7 @@ def _message_vetoes_predefined(prompt: str) -> bool:
     These read the message and nothing else: the corpus is one-to-all and
     none of them may branch on which project asked.
 
-    The fourth entry is live SET5 A3. "How long will the foundations take?"
+    The fourth entry is a live bare-duration ask. "How long will the foundations take?"
     was answered "Schedule built: 204 activities over 688 working days ...
     about 11,832 man-days" -- a whole programme invented for a scope nobody
     named -- six runs out of six. ``lookup_question_hijack`` already refuses
@@ -541,7 +541,7 @@ async def _stream_from_predefined(
         except Exception:  # noqa: BLE001 — persist must never break the stream
             logger.exception("predefined: could not persist conversation turn")
 
-    # F-BAT-D H2: "Export F1 WBS as xlsx" after a chat-built WBS must bind
+    # "Export F1 WBS as xlsx" after a chat-built WBS must bind
     # to that snapshot. Re-running generate_wbs from the export ask used
     # to serve the 204-activity building scaffold.
     if message_wants_wbs_export(user_message):

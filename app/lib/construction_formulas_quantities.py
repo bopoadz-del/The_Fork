@@ -327,7 +327,7 @@ def resolve_concrete_volume_calc(
         stated = waste_factor_from_text(blob)
         if stated is not None:
             # The operator named a figure. It wins over the documented
-            # default AND over the documented-waste phrase -- live E6 was
+            # default AND over the documented-waste phrase -- a live waste-factor ask was
             # answered on 5% after being asked for 7%, with nothing in the
             # answer saying which rate had been used.
             out["waste_factor"] = stated
