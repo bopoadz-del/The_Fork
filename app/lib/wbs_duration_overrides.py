@@ -65,7 +65,7 @@ _STOP = frozenset({
 
 # Inflection / CESMM aliases so "tree removal" hits "Remove trees …" and
 # WBS rows that folded tree work into "Site clearance — Hall A/B"
-# (UI-PHYS F2 / diagnostic D4). Not a fuzzy score floor — exact stems
+# (a live WBS duration-override ask). Not a fuzzy score floor — exact stems
 # and an explicit family alias.
 _TOKEN_STEMS = {
     "removal": "remove",

@@ -172,21 +172,11 @@ def test_a_clause_already_visible_is_not_lifted_again(monkeypatch):
     _install(monkeypatch, [clause], [clause])
 
     on, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
-    monkeypatch.setenv("RAG_FOUNDATION_BACKFILL_RESCUE", "0")
+    # Rescue off: its sole entry gate says the ask is not a degree ask.
+    monkeypatch.setattr(
+        retriever, "query_asks_foundation_backfill_degree", lambda _q: False,
+    )
     off, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
     assert [c.chunk_id for c in on] == ["clause"]
     assert [c.chunk_id for c in off] == ["clause"]
     assert on[0].score == pytest.approx(off[0].score, abs=1e-6)
-
-
-def test_the_kill_switch_leaves_the_distractors(monkeypatch):
-    monkeypatch.setenv("RAG_FOUNDATION_BACKFILL_RESCUE", "0")
-    semantic = [
-        _chunk("duct", "spec2", DUCT, 0.62),
-        _chunk("mot", "spec1", MOT, 0.57),
-    ]
-    clause = _chunk("clause", "spec4", CLAUSE, 0.0)
-    _install(monkeypatch, semantic, semantic + [clause])
-
-    chunks, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
-    assert all(c.chunk_id != "clause" for c in chunks)

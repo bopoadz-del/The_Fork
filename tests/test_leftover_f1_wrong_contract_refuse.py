@@ -35,8 +35,8 @@ from app.containers.construction import ConstructionContainer
 from tests.conftest import requires_construction_kit
 from app.core.predefined_reasoning import message_wants_boq_scope_wbs
 from app.lib.boq_schedule import (
-    f1_wbs_answer_fails_wrong_contract,
-    f1_wbs_answer_is_grounded,
+    boq_wbs_answer_fails_wrong_contract,
+    boq_wbs_answer_is_grounded,
     retrieve_boq_scope_items,
 )
 from tests.test_leftover_f1_boq_wbs import (
@@ -74,10 +74,10 @@ def test_soft_mention_of_demolition_is_not_a_pass():
     """The live soft judge (must_any: clearance) would mark this PASS."""
     assert "clearance" in REFUSE_DD22.lower()
     assert "demolition" in REFUSE_DD22.lower()
-    assert f1_wbs_answer_fails_wrong_contract(REFUSE_DD22)
-    assert not f1_wbs_answer_is_grounded(REFUSE_DD22)
-    assert f1_wbs_answer_fails_wrong_contract(MENTION_ONLY)
-    assert not f1_wbs_answer_is_grounded(MENTION_ONLY)
+    assert boq_wbs_answer_fails_wrong_contract(REFUSE_DD22)
+    assert not boq_wbs_answer_is_grounded(REFUSE_DD22)
+    assert boq_wbs_answer_fails_wrong_contract(MENTION_ONLY)
+    assert not boq_wbs_answer_is_grounded(MENTION_ONLY)
     assert "clearance" in MENTION_ONLY.lower()
 
 
@@ -86,13 +86,13 @@ def test_dd2022_cite_without_refuse_is_still_wrong_contract():
         "Per REDACTED the Contractor shall execute the demolition "
         "and site clearance scope described in the Bill of Quantities."
     )
-    assert f1_wbs_answer_fails_wrong_contract(cite)
-    assert not f1_wbs_answer_is_grounded(cite)
+    assert boq_wbs_answer_fails_wrong_contract(cite)
+    assert not boq_wbs_answer_is_grounded(cite)
 
 
 def test_grounded_boq_wbs_is_pass_and_not_wrong_contract():
-    assert f1_wbs_answer_is_grounded(GROUNDED)
-    assert not f1_wbs_answer_fails_wrong_contract(GROUNDED)
+    assert boq_wbs_answer_is_grounded(GROUNDED)
+    assert not boq_wbs_answer_fails_wrong_contract(GROUNDED)
     assert "DD-2022" not in GROUNDED
     assert "template scaffold" not in GROUNDED.lower()
 
@@ -105,7 +105,7 @@ def test_building_template_is_not_grounded():
         "### 2 Superstructure\n"
         "Schedule built: 204 activities"
     )
-    assert not f1_wbs_answer_is_grounded(scaffold)
+    assert not boq_wbs_answer_is_grounded(scaffold)
 
 
 def test_f1_ask_elects_first_run_wbs_and_forces_generate_wbs():
@@ -174,12 +174,12 @@ def test_graft_replaces_refuse_dd2022_with_predispatched_wbs():
         "Present this WBS in full. Do not refuse.",
     )
     out = _graft_boq_scope_wbs_if_wrong_contract(REFUSE_DD22, msgs)
-    assert f1_wbs_answer_is_grounded(out)
-    assert not f1_wbs_answer_fails_wrong_contract(out)
+    assert boq_wbs_answer_is_grounded(out)
+    assert not boq_wbs_answer_fails_wrong_contract(out)
     assert "DD-2022" not in out
     assert "D110" in out
     post = _postprocess_answer(REFUSE_DD22, {"content": _CONTRACT_PROSE}, msgs)
-    assert f1_wbs_answer_is_grounded(post)
+    assert boq_wbs_answer_is_grounded(post)
     assert "DD-2022" not in post
 
 
@@ -202,7 +202,7 @@ def test_compose_short_circuit_requires_boq_derived_predispatch():
         },
     }
     out = _compose_boq_scope_wbs_answer(pre, F1_ASK)
-    assert f1_wbs_answer_is_grounded(out)
+    assert boq_wbs_answer_is_grounded(out)
     assert "D110" in out
     template = {
         "name": "generate_wbs",
@@ -265,7 +265,7 @@ async def test_predispatch_passes_project_id_and_elects_boq(monkeypatch):
     draft = msgs[-1]["content"]
     assert "D110" in draft
     assert "Template scaffold" not in draft
-    assert f1_wbs_answer_is_grounded(_compose_boq_scope_wbs_answer(out, F1_ASK))
+    assert boq_wbs_answer_is_grounded(_compose_boq_scope_wbs_answer(out, F1_ASK))
 
 
 @requires_construction_kit
@@ -395,8 +395,8 @@ async def test_generate_wbs_f1_answer_has_no_dd2022_cite(monkeypatch):
     from app.agents.runtime import _format_wbs_result
     out = _format_wbs_result(r)
     assert r["scaffold"]["derived_from_boq"] is True
-    assert f1_wbs_answer_is_grounded(out)
-    assert not f1_wbs_answer_fails_wrong_contract(out)
+    assert boq_wbs_answer_is_grounded(out)
+    assert not boq_wbs_answer_fails_wrong_contract(out)
     assert "DD-2022" not in out
     assert "DD2022" not in out
     assert "Template scaffold" not in out

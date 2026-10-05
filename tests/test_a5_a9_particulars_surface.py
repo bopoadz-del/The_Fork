@@ -275,10 +275,6 @@ def _install_corpus(monkeypatch, *, semantic, rescue_hits, names):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -325,24 +321,6 @@ def test_a5_live_prefix_still_returns_the_rate(monkeypatch):
     assert A5_RATE in chunks[0].text
 
 
-def test_a5_kill_switch_restores_gc_first(monkeypatch):
-    gc = _chunk("gc", GC_DOC, 0.92, GC_8_8)
-    cap = _chunk("cap", CAP_DOC, 0.90, PREFIXED_CAP)
-    rate = _chunk("rate", SCAN_RATE_DOC, 0.22, SCANNED_RATE)
-    names = {
-        GC_DOC: GC_NAME, CAP_DOC: DD23_NAME, SCAN_RATE_DOC: CD_SCANNED_NAME,
-    }
-    ret = _install_corpus(
-        monkeypatch, semantic=[gc, cap], rescue_hits=[rate], names=names,
-    )
-    monkeypatch.setenv("RAG_DELAY_DAMAGES_RATE_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(A5_ASK, ACTIVE, k=5)
-    blob = " ".join(c.text for c in chunks)
-    assert chunks
-    assert A5_RATE not in blob
-    assert chunks[0].doc_id in {GC_DOC, CAP_DOC}
-
-
 def test_a9_surfaces_the_engineer_not_psa_parties(monkeypatch):
     """Live A9: Client/Consultant only. Appointment never reached top-k."""
     psa = _chunk("psa", PSA_DOC, 0.91, PSA_PARTIES)
@@ -377,21 +355,6 @@ def test_a9_live_prefix_still_returns_the_engineer(monkeypatch):
     chunks, _ = ret.retrieve_with_filter(LIVE_A9, ACTIVE, k=5)
     assert chunks
     assert A9_FIRM in chunks[0].text
-
-
-def test_a9_kill_switch_restores_psa_first(monkeypatch):
-    psa = _chunk("psa", PSA_DOC, 0.91, PSA_PARTIES)
-    eng = _chunk("eng", SCAN_ENG_DOC, 0.24, SCANNED_ENGINEER)
-    names = {PSA_DOC: PSA_NAME, SCAN_ENG_DOC: CD_SCANNED_NAME}
-    ret = _install_corpus(
-        monkeypatch, semantic=[psa], rescue_hits=[eng], names=names,
-    )
-    monkeypatch.setenv("RAG_ENGINEER_IDENTITY_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(A9_ASK, ACTIVE, k=5)
-    blob = " ".join(c.text for c in chunks)
-    assert chunks
-    assert chunks[0].doc_id == PSA_DOC
-    assert A9_FIRM not in blob
 
 
 def test_a3_and_a6_are_not_stolen_onto_the_rate_or_engineer_rescue(monkeypatch):

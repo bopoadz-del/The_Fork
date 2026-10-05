@@ -194,7 +194,6 @@ def ret(monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_NAMED_PARTICULARS_ROW_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return retriever
 
@@ -499,12 +498,6 @@ def test_the_rest_of_a_bare_label_is_not_its_value(ret):
 
 def test_a_key_wrapped_over_two_lines_is_one_row(ret):
     assert ret.named_particulars_row_match(A4, CD_MILESTONE_TIMES) > 0
-
-
-def test_kill_switch_restores_the_old_ranking(ret, monkeypatch):
-    monkeypatch.setenv("RAG_NAMED_PARTICULARS_ROW_RESCUE", "0")
-    assert not any(t.startswith("CONTRACT DATA particulars")
-                   for t in _texts(ret, A8))
 
 
 # ── a table that runs on into the next chunk is still one row ─────────────

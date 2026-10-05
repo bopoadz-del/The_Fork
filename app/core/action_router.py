@@ -405,7 +405,7 @@ def message_wants_look_ahead(text: str) -> bool:
     "look-ahead from the construction schedule" were classified as
     generate_wbs because those schedule nouns score higher than "look-ahead".
 
-    Live D3: "As of today, 21 September 2026, what falls in the next 14
+    A live look-ahead ask: "As of today, 21 September 2026, what falls in the next 14
     days?" never says look-ahead, so the phrase guard let UNDERSTAND map
     it to generate_wbs. A next-N-days/weeks question is the same ask.
     """

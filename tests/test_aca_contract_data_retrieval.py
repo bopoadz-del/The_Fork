@@ -164,9 +164,6 @@ def _install_a2_corpus(monkeypatch, *, cd_in_semantic: bool):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -200,15 +197,6 @@ def test_a2_drops_psa_when_contract_data_is_already_in_the_pool(monkeypatch):
     assert ACA_INCL in " ".join(c.text for c in chunks)
 
 
-def test_a2_kill_switch_restores_psa_first(monkeypatch):
-    ret = _install_a2_corpus(monkeypatch, cd_in_semantic=False)
-    monkeypatch.setenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(A2_ASK, ACTIVE, k=5)
-    assert chunks
-    assert chunks[0].doc_id == PSA_DOC
-    assert ACA_INCL not in " ".join(c.text for c in chunks)
-
-
 def test_a3_is_not_stolen_onto_the_aca_rescue(monkeypatch):
     ret = _install_a2_corpus(monkeypatch, cd_in_semantic=False)
     chunks, _ = ret.retrieve_with_filter(A3_ASK, ACTIVE, k=5)
@@ -238,6 +226,8 @@ def test_contract_sum_synonym_surfaces_the_aca_row(monkeypatch):
 def test_mutation_filename_bonus_is_what_lifts_contract_data(monkeypatch):
     ret = _install_a2_corpus(monkeypatch, cd_in_semantic=True)
     monkeypatch.setattr(ret, "filename_looks_like_contract_data", lambda *_a, **_k: False)
-    monkeypatch.setattr(ret, "aca_including_vat_rescue_enabled", lambda: False)
+    # Isolate the filename bonus from the including-VAT particular path.
+    monkeypatch.setattr(ret, "query_asks_for_aca_including_vat", lambda _q: False)
+    monkeypatch.setattr(ret, "query_is_aca_including_vat_particular", lambda _q: False)
     chunks, _ = ret.retrieve_with_filter(A2_ASK, ACTIVE, k=5)
     assert chunks[0].doc_id == PSA_DOC

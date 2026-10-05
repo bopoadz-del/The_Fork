@@ -174,7 +174,7 @@ def test_graft_replaces_the_partial_when_clause_111_is_in_the_loaded_volume(
     used to be skipped. The loaded volume has clause 1.1.1.
     """
     monkeypatch.setattr(
-        "app.core.rag.retriever.e1_compose_excerpts_from_loaded_cd_volume",
+        "app.core.rag.retriever.daily_damages_excerpts_from_loaded_cd_volume",
         lambda *a, **k: VOLUME_ONLY,
     )
     rag = {"role": "system", "content": "Reference context:\n" + PARTIAL_ONLY}
@@ -301,18 +301,18 @@ def test_milestone_composes_off_the_live_row_over_a_partial_in_the_rescue_bundle
 def test_the_rescue_collects_and_leads_with_the_live_clause_111_chunk():
     from app.core.rag.retriever import (
         _aca_parts_clause_111_first,
-        _e1_aca_preference,
-        _e1_has_standalone_excl_vat,
+        _daily_damages_aca_preference,
+        _has_standalone_excl_vat_aca,
     )
-    assert _e1_aca_preference(LIVE_CD_CHUNK0) >= 2
-    assert _e1_has_standalone_excl_vat(LIVE_CD_CHUNK0)
+    assert _daily_damages_aca_preference(LIVE_CD_CHUNK0) >= 2
+    assert _has_standalone_excl_vat_aca(LIVE_CD_CHUNK0)
     assert _aca_parts_clause_111_first([PARTIAL_ROW, LIVE_CD_CHUNK0])[0] == LIVE_CD_CHUNK0
 
 
 def test_graft_replaces_the_partial_from_the_live_volume(monkeypatch):
     volume = "\n\n".join([LIVE_RATE_ROWS, PARTIAL_ROW, LIVE_CD_CHUNK0])
     monkeypatch.setattr(
-        "app.core.rag.retriever.e1_compose_excerpts_from_loaded_cd_volume",
+        "app.core.rag.retriever.daily_damages_excerpts_from_loaded_cd_volume",
         lambda *a, **k: volume,
     )
     rag = {"role": "system", "content": "Reference context:\n" + PARTIAL_ONLY}

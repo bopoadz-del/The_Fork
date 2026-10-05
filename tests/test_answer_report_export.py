@@ -17,7 +17,6 @@ import pytest
 
 from app.core.answer_report_intent import (
     ANSWER_REPORT_BLOCKED_ACTIONS,
-    H1_EXPORT_ASK,
     answer_report_export_descriptor,
     collect_answer_pairs,
     compose_answer_report_reply,
@@ -29,6 +28,8 @@ from app.core.rag.retriever import extract_query_identifiers
 from app.routers.exports import _render_answers_docx
 from tests.conftest import requires_construction_kit
 
+# Verbatim live H1 ask (UI-PHYS "Question (ask exactly)").
+H1_EXPORT_ASK = "Export A1-A9 answers as a docx report"
 
 # Fixture-only figures — never live client amounts.
 A1_ANSWER = (

@@ -337,7 +337,7 @@ def _activities_from_text(text: str) -> List[Dict[str, Any]]:
     """Activities the operator typed in the message, or [].
 
     Only rows carrying a name AND two dates are returned -- a half-written row
-    is dropped, never completed by guesswork. Live SET4.1 D3 listed five
+    is dropped, never completed by guesswork. A live look-ahead ask listed five
     activities in the message and the look-ahead demanded a .xer, because no
     path looked here.
     """
@@ -1415,8 +1415,8 @@ class ConstructionScheduleMixin:
                 "error": "window must be at least 1 day",
             }
 
-        # Activities supplied in the request are a valid source. Live SET4.1
-        # D3 listed five activities and said not to ask for a programme file;
+        # Activities supplied in the request are a valid source. A live
+        # look-ahead ask listed five activities and said not to ask for a programme file;
         # the tool errored for a missing .xer anyway, so the answer became
         # "supply a .xer" instead of the look-ahead the operator had already
         # given the data for. A file still wins when one is named, and an

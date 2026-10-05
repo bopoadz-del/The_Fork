@@ -735,10 +735,12 @@ def test_mutation_probe_arrival_order_election_brings_the_failure_back(
     # Post-#501 A5/A9 (and later A2/A3) rescues also lift the
     # answer-bearing row. This probe measures #483 arrival-order
     # election alone.
-    monkeypatch.setenv("RAG_DELAY_DAMAGES_RATE_RESCUE", "0")
-    monkeypatch.setenv("RAG_ENGINEER_IDENTITY_RESCUE", "0")
-    monkeypatch.setenv("RAG_ACA_INCLUDING_VAT_RESCUE", "0")
-    monkeypatch.setenv("RAG_TIME_FOR_COMPLETION_RESCUE", "0")
+    monkeypatch.setattr(
+        ret, "_apply_asked_particular_value_boost", lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        ret, "_rescue_asked_particular_value_chunks", lambda *_a, **_k: 0,
+    )
     monkeypatch.setattr(
         ret, "elect_answer_bearing_contract", lambda _q, _docs: None,
     )
@@ -1567,8 +1569,8 @@ def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
     makes the fixture a hard test of the reservation and a useless one for
     any claim about where the rate row lands.
 
-    ``ensure_e1_kept_can_compose`` is the leftover-E1 last-chance twin of
-    ``reserve_e1_compose_operands`` (refuse-prone top-k). The probe must
+    ``ensure_kept_can_compose_daily_damages`` is the leftover-E1 last-chance twin of
+    ``reserve_daily_damages_operands`` (refuse-prone top-k). The probe must
     disable that path too, or the amount is still reachable and the
     reservation is no longer what the probe measures.
     """
@@ -1578,11 +1580,11 @@ def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
         lambda *_a, **_kw: False,
     )
     monkeypatch.setattr(
-        ret, "reserve_e1_compose_operands",
+        ret, "reserve_daily_damages_operands",
         lambda *_a, **_kw: False,
     )
     monkeypatch.setattr(
-        ret, "ensure_e1_kept_can_compose",
+        ret, "ensure_kept_can_compose_daily_damages",
         lambda *_a, **_kw: False,
     )
     top = top_k(E1)

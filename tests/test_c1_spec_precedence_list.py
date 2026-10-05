@@ -17,8 +17,7 @@ Sub-Clause 1.5.1(d). Neon already has the list on the next same-doc
 chunk (REDACTED / REDACTED Vol 2: chunk_index 2 = intro, 3 = list).
 
 When a hit is that open-list intro, elect the neighbor. Do not invent
-a signatory. Do not steal A2/A3/A5/A6/A9. Kill-switch:
-RAG_SPEC_PRECEDENCE_LIST_RESCUE=0. Fixture wording only.
+a signatory. Do not steal A2/A3/A5/A6/A9. Fixture wording only.
 """
 from __future__ import annotations
 
@@ -230,12 +229,6 @@ def _install_c1_corpus(monkeypatch, *, list_in_semantic: bool):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_SPEC_PRECEDENCE_LIST_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_SPEC_TITLE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -275,19 +268,6 @@ def test_c1_drops_the_intro_when_the_list_is_already_in_the_pool(monkeypatch):
     assert POST_TENDER in chunks[0].text
     assert "as follows" not in blob
     assert all(c.doc_id == VOL2_DOC and c.chunk_index == 3 for c in chunks)
-
-
-def test_c1_kill_switch_restores_intro_first(monkeypatch):
-    ret = _install_c1_corpus(monkeypatch, list_in_semantic=False)
-    monkeypatch.setenv("RAG_SPEC_PRECEDENCE_LIST_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(C1_ASK, ACTIVE, k=5)
-    blob = " ".join(c.text for c in chunks)
-    assert chunks
-    assert chunks[0].chunk_index == 2
-    assert "as follows" in chunks[0].text
-    assert POST_TENDER not in blob
-    assert TENDER_ADDENDA not in blob
-    assert SOPR not in blob
 
 
 def test_a2_a3_a5_a6_a9_are_not_stolen_onto_the_c1_list(monkeypatch):

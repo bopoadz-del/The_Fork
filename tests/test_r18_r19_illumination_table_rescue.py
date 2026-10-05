@@ -26,7 +26,7 @@ The MEP room table (chunks 435/437: "Service Luminance — Avg Lux",
 "Control Rooms 500", "Uo (uniformity)") is a DIFFERENT table and must not be
 mistaken for this one.
 
-Fix: a targeted retrieval rescue (RAG_ILLUMINATION_TABLE_RESCUE, default on)
+Fix: a targeted retrieval rescue (always on)
 that pools the work-activity illumination table when an illumination-for-an-
 activity ask has no lux row in top-k — same shape as the soil-contact-cover
 rescue. Synthetic text throughout.
@@ -151,13 +151,13 @@ def test_rescue_scans_master_corpus_source_pid_not_just_the_ui_pid(monkeypatch):
     """Live 54d017c: attempt 1 found nothing because on master_corpus the table
     chunk is owned by a SOURCE project id, not the UI project id the query runs
     under — chunks_containing_all(ui_pid) returned nothing. The rescue must scan
-    the source pids (via _e1_scan_project_ids), like the E1 rescue does."""
+    the source pids (via _late_scan_project_ids), like the E1 rescue does."""
     UI = "master_corpus"
     SRC = "src-corpus-1"
     # the table lives under the SOURCE pid, never under the UI pid
     table = _chunk("spec-661", WORK_ACTIVITY_TABLE, pid=SRC)
     store = _FakeStore([table])
-    monkeypatch.setattr(ret, "_e1_scan_project_ids",
+    monkeypatch.setattr(ret, "_late_scan_project_ids",
                         lambda pid, *a, **k: [pid, SRC])
     fused = {}
     added = ret._rescue_illumination_table_chunks(R18, UI, fused, store)
@@ -166,13 +166,13 @@ def test_rescue_scans_master_corpus_source_pid_not_just_the_ui_pid(monkeypatch):
 
 
 def test_rescue_reaches_a_general_knowledge_pid_only_via_extra_pids(monkeypatch):
-    """Attempts 1-2 (0/6 live): _e1_scan_project_ids does NOT include the
+    """Attempts 1-2 (0/6 live): _late_scan_project_ids does NOT include the
     general-knowledge pids (gk_ids) that the semantic leg searches and that
     RAG_GENERAL_KNOWLEDGE_PROJECTS holds in prod (two projects). The spec table
     lives under a GK pid; only extra_pids (= gk_ids + fb_id, passed by the call
-    site) reaches it. Stub _e1_scan_project_ids with its real contract: UI pid
+    site) reaches it. Stub _late_scan_project_ids with its real contract: UI pid
     plus whatever extra_pids the caller threads."""
-    monkeypatch.setattr(ret, "_e1_scan_project_ids",
+    monkeypatch.setattr(ret, "_late_scan_project_ids",
                         lambda pid, extra=None, fused=None: [pid] + list(extra or []))
     UI = "master_corpus"
     GK = "gk-project-1"
@@ -247,7 +247,7 @@ def test_pooled_diagnostic_is_logged_at_warning(monkeypatch):
 
 # ── Task 1B: the pooled table chunks lose the k-cut (live: admitted=4, still
 # 0/6). Give the illumination ask extra retrieval slots, exactly like the
-# spec-deferred-cover ask does (RAG_SPEC_DEFERRED_COVER_EXTRA_K).
+# spec-deferred-cover ask does (_SPEC_DEFERRED_COVER_EXTRA_K).
 
 def test_illumination_ask_gets_extra_retrieval_slots():
     from app.core.rag.inject import rag_retrieval_k
@@ -298,17 +298,6 @@ def test_rescue_never_lowers_an_existing_bonus(monkeypatch):
         R18, "P", fused, store, embedder=object(), query_vec=[1.0],
     )
     assert fused["spec-0"][2] == 3.0  # untouched, not lowered to 2.0 or 0.0
-
-
-def test_bonus_kill_switch(monkeypatch):
-    monkeypatch.setenv("RAG_ILLUMINATION_TABLE_BONUS", "0")
-    monkeypatch.setattr(ret, "_cosine_to_query", _cos_by_marker)
-    store = _FakeStore([_table("spec-0", 0), _table("spec-1", 1)])
-    fused = {}
-    ret._rescue_illumination_table_chunks(
-        R18, "P", fused, store, embedder=object(), query_vec=[1.0],
-    )
-    assert all(e[2] == 0.0 for e in fused.values())
 
 
 def test_unrelated_ask_applies_no_bonus(monkeypatch):

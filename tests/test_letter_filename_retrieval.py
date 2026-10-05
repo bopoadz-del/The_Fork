@@ -98,13 +98,13 @@ def test_who_is_the_engineer_is_not_a_letter_ask():
 
 def test_letter_filename_overlaps_named_site_and_party():
     from app.core.rag.retriever import (
-        extract_rescue_terms,
+        distinctive_query_terms,
         filename_looks_like_letter,
         filename_match_bonus,
         filename_query_overlap,
     )
 
-    terms = extract_rescue_terms(D1_QUERY)
+    terms = distinctive_query_terms(D1_QUERY)
     assert filename_looks_like_letter(LETTER_NAME)
     assert not filename_looks_like_letter(VOL5_NAME)
     assert not filename_looks_like_letter(PLOT_NAME)
@@ -119,11 +119,11 @@ def test_letter_filename_overlaps_named_site_and_party():
 
 def test_plot_agreement_filename_loses_to_the_letter():
     from app.core.rag.retriever import (
-        extract_rescue_terms,
+        distinctive_query_terms,
         filename_match_bonus,
     )
 
-    terms = extract_rescue_terms(D1_QUERY)
+    terms = distinctive_query_terms(D1_QUERY)
     letter = filename_match_bonus(LETTER_NAME, terms, letter_query=True)
     plot = filename_match_bonus(PLOT_NAME, terms, letter_query=True)
     handover = filename_match_bonus(HANDOVER_NAME, terms, letter_query=True)
@@ -193,7 +193,6 @@ def _install_d1_corpus(monkeypatch, *, letter_in_semantic: bool, rescue_docs=Non
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_LETTER_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -218,15 +217,6 @@ def test_d1_lifts_a_buried_letter_already_in_the_pool(monkeypatch):
     assert "Barry Muir" in chunks[0].text
 
 
-def test_kill_switch_restores_vol5_first_when_letter_is_out_of_pool(monkeypatch):
-    ret = _install_d1_corpus(monkeypatch, letter_in_semantic=False)
-    monkeypatch.setenv("RAG_LETTER_FILENAME_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(D1_QUERY, ACTIVE, k=5)
-    assert chunks
-    assert chunks[0].doc_id == VOL5_DOC
-    assert "Barry Muir" not in " ".join(c.text for c in chunks)
-
-
 def test_mutation_filename_bonus_is_what_lifts_the_letter(monkeypatch):
     """If the bonus is a no-op, Volume 5 wins again — the live ranking."""
     ret = _install_d1_corpus(monkeypatch, letter_in_semantic=True)
@@ -242,11 +232,11 @@ def test_a_generic_contract_filename_does_not_earn_a_bonus():
     filename bonus would have perturbed unrelated ranking.
     """
     from app.core.rag.retriever import (
-        extract_rescue_terms,
+        distinctive_query_terms,
         filename_match_bonus,
     )
 
-    terms = extract_rescue_terms(PARTICULARS_QUERY)
+    terms = distinctive_query_terms(PARTICULARS_QUERY)
     assert filename_match_bonus(
         "contract.pdf", terms, letter_query=False,
     ) == 0.0
@@ -279,7 +269,7 @@ def project_store(monkeypatch, tmp_path):
 
 
 def test_filename_sql_finds_the_s5_letter_among_vol5_decoys(project_store):
-    from app.core.rag.retriever import extract_rescue_terms
+    from app.core.rag.retriever import distinctive_query_terms
 
     p = project_store.create_project("D1 corpus")
     pid = p["id"]
@@ -293,7 +283,7 @@ def test_filename_sql_finds_the_s5_letter_among_vol5_decoys(project_store):
         pid, "Weekly Report W22 - soils.pdf", size=5,
     )
 
-    terms = extract_rescue_terms(D1_QUERY)
+    terms = distinctive_query_terms(D1_QUERY)
     found = project_store.documents_matching_filename_terms(
         pid, terms, min_terms=2, require_letter=True,
     )
@@ -303,13 +293,13 @@ def test_filename_sql_finds_the_s5_letter_among_vol5_decoys(project_store):
 
 
 def test_filename_sql_require_letter_excludes_the_plot_agreement(project_store):
-    from app.core.rag.retriever import extract_rescue_terms
+    from app.core.rag.retriever import distinctive_query_terms
 
     p = project_store.create_project("D1 decoys")
     pid = p["id"]
     project_store.add_document(pid, PLOT_NAME, size=8)
     project_store.add_document(pid, VOL5_NAME, size=40)
-    terms = extract_rescue_terms(D1_QUERY)
+    terms = distinctive_query_terms(D1_QUERY)
     found = project_store.documents_matching_filename_terms(
         pid, terms, min_terms=2, require_letter=True,
     )

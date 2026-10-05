@@ -46,8 +46,8 @@ SCOPE, stated so the edges are known rather than discovered:
   ``master_corpus`` may back an identifier attribution; ``knowledge_base``
   and ``template`` may not. A reference note or a blank form is a real
   document and may still be NAMED as a source — what it may not do is lend
-  its identifiers to a claim about this project's contract, which is the G1
-  shape.
+  its identifiers to a claim about this project's contract, which is the
+  template-quoted-as-the-contract shape.
 * A figure a calculator actually returned is credited to that calculation
   and the tool's own notes (the inputs it was given, and the note lines it
   emitted). A retrieved chunk that did not produce the figure — a ``Source:``
@@ -171,7 +171,7 @@ NON_CORPUS_TOOLS: frozenset[str] = frozenset({
 # identifiers would strip the attribution off every answer on that path. A
 # curated reference note or a blank form is the opposite case -- the project
 # corpus is right there, and lending a standard form's identifiers to a claim
-# about this contract is exactly the G1 defect.
+# about this contract is exactly the template-quoted-as-the-contract defect.
 CITABLE_CLASSES: frozenset[str] = frozenset(
     {"project_corpus", "master_corpus", "user"}
 )
@@ -277,7 +277,8 @@ class Evidence:
         about this project. It matters because a filename can CONTAIN a
         contract id: ``REDACTED Contract Template Vol 4.pdf`` is a
         template, and letting its name back a bare ``Source: REDACTED``
-        is G1 arriving by the back door -- the id would be rescued by the
+        is the template-as-contract defect arriving by the back door -- the id
+        would be rescued by the
         very document that must not lend it.
         """
         return {

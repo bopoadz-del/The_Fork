@@ -24,8 +24,7 @@ Fix (defaults on, RETRIEVAL_SOIL_CONTACT_COVER=0 restores the miss):
 pool cover chunks that state a millimetre for the soil-contact condition
 in the document's own words, at their own cosine (lexical-only entries of
 those chunks and of the deferral clause get their cosine too); hand the
-spec-deferred cover ask two extra slots (RAG_SPEC_DEFERRED_COVER_EXTRA_K,
-default 2).
+spec-deferred cover ask two extra slots (_SPEC_DEFERRED_COVER_EXTRA_K = 2).
 
 Synthetic fixture (tests/fixtures/c2_soil_contact_cover_chunks.json) plus
 synthetic fillers that crowd both hybrid legs, as the live corpus does.
@@ -147,7 +146,7 @@ def corpus(request, tmp_path, monkeypatch):
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
     for var in (
         "RAG_K", "MAX_RAG_TOKENS", "RETRIEVAL_SOIL_CONTACT_COVER",
-        "RAG_SPEC_DEFERRED_COVER_EXTRA_K", "RETRIEVAL_SPEC_DEFERRAL",
+        "RETRIEVAL_SPEC_DEFERRAL",
         "RETRIEVAL_SPEC_BOOST_GUARD", "RETRIEVAL_NUMERIC_REQUIREMENT_BOOST",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -226,10 +225,9 @@ def test_soil_contact_chunks_are_retrieved(corpus, ask):
 
 
 def test_kill_switch_restores_the_live_miss(corpus, monkeypatch):
-    """RETRIEVAL_SOIL_CONTACT_COVER=0 + extra k 0 is 0b1d13a: the 75 mm
-    chunks are not retrieved at all while the footing chunks are handed."""
+    """RETRIEVAL_SOIL_CONTACT_COVER=0: the 75 mm chunks are not retrieved
+    at all while the footing chunks are handed."""
     monkeypatch.setenv("RETRIEVAL_SOIL_CONTACT_COVER", "0")
-    monkeypatch.setenv("RAG_SPEC_DEFERRED_COVER_EXTRA_K", "0")
     _m, _a, handed = _inject(S1_ASK)
     assert not any(d in handed for d in SOIL_75_DOCS), handed
     assert any(d in handed for d in FOOTING_DOCS), handed
@@ -248,7 +246,6 @@ def test_blinding_ask_is_unchanged_by_the_soil_contact_pool(corpus, monkeypatch)
 def test_compaction_ask_is_unchanged(corpus, monkeypatch):
     _m, _a, on = _inject(S2_ASK)
     monkeypatch.setenv("RETRIEVAL_SOIL_CONTACT_COVER", "0")
-    monkeypatch.setenv("RAG_SPEC_DEFERRED_COVER_EXTRA_K", "0")
     _m, _a, off = _inject(S2_ASK)
     assert on == off
     assert not any(d in on for d in SOIL_75_DOCS), on
@@ -258,7 +255,7 @@ def test_compaction_ask_is_unchanged(corpus, monkeypatch):
 
 def _ret(monkeypatch):
     for var in ("RETRIEVAL_SOIL_CONTACT_COVER", "RETRIEVAL_SPEC_DEFERRAL",
-                "RETRIEVAL_SPEC_BOOST_GUARD", "RAG_SPEC_DEFERRED_COVER_EXTRA_K"):
+                "RETRIEVAL_SPEC_BOOST_GUARD"):
         monkeypatch.delenv(var, raising=False)
     from app.core.rag import retriever as ret
     return ret
@@ -315,5 +312,3 @@ def test_spec_deferred_cover_ask_gets_two_extra_slots(monkeypatch):
     assert rag_retrieval_k(S1_ASK, 5) == 7
     assert rag_retrieval_k(S2_ASK, 5) == 5
     assert rag_retrieval_k("What is the site address?", 5) == 5
-    monkeypatch.setenv("RAG_SPEC_DEFERRED_COVER_EXTRA_K", "0")
-    assert rag_retrieval_k(S1_ASK, 5) == 5

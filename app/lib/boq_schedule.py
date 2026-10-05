@@ -666,7 +666,7 @@ def _resolve_rag_project_id(project_id: str) -> str:
 
 
 _DD2022_CITE_RE = re.compile(r"(?i)\bdd[-\s]?2022\b")
-_F1_REFUSE_RE = re.compile(
+_WBS_REFUSE_RE = re.compile(
     r"(?i)\b(?:cannot|can\s*'?\s*t|could\s+not|unable\s+to|do\s+not\s+have|"
     r"don\s*'?\s*t\s+have|does\s+not\s+contain|do\s+not\s+contain|"
     r"excerpts?\s+do\s+not|not\s+(?:enough|sufficient)\s+(?:to\s+)?"
@@ -674,13 +674,13 @@ _F1_REFUSE_RE = re.compile(
     r"cannot\s+produce|can\s*'?\s*t\s+produce|cannot\s+generate|"
     r"can\s*'?\s*t\s+generate|i\s+(?:cannot|can\s*'?\s*t|could\s+not))\b"
 )
-_F1_WBS_HIERARCHY_RE = re.compile(r"(?m)^(?:### )?\d+(?:\.\d+)*\s+\S")
-_F1_CESMM_D_RE = re.compile(r"(?i)\bD\d{2,4}(?:\.\d+)?\b")
-_F1_TEMPLATE_RE = re.compile(
+_WBS_HIERARCHY_RE = re.compile(r"(?m)^(?:### )?\d+(?:\.\d+)*\s+\S")
+_WBS_CESMM_D_RE = re.compile(r"(?i)\bD\d{2,4}(?:\.\d+)?\b")
+_WBS_TEMPLATE_RE = re.compile(
     r"(?i)template\s+scaffold|site\s+preparation|superstructure|"
     r"project_type\s+inferred:\s*building"
 )
-_F1_SCOPE_RE = re.compile(r"(?i)\b(?:demolit|site\s+clear)\w*")
+_WBS_DEMOLITION_SCOPE_RE = re.compile(r"(?i)\b(?:demolit|site\s+clear)\w*")
 
 
 def _source_contract_recency(name: str) -> Optional[Tuple[int, int]]:
@@ -742,7 +742,7 @@ def _prefer_newer_contract_year_items(
     return kept
 
 
-def f1_wbs_answer_fails_wrong_contract(answer: str) -> bool:
+def boq_wbs_answer_fails_wrong_contract(answer: str) -> bool:
     """True for the live leftover F1 FAIL: refuse and/or DD-2022 cite.
 
     Soft battery ``must_any: clearance|trees|pavement`` marks PASS when
@@ -750,17 +750,17 @@ def f1_wbs_answer_fails_wrong_contract(answer: str) -> bool:
     """
     blob = answer or ""
     cites_dd2022 = bool(_DD2022_CITE_RE.search(blob))
-    refuses = bool(_F1_REFUSE_RE.search(blob))
+    refuses = bool(_WBS_REFUSE_RE.search(blob))
     if cites_dd2022 and refuses:
         return True
     if cites_dd2022:
         return True
-    if refuses and not f1_wbs_answer_is_grounded(blob):
+    if refuses and not boq_wbs_answer_is_grounded(blob):
         return True
     return False
 
 
-def f1_wbs_answer_is_grounded(answer: str) -> bool:
+def boq_wbs_answer_is_grounded(answer: str) -> bool:
     """True for a demolition / site-clearance WBS from BOQ rows, not a refuse.
 
     Requires the demolition/site-clearance scope AND either a numbered
@@ -772,13 +772,13 @@ def f1_wbs_answer_is_grounded(answer: str) -> bool:
         return False
     if _DD2022_CITE_RE.search(blob):
         return False
-    if _F1_TEMPLATE_RE.search(blob):
+    if _WBS_TEMPLATE_RE.search(blob):
         return False
-    if _F1_REFUSE_RE.search(blob) and not _F1_CESMM_D_RE.search(blob):
+    if _WBS_REFUSE_RE.search(blob) and not _WBS_CESMM_D_RE.search(blob):
         return False
-    if not _F1_SCOPE_RE.search(blob):
+    if not _WBS_DEMOLITION_SCOPE_RE.search(blob):
         return False
-    return bool(_F1_WBS_HIERARCHY_RE.search(blob) or _F1_CESMM_D_RE.search(blob))
+    return bool(_WBS_HIERARCHY_RE.search(blob) or _WBS_CESMM_D_RE.search(blob))
 
 
 def _list_boq_scope_documents(project_id: str) -> List[Dict[str, str]]:

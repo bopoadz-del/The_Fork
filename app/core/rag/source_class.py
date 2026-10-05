@@ -4,14 +4,14 @@ another (owner's numbered item 2, 2026-09-01).
 Two battery failures, one cause. Both are in
 ``gate_battery_13b2bf7_2026-08-31.md``:
 
-* **G1 (Sev-1)** — asked what Schedule 10 of the contract contains, the
+* **Schedule register ask (Sev-1)** — asked what Schedule 10 of the contract contains, the
   platform answered that it "sets out any applicable Works Guarantees" and
   quoted **contract template** wording. The project's own Contract Data says
   ``Schedule 10: Not Used``. Nothing in the context said which excerpt was
   the contract and which was a standard form, so the model blended them.
-* **A5 (F-KB-1)** — asked for the Delay Damages, it reproduced
+* **Delay-rate ask (F-KB-1)** — asked for the Delay Damages, it reproduced
   ``docs/knowledge/fidic_2017_administration.md`` almost verbatim instead of
-  the project's own figure at 8.8.1, which A7 and E2 prove is retrievable.
+  the project's own figure at 8.8.1, which neighbouring asks prove is retrievable.
   The knowledge base answered a question the corpus could answer better.
 
 The retriever has always KNOWN the difference: ``Chunk.layer`` is set on
@@ -29,8 +29,8 @@ THE CLASSES
                      notes, CESMM, OSHA, rate books). Background, never the
                      contract.
 ``template``         a blank or standard form -- pro forma, specimen, model
-                     form, or a chunk that is mostly placeholders. G1's
-                     class. A template can sit in ANY layer, including the
+                     form, or a chunk that is mostly placeholders. The
+                     template-as-contract class. A template can sit in ANY layer, including the
                      project's own folder, so it is decided before layer.
 ``master_corpus``    the disclosed empty/thin fallback corpus (STEP 0b).
 
@@ -71,7 +71,7 @@ SOURCE_CLASS_LABELS: dict[str, str] = {
 #
 # Conservative on purpose. A document that IS part of the contract must not
 # be demoted to a template by the bare word "form" — "Schedule 8 form of
-# Parent Company Guarantee" is a real upload name. G3 honesty (Contract
+# Parent Company Guarantee" is a real upload name. PCG honesty (Contract
 # Data 4.3.7 "not required" over that form's blank %) is a dedicated
 # retriever/compose gate, not this classifier. Only standalone markers
 # that mean "this is not filled in" count.
@@ -145,7 +145,8 @@ def classify(
 ) -> str:
     """The class of one excerpt.
 
-    Template is decided FIRST and beats every layer. That ordering is G1:
+    Template is decided FIRST and beats every layer. That ordering is the
+    schedule-register defect:
     the template that answered "what does Schedule 10 contain" would have
     been ``project_corpus`` by layer, and quoting it as the contract is
     exactly the defect. A blank form in the project's own folder is still a

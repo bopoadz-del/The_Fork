@@ -1314,7 +1314,7 @@ def admin_corpus_collections(
     # Pilot master-corpus alias: the canonical project_id
     # (master_corpus) is a read-only view over the backing Drive-folder
     # corpus (projects_folder). The admin inventory must never show the alias
-    # as 0 chunks — that invited a destructive re-index click in T2. Reflect
+    # as 0 chunks — that invited a destructive re-index click in a live run. Reflect
     # the source counts under the alias so the admin page and reconciliation
     # script agree with the API's resolved chunk_count.
     from app.core.projects import (

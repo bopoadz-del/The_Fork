@@ -15,7 +15,7 @@ an Excluded culvert that shares "storm water"). Elect the Rate Only
 row as written. Do not invent a money total.
 
 Not #504 (E1 compose), not #505 (F2 duration), not #506 (G1 Schedule
-10). Kill-switch: RAG_RATE_ONLY_RESCUE=0. Fixture wording only.
+10). Fixture wording only.
 """
 from __future__ import annotations
 
@@ -234,10 +234,6 @@ def _install_g4_corpus(monkeypatch, *, rate_only_in_semantic: bool):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_RATE_ONLY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -274,16 +270,6 @@ def test_g4_drops_lookalikes_when_rate_only_is_already_in_the_pool(monkeypatch):
     assert RATE_ONLY_MARK in chunks[0].text
     assert "68,500" not in blob
     assert all(c.doc_id == RO_DOC for c in chunks)
-
-
-def test_g4_kill_switch_restores_priced_first(monkeypatch):
-    ret = _install_g4_corpus(monkeypatch, rate_only_in_semantic=False)
-    monkeypatch.setenv("RAG_RATE_ONLY_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(G4_ASK, ACTIVE, k=5)
-    blob = " ".join(c.text for c in chunks)
-    assert chunks
-    assert chunks[0].doc_id != RO_DOC
-    assert RATE_ONLY_MARK not in blob
 
 
 def test_a2_a5_g1_are_not_stolen_onto_the_rate_only_rescue(monkeypatch):
@@ -370,13 +356,6 @@ def test_graft_is_a_no_op_when_rate_only_is_already_stated():
 
 def test_graft_does_not_invent_when_the_excerpt_has_no_rate_only():
     rag = _sys(PRICED_CULVERT)
-    msgs = [{"role": "user", "content": LIVE_G4}]
-    assert _graft_rate_only_item(GENERIC_GREETING, rag, msgs) == GENERIC_GREETING
-
-
-def test_graft_kill_switch_restores_the_greeting(monkeypatch):
-    monkeypatch.setenv("RAG_RATE_ONLY_RESCUE", "0")
-    rag = _sys(RATE_ONLY_ROW)
     msgs = [{"role": "user", "content": LIVE_G4}]
     assert _graft_rate_only_item(GENERIC_GREETING, rag, msgs) == GENERIC_GREETING
 

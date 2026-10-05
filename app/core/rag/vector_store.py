@@ -1042,12 +1042,12 @@ class VectorStore:
         stays first-N so existing callers are unchanged.
 
         ``all_rows=True`` returns every chunk of those docs (the SQL
-        already loads them). Leftover E1: a filled 1.1.1 excl-VAT row
+        already loads them). Daily delay damages: a filled 1.1.1 excl-VAT row
         can sit in the middle of a combined volume, past first-400 and
         before last-400, so prefix+tail still miss.
 
         ``offset`` skips that many rows per file (from the start, or
-        from the end when ``from_end``). Leftover E1 after #541: a
+        from the end when ``from_end``). After #541: a
         store that ignores ``all_rows`` and caps ``k_per_doc`` at 400
         still misses chunk 500 of a 1200-row volume; windowed offsets
         walk the middle.

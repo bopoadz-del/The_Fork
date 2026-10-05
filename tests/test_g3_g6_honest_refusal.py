@@ -16,7 +16,6 @@ Same shape as G1 (register row over Vol 4 prose) and G4 (Rate Only
 over priced lookalikes). Do not invent a value or date; elect the
 Contract Data row as written. A filled CD value/date still wins.
 
-Kill-switches: RAG_PCG_VALUE_RESCUE=0 / RAG_COMMENCEMENT_DATE_RESCUE=0.
 Fixture wording only — no live client names.
 """
 from __future__ import annotations
@@ -251,8 +250,6 @@ def _install_g3_corpus(monkeypatch, *, cd_in_semantic: bool):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_PCG_VALUE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -310,8 +307,6 @@ def _install_g6_corpus(monkeypatch, *, cd_in_semantic: bool):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_COMMENCEMENT_DATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -344,15 +339,6 @@ def test_g3_drops_the_form_when_cd_is_already_in_the_pool(monkeypatch):
     assert all(c.doc_id == CD_DOC for c in chunks)
 
 
-def test_g3_kill_switch_restores_form_first(monkeypatch):
-    ret = _install_g3_corpus(monkeypatch, cd_in_semantic=False)
-    monkeypatch.setenv("RAG_PCG_VALUE_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(G3_ASK, ACTIVE, k=5)
-    assert chunks
-    assert chunks[0].doc_id == FORM_DOC
-    assert "not required" not in " ".join(c.text for c in chunks).lower()
-
-
 def test_g6_retrieves_not_populated_when_the_pack_leads_the_pool(monkeypatch):
     ret = _install_g6_corpus(monkeypatch, cd_in_semantic=False)
     chunks, _ = ret.retrieve_with_filter(G6_ASK, ACTIVE, k=5)
@@ -380,15 +366,6 @@ def test_g6_drops_the_pack_when_cd_is_already_in_the_pool(monkeypatch):
     assert "not populated" in chunks[0].text.lower()
     assert "10th January 2024" not in blob
     assert all(c.doc_id == CD_DOC for c in chunks)
-
-
-def test_g6_kill_switch_restores_pack_first(monkeypatch):
-    ret = _install_g6_corpus(monkeypatch, cd_in_semantic=False)
-    monkeypatch.setenv("RAG_COMMENCEMENT_DATE_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(G6_ASK, ACTIVE, k=5)
-    assert chunks
-    assert chunks[0].doc_id == PACK_DOC
-    assert "not populated" not in " ".join(c.text for c in chunks).lower()
 
 
 def test_a2_a3_g1_are_not_stolen_onto_the_g3_rescue(monkeypatch):
@@ -469,8 +446,6 @@ def _install_filled_cd(monkeypatch, *, pcg: bool):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_PCG_VALUE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_COMMENCEMENT_DATE_RESCUE", raising=False)
     return ret
 
 
@@ -614,13 +589,6 @@ def test_graft_preserves_a_filled_cd_commencement_date():
     assert "10th January 2024" not in out
 
 
-def test_graft_kill_switch_restores_the_invention(monkeypatch):
-    monkeypatch.setenv("RAG_PCG_VALUE_RESCUE", "0")
-    rag = _sys(PCG_NOT_REQUIRED)
-    msgs = [{"role": "user", "content": LIVE_G3}]
-    assert _graft_honest_contract_refusal(INVENTED_PCG, rag, msgs) == INVENTED_PCG
-
-
 def test_postprocess_g3_invention_states_not_required():
     rag = _sys(PCG_NOT_REQUIRED)
     msgs = [{"role": "user", "content": LIVE_G3}]
@@ -693,8 +661,6 @@ def _install_g6_pack_only_no_cd(monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_COMMENCEMENT_DATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -733,13 +699,6 @@ def test_graft_refuses_tba_and_blank_cd_inventions():
         out = _graft_honest_contract_refusal(INVENTED_DATE_ABBREV, rag, msgs)
         assert "10 Jan 2024" not in out, excerpt
         assert "not populated" in out.lower() or "will not invent" in out.lower()
-
-
-def test_graft_g6_kill_switch_keeps_pack_invention(monkeypatch):
-    monkeypatch.setenv("RAG_COMMENCEMENT_DATE_RESCUE", "0")
-    rag = _sys(COMMENCEMENT_PACK)
-    msgs = [{"role": "user", "content": LIVE_G6}]
-    assert _graft_honest_contract_refusal(INVENTED_DATE, rag, msgs) == INVENTED_DATE
 
 
 def test_postprocess_g6_pack_only_strips_invented_date():

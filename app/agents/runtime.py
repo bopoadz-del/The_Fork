@@ -590,8 +590,8 @@ def _final_text_needs_forced_retry(
     # A promise to search is never a usable answer to ANY question. This was
     # gated on deliverable/generative requests, so plain factual lookups fell
     # straight through and the user was shown "Let me search more precisely
-    # for the Engineer's Representative..." as the final answer (live WAVE-2
-    # D1 and E1, plus three earlier turns in the same session). The request
+    # for the Engineer's Representative..." as the final answer (a live
+    # contract-particular lookup and a delay-damages ask). The request
     # type does not change whether a dangling promise is an answer.
     if _looks_like_search_preamble(text):
         return True
@@ -1045,7 +1045,7 @@ async def _predispatch_file_tool(
             return None
         # Contract Data Q&A (delay damages, TfC, Schedule N, …) must not
         # steal to drawing_qto just because a DXF/PDF stem collides with
-        # ordinary English in the question (UI-PHYS A5 / diagnostic D2:
+        # ordinary English in the question (delay-damages rate ask:
         # "the whole of the Works.dxf" ⊂ "…for the whole of the Works?").
         contract_lookup = message_is_contract_data_lookup(user_msg)
         low = user_msg.lower()
@@ -2440,7 +2440,7 @@ def _persist_failed_turn(conversation_id: str | None) -> None:
 
 
 # An export request asks for a FILE, not for a passage inside a document.
-# UI-PHYS H1: the export turn was refused by the RAG-miss short-circuit below
+# An answer-export ask was refused by the RAG-miss short-circuit below
 # in ~0.6s having dispatched ZERO tools, so the export action never ran and the
 # router's refusal was displayed as though it were the answer. Same shape as
 # the unit-rate case already excluded there — a request that merely mentions a
@@ -2472,10 +2472,10 @@ def _fulfill_answer_report(
     history: list[dict[str, Any]] | None,
     agent_name: str,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Compile A1–A9 (or all) chat answers and persist the confirmation.
+    """Compile the numbered (or all) chat answers and persist the confirmation.
 
-    Runs without an LLM or RAG — the live H1 failure was retrieval treating
-    ``A1-A9`` as RFP attachment codes. Kill-switch is checked by the caller.
+    Runs without an LLM or RAG — retrieval used to treat the numbered
+    answer codes as RFP attachment codes. Kill-switch is checked by the caller.
     """
     from app.core import agent_memory
 
@@ -2646,7 +2646,7 @@ def _is_search_tool_args_obj(obj: Any) -> bool:
 
     Detects shapes such as:
       {"query": "...", "top_k": 5, "project_id": "..."}
-      {"query": "..."}   # bare Scout/Kimi leak (UI-PHYS A5)
+      {"query": "..."}   # bare Scout/Kimi leak (raw tool-call JSON)
       {"tool": "search_project_documents", "arguments": {...}}
       {"name": "search_project_documents", "arguments": {...}}
       {"name": "search_project_documents", "parameters": {...}}
@@ -2727,7 +2727,7 @@ _INTERNAL_CONTEXT_MARKERS = (
     "PLATFORM PRE-DISPATCH",
 )
 
-# Answer-routing notes the model (or the A9 graft) must never show the
+# Answer-routing notes the model (or the Engineer graft) must never show the
 # user. Distinct from ``_INTERNAL_CONTEXT_MARKERS``: those trip a nuclear
 # fallback that would drop JACOBS if the hint was prepended to a good
 # answer. These are STRIPPED so the appointed firm survives.
@@ -2767,7 +2767,7 @@ _ROUTING_PREAMBLE_SENTENCE_RE = re.compile(
 
 
 def _strip_answer_routing_preamble(text: str) -> str:
-    """Remove A9/answer-routing guard text; keep the real particular.
+    """Remove Engineer/answer-routing guard text; keep the real particular.
 
     Live e24aee4: graft prepended ``The Engineer is APPOINTMENT — an
     excerpt below names the Engineer. That IS the answer. State the
@@ -2787,7 +2787,7 @@ def _strip_answer_routing_preamble(text: str) -> str:
 def answer_contains_routing_preamble(text: str) -> bool:
     """True when user-visible text still carries inject-guard wording.
 
-    Regression pin for the A9 leak. Tests (and emit checks) fail closed
+    Regression pin for the Engineer-ask guard leak. Tests (and emit checks) fail closed
     on these phrases so a future heading rename cannot silently re-leak.
     """
     if not text:
@@ -2824,7 +2824,7 @@ class _EmitLeakGuard:
     """Last line of defence: no path may ship the platform's own context.
 
     #457 put the context-leak check in the streamed-synthesis branch and in
-    _sanitize_final_text, and E1 came back clean. It recurred once on 87c7996
+    _sanitize_final_text, and the leaking question came back clean. It recurred once on 87c7996
     -- same shape, same wbs_id/brief/Drive paths -- while the next run of the
     same question was clean. Intermittent means a path that neither guard
     covers, and I have not found which one.
@@ -3651,7 +3651,7 @@ def _scrub_history(turns: list[dict[str, str]]) -> list[dict[str, str]]:
     placeholder so the model can't pattern-match to a prior (often
     hallucinated) table when it should be calling the tool.
 
-    Also strips assistant turns that are raw tool-call JSON (UI-PHYS A5) so a
+    Also strips assistant turns that are raw tool-call JSON so a
     previously leaked envelope cannot re-seed the model or the UI history.
 
     Heuristic only: markdown tables with WBS/BOQ-like headers and >=5 rows.
@@ -4391,13 +4391,13 @@ def _latest_user_text(messages: list[dict[str, Any]] | None) -> str:
 def _latest_operator_ask(messages: list[dict[str, Any]] | None) -> str:
     """Operator question, unwrapped from a RAG-folded user bubble.
 
-    Live Wave-1 A2 on 396cc7b: ``_apply_rag_context`` folds Contract Data
+    On an ACA-including-VAT ask, ``_apply_rag_context`` folds Contract Data
     chunk #0 (Delay Damages × a partial ACA) plus the lookup directive
     ("…or compute it…") into the last user turn. Ask-class detectors
-    that read that bubble then see leftover-E1 (delay-damages + compute
-    + SAR) and compose SAR/day. Unwrap so A2 stays the including-VAT
-    particular. Combined "calculate delay damages … including VAT"
-    stays E1 — the operator text still has the delay-damages token.
+    that read that bubble then see a daily-amount ask (delay-damages +
+    compute + SAR) and compose SAR/day. Unwrap so it stays the incl-VAT
+    particular. "Calculate delay damages … including VAT" stays a
+    daily-amount ask — the operator text has the delay-damages token.
     """
     return _unwrap_rag_folded_operator_text(_latest_user_text(messages))
 
@@ -4414,11 +4414,11 @@ def _is_contract_data_fact_lookup(user_message: str | None) -> bool:
     """True for a Contract Data Q&A turn that is not asking for a unit rate
     or a SAR arithmetic result.
 
-    Live Wave-1 A5: "What are the Delay Damages for the whole of the
+    A delay-damages rate ask: "What are the Delay Damages for the whole of the
     Works?" is a filled-particular lookup. The cost gate's BOQ refusal is
     the wrong instrument — it wiped a grounded (or model-expanded)
     percentage particular because a SAR-per-day gloss did not sit in a
-    rate-semantic chunk. E1 ("calculate … in SAR") still gates.
+    rate-semantic chunk. A daily-amount ask ("calculate … in SAR") still gates.
     """
     if not user_message:
         return False
@@ -4435,7 +4435,7 @@ def _infer_commissioning_systems(text: str | None) -> list[str] | None:
     """Map the user's wording onto commissioning system keys.
 
     Leftover torch-SBS / membrane / before-backfill → waterproofing
-    (holiday/spark belongs there). Infra Pack M3 PWPS-02 reservoir /
+    (holiday/spark belongs there). A PWPS-02 reservoir /
     first wet test / C21-OPC blinding must NEVER take that path.
     """
     low = (text or "").lower()
@@ -4572,7 +4572,7 @@ _TOOL_TRUNCATION_NOTICE_RE = re.compile(
 def _looks_like_tool_truncation_notice(text: str) -> bool:
     """True for the fetch-window truncation envelope shipped as an answer.
 
-    Live Set3 E1 on 4ab5561: the bubble was "Tool result exceeded 4000
+    A named-percentage × ACA ask once shipped: "Tool result exceeded 4000
     characters and was truncated. Call this tool again with … char_offset=…"
     instead of 10% × ACA. That prose is an internal fetch hint, never a
     money answer.
@@ -5151,7 +5151,7 @@ def _graft_composed_concrete_volume(
     instead of) ``construction_calc`` and never composed the with-waste
     volume. Numbers are in the question; compose from the existing
     calculator. Kill-switch ``COMPOSE_CONCRETE_VOLUME=0`` restores the
-    hang. Leftover L6 / E1 / L4 asks are not concrete-volume and pass
+    hang. Delay-damages and other non-concrete-volume asks pass
     through.
     """
     try:
@@ -5217,7 +5217,7 @@ def _graft_composed_user_priced_takeoff(
     text: str,
     messages: list[dict[str, Any]] | None,
 ) -> str:
-    """Cost-gate A3-1: volume × user rate after 0-token force_synthesis.
+    """Cost gate: volume × user rate after 0-token force_synthesis.
 
     Live FAIL: construction_calc succeeded, synthesis emitted nothing, and
     volume-only recover (one footing, or 14× without the rate) shipped a
@@ -5623,9 +5623,9 @@ def _cg_operator_factors(operator_text: str) -> tuple:
     per m3" are the two most common QS asks, and both multiply a figure the
     operator never typed (it is in the contract, or a tool computed it) by one
     the operator did. The eager/lazy pairwise closure cannot reach either: it
-    runs over the CONTEXT figures before the operator's are merged in, so live
-    SET4 M3 refused a correct 8.5%-of-ACA answer and T6 dropped the pricing
-    step. These factors are paired against the context base per checked figure
+    runs over the CONTEXT figures before the operator's are merged in, so a
+    milestone delay-damages ask refused a correct 8.5%-of-ACA answer and a
+    volume-pricing ask dropped the pricing step. These factors are paired against the context base per checked figure
     in _cg_is_grounded -- no closure is materialised.
     """
     factors: list[float] = []
@@ -5959,7 +5959,7 @@ def _graft_deterministic_cost_calc(
         return text
 
 
-def _rescue_deterministic_cost_calc(
+def _cost_calc_line_from_tool_result(
     messages: list[dict[str, Any]] | None,
 ) -> str:
     """Calculator line when this ask's cost tool already succeeded."""
@@ -6098,7 +6098,7 @@ def _cost_grounding_gate(
             # cost calculator this turn is the figure — do not leave the
             # refusal in its place.
             if _answer_is_no_rate_refusal(text):
-                rescued = _rescue_deterministic_cost_calc(messages)
+                rescued = _cost_calc_line_from_tool_result(messages)
                 if rescued:
                     return rescued
             return text  # not a cost/rate answer — leave it alone
@@ -6106,16 +6106,16 @@ def _cost_grounding_gate(
         if _is_document_deliverable_request(user):
             return text
         if _is_contract_data_fact_lookup(user):
-            # Live A5: Delay Damages is a Contract Data particular, not a
+            # Delay-damages rate ask: a Contract Data particular, not a
             # BOQ unit rate. Replacing the answer with "upload your priced
             # BOQ" is the wrong refusal for this question class. Arithmetic
-            # that wants a SAR figure (E1) still goes through the gate.
+            # that wants a SAR figure (daily amount) still goes through the gate.
             return text
         rag_context = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         grounded = _cg_grounded_numbers(rag_context, messages)
         if all(_cg_is_grounded(v, grounded) for _, v in figs):
             return text
-        rescued = _rescue_deterministic_cost_calc(messages)
+        rescued = _cost_calc_line_from_tool_result(messages)
         if rescued:
             return rescued
         _LOG.warning(
@@ -6299,7 +6299,7 @@ _ACA_INCL_CLAIM_RE = re.compile(
     r"(SAR|AED|USD|EUR|GBP|QAR|BHD|KWD|OMR)\s*"
     r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d{2})\.?",
 )
-# Live A3 PARTIAL: graft prepended "…is 90 days." then the model stated 852.
+# Time for Completion ask: graft prepended "…is 90 days." then the model stated 852.
 _TFC_WHOLE_WORKS_CLAIM_RE = re.compile(
     r"(?i)(?:the\s+)?time\s+for\s+completion\s+for\s+(?:the\s+)?"
     r"whole\s+of\s+the\s+works\s+is\s+(\d{2,4})\s+days\.?",
@@ -6383,7 +6383,7 @@ def _graft_asked_contract_particular(
     project_id: str | None = None,
     extra_project_ids: list[str] | None = None,
 ) -> str:
-    """Wave-1 A2/A3/A6/A9: state the asked Contract Data row from excerpts.
+    """State the asked Contract Data row (ACA incl. VAT, TfC, DNP, Engineer) from excerpts.
 
     DeepSeek answered a neighboring field (delay damages for an including-VAT
     ACA ask) or reported the particular absent after retrieving permit
@@ -6396,7 +6396,7 @@ def _graft_asked_contract_particular(
         if not _graft_asked_contract_particular_enabled():
             return text
         from app.core.rag.retriever import (
-            a2_including_vat_excerpts_from_loaded_cd_volume,
+            including_vat_excerpts_from_loaded_cd_volume,
             extract_aca_including_vat,
             extract_defects_notification_period,
             extract_engineer_identity,
@@ -6412,8 +6412,8 @@ def _graft_asked_contract_particular(
         text = _strip_answer_routing_preamble(text)
         if not user:
             return text
-        # Live leftover E1: compose already owns rate × ACA. The A2
-        # including-VAT election must not replace a daily figure (or a
+        # Delay-damages daily-amount ask: compose already owns rate × ACA.
+        # The including-VAT election must not replace a daily figure (or a
         # pending compose) with the neighboring particular.
         if query_asks_delay_damages_daily_amount(user):
             return text
@@ -6426,7 +6426,7 @@ def _graft_asked_contract_particular(
                 # ACA). Scan the loaded CD volume — including cited
                 # chunk owners, not only the UI project id — for the
                 # filled including-VAT row. Do not invent a figure.
-                extra = a2_including_vat_excerpts_from_loaded_cd_volume(
+                extra = including_vat_excerpts_from_loaded_cd_volume(
                     user, project_id or "", rag_context=rag,
                     extra_pids=extra_project_ids,
                 )
@@ -6524,7 +6524,7 @@ def _graft_asked_contract_particular(
                 text or "",
             ):
                 return text
-            # Live A9: JACOBS / CH2M split across two tokens.
+            # Engineer ask: JACOBS / CH2M split across two tokens.
             tokens = [t for t in re.split(r"[^A-Za-z0-9]+", name) if len(t) >= 4]
             if tokens and all(t.lower() in (text or "").lower() for t in tokens):
                 if not _MISSING_PARTICULAR_RE.search(text or ""):
@@ -6558,7 +6558,7 @@ def _graft_asked_contract_particular(
                 return line
             body = raw.strip()
             return line if not body else f"{line}\n\n{body}"
-        # Set3 A7/A9: named percentage particular when synthesis hung empty.
+        # Named percentage particular when synthesis hung empty.
         from app.lib.construction_formulas_commercial import (
             extract_named_percentage_particular,
             format_named_percentage_line,
@@ -6635,7 +6635,8 @@ def _graft_hypothetical_milestone_arithmetic(
 ) -> str:
     """Lead with user-supplied milestone arithmetic, not a premise veto.
 
-    Live ~27d6940 rejected "M1=397d, M3=487d, M5=731d, same start" from
+    Live ~27d6940 rejected user-stated milestone durations (397d, 487d,
+    731d, same start) from
     Contract Data access dates. The numbers in the question are the
     operands. Kill-switch ``HYPOTHETICAL_MILESTONE_ARITHMETIC=0``.
     """
@@ -6660,14 +6661,13 @@ def _graft_composed_delay_damages_daily(
     project_id: str | None = None,
     extra_project_ids: list[str] | None = None,
 ) -> str:
-    """OLD-pack E1: state rate × ACA as a daily figure when both are in docs.
+    """Delay-damages daily-amount ask: state rate × ACA as a daily figure when both are in docs.
 
     The live FAIL quoted Contract Data sources and never multiplied.
     Compose from retrieved excerpts only — no invented operands. A
     fabricated SAR/day still loses when the ACA is absent. When top-k
     is refuse-prone, a last-chance scan of the loaded CD volume may
-    still supply both operands (kill-switch
-    RAG_DELAY_DAMAGES_DAILY_RESCUE=0). The composed envelope is
+    still supply both operands. The composed envelope is
     appended as a tool message so the cost gate can ground the product
     (0.1% × ACA is not a pairwise product of the raw numbers 0.1 and
     the ACA).
@@ -6686,19 +6686,19 @@ def _graft_composed_delay_damages_daily(
             from app.core.rag.retriever import (
                 query_is_aca_including_vat_particular,
             )
-            # Live Wave-1 A2 on 9ad62cc / 396cc7b: do not compose
-            # SAR/day for an including-VAT particular, even when
-            # chunk #0 is delay damages × a partial ACA. Combined
-            # E1+A2 wording stays E1. Classify the unwrapped
+            # Do not compose SAR/day for an ACA-including-VAT
+            # particular, even when chunk #0 is delay damages × a
+            # partial ACA. Combined daily-amount + including-VAT
+            # wording stays a daily-amount ask. Classify the unwrapped
             # operator ask — the RAG-folded bubble contains
-            # "Delay Damages" + "compute" and looks like E1.
+            # "Delay Damages" + "compute" and looks like a daily-amount ask.
             if query_is_aca_including_vat_particular(user):
                 return text
         except Exception:  # noqa: BLE001 — ask-class fence must never break
-            _LOG.debug("A2 compose fence failed; keeping E1 ask check", exc_info=True)
+            _LOG.debug("including-VAT compose fence failed; keeping daily-amount ask check", exc_info=True)
         composed = compose_delay_damages_daily_from_excerpts(user, rag)
         # A partial Accepted Contract Amount on the rate chunk composes
-        # on its own (live M3: 0.015% × SAR 39,098,392.98). That success
+        # on its own (milestone rate: 0.015% × SAR 39,098,392.98). That success
         # used to skip the loaded-volume scan, so clause 1.1.1 never
         # replaced it. Look when the base is not clause 1.1.1, and only
         # replace it when the volume states that clause.
@@ -6712,16 +6712,16 @@ def _graft_composed_delay_damages_daily(
                 _LOG.debug("clause 1.1.1 check failed", exc_info=True)
                 needs_clause = False
         if needs_clause:
-            # Live leftover E1 after #536: top-k is refuse-prone Contract
+            # After #536: top-k is refuse-prone Contract
             # Data chunks 9–11 that do not surface both operands. When
             # excl-VAT ACA + Contract Data 0.1% exist in the loaded CD
             # volume, compose from those rows — do not invent a figure
             # and do not fall through to the cost-grounding refuse.
             try:
                 from app.core.rag.retriever import (
-                    e1_compose_excerpts_from_loaded_cd_volume,
+                    daily_damages_excerpts_from_loaded_cd_volume,
                 )
-                extra = e1_compose_excerpts_from_loaded_cd_volume(
+                extra = daily_damages_excerpts_from_loaded_cd_volume(
                     user, project_id or "", rag_context=rag,
                     extra_pids=extra_project_ids,
                 )
@@ -6774,10 +6774,10 @@ def _graft_composed_delay_damages_daily(
             if abs(v - daily) > 1.0 and abs(v - base) > 1.0
         ]
         raw = text or ""
-        # Live leftover E1 after #523: the model (or the A2 graft) led
+        # After #523: the model (or the including-VAT graft) led
         # with including-VAT ACA and never stated SAR/day. Once both
         # operands are in the excerpts, replace that particular — do
-        # not prepend under an A2-shaped lead. Same for a cannot-
+        # not prepend under an including-VAT-shaped lead. Same for a cannot-
         # calculate refusal over Spec TOC / Daywork / insurance.
         aca_lead = bool(_ACA_INCL_CLAIM_RE.search(raw))
         no_daily = not answer_states_daily_amount(raw, daily) and not re.search(
@@ -6811,7 +6811,7 @@ def _graft_composed_delay_damages_over_period(
     project_id: str | None = None,
     extra_project_ids: list[str] | None = None,
 ) -> str:
-    """Set3 E3: rate × ACA × days × named milestones when synthesis hung.
+    """Delay damages over a period: rate × ACA × days × named milestones when synthesis hung.
 
     Live a8498b3 returned ``0% of SAR 0.00`` after ``delay_damages_daily``
     ran with empty args. Both operands were already on the Contract Data
@@ -6832,7 +6832,7 @@ def _graft_composed_delay_damages_over_period(
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         composed = compose_delay_damages_over_period_from_excerpts(user, rag)
         if not composed:
-            # Live Set3 E3: top-k packed the whole-of-Works 0.1% under
+            # Period ask: top-k packed the whole-of-Works 0.1% under
             # "per Milestone". Scan the loaded CD volume for the
             # Milestone N | 0.015% rows + excl-VAT ACA.
             try:
@@ -6905,7 +6905,7 @@ def _graft_composed_percentage_of_aca(
     project_id: str | None = None,
     extra_project_ids: list[str] | None = None,
 ) -> str:
-    """Set3 E1: named percentage × ACA when synthesis hung empty."""
+    """Named percentage × ACA when synthesis hung empty."""
     try:
         from app.lib.construction_formulas_commercial import (
             answer_states_money_amount,
@@ -6921,7 +6921,7 @@ def _graft_composed_percentage_of_aca(
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         composed = compose_percentage_of_aca_from_excerpts(user, rag)
         if not composed:
-            # Live Set3 E1: top-k had neither 10% nor ACA; the model
+            # Named-percentage ask: top-k had neither 10% nor ACA; the model
             # shipped the fetch truncation notice. Scan the loaded CD
             # volume for Advance Payment 10% + excl-VAT ACA.
             try:
@@ -7002,11 +7002,11 @@ def _graft_rate_only_item(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
 ) -> str:
-    """OLD-pack G4: state Rate Only when the retrieved row already says so.
+    """Rate Only BOQ item ask: state Rate Only when the retrieved row already says so.
 
     Live Master Corpus greeted and never named D529.3. Compose nothing —
     only fire when an excerpt already says Rate Only on the asked item.
-    A fabricated money total is replaced. Kill-switch: RAG_RATE_ONLY_RESCUE=0.
+    A fabricated money total is replaced.
     """
     try:
         from app.core.rag.retriever import (
@@ -7016,10 +7016,7 @@ def _graft_rate_only_item(
             extract_asked_cesmm_codes,
             format_rate_only_line,
             query_asks_for_boq_item_amount,
-            rate_only_rescue_enabled,
         )
-        if not rate_only_rescue_enabled():
-            return text
         user = _latest_operator_ask(messages)
         if not query_asks_for_boq_item_amount(user):
             return text
@@ -7052,20 +7049,19 @@ def _graft_honest_contract_refusal(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
 ) -> str:
-    """F-BAT-D G3/G6: prefer Contract Data honesty over form/pack invention.
+    """PCG / commencement-date asks: prefer Contract Data honesty over form/pack invention.
 
-    G3: if excerpts say PCG is not required, replace a Schedule 8
+    Parent company guarantee: if excerpts say PCG is not required, replace a Schedule 8
     "20% of paid-up Capital" invention. A filled CD value is left (or
     grafted) instead of the form %.
 
-    G6: if excerpts say the commencement field is not populated / tied
+    Commencement date: if excerpts say the commencement field is not populated / tied
     to LOA-NOA, replace an invented pack date. A filled CD date is
     left (or grafted). An ask that names the commencement pack is not
     this path.
 
     Compose nothing — only fire when an excerpt already states the
-    CD row. Kill-switches: RAG_PCG_VALUE_RESCUE=0 /
-    RAG_COMMENCEMENT_DATE_RESCUE=0.
+    CD row.
     """
     try:
         from app.core.rag.retriever import (
@@ -7078,11 +7074,9 @@ def _graft_honest_contract_refusal(
             chunk_states_pcg_contract_data,
             chunk_states_pcg_filled_value,
             chunk_states_pcg_not_required,
-            commencement_date_rescue_enabled,
             format_commencement_honest_line,
             format_commencement_unsupported_line,
             format_pcg_honest_line,
-            pcg_value_rescue_enabled,
             query_asks_for_contract_commencement_date,
             query_asks_for_parent_company_guarantee,
         )
@@ -7090,8 +7084,7 @@ def _graft_honest_contract_refusal(
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         raw = text or ""
         if (
-            pcg_value_rescue_enabled()
-            and query_asks_for_parent_company_guarantee(user)
+            query_asks_for_parent_company_guarantee(user)
             and chunk_states_pcg_contract_data(rag)
         ):
             line = format_pcg_honest_line(rag)
@@ -7122,12 +7115,11 @@ def _graft_honest_contract_refusal(
                 return line
             return f"{line}\n\n{raw.strip()}" if raw.strip() else line
         if (
-            commencement_date_rescue_enabled()
-            and query_asks_for_contract_commencement_date(user)
+            query_asks_for_contract_commencement_date(user)
         ):
             # Filled Contract Data date still wins. Anything else — empty
             # CD, TBA, pack-only RAG, or no CD row at all — must not
-            # ship an invented calendar date (floor-all G6 after #563).
+            # ship an invented calendar date (commencement ask after #563).
             if chunk_states_commencement_filled_date(rag):
                 line = format_commencement_honest_line(rag)
                 already_filled = (
@@ -7199,7 +7191,7 @@ def _graft_priced_boq_item(
     Live Master Corpus on 2ceef76 (#545) echoed the D599.5 ask, cited
     nothing, and waited ~212s. #542 already elected the priced row over
     storm-water Rate Only — compose those figures from the excerpt.
-    Kill-switch: COMPOSE_PRICED_BOQ_ROW=0. G4 Rate Only is not this path.
+    Kill-switch: COMPOSE_PRICED_BOQ_ROW=0. A Rate Only item is not this path.
     """
     try:
         from app.core.rag.retriever import (
@@ -7324,11 +7316,11 @@ def _compose_priced_boq_instead_of_retry(
         return ""
 
 
-def _e1_audit_project_ids(
+def _audit_project_ids_for_daily_damages(
     project_id: str | None,
     audit_rec: dict[str, Any] | None,
 ) -> tuple[str | None, list[str] | None]:
-    """UI project + cited-chunk owners for leftover-E1 last-chance compose."""
+    """UI project + cited-chunk owners for the delay-damages daily-amount last-chance compose."""
     pid = project_id or (audit_rec or {}).get("project_id")
     extra: list[str] = []
     seen: set[str] = set()
@@ -7353,9 +7345,9 @@ def _should_short_circuit_delay_damages_daily(
     project_id: str | None = None,
     audit_rec: dict[str, Any] | None = None,
 ) -> str:
-    """Composed E1 SAR/day, or '' if the LLM hop must still run.
+    """Composed delay-damages SAR/day, or '' if the LLM hop must still run.
 
-    Live leftover E1 after #559: synthesis copied the contracts-kernel
+    After #559: synthesis copied the contracts-kernel
     BOQ refuse ("I don't have a rate on file… upload your priced BOQ")
     when priced CESMM soup shared the pool. Rate × ACA was already in
     the excerpts / loaded CD volume — compose it instead of waiting on
@@ -7374,7 +7366,7 @@ def _should_short_circuit_delay_damages_daily(
         user = _latest_operator_ask(messages)
         if not query_asks_delay_damages_daily_amount(user):
             return ""
-        pid, extra = _e1_audit_project_ids(project_id, audit_rec)
+        pid, extra = _audit_project_ids_for_daily_damages(project_id, audit_rec)
         grafted = _graft_composed_delay_damages_daily(
             "", rag_sys_msg, messages, project_id=pid,
             extra_project_ids=extra,
@@ -7425,14 +7417,14 @@ def _graft_boq_scope_wbs_if_wrong_contract(
     if not _message_wants_boq_scope_wbs_ask(user):
         return text
     from app.lib.boq_schedule import (
-        f1_wbs_answer_fails_wrong_contract,
-        f1_wbs_answer_is_grounded,
+        boq_wbs_answer_fails_wrong_contract,
+        boq_wbs_answer_is_grounded,
     )
     raw = text or ""
-    if f1_wbs_answer_is_grounded(raw) and not f1_wbs_answer_fails_wrong_contract(raw):
+    if boq_wbs_answer_is_grounded(raw) and not boq_wbs_answer_fails_wrong_contract(raw):
         return text
     recovered = _recover_answer_from_tool_messages(_EMPTY_RESPONSE_FALLBACK, messages)
-    if recovered and f1_wbs_answer_is_grounded(recovered):
+    if recovered and boq_wbs_answer_is_grounded(recovered):
         return recovered
     return text
 
@@ -7468,7 +7460,7 @@ _PART_SUMMARY_MISS_RE = re.compile(
     r"(?i)part\s+summary|priced\s+boq|not\s+found|could\s+not\s+find|"
     r"cannot\s+find|no\s+(?:printed\s+)?total",
 )
-_F1_MILESTONES_ONLY_RE = re.compile(
+_MILESTONES_ONLY_RE = re.compile(
     r"(?i)milestones?\s+1\s*[–-]\s*5\s+only|none of those are\s+"
     r"northern|no northern",
 )
@@ -7479,7 +7471,7 @@ def _graft_combined_part_summary_total(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
 ) -> str:
-    """Set3 E6: sum printed page totals when the model added 1,000,000.
+    """Combined BOQ page totals: sum printed page totals when the model added 1,000,000.
 
     Live 4ab5561: d/3/1 + d/3/2 + d/3/3 printed 34,645,529 + 1,852,848
     + 17,496,857 = 53,995,234 and the bubble said 54,995,234. Compose
@@ -7592,7 +7584,7 @@ def _graft_named_community_tfc_span(
             or body == _EMPTY_RESPONSE_FALLBACK
             or _GENERIC_ACK_RE.search(body)
             or _MISSING_PARTICULAR_RE.search(body)
-            or _F1_MILESTONES_ONLY_RE.search(body)
+            or _MILESTONES_ONLY_RE.search(body)
             or re.search(
                 r"(?i)cannot (?:answer|confirm|find)|could not|"
                 r"not in the (?:retrieved )?excerpts",
@@ -7612,7 +7604,7 @@ def _graft_part_summary_total(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
 ) -> str:
-    """F-BAT-D H3 / B3: write the page Part Summary when synthesis hung.
+    """BOQ page Part Summary ask: write the page Part Summary when synthesis hung.
 
     Live 0d9fd23 mobile H3 echoed empty / said the priced-BOQ Part
     Summary was not found. The d/3/1 total was already in the
@@ -7746,7 +7738,7 @@ def _compose_user_priced_takeoff_instead_of_retry(
     text: str,
     messages: list[dict[str, Any]] | None,
 ) -> str:
-    """A3-1: compose volume × user rate instead of a second empty LLM hop."""
+    """Compose volume × user rate instead of a second empty LLM hop."""
     grafted = _graft_composed_user_priced_takeoff(text, messages)
     if not grafted.strip() or grafted.strip() == _EMPTY_RESPONSE_FALLBACK:
         return ""
@@ -7761,8 +7753,8 @@ def _compose_user_priced_takeoff_instead_of_retry(
 # Two live defects of the same shape, found 23-24 Sep 2026 and fixed one at a
 # time:
 #
-#   T20  "L/20 = 4800/20 = 200 mm"      -- 4800/20 is 240
-#   T12  "Ec = 4700 x 5.9161 = 28,062"  -- that product is 27,806
+#   slab span   "L/20 = 4800/20 = 200 mm"      -- 4800/20 is 240
+#   concrete Ec "Ec = 4700 x 5.9161 = 28,062"  -- that product is 27,806
 #
 # Both answers stated the right rule, the right inputs and a wrong number, and
 # every visible part of them was correct. A reader checking the working is
@@ -8003,7 +7995,7 @@ def _graft_computed_slab_thickness(
 ) -> str:
     """Replace a corpus refusal with the slab_thickness_min result.
 
-    Live T20/U5/E13: the model cited the named-standard guard and never
+    Live minimum-slab-thickness asks: the model cited the named-standard guard and never
     called the calculator, including turns that named slab_thickness_min
     and offered to run it. The figure is computed. Provenance is the
     calculator's standard field.
@@ -8073,7 +8065,7 @@ def _graft_stated_total_follow_up(
 ) -> str:
     """Replace a one-element follow-up with the stated total.
 
-    Live E6: "add 7% waste to that total and price it at SAR 420/m³"
+    Live follow-up ask: "add 7% waste to that total and price it at SAR 420/m³"
     after 24 pile caps came back as 8.025 m³ (one cap × 1.07) and about
     SAR 3,370. The count is in the previous operator turn. A reply that
     already states 192.60 m³ and SAR 80,892 is left as written.
@@ -8134,7 +8126,7 @@ def _postprocess_answer(
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
-    # Live Set3 E1: the fetch-window truncation notice is not an
+    # The fetch-window truncation notice is not an
     # answer. Blank it so later grafts can compose, and so we never
     # ship "Tool result exceeded … char_offset=" to the operator.
     if _looks_like_tool_truncation_notice(text):
@@ -8149,49 +8141,49 @@ def _postprocess_answer(
     # Leftover E4: compose raft volume + documented waste when the model
     # hung on "Let me validate…" and never wrote 945 m³.
     text = _graft_composed_concrete_volume(text, messages)
-    # Cost-gate A3-1: calc succeeded, force_synthesis emitted 0 tokens.
+    # Cost gate: calc succeeded, force_synthesis emitted 0 tokens.
     # Volume-only recover is not a priced take-off — compose from the ask.
     text = _graft_composed_user_priced_takeoff(text, messages)
-    # E6: "add waste to that total and price it" continues from the prior
+    # "Add waste to that total and price it" continues from the prior
     # count (24 caps / 180 m³), not from one element the tool just recomputed.
     text = _graft_stated_total_follow_up(text, messages)
     # Live ~27d6940: user-supplied M#=Nd + common start is arithmetic.
     text = _graft_hypothetical_milestone_arithmetic(text, messages)
-    # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
+    # Delay-damages daily-amount ask: compose rate × ACA into SAR/day from retrieved client
     # text before the cost gate. A percentage-only excerpt still cannot
     # invent a daily figure; both operands must be in the excerpts or
     # the loaded CD volume (last-chance after refuse-prone top-k).
-    pid, extra_pids = _e1_audit_project_ids(project_id, audit_rec)
+    pid, extra_pids = _audit_project_ids_for_daily_damages(project_id, audit_rec)
     text = _graft_composed_delay_damages_daily(
         text, rag_sys_msg, messages, project_id=pid,
         extra_project_ids=extra_pids,
     )
-    # Set3 E3: a delay of N days (combined milestones) is a money
+    # A delay of N days (combined milestones) is a money
     # answer. Runs after the daily composer so a period ask is not
     # left on SAR/day or on the unbound 0% of 0 note.
     text = _graft_composed_delay_damages_over_period(
         text, rag_sys_msg, messages, project_id=pid,
         extra_project_ids=extra_pids,
     )
-    # Wave-1 DeepSeek: A2 answered delay damages, A3/A9 said the
-    # particular was absent. Graft the asked row from excerpts only.
+    # The model answered delay damages for an including-VAT ACA ask, or
+    # said a TfC / Engineer particular was absent. Graft the asked row from excerpts only.
     text = _graft_asked_contract_particular(
         text, rag_sys_msg, messages, project_id=pid,
         extra_project_ids=extra_pids or None,
     )
-    # Set3 E1: named percentage × ACA when the ask wants SAR, not
+    # Named percentage × ACA when the ask wants SAR, not
     # the percentage-only particular.
     text = _graft_composed_percentage_of_aca(
         text, rag_sys_msg, messages, project_id=pid,
         extra_project_ids=extra_pids,
     )
-    # WAVE 2 B4/B5 first: a priced CESMM row beats Rate Only / Excluded
-    # siblings. G4 Rate Only runs after so it cannot overwrite 280,320.
+    # Priced BOQ row first: a priced CESMM row beats Rate Only / Excluded
+    # siblings. The Rate Only graft runs after so it cannot overwrite 280,320.
     text = _graft_priced_boq_item(text, rag_sys_msg, messages)
-    # F-BAT-D H3 / B3: Part Summary page total (no CESMM code).
+    # BOQ page Part Summary total (no CESMM code).
     text = _graft_part_summary_total(text, rag_sys_msg, messages)
-    # Set3 E6: combined printed page totals (d/3/1+d/3/2+d/3/3).
-    # One-page B3 stays on the graft above.
+    # Combined printed page totals (d/3/1+d/3/2+d/3/3).
+    # A one-page total stays on the graft above.
     text = _graft_combined_part_summary_total(text, rag_sys_msg, messages)
     # Set3 F1: longest/shortest Time for Completion among a named
     # community's milestones (Northern Community 547 / 150).
@@ -8199,11 +8191,11 @@ def _postprocess_answer(
         text, rag_sys_msg, messages, project_id=pid,
         extra_project_ids=extra_pids,
     )
-    # OLD-pack G4: state Rate Only when the retrieved BOQ row already
+    # Rate Only BOQ item ask: state Rate Only when the retrieved BOQ row already
     # says so and no priced triple exists. The live FAIL greeted
     # ("I'm ready to help…") and never named D529.3 / Rate Only.
     text = _graft_rate_only_item(text, rag_sys_msg, messages)
-    # F-BAT-D G3/G6: Contract Data "not required" / empty commencement
+    # PCG / commencement asks: Contract Data "not required" / empty commencement
     # over Schedule 8 form % and commencement-pack dates.
     text = _graft_honest_contract_refusal(text, rag_sys_msg, messages)
     # Default-rate cost build-up: the calculator result is the total.
@@ -8267,7 +8259,7 @@ def _postprocess_answer(
     # electing the ENGINEER APPOINTMENT heading. Strip leftover steering
     # so JACOBS (or any other particular) is what the user sees.
     text = _strip_answer_routing_preamble(text)
-    # SET5 S1/S2/S4: the Hard rule already asked for figure + document in
+    # First-line figure + document asks: the Hard rule already asked for figure + document in
     # the first line. Live answers still opened on a narrative, a bare
     # figure, or "properly compacted". This guard writes the line the
     # operator scores, from the excerpts already on the turn.
@@ -8470,7 +8462,7 @@ def _build_sources_from_audit(
             _LOG.debug("doc name lookup failed for %s", doc_id, exc_info=True)
             return ""
 
-    # A3: a named contract/doc id must not appear beside another year's
+    # A named contract/doc id must not appear beside another year's
     # DD contract in Sources. Fail closed when nothing remaining matches.
     from app.core.rag.retriever import (
         extract_contract_doc_ids,
@@ -8481,7 +8473,7 @@ def _build_sources_from_audit(
         named_contracts = extract_contract_doc_ids(
             (audit_rec or {}).get("user_message_preview") or ""
         )
-    # Question-named ids stay authoritative (A3 / #443). When the question
+    # Question-named ids stay authoritative (#443). When the question
     # did not name a contract but the answer did, scope Sources to that id
     # so the panel cannot list DD-2022 next to prose that cites DD-2023.
     if not named_contracts:
@@ -8738,7 +8730,7 @@ def _build_exports_from_audit(
       - Schedule: when the turn ran `generate_wbs`, offer the cost-loaded
         workbook.         The full activity list is stripped from the tool result to
         keep the SSE payload small. When a conversation_id is known the
-        offer binds to that conversation's staged WBS (F-BAT-D H2);
+        offer binds to that conversation's staged WBS;
         otherwise it carries the brief params and the endpoint re-derives.
 
     Returns [] when the turn produced nothing exportable. Deduplicated.
@@ -9384,7 +9376,7 @@ def _compact_retrieval_message(content: str, budget: int) -> str:
 
         D1  "the specific Contract Data entry ... that names the individual
              Engineer's Representative is missing from what was returned"
-        E1  "The retrieved excerpts do not contain the Contract Price
+        delay damages  "The retrieved excerpts do not contain the Contract Price
              expressed in SAR"
 
     So: never slice an excerpt. Drop whole ones from the tail -- they are
@@ -10911,7 +10903,7 @@ class Agent:
                 "exports": exports,
             }
 
-        # F-BAT-D H2: export the conversation's staged WBS, not a new scaffold.
+        # Export the conversation's staged WBS, not a new scaffold.
         if message_wants_wbs_export(user_message):
             answer, exports = fulfill_wbs_export(
                 user_message, project_id, conversation_id, self.name,
@@ -11103,10 +11095,10 @@ class Agent:
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
         # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
         # the turn. Other deliverables still keep the LLM.
-        _f1_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
-        if _f1_fast:
+        _boq_wbs_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
+        if _boq_wbs_fast:
             answer = _postprocess_answer(
-                _f1_fast, _rag_sys_msg, messages,
+                _boq_wbs_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
@@ -11124,19 +11116,19 @@ class Agent:
                 "messages": messages + [{"role": "assistant", "content": answer}],
                 "sources": [],
             }
-        # Leftover E1 before B4/B5: rate × ACA is already in the
-        # excerpts / loaded CD volume. Skip the provider hop so a
+        # Delay-damages daily amount before the priced-BOQ path: rate × ACA
+        # is already in the excerpts / loaded CD volume. Skip the provider hop so a
         # priced-BOQ refuse cannot close the turn. Predispatch
         # deliverables keep the LLM.
-        _e1_fast = _should_short_circuit_delay_damages_daily(
+        _daily_damages_fast = _should_short_circuit_delay_damages_daily(
             _rag_sys_msg, messages,
             has_predispatch=_has_pre,
             project_id=project_id,
             audit_rec=_rag_audit,
         )
-        if _e1_fast:
+        if _daily_damages_fast:
             answer = _postprocess_answer(
-                _e1_fast, _rag_sys_msg, messages,
+                _daily_damages_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
@@ -11181,7 +11173,7 @@ class Agent:
                 "messages": messages + [{"role": "assistant", "content": answer}],
                 "sources": _build_sources_from_audit(_rag_audit, answer),
             }
-        # F-BAT-D H3 / B3: Part Summary total already in the excerpts.
+        # BOQ page Part Summary total already in the excerpts.
         _part_fast = _should_short_circuit_part_summary(
             _rag_sys_msg, messages,
             has_predispatch=_has_pre,
@@ -11307,7 +11299,7 @@ class Agent:
                 if force_synthesis and (dsml_tool_calls or recovered_tool_calls):
                     dsml_tool_calls = []
                     recovered_tool_calls = []
-                # UI-PHYS A5: once search is capped, do not re-execute the same
+                # Once search is capped, do not re-execute the same
                 # leaked search envelope for 12 iterations — synthesize instead.
                 if (
                     recovered_tool_calls
@@ -11366,7 +11358,7 @@ class Agent:
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     # An answer that names its own missing input gets ONE
-                    # bounded retrieval for it before it is final (F-E1-2).
+                    # bounded retrieval for it before it is final.
                     final_text, _fetched_for = await self._fetch_named_missing_input(
                         final_text, messages, user_message=user_message,
                         project_id=project_id, api_key=api_key, user_id=user_id,
@@ -11472,13 +11464,13 @@ class Agent:
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
-        e1_cap = _should_short_circuit_delay_damages_daily(
+        daily_damages_cap = _should_short_circuit_delay_damages_daily(
             _rag_sys_msg, messages, has_predispatch=False,
             project_id=project_id, audit_rec=_rag_audit,
         )
         priced_cap = _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages)
-        if e1_cap:
-            final_text = e1_cap
+        if daily_damages_cap:
+            final_text = daily_damages_cap
         elif priced_cap:
             final_text = priced_cap
         else:
@@ -11532,11 +11524,11 @@ class Agent:
     ) -> tuple[str, str | None]:
         """ONE retrieval for an input the answer named as missing (item 4).
 
-        F-E1-2: E1 answered "do not state the specific monetary rate per
-        calendar day" while E2, one question later in the same session and
-        the same corpus, retrieved the Accepted Contract Amount to complete
-        its arithmetic. E1 identified its missing input and did not go and
-        get it.
+        A delay-damages daily-amount ask answered "do not state the specific
+        monetary rate per calendar day" while the next question in the same
+        session and the same corpus retrieved the Accepted Contract Amount to
+        complete its arithmetic. The first answer identified its missing input
+        and did not go and get it.
 
         Bounded means bounded: one retrieval, one re-ask, and every failure
         path returns the ORIGINAL answer. A search always returns something,
@@ -11863,9 +11855,9 @@ class Agent:
             if name and name not in tools_invoked:
                 tools_invoked.append(name)
 
-        # H1: compile A1–A9 answers to a downloadable docx. Before the
-        # API-key check and before RAG (A1-A9 used to retrieve RFP
-        # attachments). No LLM required.
+        # Answer export: compile the numbered answers to a downloadable docx.
+        # Before the API-key check and before RAG (the numbered answer codes
+        # used to retrieve RFP attachments). No LLM required.
         if message_wants_answer_report(user_message) and answer_report_export_enabled():
             yield {"type": "start", "agent": self.name}
             answer, exports = _fulfill_answer_report(
@@ -12234,10 +12226,10 @@ class Agent:
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
         # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
         # the turn. Other deliverables still keep the LLM.
-        _f1_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
-        if _f1_fast:
+        _boq_wbs_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
+        if _boq_wbs_fast:
             answer = _postprocess_answer(
-                _f1_fast, _rag_sys_msg, messages,
+                _boq_wbs_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
@@ -12256,17 +12248,17 @@ class Agent:
                 "tools": list(tools_invoked),
             }
             return
-        # Leftover E1 before B4/B5: compose rate × ACA so a priced-BOQ
+        # Delay-damages daily amount before the priced-BOQ path: compose rate × ACA so a priced-BOQ
         # refuse cannot close the turn. Predispatch keeps the LLM.
-        _e1_fast = _should_short_circuit_delay_damages_daily(
+        _daily_damages_fast = _should_short_circuit_delay_damages_daily(
             _rag_sys_msg, messages,
             has_predispatch=_has_pre,
             project_id=project_id,
             audit_rec=_rag_audit,
         )
-        if _e1_fast:
+        if _daily_damages_fast:
             answer = _postprocess_answer(
-                _e1_fast, _rag_sys_msg, messages,
+                _daily_damages_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
@@ -12312,7 +12304,7 @@ class Agent:
                 "tools": list(tools_invoked),
             }
             return
-        # F-BAT-D H3 / B3: Part Summary total already in the excerpts.
+        # BOQ page Part Summary total already in the excerpts.
         _part_fast = _should_short_circuit_part_summary(
             _rag_sys_msg, messages,
             has_predispatch=_has_pre,
@@ -12468,7 +12460,7 @@ class Agent:
                         acc.append(_delta)
                         pending += _delta
                         raw_so_far = "".join(acc)
-                        # Leftover L4 / UI-PHYS A5: SYNTHESIS_STREAMING must not
+                        # Tool-call leak: SYNTHESIS_STREAMING must not
                         # flush XML tool markup or raw tool-call JSON to the client
                         # before sanitization (frontend keeps accumulated tokens).
                         if (
@@ -12578,7 +12570,7 @@ class Agent:
                             "platform's own context -- suppressing it and "
                             "forcing a no-tools retry"
                         )
-                    # Do not flush a held tool-leak tail — leftover L4 / A5
+                    # Do not flush a held tool-leak tail — tool-call leak
                     # streaming used to emit tool JSON/XML here before sanitize.
                     if pending and not tool_leak and not promise_hold:
                         seg = _sanitize_inline_paths(_sanitize_citation_labels(pending))
@@ -12801,7 +12793,7 @@ class Agent:
                 if force_synthesis and (dsml_tool_calls or recovered_tool_calls):
                     dsml_tool_calls = []
                     recovered_tool_calls = []
-                # UI-PHYS A5: once search is capped, do not re-execute the same
+                # Once search is capped, do not re-execute the same
                 # leaked search envelope — fall through to sanitize + synthesis.
                 if (
                     recovered_tool_calls
@@ -13034,13 +13026,13 @@ class Agent:
             messages.extend(pending_nudges)
 
         # Hit the cap without a final answer — force one more call with tools disabled.
-        e1_cap = _should_short_circuit_delay_damages_daily(
+        daily_damages_cap = _should_short_circuit_delay_damages_daily(
             _rag_sys_msg, messages, has_predispatch=False,
             project_id=project_id, audit_rec=_rag_audit,
         )
         priced_cap = _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages)
-        if e1_cap:
-            final_text = e1_cap
+        if daily_damages_cap:
+            final_text = daily_damages_cap
         elif priced_cap:
             final_text = priced_cap
         else:
@@ -13991,7 +13983,7 @@ class Agent:
             if isinstance(result, dict) and isinstance(result.get("activities"), list):
                 acts = result["activities"]
                 # Bind the full activity list to this conversation BEFORE
-                # stripping it from the model-facing payload (F-BAT-D H2).
+                # stripping it from the model-facing payload.
                 if conversation_id and result.get("status") == "success":
                     stage_conversation_wbs(conversation_id, result)
                 compact = dict(result)
@@ -15712,7 +15704,7 @@ def _summarize_result(result: Any) -> str:
     return str(result)[:200]
 
 
-# ── SYNC2 A2 / A3 helpers (tool-error prose + user-supplied cost arithmetic) ──
+# ── helpers: tool-error prose + user-supplied cost arithmetic ──
 
 _CG_PERCENT_RE = re.compile(
     rf"({_CG_NUM})\s*(?:%|percent\b|per\s*cent\b)",

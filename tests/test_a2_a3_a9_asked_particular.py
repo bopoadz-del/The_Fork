@@ -362,11 +362,6 @@ def _install(monkeypatch, *, semantic, rescue_hits, names, seeded=None):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 

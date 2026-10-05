@@ -3315,7 +3315,7 @@ def _purge_spurious_master_corpus_row() -> None:
 
 # How much of a document a single search may show. Both are read at call time
 # so they can be tuned without a code change, and both have a kill-switch
-# value that restores the pre-SET5 behaviour exactly (1 chunk, 50 words).
+# value that restores the earlier behaviour exactly (1 chunk, 50 words).
 _SEARCH_CHUNKS_PER_DOC_DEFAULT = 3
 _SEARCH_SNIPPET_WORDS_DEFAULT = 120
 
@@ -3451,8 +3451,8 @@ def _search_project_documents_sync(
     if not chunks:
         return []
 
-    # Keep the best FEW chunks per document, not just one. Live SET5 P1a was
-    # 1/6: five runs said "I don't have that" about a clause the sixth quoted
+    # Keep the best FEW chunks per document, not just one. A live foundation
+    # backfill compaction ask was 1/6: five runs said "I don't have that" about a clause the sixth quoted
     # in full, because the specification is nine PDFs of hundreds of chunks
     # each and this collapse let each file contribute exactly one. The
     # retriever already fetched ``over_fetch`` candidates and fifteen of the
@@ -3502,7 +3502,7 @@ def _search_project_documents_sync(
     for item in ranked:
         # Already bounded per kept chunk by _join_chunk_texts. Re-cutting to
         # 50 words here is what truncated a clause out of the one chunk that
-        # did survive the collapse (live P1a).
+        # did survive the collapse (live foundation backfill ask).
         snippet = item["chunk"]
         result_row = {
             "document_id": item["document_id"],

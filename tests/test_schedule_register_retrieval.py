@@ -199,9 +199,6 @@ def _install_g1_corpus(monkeypatch, *, register_in_semantic: bool):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_SCHEDULE_REGISTER_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_SPEC_TITLE_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -236,15 +233,6 @@ def test_g1_drops_volumes_when_the_register_is_already_in_the_pool(monkeypatch):
     assert REGISTER_ROW in chunks[0].text
     assert "Works Guarantee" not in blob
     assert all(c.doc_id == REG_DOC for c in chunks)
-
-
-def test_g1_kill_switch_restores_volume_first(monkeypatch):
-    ret = _install_g1_corpus(monkeypatch, register_in_semantic=False)
-    monkeypatch.setenv("RAG_SCHEDULE_REGISTER_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(G1_ASK, ACTIVE, k=5)
-    assert chunks
-    assert chunks[0].doc_id == VOL4_DOC
-    assert REGISTER_ROW not in " ".join(c.text for c in chunks)
 
 
 def test_a2_a3_c2_are_not_stolen_onto_the_schedule_rescue(monkeypatch):

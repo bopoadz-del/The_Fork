@@ -614,10 +614,9 @@ def test_graft_composes_from_loaded_cd_when_top_k_is_refuse_prone(monkeypatch):
     """Refuse-prone top-k + loaded 0.1% × excl-VAT ACA → SAR 1,754,504.46/day."""
     volume = "\n\n".join((RATE_ROW, NET_ACA_ROW))
     monkeypatch.setattr(
-        "app.core.rag.retriever.e1_compose_excerpts_from_loaded_cd_volume",
+        "app.core.rag.retriever.daily_damages_excerpts_from_loaded_cd_volume",
         lambda *a, **k: volume,
     )
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     rag = _sys(REFUSE_PRONE_8_8, REFUSE_PRONE_8_8, REFUSE_PRONE_8_8)
     msgs = [{"role": "user", "content": LIVE_E1}]
     assert compose_delay_damages_daily_from_excerpts(LIVE_E1, rag["content"]) is None
@@ -636,27 +635,10 @@ def test_graft_composes_from_loaded_cd_when_top_k_is_refuse_prone(monkeypatch):
     assert "263,175.67" not in posted
 
 
-def test_graft_loaded_cd_refuse_path_respects_daily_rescue_kill_switch(
-    monkeypatch,
-):
-    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
-    rag = _sys(REFUSE_PRONE_8_8, REFUSE_PRONE_8_8, REFUSE_PRONE_8_8)
-    msgs = [{"role": "user", "content": LIVE_E1}]
-    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
-    assert e1_compose_excerpts_from_loaded_cd_volume(
-        LIVE_E1, "p_master", rag_context=rag["content"],
-    ) == ""
-    grafted = _graft_composed_delay_damages_daily(
-        _CG_REFUSAL, rag, msgs, project_id="p_master",
-    )
-    assert grafted == _CG_REFUSAL
-    assert "1,754,504.46" not in grafted
-
-
 def test_graft_loaded_cd_still_rejects_015_lookalike(monkeypatch):
     """Volume last-chance must keep #536 lookalike rejection."""
     monkeypatch.setattr(
-        "app.core.rag.retriever.e1_compose_excerpts_from_loaded_cd_volume",
+        "app.core.rag.retriever.daily_damages_excerpts_from_loaded_cd_volume",
         lambda *a, **k: "\n\n".join((COC_015_WINDOW, NET_ACA_ROW)),
     )
     rag = _sys(REFUSE_PRONE_8_8, REFUSE_PRONE_8_8, REFUSE_PRONE_8_8)
@@ -745,7 +727,6 @@ def test_graft_composes_when_operands_anywhere_in_loaded_cd_volume(monkeypatch):
     all_chunks = list(dummies) + list(windows) + [rate, aca]
     store = _ignore_all_rows_store(all_chunks)
     monkeypatch.setattr("app.core.rag.retriever.get_lexical_store", lambda: store)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     rag = _live_refuse_sys((REFUSE_PRONE_8_8,) * 3, doc_id=GC_DOC)
     msgs = [{"role": "user", "content": LIVE_E1}]
     assert compose_delay_damages_daily_from_excerpts(LIVE_E1, rag["content"]) is None
@@ -803,7 +784,6 @@ def test_graft_uses_audit_chunk_project_id_when_ui_pid_misses(monkeypatch):
     )
     store = _ignore_all_rows_store(list(windows) + [rate, aca], owner_pid=source)
     monkeypatch.setattr("app.core.rag.retriever.get_lexical_store", lambda: store)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     rag = _live_refuse_sys((REFUSE_PRONE_8_8,) * 3, doc_id=GC_DOC)
     msgs = [{"role": "user", "content": LIVE_E1}]
     posted = _postprocess_answer(
@@ -863,7 +843,6 @@ def test_graft_composes_when_store_caps_k_and_top_k_is_refuse_prone(monkeypatch)
         "app.core.rag.retriever.get_lexical_store",
         lambda: _capped_k_store(all_chunks),
     )
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     rag = _live_refuse_sys((REFUSE_PRONE_8_8,) * 3, doc_id=GC_DOC)
     msgs = [{"role": "user", "content": LIVE_E1}]
     assert compose_delay_damages_daily_from_excerpts(LIVE_E1, rag["content"]) is None
@@ -926,7 +905,6 @@ def test_graft_replaces_015_when_store_caps_k(monkeypatch):
         "app.core.rag.retriever.get_lexical_store",
         lambda: _capped_k_store(all_chunks),
     )
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     rag = _live_refuse_sys((COC_015_WITH_ACA,) * 3, doc_id=GC_DOC)
     msgs = [{"role": "user", "content": LIVE_E1}]
     posted = _postprocess_answer(
