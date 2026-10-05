@@ -20,10 +20,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, delete, func, or_, select, text as sqla_text
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError
 
 from app.core.db import SessionLocal, engine, get_database_url
-from app.core.ingest_status import EXTRACTOR_VERSION, INDEXED, TOMBSTONED
+from app.core.ingest_status import EXTRACTOR_VERSION, INDEXED, NO_CHUNK_STATUSES, TOMBSTONED
 from app.core.models import Document, IngestionJob, Project, ProjectFact
 
 import logging
@@ -1357,7 +1357,7 @@ def set_document_file_path(doc_id: str, file_path: str) -> Optional[Dict[str, An
 
 
 def tombstone_document(doc_id: str) -> Optional[Dict[str, Any]]:
-    """Mark a Drive-deleted row hidden. Never deletes the row or its chunks.
+    """Mark a Drive-deleted row hidden and drop its chunks. Keeps the row.
 
     Idempotent: an already-TOMBSTONED row is returned unchanged.
     """
@@ -1373,6 +1373,8 @@ def tombstone_document(doc_id: str) -> Optional[Dict[str, Any]]:
                 document.ingest_status = TOMBSTONED
                 document.ingest_status_reason = "drive_deleted"
                 document.retrieval_visible = False
+                delete_document_chunks(session, doc_id)
+                document.chunk_count = 0
                 session.commit()
     return get_document(doc_id)
 
@@ -1565,11 +1567,37 @@ def stamp_document_index(
             document.chunk_count = int(chunk_count)
             document.ingest_status = ingest_status
             document.ingest_status_reason = ingest_status_reason
+            if ingest_status in NO_CHUNK_STATUSES:
+                delete_document_chunks(session, doc_id)
+                document.chunk_count = 0
             if stamp_extractor_version:
                 document.extractor_version = version
             document.last_verified_at = _now()
             session.commit()
     return get_document(doc_id)
+
+
+def delete_document_chunks(session, doc_id: str) -> int:
+    """Delete one document's chunks inside the caller's session/transaction.
+
+    Covers the active namespace table and the retired legacy table when they
+    exist. A document that leaves the indexed statuses, or is deleted, loses
+    its chunks in the same commit as the status change -- never "stale chunks
+    of a failed or tombstoned document" still retrievable.
+    """
+    from sqlalchemy import inspect as _inspect
+
+    from app.core.models import rag_chunk_table_name
+    from app.core.rag.vector_store import _rag_vector_namespace
+
+    removed = 0
+    existing = set(_inspect(session.get_bind()).get_table_names())
+    for table in {rag_chunk_table_name(_rag_vector_namespace()), rag_chunk_table_name("")}:
+        if table in existing:
+            removed += int(session.execute(
+                sqla_text(f"DELETE FROM {table} WHERE doc_id = :doc_id"), {"doc_id": doc_id},
+            ).rowcount or 0)
+    return removed
 
 
 def backfill_chunk_counts_from_table(
@@ -1964,46 +1992,15 @@ def delete_document(doc_id: str) -> Optional[Dict[str, Any]]:
     doc = get_document(doc_id)
     if not doc:
         return None
-    project_id = doc.get("project_id")
     with _lock:
         with SessionLocal() as session:
             document = session.get(Document, doc_id)
             if document:
+                # Row and chunks (active namespace and the retired legacy
+                # table) go in ONE transaction. No second connection: a vector
+                # store opened here would wait on this transaction's locks.
+                delete_document_chunks(session, doc_id)
                 session.delete(document)
-                if project_id:
-                    # Delete RAG chunks from the active namespace. The vector
-                    # store knows which namespace (e.g. v2) is current; the
-                    # static RagChunk model only covers the legacy ``chunks``
-                    # table and would leave chunks in a namespaced table behind.
-                    try:
-                        from app.core.rag import retriever as _rag
-                        from app.core.rag import vector_store as _vs
-
-                        if _rag.available():
-                            store = _vs.get_store()
-                            store.delete_doc(project_id, doc_id)
-                        else:
-                            # RAG stack not available (fresh test DB, missing
-                            # model, etc.) — legacy table cleanup, best effort.
-                            from app.core.models import RagChunk  # local: avoid circular
-                            try:
-                                session.execute(
-                                    delete(RagChunk).where(
-                                        RagChunk.project_id == project_id,
-                                        RagChunk.doc_id == doc_id,
-                                    )
-                                )
-                            except OperationalError as exc:
-                                if "no such table" not in str(exc).lower():
-                                    raise
-                    except Exception:
-                        # Document row deletion must never be blocked by RAG
-                        # cleanup; the chunks will become unreachable once the
-                        # document row is gone anyway.
-                        logger.warning(
-                            "swallowed %s in delete_document() — continuing",
-                            "Exception", exc_info=True,
-                        )
                 session.commit()
     return doc
 
