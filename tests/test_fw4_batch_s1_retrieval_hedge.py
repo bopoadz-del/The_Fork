@@ -39,7 +39,6 @@ def _corpus(tmp_path, monkeypatch):
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
     monkeypatch.delenv("RAG_K", raising=False)
     monkeypatch.delenv("MAX_RAG_TOKENS", raising=False)
-    monkeypatch.delenv("RETRIEVAL_SPEC_DEFERRAL", raising=False)
     monkeypatch.delenv("FIRST_LINE_HARD_RULE", raising=False)
     from app.core.rag import embeddings as emb
     from app.core.rag import vector_store as vs

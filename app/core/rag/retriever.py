@@ -127,7 +127,7 @@ def _is_misspelled_word(token: str) -> bool:
 # number — burying the real answer and inducing a fabricated figure lifted from
 # the number-soup (2026-07-14 live cost-query incident). Unit atoms are short
 # symbols; a trailing exponent digit (m2, m3, cm2, mm2) is stripped before the
-# vocabulary check. Reference codes (IP-INF-054, PRC-501, D999.46) are NOT unit
+# vocabulary check. Reference codes (AB-CDE-012, PRC-123, X123.45) are NOT unit
 # atoms, so they survive untouched.
 _UNIT_ATOMS = frozenset({
     "kg", "g", "mg", "t", "ton", "tonne", "lb", "kn", "mn", "n",
@@ -196,9 +196,9 @@ def extract_query_identifiers(query: str) -> List[str]:
 
     Detects, without hardcoding any specific value:
       * quoted phrases (preserved as exact-match candidates)
-      * code-shaped tokens such as PRC-501, IP-INF-054-0000-...
+      * code-shaped tokens such as PRC-123, AB-CDE-012-0000-...
       * labeled references such as "VO Ref 31", "RFI 42", "Clause 13.1"
-      * alphanumeric tokens that clearly contain a digit (e.g. D999.46)
+      * alphanumeric tokens that clearly contain a digit (e.g. X123.45)
 
     Returns a deduplicated list of lowercase identifier strings. The list
     is empty for queries that contain no identifier-like tokens.
@@ -340,9 +340,9 @@ def _identifier_context_overlap(terms: List[str], text: str) -> float:
     return matched / len(terms)
 
 
-# Tender / executed-contract numbers: PREFIX-YEAR-SEQ (DD-2023-118, FX-2044-001).
-# Drawing codes (IP-INF-054-...) and quantities do not match this shape.
-# Underscore-glued filenames ("DD-2023-118_Vol 1.pdf") must still match, so
+# Tender / executed-contract numbers: PREFIX-YEAR-SEQ (AB-2031-007, FX-2044-001).
+# Drawing codes (AB-CDE-012-...) and quantities do not match this shape.
+# Underscore-glued filenames ("AB-2031-007_Vol 1.pdf") must still match, so
 # this is not a \b word-boundary pattern (_ is a word character).
 _CONTRACT_DOC_ID_RE = re.compile(
     r"(?<![A-Za-z0-9])([A-Za-z]{2,}-\d{4}-\d+)(?![A-Za-z0-9])"
@@ -395,8 +395,8 @@ def _contract_id_recency(cid: str) -> Tuple[int, int]:
     """Sort key for PREFIX-YEAR-SEQ: newer year, then higher sequence.
 
     Unnamed Master Corpus questions can retrieve a filled Time for
-    Completion from more than one package (DD-2022-175 demolition at
-    548 days, DD-2023-118 infrastructure at 852). First-in-rank used to
+    Completion from more than one package (an earlier package and a
+    later executed one, each with its own figure). First-in-rank used to
     lock the pool to whichever cosine arrived first. The later executed
     package owns the unnamed ask; the earlier one stays reachable by
     naming its id (#443).
@@ -426,9 +426,9 @@ def elect_answer_bearing_contract(
     does not merely outrank the rest — it DELETES the other contract from the
     result set. On the live Master Corpus that is decided by whichever chunk
     happens to sort first, and both outcomes were measured on one corpus in
-    one session: the ACA and Defects Notification Period asks passed because a DD-2023-118 Contract Data row
-    sorted first, while the delay-damages rate and Engineer asks failed because a DD-2022-175 Conditions of
-    Contract clause did — and once it had, the DD-2023-118 row holding the
+    one session: the ACA and Defects Notification Period asks passed because the asked contract's
+    Contract Data row sorted first, while the delay-damages rate and Engineer asks failed because
+    another contract's Conditions clause did — and once it had, the row holding the
     answer could not appear at any rank.
 
     A General Conditions clause or a defined-term glossary entry is not an
@@ -478,11 +478,13 @@ def elect_answer_bearing_contract(
          lambda _name, text: chunk_states_part_summary_total(
              text, extract_asked_boq_page_refs(query),
          )),
-        # Set3 C3: "on what date was the demolition bill issued, and under
-        # which RFP number?" A Date:/RFP No. stamp is the answer. The
-        # demolition-titled earlier pack must not lock the pool.
-        (query_asks_for_bill_issue_identity,
-         lambda _name, text: chunk_states_bill_issue_stamp(text)),
+        # "On what date was <named document> issued, and under which <label>
+        # number?" An issue stamp is the answer. An earlier contract whose
+        # file names repeat the title must not lock the pool.
+        (query_asks_for_issue_identity,
+         lambda _name, text: chunk_states_issue_stamp(
+             text, asked_reference_labels(query),
+         )),
     ]
     active = [is_answer for asks, is_answer in kinds if asks(query)]
     if not active:
@@ -507,7 +509,7 @@ def elect_answer_bearing_contract(
 class _ContractScope:
     """Drop wrong-contract chunks before top-K selection.
 
-    Named query (DD-2023-118 in the question): keep only that id's files;
+    Named query (a PREFIX-YEAR-SEQ id in the question): keep only that id's files;
     if none remain the result is empty (fail closed — do not fill with
     another year's DD contract).
 
@@ -541,6 +543,7 @@ class _ContractScope:
         # rows must not occupy the top-k.
         self._delay_rate_in_pool = False
         self._engineer_identity_in_pool = False
+        self._party_role = ""
         self._aca_incl_vat_in_pool = False
         self._tfc_in_pool = False
         # Defects Notification Period ask: PSA / CPM TOC
@@ -568,21 +571,18 @@ class _ContractScope:
         # page total when it is in the pool.
         self._part_summary_refs: List[str] = []
         self._part_summary_in_pool = False
-        # Specification precedence list: Sub-Clause 1.5.1(d) intro ends "as follows";
-        # the precedence list is the next same-doc chunk.
-        self._spec_precedence_list_in_pool = False
         docs: Optional[List[Tuple[str, str]]] = (
             list(ranked_docs) if ranked_docs is not None else None
         )
         if docs is not None:
-            if query_asks_which_specification_document(
+            if query_asks_which_document(
                 self.query,
             ):
                 self._title_phrases = extract_document_title_phrases(self.query)
                 if self._title_phrases:
                     self._spec_identity_in_pool = any(
-                        chunk_states_spec_document_identity(text, self._title_phrases)
-                        or spec_title_filename_bonus(name, self._title_phrases) > 0
+                        chunk_states_document_register_line(text, self._title_phrases)
+                        or title_filename_bonus(name, self._title_phrases) > 0
                         for name, text in docs
                     )
             if (
@@ -598,11 +598,10 @@ class _ContractScope:
                 self._delay_rate_in_pool = any(
                     chunk_states_delay_damages_rate(text) for _n, text in docs
                 )
-            if (
-                query_asks_who_the_engineer_is(self.query)
-            ):
+            self._party_role = asked_party_role(self.query)
+            if self._party_role:
                 self._engineer_identity_in_pool = any(
-                    chunk_states_engineer_identity(text) for _n, text in docs
+                    chunk_names_party(text, self._party_role) for _n, text in docs
                 )
             if (
                 query_asks_for_aca_including_vat(self.query)
@@ -713,19 +712,13 @@ class _ContractScope:
                         )
                         for _n, text in docs
                     )
-            if (
-                query_asks_for_spec_precedence_list(self.query)
-            ):
-                self._spec_precedence_list_in_pool = any(
-                    chunk_states_spec_precedence_list(text) for _n, text in docs
-                )
         if not self.named and docs is not None:
             self.winning = elect_answer_bearing_contract(self.query, docs)
 
     def allow(self, filename: str, chunk_text: str = "") -> bool:
         # Named PREFIX-YEAR-SEQ (#443) is fail-closed onto that year.
         # The rate / Engineer fences are unnamed-only — a question that
-        # names DD-2022-175 must still see that year's chunks.
+        # names an earlier contract id must still see that year's chunks.
         daily_damages_ask = query_asks_delay_damages_daily_amount(self.query)
         if self._priced_item_in_pool and not daily_damages_ask:
             # A priced Part Nr. 3 line beats Rate Only /
@@ -747,9 +740,6 @@ class _ContractScope:
                 chunk_text, self._part_summary_refs,
             ):
                 return False
-        if self._spec_precedence_list_in_pool:
-            if not chunk_states_spec_precedence_list(chunk_text):
-                return False
         if not self.named:
             if self._delay_rate_in_pool:
                 if not chunk_states_delay_damages_rate(chunk_text):
@@ -764,7 +754,7 @@ class _ContractScope:
                     ):
                         return False
             if self._engineer_identity_in_pool:
-                if not chunk_states_engineer_identity(chunk_text):
+                if not chunk_names_party(chunk_text, self._party_role):
                     return False
             if self._aca_incl_vat_in_pool:
                 if not chunk_states_aca_including_vat(chunk_text):
@@ -779,8 +769,8 @@ class _ContractScope:
                 if not _chunk_keeps_for_daily_damages(filename, chunk_text):
                     return False
         if self._spec_identity_in_pool:
-            titled = spec_title_filename_bonus(filename, self._title_phrases) > 0
-            identity = chunk_states_spec_document_identity(
+            titled = title_filename_bonus(filename, self._title_phrases) > 0
+            identity = chunk_states_document_register_line(
                 chunk_text, self._title_phrases,
             )
             if not (titled or identity):
@@ -957,21 +947,26 @@ def _general_knowledge_project_ids() -> List[str]:
     """Project ids whose chunks count as cross-project general knowledge —
     queried alongside the active project on every retrieval.
 
-    Configured via ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` (comma-separated).
-    Defaults to ``training_material`` which holds the 8 procedure +
-    scanned-reference folders migrated in PR #93. Set to the empty
-    string to disable the merge (the retriever then queries the active
-    project only — the pre-PR-107 behavior).
+    Configured via ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` (comma-separated);
+    the default lives with the project registry
+    (``app.core.projects.DEFAULT_GENERAL_KNOWLEDGE_PROJECTS``), the one place
+    every reader of this variable takes it from. Set to the empty string to
+    disable the merge (the retriever then queries the active project only).
     """
-    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
+    try:
+        from app.core.projects import DEFAULT_GENERAL_KNOWLEDGE_PROJECTS as default
+    except Exception:  # noqa: BLE001 — registry unavailable: no default merge
+        logger.debug("general-knowledge default unavailable", exc_info=True)
+        default = ""
+    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", default)
     ids = [p.strip() for p in raw.split(",") if p.strip()]
     # STEP 0 structural isolation: the master-corpus / client fallback corpus
     # is NEVER part of the always-on GK merge, even when a stale env still lists
-    # it (prod once had drive_archive + client_infra_pack_1 in this var, silently
-    # merging the whole the client project client corpus into every OTHER project's results —
-    # the ha_long -> the client project leak). It may only surface as the disclosed empty/thin
-    # fallback below. This makes the client corpus structurally unreachable from
-    # another project's populated query regardless of score.
+    # it (prod once listed client corpora in this var, silently merging a whole
+    # client corpus into every OTHER project's results). It may only surface as
+    # the disclosed empty/thin fallback below. This makes the client corpus
+    # structurally unreachable from another project's populated query
+    # regardless of score.
     fb = _master_corpus_fallback_id()
     if fb:
         ids = [p for p in ids if p != fb]
@@ -1222,165 +1217,19 @@ def cooccurrence_pair_phrases(terms: List[str]) -> List[str]:
     return [" ".join(pair) for pair in itertools.combinations(stems, 2)]
 
 
-# ── foundation-backfill degree ─────────────────────────────────────────
+# ── letter / named-party filename recall ──────────────────────────────────
 #
-# A foundation backfill compaction degree ask: "Per the project specification, to what degree must
-# structural backfill under foundations be compacted, and by which test?"
-# The specification states 98% of maximum dry density, Modified Proctor,
-# near-optimum moisture. Retrieval returned duct backfilling (50 mm sand,
-# BS 1377 Part 9) and the MOT embankment test instead.
+# "Who signed the letter about <site / party>" retrieved only a long
+# miscellaneous-documents volume that mentions the place. The letter was
+# indexed, and its file name carries "Letter" plus the site and party the
+# question names. The term rescue skipped the out-of-pool fetch because the
+# volume already mentioned the place in-chunk.
 #
-# Term rescue did not correct it. The rescue stands down once ANY pair of
-# query stems co-occurs in the top-k, and "compact" + "backfill" co-occur
-# in the duct chunk. The degree clause, outside that pool, is never fetched.
-# On 7c0b255 the tool path also searches the operator's words, so that
-# distractor list is merged into every run and crowds out a model query
-# that had reached the clause.
+# A letter whose indexed text ends without a signatory states no name; do
+# not invent one. Re-extracting a sparse letter is an ingest job, not a
+# ranking delta.
 #
-# This rescue asks a narrower question: does the top-k already state a
-# backfill compaction degree (a percent of MDD, or Modified Proctor /
-# ASTM D1557)? Generic "properly compacted" does not count. When it does
-# not, chunks that do state the degree are fetched and lifted. Nothing is
-# invented when the corpus has no such chunk. A degree clause already in
-# the top-k is left alone, score included.
-#
-# Below IDENTIFIER_BONUS_MAX so an exact reference code still outranks it.
-_FOUNDATION_BACKFILL_ASK_RE = re.compile(
-    r"(?i)\bstructural\s+backfill\b"
-    r"|\bbackfill\b(?:\s+\w+){0,5}\s+(?:under|beneath)\s+foundations?\b",
-)
-_FOUNDATION_BACKFILL_TOPIC_RE = re.compile(
-    r"(?i)\b(?:compact\w*|degree|proctor|density|mdd|test)\b",
-)
-_BACKFILL_WORD_RE = re.compile(r"(?i)\bbackfill")
-_BACKFILL_DEGREE_RE = re.compile(
-    r"(?i)(?:"
-    r"\b\d+(?:\.\d+)?\s*(?:%|percent\b)"
-    r"(?:\s+of)?(?:\s+the)?\s+(?:maximum\s+dry\s+density|\bmdd\b)"
-    r"|modified\s+proctor"
-    r"|astm\s*d\s*1557"
-    r")",
-)
-_STRUCTURAL_BACKFILL_RE = re.compile(
-    r"(?i)\bstructural\s+backfill\b"
-    r"|\bbackfill\s+(?:under|beneath)\s+foundations?\b"
-    r"|\bfoundation\s+backfill\b",
-)
-# AND-matched by identifier_search. Kept specific so a concrete clause that
-# merely says "maximum dry density" is not the whole candidate list.
-_FOUNDATION_BACKFILL_PHRASES = (
-    "structural backfill",
-    "foundation backfill",
-    "backfill modified proctor",
-    "backfill maximum dry density",
-    "backfill mdd",
-)
-_FOUNDATION_BACKFILL_DEGREE_BONUS = 1.15
-_FOUNDATION_BACKFILL_STRUCTURAL_EXTRA = 0.25
-
-
-def query_asks_foundation_backfill_degree(query: str) -> bool:
-    """True when the question asks how structural / foundation backfill is compacted."""
-    text = query or ""
-    return bool(
-        _FOUNDATION_BACKFILL_ASK_RE.search(text)
-        and _FOUNDATION_BACKFILL_TOPIC_RE.search(text)
-    )
-
-
-def chunk_states_backfill_compaction_degree(text: str) -> bool:
-    """True when ``text`` states a backfill compaction degree or Proctor test.
-
-    Duct sand cover, "properly compacted", and BS 1377 / MOT method lines
-    do not. They name neither a percent of maximum dry density nor
-    Modified Proctor.
-    """
-    body = text or ""
-    return bool(_BACKFILL_WORD_RE.search(body) and _BACKFILL_DEGREE_RE.search(body))
-
-
-def foundation_backfill_degree_bonus(text: str) -> float:
-    """Lift for a chunk that states the degree. 0 when it does not.
-
-    A chunk that also says the backfill is structural or under foundations
-    ranks above a generic backfill-density sentence.
-    """
-    if not chunk_states_backfill_compaction_degree(text):
-        return 0.0
-    bonus = _FOUNDATION_BACKFILL_DEGREE_BONUS
-    if _STRUCTURAL_BACKFILL_RE.search(text or ""):
-        bonus += _FOUNDATION_BACKFILL_STRUCTURAL_EXTRA
-    return bonus
-
-
-def _rescue_foundation_backfill_degree(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    k: int,
-) -> None:
-    """Pull the backfill degree clause into ``fused`` when the top-k lacks it.
-
-    Project corpus only: a general-knowledge note must not supply a figure
-    the project's specification does not. Failures leave the semantic pool
-    standing.
-    """
-    if not query_asks_foundation_backfill_degree(query):
-        return
-    ranked = sorted(
-        fused.values(), key=lambda entry: -((entry[1] or 0.0) + (entry[2] or 0.0)),
-    )
-    if any(
-        chunk_states_backfill_compaction_degree(chunk.text or "")
-        for chunk, _sem, _bonus in ranked[: max(k, 1)]
-    ):
-        return
-
-    def _lift(chunk_id: str, chunk, sem: float, bonus: float) -> None:
-        add = foundation_backfill_degree_bonus(chunk.text or "")
-        if add <= 0.0:
-            return
-        fused[chunk_id] = (chunk, sem, max(bonus, add))
-
-    for chunk_id, (chunk, sem, bonus) in list(fused.items()):
-        _lift(chunk_id, chunk, sem, bonus)
-
-    try:
-        hits = store.identifier_search(
-            project_id, list(_FOUNDATION_BACKFILL_PHRASES), k=max(k * 8, 40),
-        )
-    except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-        logger.warning("foundation-backfill degree rescue failed: %s", exc)
-        return
-    for chunk in hits or []:
-        prev = fused.get(chunk.chunk_id)
-        if prev is None:
-            _lift(chunk.chunk_id, chunk, 0.0, 0.0)
-        else:
-            _lift(chunk.chunk_id, prev[0], prev[1], prev[2])
-
-
-# ── letter / named-party filename rescue (live D1) ──────────────────────────
-#
-# Live Master Corpus D1 (SHA 567147a): "who signed the UBCC Concrete
-# Batching Plant at Wadi Safar letter" retrieved only Volume 5 Other
-# Documents (geotech / plot agreement / weekly reports). The letter was
-# already in Neon (ids 8199b14b, b5033ec2) — its filename carries Letter +
-# UBCC + Batching Plant + wadi Safar. Term rescue skipped the out-of-pool
-# fetch because Volume 5 already mentioned the place-name in-chunk.
-#
-# Re-score on tip d7a4ca8 (2026-09-05, Neon project the-fork): retrieval
-# now finds b5033ec2, but the indexed text is corpus-blocked. 8199b14b is
-# MISSING from ``documents`` (fabricated eval fixture id — FORK_EVAL
-# citation-grounding failure: citations must resolve against documents
-# before render). b5033ec2 is TEXT_SPARSE
-# (``single_window:terminal``, one 1168-char chunk) and ends
-# ``Yours sincerely, ,`` — no signatory name, role, or company. Do not
-# invent a name that is not in the chunk. Re-extract / re-ingest of the
-# richer id is an ingest job, not a ranking delta.
-#
-# Filename overlap is the discriminator Volume 5 cannot fake: its name is
+# Filename overlap is the discriminator the volume cannot fake: its name is
 # a contract volume, not a letter.
 _LETTER_OR_SIGNATORY_RE = re.compile(
     r"(?i)\b(?:"
@@ -1460,11 +1309,10 @@ def filename_match_bonus(
 
 # ── governing-source preference ──────────────────────────────────────────
 #
-# Asked "PER THE PROJECT SPECIFICATION for
-# DD-2023-118, to what degree must structural backfill under foundations be
-# compacted?", the answer came from an MTS & Risk Assessment for Site Office
-# Mobilization (95% MDD) instead of the specification (98%, modified Proctor).
-# Same for the HSE lighting levels. The question named the governing document
+# A question that names its governing document ("per the project
+# specification, what compaction ...") was answered from a site-office
+# mobilisation method statement stating its own lesser figure instead of the
+# specification. The question named the governing document
 # class and ranking ignored it: every document was equally eligible.
 #
 # The classes below are the ones a construction question actually names. Each
@@ -1577,21 +1425,29 @@ _COVER_ASK_RE = re.compile(
 _COMPACTION_ASK_RE = re.compile(
     r"(?i)\b(?:compact\w*|sub-?grades?|cbr|dry\s+density)\b"
 )
+# Illuminance: lux / lx, or a foot-candle column. "lighting design" or a
+# "light fitting" is not an asked level; an illumination / lux / lighting
+# level is.
+_ILLUMINANCE_ASK_RE = re.compile(
+    r"(?i)\b(?:illuminat\w*|illuminance|lux|lighting\s+levels?|"
+    r"light(?:ing)?\s+intensit\w*|foot[-\s]*candles?)\b"
+)
+# A lux figure: "50 lux", "300lx", or a table whose header carries a lux /
+# foot-candle column and whose rows carry numeric cells.
+_LUX_FIGURE_RE = re.compile(r"(?i)\b\d+(?:\.\d+)?\s*(?:lux|lx)\b")
+_LUX_COLUMN_RE = re.compile(r"(?i)\|[^|\n]{0,40}\b(?:lux|lx|foot[-\s]*candles?)\b[^|\n]{0,20}\|")
+_NUMERIC_CELL_RE = re.compile(r"\|\s*\d+(?:\.\d+)?\s*(?=\|)")
 _COVER_WORD_RE = re.compile(r"(?i)\bcovers?\b")
 _MM_FIGURE_RE = re.compile(r"(?i)\b\d+(?:\.\d+)?\s*mm\b")
 # A cover *length* is a millimetre next to the cover phrase. "200 mm"
 # bollard bands and "600 mm" floor panels in the same chunk as the word
 # "cover" are not that length. Window covers "nominal cover should be 50mm".
-_COVER_PHRASE_RE = re.compile(
-    r"(?i)(?:nominal\s+cover|concrete\s+cover|"
-    r"cover\s+to\s+(?:the\s+)?reinforcement)"
-)
 _COVER_PHRASE_WINDOW = 64
 # Filename lift kept when a specification chunk actually states the asked
 # figure. Otherwise the +1.2 class bonus is capped so it cannot stack on
 # an unrelated millimetre and outrank the clause that states the length.
 _SOURCE_CLASS_BONUS_CAP = 0.25
-_COVER_LEXICAL_TERMS = "nominal cover cast against soil casted against blinding"
+_COVER_LEXICAL_TERMS = "nominal cover cast against soil cast against blinding"
 _MDD_RE = re.compile(r"(?i)\b(?:maximum\s+dry\s+density|mdd)\b")
 _PERCENT_FIGURE_RE = re.compile(
     r"(?i)(?:\d+(?:\.\d+)?\s*%|\b(?:twenty|thirty|forty|fifty|sixty|"
@@ -1632,6 +1488,8 @@ def asked_quantity_kinds(query: str) -> frozenset:
         kinds.add("length_mm")
     if _COMPACTION_ASK_RE.search(text):
         kinds.add("compaction")
+    if _ILLUMINANCE_ASK_RE.search(text):
+        kinds.add("illuminance")
     return frozenset(kinds)
 
 
@@ -1646,13 +1504,15 @@ def numeric_requirement_expansion(query: str) -> str:
     if "length_mm" in kinds:
         parts.append("nominal cover millimetre millimeter blinding")
         if spec_boost_guard_enabled():
-            # The clause says "nominal cover" and "casted against soil",
-            # not "minimum cover to reinforcement".
-            parts.append("cast against soil casted against blinding")
+            # A cover clause names the condition ("cast against soil /
+            # blinding"), not "minimum cover to reinforcement".
+            parts.append("cast against soil blinding")
     if "compaction" in kinds:
         parts.append(
             "compacted sub-grade subgrade embankment maximum dry density CBR percent"
         )
+    if "illuminance" in kinds:
+        parts.append("illumination lux lighting level foot candle")
     return " ".join(parts)
 
 
@@ -1660,18 +1520,6 @@ def _spans_within(text: str, left: re.Pattern, right: re.Pattern, window: int) -
     a = [m.start() for m in left.finditer(text or "")]
     b = [m.start() for m in right.finditer(text or "")]
     return any(abs(x - y) <= window for x in a for y in b)
-
-
-def _mm_near_cover_phrase(text: str) -> bool:
-    """True when a millimetre figure sits next to a cover-length phrase."""
-    blob = text or ""
-    phrases = [m.start() for m in _COVER_PHRASE_RE.finditer(blob)]
-    figures = [m.start() for m in _MM_FIGURE_RE.finditer(blob)]
-    return any(
-        abs(phrase - figure) <= _COVER_PHRASE_WINDOW
-        for phrase in phrases
-        for figure in figures
-    )
 
 
 def chunk_states_cover_length(text: str) -> bool:
@@ -1685,9 +1533,7 @@ def chunk_states_cover_length(text: str) -> bool:
     """
     blob = text or ""
     if spec_boost_guard_enabled():
-        if spec_deferral_enabled():
-            return _cover_clause_states_length(blob)
-        return _mm_near_cover_phrase(blob)
+        return _cover_clause_states_length(blob)
     return bool(_COVER_WORD_RE.search(blob) and _MM_FIGURE_RE.search(blob))
 
 
@@ -1704,11 +1550,26 @@ def chunk_states_compaction_figure(text: str) -> bool:
     return False
 
 
+def chunk_states_illuminance(text: str) -> bool:
+    """True when the chunk states a lux figure.
+
+    Either a number with its unit ("50 lux"), or a table whose header has a
+    lux / foot-candle column and whose rows carry numeric cells. Prose that
+    names lighting and states no figure does not count.
+    """
+    blob = text or ""
+    if _LUX_FIGURE_RE.search(blob):
+        return True
+    return bool(_LUX_COLUMN_RE.search(blob) and _NUMERIC_CELL_RE.search(blob))
+
+
 def chunk_states_asked_quantity(text: str, kinds: frozenset) -> bool:
     """True when ``text`` states a number for one of ``kinds``."""
     if "length_mm" in kinds and chunk_states_cover_length(text):
         return True
     if "compaction" in kinds and chunk_states_compaction_figure(text):
+        return True
+    if "illuminance" in kinds and chunk_states_illuminance(text):
         return True
     return False
 
@@ -1748,10 +1609,22 @@ def compaction_subject_agrees(query: str, text: str) -> bool:
 
 
 def chunk_matches_quantity_question(query: str, text: str, kinds: frozenset) -> bool:
-    """Figure present, and — for compaction — about the asked element."""
+    """Figure present, and about the asked subject.
+
+    Compaction keeps its element groups (a road sub-grade figure does not
+    answer a backfill question). An illumination table lists levels for many
+    subjects at once, so a lux figure counts only when the chunk also names
+    the question's subject.
+    """
     if not chunk_states_asked_quantity(text, kinds):
         return False
     if "compaction" in kinds and not compaction_subject_agrees(query, text):
+        return False
+    if (
+        "illuminance" in kinds
+        and not chunk_states_asked_quantity(text, kinds - {"illuminance"})
+        and not chunk_names_quantity_subject(text, quantity_subject_terms(query))
+    ):
         return False
     return True
 
@@ -1806,7 +1679,7 @@ def _cap_specification_class_bonus(
             continue
         if chunk_matches_quantity_question(query, chunk.text or "", kinds):
             continue
-        if spec_deferral_enabled() and chunk_defers_cover_to_drawings(chunk.text or ""):
+        if chunk_points_quantity_elsewhere(chunk.text or "", kinds):
             continue
         if not _loose_cover_and_millimetre(chunk.text or ""):
             continue
@@ -1816,33 +1689,32 @@ def _cap_specification_class_bonus(
         scored[i] = (adjusted, chunk)
 
 
-# ── specification defers the asked cover to the drawings (FW4 S1) ────────
+# ── pointer-following: the named source sends the figure elsewhere ───────
 #
-# "Per the project specification, what is the minimum concrete cover for
-# foundations cast directly against soil?" The specification states no
-# figure. Its reinforcement clause sends the cover to the drawings and
-# states no cover millimetre. The drawings carry the figures (bottom of
-# footings in contact with soil 100 mm; other elements in contact with
-# soil 75 mm). Local rag_inject on b13aed07 injected neither:
+# "Per the project specification, what is the minimum <quantity> for
+# <subject>?" The named source often states no figure. Its clause sends the
+# reader to another document -- "the cover specified ... on the Drawings",
+# "compacted as shown on the drawings", "lighting levels as listed in the
+# Schedule" -- and that document states the figure. Two things go wrong
+# without this block:
 #
-#   * The deferral clause was never a candidate. It shares no cover
-#     millimetre with the question, so ``_fetch_numeric_requirement_chunks``
-#     rejects it, and cosine for a spacer paragraph is low. When it did
-#     reach the pool its +1.2 class lift was capped, because an unrelated
-#     wire-gauge millimetre sits in the same chunk.
-#   * The drawing note was pooled but never lifted. Its 100 mm is a list
-#     item under the cover heading, about 120 characters after the cover
-#     phrase, past the 64-character proximity window.
+#   * The pointer clause is never a candidate: it states no figure, so the
+#     numeric fetch rejects it, and cosine for a clause about something else
+#     (bar fixing, spacer blocks) is low.
+#   * Every slot goes to chunks from other documents that state some figure
+#     of the asked quantity, and nothing prefers the document the source
+#     points to.
 #
-# Every passed slot then went to non-specification chunks that state a
-# millimetre next to "cover" (+2.5), which is exactly what the model
-# answered from. This block: fetch the specification clause that defers
-# the cover to the drawings; lift it like a stated figure (it IS the
-# specification's answer); once it is in the pool, prefer drawing chunks
-# that state the cover (the authority the clause names) and chunks about
-# the element the question names. A cover list item under its heading
-# counts as a stated length; a lid size "250mm x 250mm x 10mm" does not.
-# Kill-switch: RETRIEVAL_SPEC_DEFERRAL=0 restores b13aed07 exactly.
+# The pointer is read from the chunk itself: one sentence names the asked
+# quantity and points at a document class (drawings, a schedule, an
+# appendix, the contract data). When the question names its source, such a
+# clause from a document of that source class is fetched, enters the pool
+# at its cosine and is lifted like a stated figure (it IS the source's
+# answer); once it is pooled, chunks from the pointed-to class that state the
+# quantity, and chunks about the element the question names, are preferred.
+#
+# Cover lengths: a cover list item under its heading counts as a stated
+# length; a lid size "250mm x 250mm x 10mm" does not.
 _COVER_CLAUSE_PHRASE_RE = re.compile(
     r"(?i)(?:nominal\s+cover|concrete\s+cover|clear\s+cover|minimum\s+cover|"
     r"cover\s+to\s+(?:the\s+)?(?:steel\s+)?reinforce)"
@@ -1859,28 +1731,43 @@ _COVER_REF_RE = re.compile(
     r"cover\s+to\s+(?:the\s+)?(?:steel\s+)?reinforce\w*|"
     r"cover\s+specified|specified\s+(?:minimum\s+)?(?:concrete\s+)?cover)\b"
 )
-_DRAWINGS_REF_RE = re.compile(
-    r"(?i)\b(?:(?:on|in|by)\s+the\s+drawings?|"
-    r"(?:shown|indicated|detailed|noted|specified|given)\s+(?:on|in)\s+"
-    r"(?:the\s+)?drawings?|(?:as\s+)?per\s+(?:the\s+)?drawings?)\b"
+# How a clause names each quantity when it points elsewhere for the figure.
+# A manhole "cover" is not the concrete cover; a "lighting fitting" is not a
+# lighting level.
+_QUANTITY_REFERENCE_RES: Dict[str, "re.Pattern"] = {
+    "length_mm": _COVER_REF_RE,
+    "compaction": re.compile(
+        r"(?i)\b(?:compaction|compacted|degree\s+of\s+compaction|"
+        r"(?:maximum\s+)?dry\s+density)\b"
+    ),
+    "illuminance": re.compile(
+        r"(?i)\b(?:illuminat\w*|illuminance|lighting\s+levels?|lux)\b"
+    ),
+}
+# The document classes a clause can send the reader to, each with the test
+# that tells a document of that class by its name. Vocabulary of document
+# kinds, not names of documents.
+_POINTER_TARGET_CLASSES: Tuple[Tuple[str, "re.Pattern", "re.Pattern"], ...] = (
+    ("drawings", re.compile(r"(?i)\bdrawings?\b"),
+     re.compile(r"(?i)(?:(?:^|[^a-z])dwg(?:[^a-z]|$)|\bdrawings?\b)")),
+    ("schedule", re.compile(r"(?i)\bschedules?\b"),
+     re.compile(r"(?i)\bschedules?\b")),
+    ("appendix", re.compile(r"(?i)\b(?:appendix|appendices|annex\w*)\b"),
+     re.compile(r"(?i)\b(?:appendix|appendices|annex\w*)\b")),
+    ("contract data", re.compile(r"(?i)\bcontract\s+data\b"),
+     re.compile(r"(?i)contract[\s_]+data")),
+)
+# "shown on the Drawings", "as specified in the Schedule", "per the drawings",
+# "refer to the Appendix", "on the Drawings or as the engineer directs".
+_POINTER_LEAD_RE = re.compile(
+    r"(?i)\b(?:(?:on|in|by)\s+the|"
+    r"(?:shown|indicated|detailed|noted|specified|given|stated|listed|"
+    r"scheduled|set\s+out|tabulated)\s+(?:on|in)\s+(?:the)?|"
+    r"(?:as\s+)?per\s+(?:the)?|refer(?:red)?\s+to\s+(?:the)?|see\s+(?:the)?)\s*$"
 )
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.;!?])\s+")
-_DRAWING_NAME_RE = re.compile(r"(?i)(?:(?:^|[^a-z])dwg(?:[^a-z]|$)|\bdrawings?\b)")
-# Needles for the deferral fetch. Every set carries "drawings"; the scoped
-# pass runs inside specification volumes already in the pool, the open
-# pass only on the phrasings that are rare outside a reinforcement clause.
-_SPEC_DEFERRAL_SCOPED_NEEDLES = (
-    ("cover specified", "drawings"),
-    ("specified cover", "drawings"),
-    ("concrete cover", "drawings"),
-    ("cover to", "reinforcement", "drawings"),
-)
-_SPEC_DEFERRAL_OPEN_NEEDLES = (
-    ("cover specified", "drawings"),
-    ("specified cover", "drawings"),
-)
-_SPEC_DEFERRAL_FETCH_K = 60
-_SPEC_DEFERRAL_MAX_SCOPED_DOCS = 24
+_POINTER_FETCH_K = 60
+_POINTER_MAX_SCOPED_DOCS = 24
 _DEFERRED_AUTHORITY_BONUS = 0.5
 _COVER_SUBJECT_BONUS = 0.3
 # A cover question names what is covered. Same idea as the compaction
@@ -1892,14 +1779,6 @@ _COVER_SUBJECT_GROUPS: tuple[tuple[str, ...], ...] = (
     ("column",),
     ("beam",),
 )
-
-
-def spec_deferral_enabled() -> bool:
-    """ON by default. ``RETRIEVAL_SPEC_DEFERRAL=0`` restores the b13aed07
-    cover detector, candidate pool and scores."""
-    return (os.getenv("RETRIEVAL_SPEC_DEFERRAL", "1") or "").strip().lower() not in (
-        "0", "false", "no", "off",
-    )
 
 
 def _figure_is_dimension(blob: str, start: int, end: int) -> bool:
@@ -1936,22 +1815,53 @@ def _cover_clause_states_length(text: str) -> bool:
     return False
 
 
-def chunk_defers_cover_to_drawings(text: str) -> bool:
-    """True when one sentence names the cover and sends it to the drawings.
+def _sentence_points_to(sentence: str) -> Optional[str]:
+    """The document class a sentence sends the reader to, or None."""
+    for name, noun_rx, _name_rx in _POINTER_TARGET_CLASSES:
+        for match in noun_rx.finditer(sentence):
+            lead = sentence[max(0, match.start() - 40):match.start()]
+            if _POINTER_LEAD_RE.search(lead):
+                return name
+    return None
 
-    One sentence must name the concrete or reinforcement cover and point
-    at the drawings. A manhole-cover sentence does not count: the cover
-    has to be the reinforcement / concrete cover.
+
+def chunk_points_quantity_elsewhere(text: str, kinds: frozenset) -> Optional[str]:
+    """The document class one sentence sends an asked quantity to, or None.
+
+    The same sentence must name the quantity ("the cover specified",
+    "compacted", "lighting levels") and point at a document class ("on the
+    Drawings", "as listed in the Schedule"). A manhole-cover sentence does
+    not name the concrete cover; a quantity and a pointer in different
+    sentences are not a deferral.
     """
+    refs = [_QUANTITY_REFERENCE_RES[k] for k in sorted(kinds) if k in _QUANTITY_REFERENCE_RES]
+    if not refs:
+        return None
     for sentence in _SENTENCE_SPLIT_RE.split(text or ""):
-        if _COVER_REF_RE.search(sentence) and _DRAWINGS_REF_RE.search(sentence):
-            return True
+        if not any(rx.search(sentence) for rx in refs):
+            continue
+        target = _sentence_points_to(sentence)
+        if target:
+            return target
+    return None
+
+
+def chunk_defers_cover_to_drawings(text: str) -> bool:
+    """True when one sentence names the concrete cover and sends it to the drawings."""
+    return chunk_points_quantity_elsewhere(text, frozenset({"length_mm"})) == "drawings"
+
+
+def filename_is_pointer_target(filename: str, target: str) -> bool:
+    """True when the document name says it is of the pointed-to class."""
+    for name, _noun_rx, name_rx in _POINTER_TARGET_CLASSES:
+        if name == target:
+            return bool(name_rx.search(filename or ""))
     return False
 
 
 def filename_is_drawing(filename: str) -> bool:
     """True when the document name says it is a drawing or drawings volume."""
-    return bool(_DRAWING_NAME_RE.search(filename or ""))
+    return filename_is_pointer_target(filename, "drawings")
 
 
 def cover_subject_named(query: str) -> List[tuple]:
@@ -2016,95 +1926,129 @@ def query_asks_concrete_cover(query: str) -> bool:
     )
 
 
-def query_asks_spec_deferred_cover(query: str) -> bool:
-    """Specification-scoped cover-length question."""
-    if not spec_deferral_enabled() or not spec_boost_guard_enabled():
+def query_names_its_source(query: str) -> str:
+    """The document class the question names as its source, or ""."""
+    named = source_class_named_by(query)
+    if named:
+        return named
+    if query_names_specification(query):
+        return "specification"
+    return ""
+
+
+def query_follows_source_pointers(query: str) -> bool:
+    """A measured-quantity question scoped to a named source document."""
+    if not spec_boost_guard_enabled():
         return False
-    return query_names_specification(query) and query_asks_concrete_cover(query)
+    return bool(query_names_its_source(query)) and bool(measured_quantity_kinds(query))
 
 
-def _rescue_spec_deferral_chunks(
+# The word a pointer clause uses for each quantity, for the text fetch. The
+# detector above is the real gate.
+_QUANTITY_POINTER_ANCHORS: Dict[str, Tuple[str, ...]] = {
+    "length_mm": ("cover",),
+    "compaction": ("compact",),
+    "illuminance": ("illuminat", "lighting"),
+}
+_POINTER_TARGET_WORDS = ("drawing", "schedule", "appendix", "contract data")
+
+
+def follow_quantity_pointers(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     *,
+    k: int = 5,
     embedder=None,
     query_vec=None,
 ) -> Dict[str, str]:
-    """Pool the specification clause that defers the cover to the drawings.
+    """Pool the named source's clause that sends the asked figure elsewhere.
 
     Returns ``{doc_id: name}`` for every doc resolved here, so the later
-    name pass does not look them up twice. Project corpus only. No-op when
-    a specification-class deferral clause is already pooled. Failures
-    leave the pool standing.
-
-    A pooled clause enters with its own cosine to the query when the
-    embedder is at hand (0.0 otherwise), like any semantic candidate.
+    name pass does not look them up twice. Project corpus only. A pointer
+    clause already pooled outside the provisional top-``k`` with no bonus of
+    its own competes on its cosine (a lexical-only entry carries a BM25 rank
+    in that slot); when none is pooled, one is fetched -- first inside the
+    source documents already in the pool, then across the project. New
+    clauses enter at their cosine (0.0 without an embedder). Failures leave
+    the pool standing.
     """
     names: Dict[str, str] = {}
-    if not query_asks_spec_deferred_cover(query):
+    if not query_follows_source_pointers(query):
         return names
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return names
+    source = query_names_its_source(query)
+    kinds = measured_quantity_kinds(query)
 
     def _name(doc_id: str) -> str:
         if doc_id not in names:
             names[doc_id] = _doc_name_for_id(doc_id)
         return names[doc_id]
 
-    def _is_spec(doc_id: str) -> bool:
-        return filename_is_source_class(_name(doc_id), "specification")
+    def _is_source(doc_id: str) -> bool:
+        return filename_is_source_class(_name(doc_id), source)
 
-    spec_docs: List[str] = []
-    for chunk, _sem, _bonus in list(fused.values()):
+    ranked = sorted(fused.items(), key=lambda kv: -((kv[1][1] or 0.0) + (kv[1][2] or 0.0)))
+    top_ids = {cid for cid, _e in ranked[:max(k, 1)]}
+    source_docs: List[str] = []
+    admitted: List[Chunk] = []
+    found_pooled = False
+    for chunk_id, (chunk, _sem, bonus) in ranked:
         if getattr(chunk, "project_id", project_id) != project_id:
             continue
-        if not _is_spec(chunk.doc_id):
+        if not _is_source(chunk.doc_id):
             continue
-        if chunk_defers_cover_to_drawings(chunk.text or ""):
-            return names
-        if chunk.doc_id not in spec_docs:
-            spec_docs.append(chunk.doc_id)
-
-    passes: List[Tuple[tuple, Optional[List[str]]]] = []
-    if spec_docs:
-        scoped = spec_docs[:_SPEC_DEFERRAL_MAX_SCOPED_DOCS]
-        passes.extend((needles, scoped) for needles in _SPEC_DEFERRAL_SCOPED_NEEDLES)
-    passes.extend((needles, None) for needles in _SPEC_DEFERRAL_OPEN_NEEDLES)
-
-    admitted: List[Chunk] = []
-    for needles, doc_ids in passes:
-        try:
-            hits = fetch(
-                project_id, list(needles), k=_SPEC_DEFERRAL_FETCH_K, doc_ids=doc_ids,
-            )
-        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-            logger.warning(
-                "spec-deferral rescue for %s (%r) failed: %s",
-                project_id, needles, exc,
-            )
+        if chunk.doc_id not in source_docs:
+            source_docs.append(chunk.doc_id)
+        if not chunk_points_quantity_elsewhere(chunk.text or "", kinds):
             continue
-        for chunk in hits or []:
-            if chunk.chunk_id in fused:
-                continue
-            if not chunk_defers_cover_to_drawings(chunk.text or ""):
-                continue
-            if not _is_spec(chunk.doc_id):
-                continue
-            if any(c.chunk_id == chunk.chunk_id for c in admitted):
-                continue
+        found_pooled = True
+        if chunk_id not in top_ids and not (bonus or 0.0):
             admitted.append(chunk)
+
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not found_pooled and callable(fetch):
+        anchors = [a for kind in sorted(kinds) for a in _QUANTITY_POINTER_ANCHORS.get(kind, ())]
+        needle_sets = [(anchor, target) for anchor in anchors for target in _POINTER_TARGET_WORDS]
+        seen: Set[str] = set(fused)
+        scopes: List[Optional[List[str]]] = []
+        if source_docs:
+            scopes.append(source_docs[:_POINTER_MAX_SCOPED_DOCS])
+        scopes.append(None)
+        for doc_ids in scopes:
+            if admitted:
+                break  # the source's own documents answered; skip the open pass
+            for needles in needle_sets:
+                try:
+                    hits = fetch(
+                        project_id, list(needles), k=_POINTER_FETCH_K, doc_ids=doc_ids,
+                    )
+                except Exception as exc:  # noqa: BLE001 — recall must not break the turn
+                    logger.warning(
+                        "pointer-following fetch for %s (%r) failed: %s",
+                        project_id, needles, exc,
+                    )
+                    continue
+                for chunk in hits or []:
+                    if chunk.chunk_id in seen:
+                        continue
+                    seen.add(chunk.chunk_id)
+                    if not chunk_points_quantity_elsewhere(chunk.text or "", kinds):
+                        continue
+                    if not _is_source(chunk.doc_id):
+                        continue
+                    admitted.append(chunk)
     sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
     for chunk, sim in zip(admitted, sims):
+        prior = fused.get(chunk.chunk_id)
+        if prior is not None and (prior[1] or 0.0) > 0.0:
+            sim = max(sim, prior[1] or 0.0)
         chunk.score = round(sim, 6)
         fused[chunk.chunk_id] = (chunk, sim, 0.0)
-    recovered = len(admitted)
-    if recovered:
+    if admitted:
         logger.info(
-            "spec-deferral rescue pooled %d specification clause(s) that "
-            "defer the cover to the drawings", recovered,
+            "pointer-following pooled %d %s clause(s) that send the asked "
+            "figure to another document", len(admitted), source,
         )
     return names
 
@@ -2126,54 +2070,66 @@ def _cosine_to_query(embedder, query_vec, texts: List[str]) -> List[float]:
         return [0.0] * len(texts)
 
 
-def _apply_spec_deferral_boost(
+def _apply_quantity_pointer_boost(
     query: str,
     scored: List[Tuple[float, Chunk]],
     name_by_id: Dict[str, str],
 ) -> None:
-    """In-place: rank the deferral clause and the drawings it names.
+    """In-place: rank the source's pointer clause and the documents it names.
 
-    A specification chunk that sends the asked cover to the drawings takes
-    the stated-figure lift. With such a clause in the pool, a drawing chunk
-    that states the cover gets a small lift over other documents, and a
-    cover chunk about the element the question names gets another. No-op
-    unless the question is a specification-scoped cover ask.
+    A chunk of the named source class that sends the asked quantity to
+    another document takes the stated-figure lift. With such a clause in the
+    pool, a chunk from the pointed-to document class that states the figure
+    gets a small lift over other documents, and a figure chunk about the
+    element the question names gets another. No-op unless the question is a
+    source-scoped quantity question.
     """
-    if not query_asks_spec_deferred_cover(query):
+    if not query_follows_source_pointers(query):
         return
     if not numeric_requirement_boost_enabled():
         return
-    # A bare "cover" ask is a cover-length ask on this path.
-    kinds = asked_quantity_kinds(query) | frozenset({"length_mm"})
+    kinds = measured_quantity_kinds(query)
+    source = query_names_its_source(query)
 
     def _nm(chunk) -> str:
         return name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
 
-    deferral_idx = [
-        i for i, (_s, c) in enumerate(scored)
-        if filename_is_source_class(_nm(c), "specification")
-        and chunk_defers_cover_to_drawings(c.text or "")
-        and not chunk_matches_quantity_question(query, c.text or "", kinds)
-    ]
-    if not deferral_idx:
+    pointer_idx: List[int] = []
+    targets: Set[str] = set()
+    for i, (_s, c) in enumerate(scored):
+        if not filename_is_source_class(_nm(c), source):
+            continue
+        target = chunk_points_quantity_elsewhere(c.text or "", kinds)
+        if not target:
+            continue
+        if chunk_matches_quantity_question(query, c.text or "", kinds):
+            continue
+        pointer_idx.append(i)
+        targets.add(target)
+    if not pointer_idx:
         return
-    for i in deferral_idx:
+    for i in pointer_idx:
         score, chunk = scored[i]
         adjusted = score + _NUMERIC_REQUIREMENT_BONUS
         chunk.score = round(adjusted, 6)
         scored[i] = (adjusted, chunk)
-    groups = cover_subject_named(query)
+    groups = cover_subject_named(query) if "length_mm" in kinds else []
+    terms = quantity_subject_terms(query)
     for i, (score, chunk) in enumerate(scored):
-        if i in deferral_idx:
+        if i in pointer_idx:
             continue
-        if not chunk_matches_quantity_question(query, chunk.text or "", kinds):
+        text = chunk.text or ""
+        if not chunk_matches_quantity_question(query, text, kinds):
             continue
         add = 0.0
-        # Name only: a parsed drawing_number also fires on contract ids
-        # ("DD-2023-118 ... Other Documents"), which are not drawings.
-        if filename_is_drawing(_nm(chunk)):
+        # The document's name says which class it is; a parsed drawing_number
+        # also fires on contract ids, which are not drawings.
+        if any(filename_is_pointer_target(_nm(chunk), t) for t in targets):
             add += _DEFERRED_AUTHORITY_BONUS
-        if cover_subject_agrees(groups, chunk.text or ""):
+        if groups:
+            if cover_subject_agrees(groups, text):
+                add += _COVER_SUBJECT_BONUS
+        elif terms and chunk_names_quantity_subject(text, terms):
             add += _COVER_SUBJECT_BONUS
         if add:
             adjusted = score + add
@@ -2181,331 +2137,290 @@ def _apply_spec_deferral_boost(
             scored[i] = (adjusted, chunk)
 
 
-# ── soil-contact cover in the document's own words (CYCLE2 S1) ──────────
+# ── asked-quantity recall ────────────────────────────────────────────────
 #
-# Live trace on 0b1d13a (e-c2s1-r1..r6): the drawing chunks that state
-# 75 mm for structure in contact with soil were never retrieved. The
-# question says "concrete cover" and "cast directly against soil"; those
-# chunks say "cover to reinforcement" and "in contact with soil". The cover
-# expansion adds "cast against soil" only, so neither 50-deep hybrid leg
-# (cosine, BM25) nor the numeric BM25 fetch reached them on the full
-# corpus, while three footing-cover chunks that repeat the question's words
-# filled the slots. This block: when a cover ask names the soil-contact
-# condition, pool every cover chunk that states a millimetre for that
-# condition (LIKE on the documents' own wording), at its own cosine.
-# A chunk that reached the pool through a lexical leg only carries no
-# cosine: a BM25-only hybrid hit keeps its ts_rank as .score (live, the
-# deferral clause d8c63ec7:109 scored 3.754625 = 0.054625 ts_rank + 2.5 +
-# 1.2; its cosine is about 0.63) and the numeric fetch sets 0.0. On this
-# path such a soil-contact cover chunk, and the specification clause that
-# defers the cover to the drawings, keep the higher of that value and
-# their cosine. Ranking lifts are unchanged. Kill-switch:
-# RETRIEVAL_SOIL_CONTACT_COVER=0 restores 0b1d13a exactly.
-_SOIL_CONTACT_RE = re.compile(
-    r"(?i)\b(?:(?:in\s+)?contact\s+with\s+(?:the\s+)?(?:soil|earth|ground)|"
-    r"(?:cast|placed|poured|concreted)\s+(?:directly\s+)?against\s+(?:the\s+)?"
-    r"(?:soil|earth|ground|excavat\w*)|"
-    r"against\s+(?:the\s+)?(?:soil|earth)|below\s+ground|earth[-\s]faced|"
-    r"exposed\s+to\s+(?:the\s+)?(?:soil|earth|ground))\b"
+# A question that asks for a measured quantity ("what minimum <quantity> is
+# required for <subject>") is answered by a chunk that states a number of that
+# quantity next to the subject. That chunk is often a table row or a drawing
+# note whose wording shares little with the question: the question says
+# "cast directly against soil", the note says "in contact with soil"; the
+# question says "minimum illumination for <task>", the table prints
+# "| <task> | 50 |" under a "Lux" header. Neither retrieval leg pools it, and
+# prose that repeats the question's words (but states no figure) fills the
+# slots. The term rescue does not help either: that prose already co-occurs
+# the question's terms, so the top-k looks grounded.
+#
+# Recall, for every quantity class the question asks for:
+#   * the subject is the question's own content words, minus the words that
+#     name the quantity and minus the clause that names the source document
+#     ("per the project specification");
+#   * candidates are chunks carrying one subject word together with a word a
+#     document prints beside that quantity's figure (the anchor lexicon below
+#     -- a units vocabulary, not text from any one document);
+#   * a candidate is admitted only if it states a figure of that class and
+#     names the subject in an affirmed (not negated) mention.
+# Admitted chunks enter the pool at their own cosine, like any semantic
+# candidate. Ranking is left to the numeric-requirement lift, which already
+# prefers a chunk that states the asked figure. A chunk already pooled is left
+# exactly as it is, and a corpus that states no such figure gets nothing.
+_QUANTITY_ANCHOR_WORDS: Dict[str, Tuple[str, ...]] = {
+    "length_mm": ("cover",),
+    "compaction": ("dry density", "proctor", "cbr"),
+    "illuminance": ("lux", "foot candle"),
+}
+# Words that name the quantity itself, per class. They say WHAT is measured,
+# not what it is measured for.
+_QUANTITY_NAME_WORDS: Dict[str, frozenset] = {
+    "length_mm": frozenset({
+        "cover", "covers", "concrete", "nominal", "clear", "reinforcement",
+        "reinforcing", "rebar", "steel", "length", "thickness",
+    }),
+    "compaction": frozenset({
+        "compact", "compacted", "compaction", "compacting", "degree", "density",
+        "maximum", "proctor", "modified", "test", "tests", "percent",
+    }),
+    "illuminance": frozenset({
+        "illumination", "illuminance", "lighting", "light", "level", "levels",
+        "intensity", "candle", "candles",
+    }),
+}
+# The frame of a requirement question, in any domain.
+_QUANTITY_FRAME_WORDS = frozenset({
+    "minimum", "maximum", "required", "require", "requires", "requirement",
+    "requirements", "must", "shall", "should", "need", "needed", "needs",
+    "value", "figure", "amount", "much", "many", "what", "which", "under",
+    "during", "given", "stated", "state", "states", "says", "apply", "applies",
+    "directly", "against", "where", "within",
+    # the source a question names, wherever it sits in the sentence
+    "project", "specification", "specifications", "spec", "specs", "drawing",
+    "drawings", "plan", "plans", "procedure", "procedures", "document",
+})
+# "Per the project specification", "according to the site safety plan",
+# "under the HSE lighting requirements": the clause that names the source.
+_QUANTITY_SOURCE_CLAUSE_RE = re.compile(
+    r"(?i)\b(?:per|as\s+per|according\s+to|under|in|from|by)\s+the\s+"
+    r"(?:[a-z0-9'&-]+\s+){0,4}?"
+    r"(?:specifications?|specs?|plans?|requirements?|procedures?|drawings?|"
+    r"standards?|codes?)\b"
 )
-# LIKE needles. Every set carries "mm" so a qualitative mention (backfill,
-# waterproofing) is not a candidate; the detector below is the real gate.
-_SOIL_CONTACT_NEEDLES = (
-    ("cover", "contact with soil", "mm"),
-    ("cover", "contact with the soil", "mm"),
-    ("cover", "contact with earth", "mm"),
-    ("cover", "contact with the ground", "mm"),
-    ("cover", "against soil", "mm"),
+# A subject mention governed by a negation in the same clause: "not in
+# contact with <subject>", "elements not on <subject>".
+_QUANTITY_NEGATED_LEAD_RE = re.compile(
+    r"(?i)\b(?:not|no|non|without|except)\b[^.;:\n|]{0,24}$"
 )
-_SOIL_CONTACT_FETCH_K = 60
+_QUANTITY_RECALL_FETCH_K = 80
+_QUANTITY_RECALL_MAX_TERMS = 6
+_QUANTITY_RECALL_MAX_CHUNKS = 8
 
 
-def soil_contact_cover_enabled() -> bool:
-    """ON by default. ``RETRIEVAL_SOIL_CONTACT_COVER=0`` restores 0b1d13a."""
-    return (os.getenv("RETRIEVAL_SOIL_CONTACT_COVER", "1") or "").strip().lower() not in (
-        "0", "false", "no", "off",
-    )
+def measured_quantity_kinds(query: str) -> frozenset:
+    """Every quantity class ``query`` asks a figure for.
 
-
-def _affirmed_soil_contact(text: str) -> bool:
-    """A soil-contact phrase that is not immediately negated.
-
-    ``not in contact with soil`` contains the positive phrase. A chunk or
-    question that only states the negated condition is a different cover
-    (the 50 mm case) and must not take this pool. A chunk that states both
-    still matches on the affirmed phrase.
+    ``asked_quantity_kinds`` plus a bare "cover" asked about concrete work.
+    Empty for an ordinary question.
     """
-    blob = text or ""
-    for match in _SOIL_CONTACT_RE.finditer(blob):
-        prefix = blob[max(0, match.start() - 16):match.start()]
-        if re.search(r"(?i)\bnot\s+$", prefix):
+    kinds = set(asked_quantity_kinds(query))
+    if query_asks_concrete_cover(query):
+        kinds.add("length_mm")
+    return frozenset(kinds)
+
+
+def query_asks_source_scoped_quantity(query: str) -> bool:
+    """A measured-quantity question that names the document governing it.
+
+    "Per the project specification, what minimum cover ...", "under the site
+    safety plan, what lighting level ...". Its answer can sit in two places:
+    the named source's own clause and the document that clause points to.
+    """
+    if not measured_quantity_kinds(query):
+        return False
+    return bool(source_class_named_by(query)) or query_names_specification(query)
+
+
+def quantity_subject_terms(query: str) -> List[str]:
+    """Stems of the words that name what the quantity is asked FOR.
+
+    The source clause, the question frame and the words naming an asked
+    quantity are removed; what is left is the subject ("formwork erection",
+    "pile caps poured against rock"). Order of first appearance.
+    """
+    kinds = measured_quantity_kinds(query)
+    drop: Set[str] = set(_QUANTITY_FRAME_WORDS)
+    for kind in kinds:
+        drop |= _QUANTITY_NAME_WORDS.get(kind, frozenset())
+    scope = _QUANTITY_SOURCE_CLAUSE_RE.sub(" ", query or "")
+    out: List[str] = []
+    for word in re.findall(r"[a-z0-9]{4,}", scope.lower()):
+        if word in drop or word in _GK_STOPWORDS or word in _STOPWORDS:
+            continue
+        if word.isdigit():
+            continue
+        stem = stem_query_term(word)
+        if stem not in out:
+            out.append(stem)
+    return out
+
+
+# Words a document uses for the same element or ground condition as the
+# question: a note says "in contact with soil" where the question said "cast
+# against earth", "footings" where it said "foundations". A construction
+# thesaurus, not phrases from any one document.
+_SUBJECT_SYNONYM_GROUPS: Tuple[Tuple[str, ...], ...] = (
+    ("soil", "earth", "ground"),
+    ("foundation", "footing", "raft", "pile cap"),
+    ("pavement", "road", "carriageway", "sub-grade", "subgrade", "embankment"),
+    ("backfill", "fill"),
+)
+_SUBJECT_FETCH_MAX_WORDS = 10
+
+
+def subject_alternatives(term: str) -> List[str]:
+    """``term`` and the words its synonym group uses for the same thing."""
+    out = [term]
+    for group in _SUBJECT_SYNONYM_GROUPS:
+        if any(word == term or word.startswith(term) for word in group):
+            out.extend(word for word in group if word not in out)
+    return out
+
+
+def _affirmed_mention(blob: str, word: str) -> bool:
+    for match in re.finditer(rf"(?i)\b{re.escape(word)}", blob):
+        lead = blob[max(0, match.start() - 32):match.start()]
+        if _QUANTITY_NEGATED_LEAD_RE.search(lead):
             continue
         return True
     return False
 
 
-def query_asks_soil_contact_cover(query: str) -> bool:
-    """A concrete-cover ask that names the soil-contact condition."""
-    if not soil_contact_cover_enabled() or not spec_boost_guard_enabled():
-        return False
-    text = query or ""
-    return _affirmed_soil_contact(text) and query_asks_concrete_cover(text)
+def chunk_names_quantity_subject(text: str, terms: List[str]) -> bool:
+    """True when ``text`` mentions one of ``terms`` and that mention is affirmed.
 
-
-def chunk_states_soil_contact_cover(text: str) -> bool:
-    """The chunk states a cover length and names the soil-contact condition."""
+    A term also matches the words of its synonym group. Vacuously true when
+    the question names no subject. A mention inside a negated clause ("not in
+    contact with <subject>") does not count; a chunk that also states the
+    affirmed condition still does.
+    """
+    if not terms:
+        return True
     blob = text or ""
-    return _affirmed_soil_contact(blob) and chunk_states_cover_length(blob)
+    return any(
+        _affirmed_mention(blob, word)
+        for term in terms
+        for word in subject_alternatives(term)
+    )
 
 
-def _rescue_soil_contact_cover_chunks(
+def _quantity_subject_coverage(text: str, terms: List[str]) -> int:
+    """How many of the question's subject terms the chunk names (affirmed)."""
+    blob = text or ""
+    return sum(
+        1 for term in terms
+        if any(_affirmed_mention(blob, word) for word in subject_alternatives(term))
+    )
+
+
+def recall_asked_quantity_chunks(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     *,
+    k: int = 5,
+    extra_pids: Optional[List[str]] = None,
     embedder=None,
     query_vec=None,
 ) -> int:
-    """Pool the cover chunks that state a millimetre for soil contact.
+    """Pool chunks that state the asked quantity for the asked subject.
 
-    Project corpus only. New chunks enter with their own cosine to the
-    query (0.0 without an embedder), like any semantic candidate. A pooled
-    soil-contact cover chunk, or specification clause deferring the cover
-    to the drawings, without an identifier/rescue bonus keeps the higher of
-    its pooled score and its cosine, so a lexical-only entry (BM25 rank or
-    0.0 in the score slot) competes on cosine like the rest.
-    Returns the number of chunks added or re-scored. Failures leave the
-    pool standing.
+    Scans the project and ``extra_pids`` (the corpora the semantic leg
+    searched). New chunks enter at their own cosine to the query (0.0
+    without an embedder). A matching chunk already pooled but outside the
+    provisional top-``k`` with no bonus of its own competes on its cosine
+    too: a lexical-only entry carries a BM25 rank, not a cosine, in that
+    slot. The top-``k`` itself is never touched. Returns the number of chunks
+    added or re-scored. Store failures leave the pool standing.
     """
-    if not query_asks_soil_contact_cover(query):
+    kinds = measured_quantity_kinds(query)
+    if not kinds:
         return 0
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
+    terms = quantity_subject_terms(query)[:_QUANTITY_RECALL_MAX_TERMS]
+    if not terms:
         return 0
-    admitted: List[Chunk] = []
-    seen: Set[str] = set()
-    for chunk_id, (chunk, _sem, bonus) in list(fused.items()):
-        if getattr(chunk, "project_id", project_id) != project_id or (bonus or 0.0):
-            continue
-        text = chunk.text or ""
-        if chunk_states_soil_contact_cover(text) or (
-            spec_deferral_enabled() and chunk_defers_cover_to_drawings(text)
-            and filename_is_source_class(_doc_name_for_id(chunk.doc_id), "specification")
-        ):
-            seen.add(chunk_id)
-            admitted.append(chunk)
-    for needles in _SOIL_CONTACT_NEEDLES:
-        try:
-            hits = fetch(project_id, list(needles), k=_SOIL_CONTACT_FETCH_K)
-        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-            logger.warning(
-                "soil-contact cover rescue for %s (%r) failed: %s",
-                project_id, needles, exc,
-            )
-            continue
-        for chunk in hits or []:
-            if chunk.chunk_id in seen:
-                continue
-            seen.add(chunk.chunk_id)
-            if chunk.chunk_id in fused:
-                continue  # pooled: handled above (or carries a bonus)
-            if not chunk_states_soil_contact_cover(chunk.text or ""):
-                continue
-            admitted.append(chunk)
-    sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
-    for chunk, sim in zip(admitted, sims):
+    contain = getattr(store, "chunks_containing_all", None)
+    ident = getattr(store, "identifier_search", None)
+    anchors = [
+        anchor for kind in sorted(kinds)
+        for anchor in _QUANTITY_ANCHOR_WORDS.get(kind, ())
+    ]
+    # The question's own words first, then the words their synonym groups add.
+    words: List[str] = list(terms)
+    for term in terms:
+        for word in subject_alternatives(term):
+            # A text match on "found" already finds "foundation".
+            if not any(have in word for have in words):
+                words.append(word)
+    groups = [(word, anchor) for word in words[:_SUBJECT_FETCH_MAX_WORDS] for anchor in anchors]
+    pids = [project_id] + [p for p in (extra_pids or []) if p and p != project_id]
+    top = sorted(fused.items(), key=lambda kv: -((kv[1][1] or 0.0) + (kv[1][2] or 0.0)))
+    seen: Set[str] = {cid for cid, _entry in top[:max(k, 1)]}
+    admitted: List[Tuple[int, Chunk]] = []
+
+    def _consider(chunk: Chunk) -> None:
+        if chunk.chunk_id in seen:
+            return
+        seen.add(chunk.chunk_id)
         prior = fused.get(chunk.chunk_id)
-        if prior is not None:
-            sim = max(sim, prior[1] or 0.0) if (prior[1] or 0.0) > 0.0 else sim
+        if prior is not None and (prior[2] or 0.0):
+            return  # carries another mechanism's lift; leave it
+        text = chunk.text or ""
+        if not chunk_matches_quantity_question(query, text, kinds):
+            return
+        if not chunk_names_quantity_subject(text, terms):
+            return
+        admitted.append((_quantity_subject_coverage(text, terms), prior[0] if prior else chunk))
+
+    for _cid, (chunk, _sem, _bonus) in top[max(k, 1):]:
+        _consider(chunk)
+    for pid in pids:
+        if callable(contain):
+            for term, anchor in groups:
+                try:
+                    hits = contain(pid, [term, anchor], k=_QUANTITY_RECALL_FETCH_K)
+                except Exception as exc:  # noqa: BLE001 — recall must not break the turn
+                    logger.warning(
+                        "asked-quantity recall for %s (%s + %s) failed: %s",
+                        pid, term, anchor, exc,
+                    )
+                    continue
+                for chunk in hits or []:
+                    _consider(chunk)
+        if callable(ident):
+            try:
+                hits = ident(
+                    pid, [f"{term} {anchor}" for term, anchor in groups],
+                    k=_QUANTITY_RECALL_FETCH_K,
+                )
+            except Exception as exc:  # noqa: BLE001 — recall must not break the turn
+                logger.warning("asked-quantity recall for %s failed: %s", pid, exc)
+                hits = []
+            for chunk in hits or []:
+                _consider(chunk)
+    if not admitted:
+        return 0
+    admitted.sort(key=lambda item: -item[0])
+    chosen = [chunk for _cov, chunk in admitted[:_QUANTITY_RECALL_MAX_CHUNKS]]
+    sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in chosen])
+    for chunk, sim in zip(chosen, sims):
+        prior = fused.get(chunk.chunk_id)
+        if prior is not None and (prior[1] or 0.0) > 0.0:
+            sim = max(sim, prior[1] or 0.0)
         chunk.score = round(sim, 6)
         fused[chunk.chunk_id] = (chunk, sim, 0.0)
-    if admitted:
-        logger.info(
-            "soil-contact cover rescue pooled %d chunk(s) that state the cover "
-            "for the soil-contact condition", len(admitted),
-        )
-    return len(admitted)
-
-
-# ── work-activity illumination table rescue ──────────────────────────
-# Live 4bbb632: "minimum illumination for concrete placement during night
-# work" (50 lux) and "… for bricklaying" (100 lux) both refused 0/6. The
-# spec's work-activity illumination table (doc e6e0702b chunk 661 / 9a56fb14
-# chunk 73, Vol 2 - Specification (6 of 9).pdf) states the figures, but the
-# "HSE lighting / night work" wording steers hybrid retrieval to the HSE plan
-# and a pre-condition site-survey doc, and the table never enters top-k even
-# though its BM25 tokens match. Same class and same shape as the soil-contact
-# cover rescue: pool the table at its own cosine when the ask has no lux row.
-_ILLUMINATION_TOKEN_RE = re.compile(r"(?i)\b(illuminat\w*|lighting|lux|lx)\b")
-# A construction WORK ACTIVITY (this table), not a room (that is the MEP
-# room-lux table, a different table with "Service Luminance" / "Uo").
-_ILLUMINATION_ACTIVITY_RE = re.compile(
-    r"(?i)\b(concrete\s+plac\w*|bricklay\w*|brick\s+lay\w*|reinforc\w*|"
-    r"plaster\w*|handling\s+material|rough\s+work|bench\s+work|"
-    r"drawing\s+board|interior\s+movement|night\s+work|work\s+activit\w*|"
-    r"(?:type|kind)\s+of\s+work)\b"
-)
-# The table's own introduction, unique enough to identify it on its own.
-_ILLUMINATION_TABLE_INTRO_RE = re.compile(
-    r"(?i)minimum\s+levels?\s+of\s+area\s+illuminat\w*"
-)
-_ILLUMINATION_FOOT_CANDLE_RE = re.compile(r"(?i)\bfoot\s*candle")
-_ILLUMINATION_ROW_RE = re.compile(
-    r"(?i)\b(concrete\s+plac\w*|bricklay\w*|interior\s+reinforc\w*|"
-    r"handling\s+material|general\s+rough\s+work|bench\s+work|"
-    r"interior\s+movement|drawing\s+board)\b"
-)
-_ILLUMINATION_LUX_RE = re.compile(r"(?i)\b(lux|lx)\b")
-_ILLUMINATION_NEEDLES = (
-    ("illumination", "lux", "foot candle"),
-    ("minimum levels of area illumination",),
-    ("concrete placement", "lux"),
-    ("bricklaying", "lux"),
-)
-_ILLUMINATION_FETCH_K = 60
-# The pooled table loses the top-k cut: the cut sorts fused by sem + bonus
-# (see retrieve_with_filter), and the rescue pooled at bonus 0.0, so the table
-# competed on raw cosine and lost to the HSE-plan chunks (0 of 6 passes; extra-k
-# alone lifted one ask to 1 of 6). A bonus on the table's two best copies lifts it in.
-# 2.0 matches the file's _DOC_IDENTITY_BONUS / spec-title bonus and dominates a
-# cosine (<= 1).
-_ILLUMINATION_TABLE_BONUS = 2.0
-_ILLUMINATION_TABLE_BONUS_MAX_CHUNKS = 2
-
-
-def query_asks_illumination_level(query: str) -> bool:
-    """An ask for the minimum illumination/lux of a construction work activity.
-
-    Fires only when both an illumination token and a work-activity token are
-    present, so a room-lighting-design ask (the MEP room table) does not
-    trigger it.
-    """
-    q = query or ""
-    return bool(
-        _ILLUMINATION_TOKEN_RE.search(q) and _ILLUMINATION_ACTIVITY_RE.search(q)
+    logger.info(
+        "asked-quantity recall pooled %d chunk(s) for %s (subject %r)",
+        len(chosen), sorted(kinds), terms,
     )
-
-
-def chunk_states_work_activity_illumination(text: str) -> bool:
-    """The chunk carries the work-activity illumination table.
-
-    Identified by its unique intro, or by a lux figure alongside the
-    Foot-Candle column and at least one activity row. The MEP room-lux table
-    ("Service Luminance", "Uo", room names, no Foot Candle) is excluded, as is
-    HSE prose that names lighting but states no lux figure.
-    """
-    blob = text or ""
-    if not _ILLUMINATION_LUX_RE.search(blob):
-        return False
-    if _ILLUMINATION_TABLE_INTRO_RE.search(blob):
-        return True
-    return bool(
-        _ILLUMINATION_FOOT_CANDLE_RE.search(blob)
-        and _ILLUMINATION_ROW_RE.search(blob)
-    )
-
-
-def _rescue_illumination_table_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: Optional[List[str]] = None,
-    *,
-    embedder=None,
-    query_vec=None,
-) -> int:
-    """Pool the work-activity illumination table when the ask lacks a lux row.
-
-    Mirrors ``_rescue_soil_contact_cover_chunks``: project corpus only, fetch
-    by lexical needles, keep only chunks that ARE the table, and pool each at
-    its own cosine (0.0 without an embedder) so it competes like any semantic
-    candidate. Returns the number added/re-scored. Failures leave the pool.
-    """
-    if not query_asks_illumination_level(query):
-        return 0
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return 0
-    admitted: List[Chunk] = []
-    seen: Set[str] = set()
-    # An already-pooled table chunk (any owner pid) is kept, not re-fetched.
-    for chunk_id, (chunk, _sem, bonus) in list(fused.items()):
-        if bonus or 0.0:
-            continue
-        if chunk_states_work_activity_illumination(chunk.text or ""):
-            seen.add(chunk_id)
-            admitted.append(chunk)
-    # Scan the SAME pid set the semantic leg searches: the UI pid, the Master
-    # Corpus fallback/source, AND the general-knowledge pids (gk_ids), passed
-    # by the call site as extra_pids. Attempts 1-2 (0/6 live) omitted the GK
-    # layer, where the spec volume lives, so chunks_containing_all — which
-    # matches project_id EXACTLY — returned nothing for every pid it tried.
-    pids = _late_scan_project_ids(project_id, extra_pids, fused)
-    needle_hits: Dict[str, int] = {}
-    for pid in pids:
-        for needles in _ILLUMINATION_NEEDLES:
-            try:
-                hits = fetch(pid, list(needles), k=_ILLUMINATION_FETCH_K)
-            except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-                logger.warning(
-                    "illumination-table rescue for %s (%r) failed: %s",
-                    pid, needles, exc,
-                )
-                continue
-            needle_hits[" ".join(needles)] = (
-                needle_hits.get(" ".join(needles), 0) + len(hits or [])
-            )
-            for chunk in hits or []:
-                if chunk.chunk_id in seen:
-                    continue
-                seen.add(chunk.chunk_id)
-                if chunk.chunk_id in fused:
-                    continue  # pooled: handled above (or carries a bonus)
-                if not chunk_states_work_activity_illumination(chunk.text or ""):
-                    continue
-                admitted.append(chunk)
-    # Always-on diagnostic (the query matched but production is unobservable
-    # otherwise): which pids were scanned, raw needle-hit counts BEFORE the
-    # table predicate, and how many were admitted. WARNING, not INFO: prod's
-    # root logger sits at WARNING (the setup_structured_logging NOTSET guard
-    # never fires), so a module INFO line never reaches CloudWatch — which is
-    # exactly why attempts 1-3 saw "no rescue log" and learned nothing.
-    sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
-    # Bonus the two highest-cosine copies of the table so they clear the top-k
-    # cut (the cut sorts fused by sem + bonus; pooling at 0.0 lost). The 4
-    # admitted chunks are copies of one table — two in the excerpts answer the
-    # ask without flooding it; the rest pool at their cosine as before.
-    bonus_val = _ILLUMINATION_TABLE_BONUS
-    bonus_rank = sorted(range(len(admitted)), key=lambda i: -(sims[i] or 0.0))
-    bonus_idx = set(bonus_rank[:_ILLUMINATION_TABLE_BONUS_MAX_CHUNKS]) if bonus_val > 0 else set()
-    bonus_applied = 0
-    for i, (chunk, sim) in enumerate(zip(admitted, sims)):
-        prior = fused.get(chunk.chunk_id)
-        if prior is not None:
-            sim = max(sim, prior[1] or 0.0) if (prior[1] or 0.0) > 0.0 else sim
-        this_bonus = bonus_val if i in bonus_idx else 0.0
-        if prior is not None:
-            this_bonus = max(this_bonus, prior[2] or 0.0)  # never lower an existing bonus
-        chunk.score = round(sim, 6)
-        fused[chunk.chunk_id] = (chunk, sim, this_bonus)
-        if this_bonus > 0:
-            bonus_applied += 1
-    # Always-on diagnostic at WARNING (prod root logger is at WARNING, so a
-    # module INFO line never reaches CloudWatch — attempts 1-3 learned nothing
-    # from its absence). pids scanned, raw needle-hit counts BEFORE the table
-    # predicate, how many admitted, and how many got the top-k bonus.
-    logger.warning(
-        "illumination-table rescue: pids=%s needle_hits=%s admitted=%d bonus_applied=%d",
-        pids, needle_hits, len(admitted), bonus_applied,
-    )
-    if admitted:
-        logger.warning(
-            "illumination-table rescue pooled %d chunk(s) that state the "
-            "work-activity illumination table", len(admitted),
-        )
-    return len(admitted)
+    return len(chosen)
 
 
 _SOURCE_HEADER_RE = re.compile(r"(?i)^\[source:[^\]]*\]\s*")
@@ -2695,57 +2610,61 @@ def _pool_docs_named_by_query(
     return names
 
 
-# ── document-identity rescue (live B6) ─────────────────────────────────────
+# ── named-document recall: identity of a document the question names ──────
 #
-# Live 24d1c0c, 0/3: "What is the document number and revision of the priced
-# Bill of Quantities, and who prepared it?" The cover is indexed, in a file
-# NAMED ``…Bill of Quantities (Priced).pdf``; searched by its document number
-# it ranks first. Asked plainly, the top five were contract templates that
-# describe how a bill should be identified. A control block is labels and
-# codes — nothing in the question resembles it — and "document number",
-# "revision", "prepared" are in every template in the corpus.
+# "What is the document number and revision of <named document>, and who
+# prepared it?" / "On what date was <named document> issued, and under which
+# <reference> number?" The answer is the named document's own control block
+# (labels and codes) or its issue stamp ("Date: ... <Label> No. <code>").
+# Nothing in the question resembles either, and "document number", "revision",
+# "prepared" are in every template in the corpus, so cosine prefers templates
+# that describe how a document should be identified.
 #
-# The filename rescue above keeps the five most "distinctive" words,
-# capitalised first; "priced", the one word that tells this bill from the
-# unpriced one, came sixth. Here the words that ASK (number, revision,
-# prepared) are separated from the words that NAME, every naming word is
-# mandatory, and only the named document's control block is fetched.
+# The words that ASK (number, revision, prepared, the asked reference label)
+# are separated from the words that NAME the document; the named document is
+# found by its name or by the stamp that repeats its title, and only its
+# identity evidence is pooled.
+#
+# "under which RFP number", "which tender no.", "what contract reference":
+# the reference a question asks for by its label. Labels that are the
+# control-block path's own vocabulary are not issue-stamp labels.
+_REFERENCE_LABEL_ASK_RE = re.compile(
+    r"(?i)\b(?:under\s+which|which|what)\s+(?P<label>[a-z]{2,12})\s+"
+    r"(?:number|no\b\.?|reference|ref\b)"
+)
+_CONTROL_BLOCK_LABEL_WORDS = frozenset({
+    "document", "doc", "drawing", "revision", "page", "clause", "section",
+    "item", "sheet", "is", "its", "the",
+})
+_ISSUED_WHEN_RE = re.compile(
+    r"(?i)\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b|"
+    r"\b(?:on\s+what\s+)?date\s+was\b[^?]{0,80}"
+    r"\b(?:issued|prepared|dated|published|revised)\b"
+)
 _DOC_IDENTITY_ASK_RE = re.compile(
     r"(?i)\b(?:document|doc\.?|drawing|reference)\s+(?:number|no\b\.?|ref\b)|"
     r"\brevision\b|\bprepared\s+by\b|"
     r"\bwho\s+(?:prepared|authored|wrote|issued|checked|reviewed|approved)\b|"
     # "What is the date of the priced BOQ", "when / on what date was … issued".
-    r"\bdate\s+of\s+(?:the\s+)?(?!commencement|completion|award|access|taking)|"
-    r"\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b|"
-    r"\b(?:on\s+what\s+)?date\s+was\b[^?]{0,80}"
-    r"\b(?:issued|prepared|dated|published|revised)\b|"
-    r"\bunder\s+which\s+rfp\b|"
-    r"\bwhich\s+rfp\s+(?:number|no)\b|"
-    r"\brfp\s+(?:number|no)\b"
+    r"\bdate\s+of\s+(?:the\s+)?(?!commencement|completion|award|access|taking)"
 )
 _DOC_IDENTITY_ASK_WORDS = frozenset({
     "document", "number", "revision", "prepared", "authored", "wrote",
     "issued", "checked", "reviewed", "approved", "reference", "drawing",
-    "date", "dated", "title", "author", "rfp",
+    "date", "dated", "title", "author",
 })
-# Set3 C3: issue date + RFP of a named bill. Not B6 (who prepared /
-# revision) and not C1 ("date of the priced BOQ and the Employer's
-# contract reference") — those stay on the cover-block path.
-_BILL_ISSUE_ASK_RE = re.compile(
-    r"(?i)\bwhen\s+was\b[^?]{0,80}\b(?:issued|prepared|dated|published|revised)\b|"
-    r"\b(?:on\s+what\s+)?date\s+was\b[^?]{0,80}"
-    r"\b(?:issued|prepared|dated|published|revised)\b|"
-    r"\bunder\s+which\s+rfp\b|"
-    r"\bwhich\s+rfp\s+(?:number|no)\b|"
-    r"\brfp\s+(?:number|no)\b"
+# A labelled issue date: "Date: July 10, 2031", "Dated 4 March 2031",
+# "Issue date: 04/03/2031".
+_LABELLED_DATE_RE = re.compile(
+    r"(?i)\b(?:issue\s+date|date\s+of\s+issue|dated|date)\s*:?\s*"
+    r"(?:[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]{3,9}\.?\s+\d{4}|"
+    r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{2}-\d{2})"
 )
-# Live BOQ page stamp: "Date: July 10, 2023 … RFP No. DD-2023-118".
-# Fixture dates use the same shape with a non-live year.
-_BILL_ISSUE_DATE_RE = re.compile(
-    r"(?i)\bdate\s*:\s*[A-Za-z]+\s+\d{1,2},\s+\d{4}"
-)
-_BILL_ISSUE_RFP_RE = re.compile(
-    r"(?i)\brfp\s+no\.?\s*[A-Za-z]{2,}-\d{4}-\d+"
+# A reference code: letters, then hyphen- or slash-joined segments, at least
+# one of them numeric ("AB-2031-044", "TN/88/12").
+_REFERENCE_CODE = r"[A-Za-z][A-Za-z0-9]*(?:[-/][A-Za-z0-9.]+)*[-/]\d+[A-Za-z0-9.-]*"
+_LABELLED_CODE_RE = re.compile(
+    rf"(?i)\b(?P<label>[a-z]{{2,12}})\s+no\.?\s*:?\s*{_REFERENCE_CODE}"
 )
 _DOC_CONTROL_BLOCK_LABEL_RES = tuple(
     re.compile(p, re.IGNORECASE) for p in (
@@ -2760,9 +2679,25 @@ _DOC_IDENTITY_COVER_CHUNKS = 8
 _DOC_IDENTITY_MAX_CHUNKS = 2
 
 
+def asked_reference_labels(query: str) -> List[str]:
+    """Labels of the references the question asks for by number ("rfp")."""
+    out: List[str] = []
+    for match in _REFERENCE_LABEL_ASK_RE.finditer(query or ""):
+        label = match.group("label").lower()
+        if label in _CONTROL_BLOCK_LABEL_WORDS or label in out:
+            continue
+        out.append(label)
+    return out
+
+
 def query_asks_for_document_identity(query: str) -> bool:
-    """True for "what number / revision is X, who prepared it"."""
-    return bool(_DOC_IDENTITY_ASK_RE.search(query or ""))
+    """True for "what number / revision is X, who prepared it, when was X issued"."""
+    q = query or ""
+    return bool(
+        _DOC_IDENTITY_ASK_RE.search(q)
+        or _ISSUED_WHEN_RE.search(q)
+        or asked_reference_labels(q)
+    )
 
 
 # "...number and revision OF THE priced Bill of Quantities, and who prepared
@@ -2774,7 +2709,7 @@ _DOC_IDENTITY_TITLE_RE = re.compile(
     r"(?i)\b(?:number|no\.?|revision|date|reference|ref|status|title|author)\s+"
     r"of\s+(?:the\s+)?(?P<title>.+?)(?=\s+and\s+(?:the|who|what|its|when)\b|[,;?]|$)"
 )
-# "On what date was the Demolition and Site Clearance bill issued"
+# "On what date was the <named document> issued"
 _DOC_IDENTITY_WAS_ISSUED_TITLE_RE = re.compile(
     r"(?i)\b(?:date|when)\s+was\s+(?:the\s+)?(?P<title>.+?)\s+"
     r"(?:issued|prepared|dated|published|revised)\b"
@@ -2789,21 +2724,34 @@ def document_identity_title_terms(query: str) -> List[str]:
         or _DOC_IDENTITY_TITLE_RE.search(q)
     )
     scope = pointed.group("title") if pointed else q
-    return sorted(
-        t for t in _significant_terms(scope)
-        if t not in _DOC_IDENTITY_ASK_WORDS
-    )
+    asking = _DOC_IDENTITY_ASK_WORDS | set(asked_reference_labels(q))
+    return sorted(t for t in _significant_terms(scope) if t not in asking)
 
 
-def query_asks_for_bill_issue_identity(query: str) -> bool:
-    """True for "on what date was X issued, and under which RFP number?"."""
-    return bool(_BILL_ISSUE_ASK_RE.search(query or ""))
+def query_asks_for_issue_identity(query: str) -> bool:
+    """True for "when was X issued, and under which <label> number?".
+
+    Who-prepared / revision asks and "the date of X and its reference" stay
+    on the control-block path.
+    """
+    q = query or ""
+    return bool(_ISSUED_WHEN_RE.search(q) or asked_reference_labels(q))
 
 
-def chunk_states_bill_issue_stamp(text: str) -> bool:
-    """True for a BOQ page stamp that prints Date: and RFP No. PREFIX-YEAR-SEQ."""
+def chunk_states_issue_stamp(text: str, labels: Optional[List[str]] = None) -> bool:
+    """True for an issue stamp: a labelled date and a labelled reference code.
+
+    With ``labels`` the reference must carry one of them ("RFP No. <code>");
+    without, any "<Label> No. <code>" counts.
+    """
     blob = text or ""
-    return bool(_BILL_ISSUE_DATE_RE.search(blob) and _BILL_ISSUE_RFP_RE.search(blob))
+    if not _LABELLED_DATE_RE.search(blob):
+        return False
+    wanted = {lab.lower() for lab in (labels or [])}
+    for match in _LABELLED_CODE_RE.finditer(blob):
+        if not wanted or match.group("label").lower() in wanted:
+            return True
+    return False
 
 
 def document_control_label_count(text: str) -> int:
@@ -2877,35 +2825,26 @@ def _pool_named_document_control_block(
     return recovered
 
 
-def _bill_issue_stamp_needles(terms: List[str]) -> List[str]:
-    """Needles that find a Date:/RFP stamp of the named bill.
-
-    Filename rescue cannot see a Volume 4 schedule whose name does not
-    repeat "Demolition and Site Clearance". The stamp itself does.
-    """
-    needles = ["rfp"]
-    for token in ("demolition", "clearance", "priced", "quantities"):
-        if token in terms:
-            needles.append(token)
-    if len(needles) < 2:
-        needles.extend(t for t in terms if t not in needles)
-    return needles[:6]
+_ISSUE_STAMP_TITLE_WORDS = 2
 
 
-def _rescue_bill_issue_stamp_chunks(
+def recall_issue_stamps(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     extra_pids: List[str],
 ) -> int:
-    """Pull Date:/RFP No. stamps of the named bill into ``fused``.
+    """Pull the issue stamp of the document the question names into ``fused``.
 
-    Live Set3 C3: cosine and filename ``require_all`` lock onto the
-    DD-2022-175 demolition-titled pack. The executed DD-2023-118 stamp
-    lives in Volume 4 and is fetched here, then year-locked.
+    A stamp repeats the document's title on every page it heads, so it is
+    found by its own words even when the file it sits in is named for
+    something else (a bill bound inside a schedules volume). The text fetch
+    pairs the asked reference label ("rfp") with the two most distinctive
+    title words; a hit must be a stamp and carry two title words. When stamps
+    from more than one contract match, the year-lock election keeps one.
     """
-    if not query_asks_for_bill_issue_identity(query):
+    if not query_asks_for_issue_identity(query):
         return 0
     terms = document_identity_title_terms(query)
     if len(terms) < 2:
@@ -2913,18 +2852,20 @@ def _rescue_bill_issue_stamp_chunks(
     fetch = getattr(store, "chunks_containing_all", None)
     if not callable(fetch):
         return 0
-    needles = _bill_issue_stamp_needles(terms)
+    labels = asked_reference_labels(query)
+    distinctive = sorted(terms, key=lambda t: (-len(t), t))[:_ISSUE_STAMP_TITLE_WORDS]
+    needles = (labels[:1] or ["date"]) + distinctive
     pids = [project_id] + [p for p in extra_pids if p and p != project_id]
     stamps: List[Tuple[str, object]] = []
     for pid in pids:
         try:
             hits = fetch(pid, needles, k=20)
         except Exception as exc:  # noqa: BLE001 — extras must not break the turn
-            logger.warning("bill-issue stamp rescue for %s failed: %s", pid, exc)
+            logger.warning("issue-stamp recall for %s failed: %s", pid, exc)
             continue
         for chunk in hits:
             text = chunk.text or ""
-            if not chunk_states_bill_issue_stamp(text):
+            if not chunk_states_issue_stamp(text, labels):
                 continue
             blob = text.lower()
             if sum(1 for t in terms if t in blob) < 2:
@@ -2933,8 +2874,7 @@ def _rescue_bill_issue_stamp_chunks(
                 name = _doc_name_for_id(chunk.doc_id) or ""
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "bill-issue stamp name lookup for %s failed: %s",
-                    chunk.doc_id, exc,
+                    "issue-stamp name lookup for %s failed: %s", chunk.doc_id, exc,
                 )
                 name = ""
             stamps.append((name, chunk))
@@ -2962,39 +2902,36 @@ def _rescue_bill_issue_stamp_chunks(
         recovered += 1
     if recovered:
         logger.info(
-            "bill-issue stamp rescue recovered %d chunk(s) winner=%s",
-            recovered, winner,
+            "issue-stamp recall pooled %d chunk(s) winner=%s", recovered, winner,
         )
     return recovered
 
 
-# ── specification-title filename rescue (live C2) ──────────────────────────
+# ── named-document recall: which document carries a title ────────────────
 #
-# Live Master Corpus C2 (SHA 567147a): "Which specification document covers
-# the Variation Procedure, and what is its number?" retrieved DD-2022-175
-# Demolition Specs Part 3. The governing spec is already in Neon —
-# ``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``. Term rescue treated
-# the demolition volume's in-chunk "specification" / "procedure" overlap as
-# already-grounded and skipped the out-of-pool fetch. Cosine prefers the
-# long demolition volume over the short titled spec.
+# "Which <kind of document> covers <Title Phrase>, and what is its number?"
+# The question names the document by its title. A long volume that merely
+# mentions the topic outranks the short titled document on cosine, and the
+# term rescue treats the volume's overlap as already grounded.
 #
-# The filename is the discriminator Demolition Specs cannot fake: it
-# carries the Title-Case phrase the question used.
-#
-# Re-score on tip d7a4ca8: there is still no standalone upload named
-# ``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``. The identifier
-# lives as a register line inside Vol 2 Specification (8 of 9). Cosine
-# prefers the later CSI heading ``Section 012650 — Variation and
-# Adjustments`` in the same file. Filename rescue cannot see a title
-# that is not in the upload name; the remaining delta is in-chunk
-# spec-identity election (SPE-NNNNN + title).
-_SPEC_IDENTITY_ASK_RE = re.compile(
-    r"(?i)\b(?:which|what)\s+specification\s+(?:document|section)s?\b"
-    r"|\bspecification\s+document\s+covers\b"
-    r"|\band\s+what\s+is\s+its\s+number\b"
+# Two places carry the title, and both are read from the corpus itself:
+#   * the upload name ("<code> <Title Phrase>.pdf") -- documents whose name
+#     contains the phrase are pulled into the pool and lifted;
+#   * a register line inside another volume ("<reference code> <Title
+#     Phrase>") -- the document number sits in front of the title. A
+#     section heading that only shares the topic ("Section 0123 - <topic>")
+#     has no reference code in front of the phrase and is not a register
+#     line.
+_WHICH_DOCUMENT_ASK_RE = re.compile(
+    r"(?i)\b(?:which|what)\s+(?:specification|procedure|plan|standard|manual|"
+    r"policy|report|document|drawing)s?\s+(?:document|section|covers|sets\s+out|"
+    r"describes|governs)\b"
+    r"|\b(?:specification|procedure|plan|standard|manual|policy|report)\s+"
+    r"document\s+covers\b"
+    r"|\band\s+what\s+is\s+its\s+(?:number|reference|ref)\b"
 )
-# Two-or-more consecutive Title-Case words ("Variation Procedure").
-# Leading question words ("Which Specification") are stripped below.
+# Two-or-more consecutive Title-Case words. Leading question words ("Which
+# Specification") are stripped below.
 _TITLE_CASE_PHRASE_RE = re.compile(
     r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\b"
 )
@@ -3003,27 +2940,31 @@ _TITLE_PHRASE_STOP = frozenset({
     "this", "that", "the", "and", "for", "its", "our",
 })
 # Equal to IDENTIFIER_BONUS_MAX so a titled filename beats a high-cosine
-# demolition volume the way an exact code beats boilerplate.
-_SPEC_TITLE_FILENAME_BONUS = 2.0
-# A CSI section number (``012650``) is not a document identity. The
-# register line carries ``SPE-`` + five-or-more digits.
-_SPE_DOC_CODE_RE = re.compile(r"(?i)\bSPE-\d{5,}\b")
+# volume the way an exact code beats boilerplate.
+_TITLE_MATCH_BONUS = 2.0
+# A document reference code: letter-led segments joined by hyphens, at least
+# three segments and one numeric run of three or more digits
+# ("AB-CD-XYZ-0001-2.0"). A bare section number is not one.
+_DOC_REFERENCE_CODE_RE = re.compile(
+    r"\b[A-Z][A-Z0-9]*(?:-[A-Z0-9][A-Z0-9.]*){2,}\b"
+)
+_REGISTER_LINE_GAP = 12
 
 
-def query_asks_which_specification_document(query: str) -> bool:
-    """True for a which-spec-covers-X / what-is-its-number ask (C2).
+def query_asks_which_document(query: str) -> bool:
+    """True for "which <kind of document> covers <Title>" / "what is its number".
 
-    Numbered-spec questions ("Specification 003113") stay on the
+    Numbered-document questions ("Specification 0042") stay on the
     identifier path. Contract-role and letter asks are not this class.
     """
-    return bool(_SPEC_IDENTITY_ASK_RE.search(query or ""))
+    return bool(_WHICH_DOCUMENT_ASK_RE.search(query or ""))
 
 
 def extract_document_title_phrases(query: str) -> List[str]:
     """Title-Case phrases of two or more content words from ``query``.
 
-    ``Variation Procedure`` is a document title. ``Which Specification``
-    is question scaffolding and is dropped. Lowercased, deduplicated.
+    A run of capitalised words is a title; leading question words ("Which
+    Specification") are dropped. Lowercased, deduplicated.
     """
     found: List[str] = []
     seen: Set[str] = set()
@@ -3042,7 +2983,7 @@ def extract_document_title_phrases(query: str) -> List[str]:
     return found
 
 
-def spec_title_filename_bonus(filename: str, phrases: List[str]) -> float:
+def title_filename_bonus(filename: str, phrases: List[str]) -> float:
     """Additive lift when the upload name carries a queried title phrase.
 
     Zero when the name shares no title phrase, so ordinary Q&A ranking
@@ -3052,7 +2993,7 @@ def spec_title_filename_bonus(filename: str, phrases: List[str]) -> float:
     if not blob or not phrases:
         return 0.0
     if any(phrase and phrase in blob for phrase in phrases):
-        return _SPEC_TITLE_FILENAME_BONUS
+        return _TITLE_MATCH_BONUS
     return 0.0
 
 
@@ -3061,38 +3002,39 @@ def _normalize_retrieval_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def chunk_states_spec_document_identity(text: str, phrases: List[str]) -> bool:
-    """True when the chunk names a SPE-NNNNN document whose title is the ask.
-
-    Live C2 on d7a4ca8: the register line ``DGDAX-DGD-PMO-SPE-012650-1.0
-    Variation Procedure`` is the document number. ``Section 012650 —
-    Variation and Adjustments`` in the same volume is a CSI heading, not
-    the identifier the question asked for. ``SPE-`` + five digits is the
-    discriminator; a bare ``012650`` is not.
-    """
+def chunk_states_document_register_line(text: str, phrases: List[str]) -> bool:
+    """True when a document reference code stands right before a title phrase."""
     if not phrases:
         return False
     blob = _normalize_retrieval_ws(text)
-    if not _SPE_DOC_CODE_RE.search(blob):
-        return False
     lower = blob.lower()
-    return any(bool(p) and p in lower for p in phrases)
+    for code in _DOC_REFERENCE_CODE_RE.finditer(blob):
+        if not any(ch.isdigit() for ch in code.group(0)):
+            continue
+        if not re.search(r"\d{3,}", code.group(0)):
+            continue
+        tail = lower[code.end():code.end() + _REGISTER_LINE_GAP + 80]
+        for phrase in phrases:
+            at = tail.find(phrase)
+            if 0 <= at <= _REGISTER_LINE_GAP:
+                return True
+    return False
 
 
-def _apply_spec_title_filename_boost(
+def _apply_title_filename_boost(
     query: str,
     scored: List[Tuple[float, Chunk]],
     name_by_id: Dict[str, str],
 ) -> None:
-    """In-place: lift chunks whose resolved filename matches a spec title."""
-    if not query_asks_which_specification_document(query):
+    """In-place: lift chunks whose resolved filename carries the asked title."""
+    if not query_asks_which_document(query):
         return
     phrases = extract_document_title_phrases(query)
     if not phrases:
         return
     for i, (score, chunk) in enumerate(scored):
         name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
-        add = spec_title_filename_bonus(name, phrases)
+        add = title_filename_bonus(name, phrases)
         if add <= 0.0:
             continue
         boosted = score + add
@@ -3100,155 +3042,118 @@ def _apply_spec_title_filename_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_spec_title_docs(
+def _apply_register_line_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift chunks whose body is a code + title register line."""
+    if not query_asks_which_document(query):
+        return
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_document_register_line(chunk.text or "", phrases):
+            continue
+        boosted = score + _TITLE_MATCH_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def recall_titled_documents(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     extra_pids: List[str],
 ) -> Dict[str, str]:
-    """Pull chunks from title-matched specs into ``fused``.
+    """Pull the documents the question names by title into ``fused``.
 
-    Returns ``{doc_id: original_name}`` so later name resolution does
-    not re-query the documents table for docs we just looked up.
-    Failures never raise — the semantic pool stands.
+    Both carriers of the title are fetched: documents whose upload name
+    contains a title phrase (their chunks), and register lines that print a
+    reference code before the phrase. Returns ``{doc_id: original_name}`` for
+    the name pass. Failures never raise -- the semantic pool stands.
     """
     names: Dict[str, str] = {}
-    if not query_asks_which_specification_document(query):
+    if not query_asks_which_document(query):
         return names
     phrases = extract_document_title_phrases(query)
     if not phrases:
         return names
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
 
     try:
         from app.core.projects import documents_matching_title_phrase
     except Exception:  # noqa: BLE001
-        logger.warning("spec-title rescue: projects import failed", exc_info=True)
-        return names
-
-    fetch = getattr(store, "chunks_for_docs", None)
-    if not callable(fetch):
-        return names
-
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    recovered = 0
-    for pid in pids:
-        matches: List[Dict[str, str]] = []
-        for phrase in phrases:
-            try:
-                matches.extend(documents_matching_title_phrase(pid, phrase))
-            except Exception as exc:  # noqa: BLE001 — extras must not break the turn
-                logger.warning(
-                    "spec-title rescue listing for %s (%r) failed: %s",
-                    pid, phrase, exc,
-                )
-        if not matches:
-            continue
-        seen_docs: Set[str] = set()
-        unique_matches: List[Dict[str, str]] = []
-        for doc in matches:
-            did = doc.get("id") or ""
-            if not did or did in seen_docs:
+        logger.warning("titled-document recall: projects import failed", exc_info=True)
+        documents_matching_title_phrase = None
+    by_docs = getattr(store, "chunks_for_docs", None)
+    if documents_matching_title_phrase is not None and callable(by_docs):
+        for pid in pids:
+            matches: List[Dict[str, str]] = []
+            for phrase in phrases:
+                try:
+                    matches.extend(documents_matching_title_phrase(pid, phrase))
+                except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+                    logger.warning(
+                        "titled-document listing for %s (%r) failed: %s", pid, phrase, exc,
+                    )
+            unique: List[Dict[str, str]] = []
+            for doc in matches:
+                did = doc.get("id") or ""
+                if not did or did in names:
+                    continue
+                names[did] = doc.get("original_name") or ""
+                unique.append(doc)
+            if not unique:
                 continue
-            seen_docs.add(did)
-            unique_matches.append(doc)
-            names[did] = doc.get("original_name") or ""
-        try:
-            hits = fetch(pid, [d["id"] for d in unique_matches])
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("spec-title rescue fetch for %s failed: %s", pid, exc)
-            continue
-        for chunk in hits:
-            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
-            if chunk.chunk_id in fused:
-                continue
-            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
-            recovered += 1
-    if recovered:
-        logger.info(
-            "spec-title rescue recovered %d chunk(s) for phrases %r",
-            recovered, phrases,
-        )
-    return names
-
-
-def _apply_spec_identity_text_boost(
-    query: str,
-    scored: List[Tuple[float, Chunk]],
-) -> None:
-    """In-place: lift chunks whose body is a SPE-NNNNN + title register line."""
-    if not query_asks_which_specification_document(query):
-        return
-    phrases = extract_document_title_phrases(query)
-    if not phrases:
-        return
-    for i, (score, chunk) in enumerate(scored):
-        if not chunk_states_spec_document_identity(chunk.text or "", phrases):
-            continue
-        boosted = score + _SPEC_TITLE_FILENAME_BONUS
-        chunk.score = round(boosted, 6)
-        scored[i] = (boosted, chunk)
-
-
-def _rescue_spec_identity_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: List[str],
-) -> int:
-    """Pull SPE-NNNNN + title register lines into ``fused``.
-
-    Filename title rescue cannot see a title that lives only in a volume's
-    table of contents. Failures never raise.
-    """
-    if not query_asks_which_specification_document(query):
-        return 0
-    phrases = extract_document_title_phrases(query)
-    if not phrases:
-        return 0
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return 0
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    recovered = 0
-    for pid in pids:
-        for phrase in phrases:
             try:
-                hits = fetch(pid, ["SPE-", phrase], k=20)
+                hits = by_docs(pid, [d["id"] for d in unique])
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "spec-identity rescue for %s (%r) failed: %s",
-                    pid, phrase, exc,
-                )
+                logger.warning("titled-document fetch for %s failed: %s", pid, exc)
                 continue
             for chunk in hits:
-                if not chunk_states_spec_document_identity(chunk.text or "", phrases):
-                    continue
+                names.setdefault(chunk.doc_id, "")
                 if chunk.chunk_id in fused:
                     continue
                 fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
                 recovered += 1
+
+    containing = getattr(store, "chunks_containing_all", None)
+    if callable(containing):
+        for pid in pids:
+            for phrase in phrases:
+                try:
+                    hits = containing(pid, [phrase], k=20)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "register-line recall for %s (%r) failed: %s", pid, phrase, exc,
+                    )
+                    continue
+                for chunk in hits:
+                    if not chunk_states_document_register_line(chunk.text or "", phrases):
+                        continue
+                    if chunk.chunk_id in fused:
+                        continue
+                    fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+                    recovered += 1
     if recovered:
         logger.info(
-            "spec-identity rescue recovered %d chunk(s) for phrases %r",
-            recovered, phrases,
+            "titled-document recall pooled %d chunk(s) for phrases %r", recovered, phrases,
         )
-    return recovered
+    return names
 
 
-# ── Contract Data filename rescue (live A2) ────────────────────────────────
+# ── particulars documents by kind ──────────────────────────────────────────
 #
-# Live Master Corpus A2 retry on tip d7a4ca8: "What is the Accepted
-# Contract Amount including VAT?" retrieved Long Form PSA / CPM permit
-# trackers and reported the figure absent. The executed amount sits in
-# ``…_Contract Data.pdf`` (scanned table, newlines between Accepted /
-# Contract / Amount). That file has no ``CONTRACT DATA particulars``
-# index-time prefix, so the particulars boost and unnamed election never
-# fire. Filename "Contract Data" is the discriminator PSA/CPM cannot fake.
-#
-# Not #501 (Time for Completion / delay-damages rate newest-year lock). This only gets the Contract Data
-# file into the pool for an Accepted Contract Amount ask.
+# An Accepted Contract Amount ask can retrieve service-agreement and permit
+# trackers and report the figure absent while the executed amount sits in a
+# file whose NAME says it is the Contract Data (a scanned table, newlines
+# between Accepted / Contract / Amount, no index-time particulars prefix, so
+# the particulars boost and the unnamed election never fire). The document
+# kind in the file name is the discriminator the other documents cannot
+# fake.
 _ACA_ASK_RE = re.compile(r"(?i)accepted\s+contract\s+amount")
 _CONTRACT_DATA_FILENAME_BONUS = 2.0
 _INCLUDING_VAT_RE = re.compile(r"(?i)including\s+vat|incl\.?\s+vat")
@@ -3271,8 +3176,8 @@ def filename_looks_like_contract_data(filename: str) -> bool:
 def filename_looks_like_conditions_volume(filename: str) -> bool:
     """True for the bound CoC / Contract Data volume a delay-damages daily-amount scan walks.
 
-    Live sources cite ``DD-2023-118_…_Cond…`` — a complete Conditions
-    volume whose 8.8 windows occupy top-k. Requiring only
+    Sources can cite a truncated ``<id>_…_Cond…`` — a complete Conditions
+    volume whose delay-damages windows occupy top-k. Requiring only
     ``contract data`` in the name left ``_e1_pool_doc_ids`` empty when
     those chunks were pointer-only, so the all-chunk scan never ran.
     """
@@ -3280,9 +3185,8 @@ def filename_looks_like_conditions_volume(filename: str) -> bool:
     return bool(re.search(
         r"(?i)contract\s+data|conditions?\s+of\s+contract|"
         r"particular\s+conditions|"
-        # Live Sources truncate to ``Vol 1.0_Con…`` / ``Cond of Contract``.
-        r"cond(?:itions?)?\s+of\s+con|"
-        r"vol\.?\s*\d[\d.]*\s+con",
+        # Abbreviated / truncated "Cond of Contract".
+        r"cond(?:itions?)?\.?\s+of\s+con",
         blob,
     ))
 
@@ -3316,7 +3220,7 @@ def _apply_contract_data_filename_boost(
         return
     want_aca = query_asks_for_accepted_contract_amount(query)
     want_tfc = query_asks_for_time_for_completion(query)
-    want_eng = query_asks_who_the_engineer_is(query)
+    party_role = asked_party_role(query)
     want_daily_damages = query_asks_delay_damages_daily_amount(query)
     want_dnp = query_asks_for_defects_notification_period(query)
     want_pcg = (
@@ -3337,7 +3241,7 @@ def _apply_contract_data_filename_boost(
         # PCG / commencement asks lift only the answering PCG / commencement row.
         if want_tfc and not want_aca and not chunk_states_time_for_completion(text):
             continue
-        if want_eng and not want_aca and not chunk_states_engineer_identity(text):
+        if party_role and not want_aca and not chunk_names_party(text, party_role):
             continue
         if want_daily_damages and not want_aca and not chunk_states_delay_damages_rate(text):
             continue
@@ -3352,97 +3256,15 @@ def _apply_contract_data_filename_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_contract_data_docs(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: List[str],
-) -> Dict[str, str]:
-    """Pull chunks from filename-matched Contract Data files into ``fused``."""
-    names: Dict[str, str] = {}
-    if not query_wants_contract_data_file(query):
-        return names
-    try:
-        from app.core.projects import documents_matching_title_phrase
-    except Exception:  # noqa: BLE001
-        logger.warning("contract-data rescue: projects import failed", exc_info=True)
-        return names
-    fetch = getattr(store, "chunks_for_docs", None)
-    if not callable(fetch):
-        return names
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    recovered = 0
-    for pid in pids:
-        try:
-            matches = documents_matching_title_phrase(pid, "contract data")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("contract-data rescue listing for %s failed: %s", pid, exc)
-            continue
-        if not matches:
-            continue
-        for doc in matches:
-            names[doc["id"]] = doc.get("original_name") or ""
-        try:
-            hits = fetch(pid, [d["id"] for d in matches], k_per_doc=40)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("contract-data rescue fetch for %s failed: %s", pid, exc)
-            continue
-        keep = None
-        if query_asks_for_aca_including_vat(query):
-            keep = chunk_states_aca_including_vat
-        elif query_asks_for_time_for_completion(query):
-            keep = chunk_states_time_for_completion
-        elif query_asks_who_the_engineer_is(query):
-            keep = chunk_states_engineer_identity
-        elif query_asks_delay_damages_daily_amount(query):
-            keep = _chunk_is_daily_damages_operand
-        elif query_asks_for_defects_notification_period(query):
-            keep = chunk_states_defects_notification_period
-        elif query_asks_for_parent_company_guarantee(query):
-            keep = chunk_states_pcg_contract_data
-        elif query_asks_for_contract_commencement_date(query):
-            keep = chunk_states_commencement_contract_data
-        paired = _pair_adjacent_keep_text(hits, keep) if keep else []
-        daily_damages_ask = query_asks_delay_damages_daily_amount(query)
-        for chunk in paired:
-            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
-            # Daily amount: rate earns the asked-value bonus; ACA enters at 0 so
-            # the monetary reservation still owns the last slot.
-            bonus = _ASKED_PARTICULAR_VALUE_BONUS
-            if daily_damages_ask and not chunk_states_delay_damages_rate(chunk.text or ""):
-                bonus = 0.0
-            fused[chunk.chunk_id] = (chunk, 0.0, bonus)
-            recovered += 1
-        # The ACA ask still needs every Contract Data window so the filename
-        # fence can see the including-VAT row. TfC / Engineer asks only keep the
-        # answering row — an ACA-only file must not fill top-k.
-        if query_asks_for_accepted_contract_amount(query):
-            for chunk in hits:
-                names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
-                if chunk.chunk_id in fused:
-                    continue
-                fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
-                recovered += 1
-    if recovered:
-        logger.info("contract-data rescue recovered %d chunk(s) for a particulars ask", recovered)
-    return names
-
-
-# ── Named-row rescue: ANY filled Contract Data row the question names ─────
+# ── named particulars rows ─────────────────────────────────────────────────
 #
-# Live b64bbd2, 0/3 each: "What is the value of the Performance Bond?",
-# "...Time for Completion for Milestone 5?", "What is the approved method of
-# electronic communication under the contract?". All three rows are in the
-# index, correctly prefixed, and score 5.0 when the question happens to say
-# "Contract Data". Asked plainly they are absent: a scanned table embeds
-# badly, cosine never pools it, and every bonus below only re-scores the pool.
-#
-# The out-of-pool fetch above is gated by ``query_wants_contract_data_file``
-# — seven rows, each added after it failed live. This is the same fetch for
-# the rest of the sheet: the discriminator is the row itself. A filled row
-# line that carries two or more of the question's own content words is a row
-# the question named; one shared word is a coincidence.
+# A filled particulars row asked plainly (its value, a milestone's duration,
+# a method named in a cell) is absent from the pool even though it is
+# indexed and correctly prefixed: a scanned table embeds badly, cosine never
+# pools it, and every bonus only re-scores the pool. The discriminator is the
+# row itself: a filled row line that carries two or more of the question's
+# own content words is a row the question named; one shared word is a
+# coincidence.
 _NAMED_ROW_MIN_LINE_TERMS = 2
 _NAMED_ROW_MIN_COVERAGE = 0.5
 _NAMED_ROW_MAX_CHUNKS = 2
@@ -3577,7 +3399,7 @@ def named_particulars_row_match(query: str, text: str) -> int:
         tail = low[max(ends):]
         if not _NAMED_ROW_SEPARATOR_RE.search(tail) and i + 1 < len(lines):
             # A scanned key wraps: ``Time for Completion (by`` /
-            # ``Milestone, if applicable): Milestone 1 | 397 days``. A next
+            # ``Milestone, if applicable): Milestone 1 | NNN days``. A next
             # line that opens with a clause number is the next ROW, not the
             # rest of this one.
             nxt = lines[i + 1]
@@ -3600,11 +3422,11 @@ def named_particulars_row_match(query: str, text: str) -> int:
     return covered
 
 
-# One cause behind three failed asks (milestone TfC, delay rate, BOQ WBS). Row 1.1.75 lists ten
-# milestones; the page breaks after Milestone 5 and so does the chunk. The
-# second half opens with the table's repeated header and then "Milestone 7 |
-# 397 days ..." — no "Time for Completion" label anywhere on it — so every
-# answer stopped, honestly, at Milestone 5.
+# One cause behind several failed asks: a particulars row lists many
+# milestones; the page breaks after one of them and so does the chunk. The
+# second half opens with the table's repeated header and then "Milestone N |
+# NNN days ..." — no "Time for Completion" label anywhere on it — so every
+# answer stopped, honestly, at the page break.
 #
 # What marks a continuation is the NUMBERING: the first half ends on
 # "<Word> n" and a following chunk of the same document opens on "<Word> n+1"
@@ -3613,8 +3435,8 @@ def named_particulars_row_match(query: str, text: str) -> int:
 _ENUMERATED_ITEM_RE = re.compile(r"(?m)^[\s|:]*([A-Z][a-z]{3,})\s+(\d{1,2})\b")
 _CONTINUATION_LOOKAHEAD_CHUNKS = 5
 _CONTINUATION_MAX_CHUNKS = 2
-# Live Set3 F1: a repeated OCR header pushed Milestone 6 past 400
-# chars, so enumeration rescue never saw 547 / Northern Community.
+# A repeated OCR header can push the next milestone past 400 chars, so the
+# continuation check reads a longer opening.
 _CONTINUATION_OPENING_CHARS = 1600
 
 
@@ -3667,9 +3489,12 @@ def _enumeration_continuations(parent: Chunk, sheet: List[Chunk]) -> List[Chunk]
 _NAMED_COMMUNITY_AMONG_RE = re.compile(
     r"(?i)\bamong\s+the\s+(.+?)\s+milestones\b",
 )
+# A named group of milestones: up to three words before a group noun
+# ("<Name> Quarter", "<Name Name> District"). The group nouns are a
+# vocabulary of how a site is divided, not any project's place names.
+_MILESTONE_GROUP_NOUNS = r"(?:community|quarter|district|precinct|zone|phase|sector|area|parcel)"
 _NAMED_COMMUNITY_NAME_RE = re.compile(
-    r"(?i)\b((?:northern|southern|boulevard|eastern|western|central|east|west)"
-    r"(?:\s+community|\s+quarter))\b",
+    rf"(?i)\b((?:[a-z][\w'-]*\s+){{1,3}}?{_MILESTONE_GROUP_NOUNS})\b",
 )
 _NAMED_COMMUNITY_SPAN_RE = re.compile(
     r"(?i)\b(?:longest|shortest|exceed)\b",
@@ -3685,14 +3510,22 @@ def extract_asked_community_name(query: str) -> str:
     among = _NAMED_COMMUNITY_AMONG_RE.search(q)
     if among:
         return re.sub(r"\s+", " ", among.group(1)).strip()
-    named = _NAMED_COMMUNITY_NAME_RE.search(q)
-    if named:
-        return re.sub(r"\s+", " ", named.group(1)).strip()
+    for named in _NAMED_COMMUNITY_NAME_RE.finditer(q):
+        words = named.group(1).split()
+        # The question's own frame words are not part of the name.
+        while words and (
+            words[0].lower() in _LABEL_PHRASE_STOPWORDS
+            or words[0].lower() in _NAMED_ROW_UBIQUITOUS_TERMS
+            or words[0].lower() in _GK_STOPWORDS
+        ):
+            words = words[1:]
+        if len(words) >= 2:
+            return " ".join(words)
     return ""
 
 
 def query_asks_named_community_tfc_span(query: str) -> bool:
-    """True for F1: longest/shortest Time for Completion in a named community."""
+    """True for longest/shortest Time for Completion in a named group of milestones."""
     q = query or ""
     if not extract_asked_community_name(q):
         return False
@@ -3708,10 +3541,9 @@ def compose_named_community_tfc_span(
 ) -> Optional[Dict[str, Any]]:
     """Longest / shortest Time for Completion among a named community.
 
-    Live Set3 F1: Northern Community milestones are 397 / 547 / 520 /
-    400 days. Longest 547 exceeds shortest 397 by 150. Does not invent
-    days; every figure must already be printed on a Milestone row that
-    names the community.
+    The longest and shortest durations among the milestones that name the
+    community, and their difference. Does not invent days; every figure
+    must already be printed on a Milestone row that names the community.
     """
     community = extract_asked_community_name(query)
     if not community or not excerpts:
@@ -3720,7 +3552,7 @@ def compose_named_community_tfc_span(
     days_by_ms: Dict[int, int] = {}
     for match in _MILESTONE_DAYS_ROW_RE.finditer(excerpts):
         # Cut at the next Milestone, not a fixed char window — a 200-char
-        # reach stained East Quarter 640 days as Northern Community when
+        # reach stained the next community's days as this community's when
         # the next row named it. A wrap that keeps the community on the
         # same item still counts.
         nxt = re.search(r"(?i)milestone\s+\d+", excerpts[match.end():])
@@ -3769,125 +3601,366 @@ def format_named_community_tfc_span_line(composed: Dict[str, Any]) -> str:
     )
 
 
-def _rescue_named_particulars_rows(
+# ── labelled-row recall: the filled row for the label a question names ────
+#
+# A particular (an amount, a duration, a party, "Not Used", "Not required",
+# a register entry, a bill item marked Rate Only) is a labelled ROW: a label
+# cell and a value cell. Asked plainly, the row is absent from the pool: a
+# scanned table embeds badly, the row shares one or two words with the
+# question, and long prose that mentions the same topic at length fills the
+# slots. The discriminator is the row itself: a line that opens with a label
+# the question names and states a value for it.
+#
+# The labels come from the question: the particular names it uses (a lexicon
+# of contract-particular names), any identifier label it names ("Schedule 7",
+# a bill item code), and runs of its own content words. A filled value is a
+# figure, a party, a date, a register entry or a stated absence ("No", "Not
+# required", "Not used", "to be notified"); a blank template ("[insert
+# amount]") and a pointer to somewhere else ("as stated in the Contract
+# Data") are not.
+_PARTICULARS_KIND_PHRASES = ("contract data", "appendix to tender", "contract particulars")
+_LABELLED_ROW_MAX_LABELS = 6
+_LABELLED_ROW_FETCH_K = 20
+_LABELLED_ROW_VALUE_CHARS = 120
+_STATED_ABSENCE_RE = re.compile(
+    r"(?i)^(?:no|none|nil|n/?a|not\s+(?:required|used|applicable|populated|stated)|"
+    r"tba|tbc|to\s+be\s+(?:advised|agreed|confirmed|notified|issued|inserted))\b"
+)
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"(?i)\[\s*(?:insert|name|amount|date|enter|state)\b|\.{5,}|_{5,}"
+)
+# A value cell that points elsewhere is not a value.
+_ROW_VALUE_POINTER_RE = re.compile(
+    r"(?i)\b(?:stated|set\s+out|specified|given|shown|defined|referred\s+to)\s+in\s+"
+    r"(?:the\s+)?(?:contract\s+data|appendix|schedule|particular|letter\s+of)"
+)
+_ROW_VALUE_MAX_PROSE_WORDS = 14
+
+
+def asked_row_labels(query: str) -> List[str]:
+    """The row labels the question names, most specific first.
+
+    Identifier labels ("schedule 7", a bill item code) first, then the
+    contract-particular names it uses, then runs of its own content words.
+    Empty for a definition question.
+    """
+    q = query or ""
+    if _DEFINITION_QUESTION_RE.search(q):
+        return []
+    out: List[str] = []
+
+    def _add(label: str) -> None:
+        lab = " ".join((label or "").lower().split())
+        if len(lab) >= 3 and lab not in out:
+            out.append(lab)
+
+    if query_asks_for_numbered_contract_schedule(q):
+        for lab in extract_asked_schedule_labels(q):
+            _add(lab)
+    if query_asks_for_boq_item_amount(q):
+        for code in extract_asked_cesmm_codes(q):
+            _add(code)
+    for phrase in _asked_particular_key_phrases(q):
+        _add(phrase)
+    for phrase in sorted(_label_phrases(q), key=lambda p: -len(p.split())):
+        _add(phrase)
+    return out
+
+
+def query_wants_a_labelled_row(query: str) -> bool:
+    """A question whose answer is a filled row, so its labels may be text-searched.
+
+    A contract-particulars question, a numbered register / schedule entry, or
+    a bill item named by its code. An ordinary question is not searched this
+    way: its word runs are not labels.
+    """
+    q = query or ""
+    if _DEFINITION_QUESTION_RE.search(q):
+        return False
+    return bool(
+        query_asks_for_contract_particulars(q)
+        or query_asks_for_numbered_contract_schedule(q)
+        or (query_asks_for_boq_item_amount(q) and extract_asked_cesmm_codes(q))
+        or query_asks_for_parent_company_guarantee(q)
+        or query_asks_for_contract_commencement_date(q)
+        or query_wants_contract_data_file(q)
+    )
+
+
+def _row_value_is_filled(value: str) -> bool:
+    val = (value or "").strip(" \t|:;-–—.")
+    if not val or not re.search(r"[A-Za-z0-9]", val):
+        return False
+    if _TEMPLATE_PLACEHOLDER_RE.search(val):
+        return False
+    if _ROW_VALUE_POINTER_RE.search(val):
+        return False
+    if _STATED_ABSENCE_RE.search(val):
+        return True
+    if _CD_FILLED_VALUE_RE.search(val[:_LABELLED_ROW_VALUE_CHARS]):
+        return True
+    # A sentence of prose under a heading is a clause, not a value cell.
+    return len(val.split()) <= _ROW_VALUE_MAX_PROSE_WORDS
+
+
+def chunk_states_labelled_row(text: str, labels: List[str]) -> bool:
+    """True when a line opens with one of ``labels`` and a filled value follows.
+
+    The value is the rest of the line after the label (past any ``:`` / ``|``
+    cell separators), or the next line when the label stands alone on its
+    line, as a scanned key often does.
+    """
+    if not labels:
+        return False
+    lines = [ln for ln in (text or "").splitlines()]
+    for i, line in enumerate(lines):
+        end = _line_is_labelled(line, labels)
+        if end is None:
+            continue
+        rest = line.lower()[end:]
+        if rest.strip(" \t|:;-–—.") == "" and i + 1 < len(lines):
+            rest = lines[i + 1]
+        if _row_value_is_filled(rest):
+            return True
+    return False
+
+
+def _known_particular_row_test(query: str):
+    """The row recogniser for a contract particular whose row shape is known.
+
+    None when the question asks for no such particular.
+    """
+    if query_asks_for_aca_including_vat(query):
+        return chunk_states_aca_including_vat
+    if query_asks_for_time_for_completion(query):
+        return chunk_states_time_for_completion
+    party_role = asked_party_role(query)
+    if party_role:
+        return lambda text: chunk_names_party(text, party_role)
+    if query_asks_delay_damages_daily_amount(query):
+        return _chunk_is_daily_damages_operand
+    if query_asks_for_defects_notification_period(query):
+        return chunk_states_defects_notification_period
+    if query_asks_for_parent_company_guarantee(query):
+        return chunk_states_pcg_contract_data
+    if query_asks_for_contract_commencement_date(query):
+        return chunk_states_commencement_contract_data
+    return None
+
+
+def chunk_states_asked_row(query: str, text: str, labels: Optional[List[str]] = None) -> bool:
+    """True when ``text`` states the row the question asks for.
+
+    The particular shapes the retriever already recognises (a rate, a party,
+    a duration, a Rate Only item, a register entry, a not-required /
+    not-populated particular) or, for any other label, a labelled row with a
+    filled value.
+    """
+    if chunk_answers_asked_particular(query, text):
+        return True
+    if query_asks_for_parent_company_guarantee(query) and chunk_states_pcg_contract_data(text):
+        return True
+    if (
+        query_asks_for_contract_commencement_date(query)
+        and chunk_states_commencement_contract_data(text)
+    ):
+        return True
+    if query_asks_for_numbered_contract_schedule(query):
+        schedule_labels = extract_asked_schedule_labels(query)
+        if schedule_labels and chunk_states_schedule_register(text, schedule_labels):
+            return True
+    if query_asks_for_boq_item_amount(query):
+        codes = extract_asked_cesmm_codes(query)
+        if codes and chunk_states_rate_only_item(text, codes):
+            return True
+    return chunk_states_labelled_row(text, labels if labels is not None else asked_row_labels(query))
+
+
+def recall_labelled_rows(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     extra_pids: List[str],
-) -> int:
-    """Pull the filled Contract Data row(s) the question names into ``fused``."""
+) -> Dict[str, str]:
+    """Pull the filled row(s) for the label(s) the question names into ``fused``.
+
+    Labelled-row recall, in two passes:
+
+      * the particulars documents (their kind read from the upload name) are
+        loaded, and the rows the question names -- by its own label phrases,
+        or by a particular it asks for -- are pooled with the asked-value
+        bonus; a row that runs on into the next chunk brings that chunk, and
+        a share of a named sum brings the row stating the sum;
+      * for a particulars-shaped question, the question's labels are also
+        searched as text across the project, so a row that lives in a file
+        of another kind (a register, a bill, a scanned sheet) is pooled when
+        it states a value for that label.
+
+    Returns ``{doc_id: name}`` for the particulars documents listed here.
+    Failures never raise -- the semantic pool stands.
+    """
+    names: Dict[str, str] = {}
     if _DEFINITION_QUESTION_RE.search(query or ""):
-        return 0
-    if (
-        len(_named_row_terms(query)) < _NAMED_ROW_MIN_LINE_TERMS
-        and not _label_phrases(query)
-    ):
-        return 0
+        return names
+    labels = asked_row_labels(query)
+    named_terms = _named_row_terms(query)
+    if not labels and len(named_terms) < _NAMED_ROW_MIN_LINE_TERMS:
+        return names
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+
+    def _pool(chunk: Chunk, bonus: float) -> None:
+        nonlocal recovered
+        prev = fused.get(chunk.chunk_id)
+        if prev is not None:
+            fused[chunk.chunk_id] = (prev[0], prev[1], max(prev[2] or 0.0, bonus))
+            return
+        fused[chunk.chunk_id] = (chunk, 0.0, bonus)
+        recovered += 1
+
+    keep = (lambda text: chunk_states_asked_row(query, text, labels))
+    daily_damages_ask = query_asks_delay_damages_daily_amount(query)
+
+    def _bonus_for(text: str) -> float:
+        # A daily amount is composed from the rate and the sum it is a share
+        # of: the rate row earns the asked-value bonus, the sum enters at 0 so
+        # the monetary reservation still owns the last slot.
+        if daily_damages_ask and not chunk_states_delay_damages_rate(text):
+            return 0.0
+        return _ASKED_PARTICULAR_VALUE_BONUS
+
+    # ── pass 1: the particulars documents ─────────────────────────────────
     try:
         from app.core.projects import documents_matching_title_phrase
     except Exception:  # noqa: BLE001
-        logger.warning("named-row rescue: projects import failed", exc_info=True)
-        return 0
-    fetch = getattr(store, "chunks_for_docs", None)
-    if not callable(fetch):
-        return 0
-    matched: List[Tuple[int, Chunk]] = []
-    sheet: List[Chunk] = []
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    for pid in pids:
-        try:
-            docs = documents_matching_title_phrase(pid, "contract data")
-            k_per = 80 if query_asks_named_community_tfc_span(query) else 40
-            hits = fetch(pid, [d["id"] for d in docs], k_per_doc=k_per) if docs else []
-        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
-            logger.warning("named-row rescue for %s failed: %s", pid, exc)
-            continue
-        sheet.extend(hits)
-        for chunk in hits:
-            strength = named_particulars_row_match(query, chunk.text or "")
-            if strength:
-                matched.append((strength, chunk))
-    matched.sort(key=lambda m: (-m[0], m[1].chunk_index))
-    row_cap = _NAMED_ROW_MAX_CHUNKS
-    if query_asks_named_community_tfc_span(query):
-        # Live F1: list + M1–5 times filled both slots and the
-        # continuation (547 / Northern) never entered chosen.
-        row_cap = max(row_cap, 4)
-    chosen = [chunk for _strength, chunk in matched[:row_cap]]
-    # A row that runs on into the next chunk is still one row. The second
-    # half carries no label, so it is found from the first half, not by name.
-    for parent in list(chosen):
-        for cont in _enumeration_continuations(parent, sheet):
-            if all(cont.chunk_id != c.chunk_id for c in chosen):
-                chosen.append(cont)
-    # Set3 F1: a named-community Time-for-Completion span needs the
-    # continuation rows that name the community AND state days, even
-    # when the opening header is too long for enumeration rescue.
-    if query_asks_named_community_tfc_span(query):
-        community = extract_asked_community_name(query)
-        needle = (community or "").lower()
-        if needle:
-            for chunk in sheet:
-                text = chunk.text or ""
-                if needle not in text.lower():
-                    continue
-                if not re.search(r"(?i)\d+\s*days", text):
-                    continue
-                if all(chunk.chunk_id != c.chunk_id for c in chosen):
-                    chosen.append(chunk)
-    recovered = 0
-    # Live 24d1c0c E2, 0/3: the 0.015%-per-day row ranked first and the answer
-    # stopped, correctly, at "0.45% of the Contract Price — which is not in
-    # the retrieved context". A share of the contract sum is half an answer;
-    # the sum is one row up the same sheet. Below the asked row's bonus, so
-    # the base can accompany the row and never outrank it.
-    if any(_NAMED_ROW_SHARE_OF_SUM_RE.search(c.text or "") for c in chosen):
-        docs = {c.doc_id for c in chosen}
-        base = next(
-            (
-                c for c in sheet
-                if c.doc_id in docs
-                and chunk_states_accepted_contract_amount(c.text or "")
-            ),
-            None,
-        )
-        if base is not None and base.chunk_id not in fused:
-            fused[base.chunk_id] = (base, 0.0, _NAMED_ROW_BASE_AMOUNT_BONUS)
-            recovered += 1
-    for chunk in chosen:
-        prev = fused.get(chunk.chunk_id)
-        if prev is not None:
-            # Already pooled on cosine alone: it still has to beat the
-            # table-of-contents page that repeats the label.
-            fused[chunk.chunk_id] = (
-                prev[0], prev[1], max(prev[2], _ASKED_PARTICULAR_VALUE_BONUS),
+        logger.warning("labelled-row recall: projects import failed", exc_info=True)
+        documents_matching_title_phrase = None
+    by_docs = getattr(store, "chunks_for_docs", None)
+    span_ask = query_asks_named_community_tfc_span(query)
+    if documents_matching_title_phrase is not None and callable(by_docs):
+        matched: List[Tuple[int, Chunk]] = []
+        sheet: List[Chunk] = []
+        for pid in pids:
+            docs: List[Dict[str, str]] = []
+            for phrase in _PARTICULARS_KIND_PHRASES:
+                try:
+                    docs.extend(documents_matching_title_phrase(pid, phrase) or [])
+                except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+                    logger.warning(
+                        "particulars listing for %s (%r) failed: %s", pid, phrase, exc,
+                    )
+            ids: List[str] = []
+            for doc in docs:
+                did = doc.get("id") or ""
+                if did and did not in ids:
+                    ids.append(did)
+                    names[did] = doc.get("original_name") or ""
+            if not ids:
+                continue
+            try:
+                hits = by_docs(pid, ids, k_per_doc=80 if span_ask else 40)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("particulars fetch for %s failed: %s", pid, exc)
+                continue
+            sheet.extend(hits)
+            for chunk in hits:
+                strength = named_particulars_row_match(query, chunk.text or "")
+                if strength:
+                    matched.append((strength, chunk))
+            # A label split from its value across chunks is still one row. Only
+            # for a particular whose row shape is known: joining arbitrary
+            # neighbours would make any two adjacent rows look like one.
+            known = _known_particular_row_test(query)
+            if known is not None:
+                for chunk in _pair_adjacent_keep_text(hits, known):
+                    names.setdefault(chunk.doc_id, "")
+                    _pool(chunk, _bonus_for(chunk.text or ""))
+            # The Accepted Contract Amount ask keeps every window of the sheet so
+            # the filename fence can see the variant (VAT basis) asked for.
+            if query_asks_for_accepted_contract_amount(query):
+                for chunk in hits:
+                    if chunk.chunk_id not in fused:
+                        fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+                        recovered += 1
+        matched.sort(key=lambda m: (-m[0], m[1].chunk_index))
+        row_cap = max(_NAMED_ROW_MAX_CHUNKS, 4) if span_ask else _NAMED_ROW_MAX_CHUNKS
+        chosen = [chunk for _strength, chunk in matched[:row_cap]]
+        # A row that runs on into the next chunk is still one row. The second
+        # half carries no label, so it is found from the first half.
+        for parent in list(chosen):
+            for cont in _enumeration_continuations(parent, sheet):
+                if all(cont.chunk_id != c.chunk_id for c in chosen):
+                    chosen.append(cont)
+        # A span across a named group of milestones needs every row that names
+        # the group and states days, even past an over-long repeated header.
+        if span_ask:
+            needle = (extract_asked_community_name(query) or "").lower()
+            if needle:
+                for chunk in sheet:
+                    text = chunk.text or ""
+                    if needle in text.lower() and re.search(r"(?i)\d+\s*days", text):
+                        if all(chunk.chunk_id != c.chunk_id for c in chosen):
+                            chosen.append(chunk)
+        # A share of a named sum is half an answer; the sum is a row of the same
+        # sheet. Below the asked row's bonus, so it accompanies and never leads.
+        if any(_NAMED_ROW_SHARE_OF_SUM_RE.search(c.text or "") for c in chosen):
+            docs_in = {c.doc_id for c in chosen}
+            base = next(
+                (c for c in sheet
+                 if c.doc_id in docs_in and chunk_states_accepted_contract_amount(c.text or "")),
+                None,
             )
-            continue
-        fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
-        recovered += 1
+            if base is not None and base.chunk_id not in fused:
+                fused[base.chunk_id] = (base, 0.0, _NAMED_ROW_BASE_AMOUNT_BONUS)
+                recovered += 1
+        for chunk in chosen:
+            _pool(chunk, _ASKED_PARTICULAR_VALUE_BONUS)
+
+    # ── pass 2: the question's labels as text, project corpus ─────────────
+    if labels and query_wants_a_labelled_row(query):
+        gk = set(_general_knowledge_project_ids())
+        text_pids = [p for p in pids if p == project_id or p not in gk]
+        for label in labels[:_LABELLED_ROW_MAX_LABELS]:
+            recovered += _pool_lexical_hits_matching(
+                project_id, fused, store, (label,), keep,
+                label="labelled-row", bonus=_bonus_for,
+            )
+        containing = getattr(store, "chunks_containing_all", None)
+        party_role = asked_party_role(query)
+        needle_sets: List[List[str]] = [[label] for label in labels[:_LABELLED_ROW_MAX_LABELS]]
+        # The row that names a party: the role word alone hits every clause
+        # that mentions the role, so pair it with a name ending.
+        needle_sets.extend(list(n) for n in party_name_needle_sets(party_role))
+        if callable(containing):
+            for pid in text_pids:
+                for needles in needle_sets:
+                    label = " + ".join(needles)
+                    try:
+                        hits = containing(pid, needles, k=_LABELLED_ROW_FETCH_K)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "labelled-row text fetch for %s (%r) failed: %s", pid, label, exc,
+                        )
+                        continue
+                    # Adds what the pool is missing; a row already pooled keeps
+                    # the score the other legs gave it.
+                    for chunk in _pair_adjacent_keep_text(hits or [], keep):
+                        if chunk.chunk_id not in fused:
+                            _pool(chunk, _bonus_for(chunk.text or ""))
     if recovered:
-        logger.info("named-row rescue recovered %d Contract Data chunk(s)", recovered)
-    return recovered
+        logger.info("labelled-row recall pooled %d chunk(s) for labels %r", recovered, labels)
+    return names
 
 
-# ── Schedule-register / Not Used rescue ────────────────────────────
+# ── numbered schedule register rows ───────────────────────────────────────
 #
-# Numbered schedule ask: "Answer only from the client project
-# documents. What does Schedule 10 of the contract contain?" retrieved
-# Volume 5 / Volume 4 / CPM and answered with a generic "I will answer from
-# the documents" acknowledgement. The contract's own schedule index says
-# ``Schedule 10: Not Used``. That short register row is the answer — cosine
-# prefers the long volumes that mention "schedule" at length, and term
-# rescue treats that overlap as already-grounded so it never fetches the
-# index line. Do not invent contents; surface the register row as written.
-#
-# Same shape as the spec-title in-chunk identity rescue (``chunks_containing_all``)
-# plus the Contract Data / spec-title fence: when a register row is in the pool, lookalikes
-# drop.
-#
-# Not #500 (routing), not #501 (year lock), not #502
-# (SPE-identity / Contract Data filename).
+# "What does Schedule N of the contract contain?" can retrieve long volumes
+# that mention "schedule" at length and answer with a generic
+# acknowledgement, while the contract's own schedule index row
+# (``Schedule N: Not Used`` / ``Schedule N | <title>``) is the answer. Do not
+# invent contents; surface the register row as written. When a register row
+# is in the pool, lookalikes drop.
 _SCHEDULE_REGISTER_BONUS = 2.0
 _SCHEDULE_REGISTER_ROW_RE = re.compile(
     r"(?i)\b(schedule\s+(?:no\.?\s*)?\d+[A-Za-z]?)"
@@ -4008,84 +4081,24 @@ def _apply_schedule_register_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_schedule_register_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: List[str],
-) -> int:
-    """Pull Schedule-N register / Not Used index rows into ``fused``.
-
-    Cosine never ranks the short index line; Vol 4/5/CPM flood the
-    semantic pool. Failures never raise.
-    """
-    if not query_asks_for_contract_particulars(query):
-        return 0
-    if not query_asks_for_numbered_contract_schedule(query):
-        return 0
-    labels = extract_asked_schedule_labels(query)
-    if not labels:
-        return 0
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return 0
-    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
-    recovered = 0
-    for pid in pids:
-        for label in labels:
-            needle_sets = ([label, "not used"], [label])
-            for needles in needle_sets:
-                try:
-                    hits = fetch(pid, needles, k=20)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "schedule-register rescue for %s (%r) failed: %s",
-                        pid, needles, exc,
-                    )
-                    continue
-                for chunk in hits:
-                    if not chunk_states_schedule_register(
-                        chunk.text or "", labels,
-                    ):
-                        continue
-                    if chunk.chunk_id in fused:
-                        continue
-                    fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
-                    recovered += 1
-    if recovered:
-        logger.info(
-            "schedule-register rescue recovered %d chunk(s) for labels %r",
-            recovered, labels,
-        )
-    return recovered
-
-
-# ── PCG / commencement-date honest-refusal (Contract Data over form / pack) ─────────────
+# ── a particular stated as absent beats a lookalike (form / pack) ──────────
 #
-# Observed on BASELINE 0d9fd23:
+#   Guarantee ask: the Contract Data row says the guarantee is not required.
+#   Cosine preferred the blank form of guarantee (a percentage of paid-up
+#   capital) and the model invented a monetary value. The form is a
+#   template; "not required" IS the answer.
 #
-#   PCG ask — "What is the value of the Parent Company Guarantee?"
-#   Contract Data 4.3.7 = No / not required. Cosine preferred the
-#   Schedule 8 form's "20% of paid-up Capital and Reserves" and the
-#   model invented a monetary value. The form is a blank template;
-#   "not required" IS the answer.
+#   Commencement-date ask: the tender's Contract Data field is empty / tied
+#   to the letter of acceptance. Cosine preferred a site commencement pack
+#   report and the model invented the pack's date. That pack is site
+#   commencement, not the contract Commencement Date particular.
 #
-#   Commencement date ask — "What is the Commencement Date of the contract?"
-#   Tender Contract Data field is empty / tied to LOA-NOA. Cosine
-#   preferred a Construction Commencement Pack Report and the model
-#   invented 10 January 2024. That pack is site commencement, not
-#   the contract Commencement Date particular.
-#
-# Same shape as the schedule register (row over Vol 4 prose) and Rate Only
-# (row over priced lookalikes): rescue the Contract Data row, fence the
-# lookalike, instruct compose, graft if the model still invents.
-# Do not invent: the excerpt itself must already say not required /
-# not populated, or a filled CD value/date.
-#
-# Not #506 (schedule register), not #542 (Rate Only). A filled
-# Contract Data value or date still wins — this only refuses the
-# form/pack when CD already answered.
+# Same shape as the schedule register (row over volume prose) and Rate Only
+# (row over priced lookalikes): pool the Contract Data row, fence the
+# lookalike, instruct compose, graft if the model still invents. Do not
+# invent: the excerpt itself must already say not required / not populated,
+# or a filled value / date. A filled value or date still wins -- this only
+# refuses the form / pack when the Contract Data already answered.
 _PCG_HONEST_BONUS = 2.0
 _COMMENCEMENT_HONEST_BONUS = 2.0
 _PCG_ASK_RE = re.compile(r"(?i)\bparent\s+company\s+guarantee\b|\bpcg\b")
@@ -4098,9 +4111,12 @@ _PCG_NOT_REQUIRED_RE = re.compile(
 _PCG_NO_ROW_RE = re.compile(
     r"(?i)(?:^|\n)\s*(?:no\.?|none)\s*(?:[.\n]|$)",
 )
+# A guarantee FORM: the form's own title, its operative wording, or a blank
+# placeholder -- in whichever schedule / annex a contract binds it.
 _PCG_FORM_RE = re.compile(
-    r"(?i)(?:paid[- ]up\s+capital|form\s+of\s+parent\s+company|"
-    r"schedule\s+8\b|the\s+guarantor\s+shall|"
+    r"(?i)(?:paid[- ]up\s+capital|shareholders['’]?\s+funds|"
+    r"form\s+of\s+(?:parent\s+company\s+)?guarantee|"
+    r"the\s+guarantor\s+(?:shall|irrevocably|hereby)|"
     r"\[\s*(?:insert|name|amount|date)\b)",
 )
 _PCG_FILLED_VALUE_RE = re.compile(
@@ -4108,7 +4124,6 @@ _PCG_FILLED_VALUE_RE = re.compile(
     r"\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b"
     r"[^\n]{0,12}\d{1,3}(?:,\d{3})+(?:\.\d+)?)",
 )
-_PCG_CLAUSE_RE = re.compile(r"(?i)\b4\.3\.7\b")
 _COMMENCEMENT_DATE_ASK_RE = re.compile(
     r"(?i)(?:\bcommencement\s+date\b|"
     r"\bcontract\s+commencement\b|"
@@ -4154,16 +4169,6 @@ _COMMENCEMENT_UNSUPPORTED_LINE = (
     "The contract Commencement Date is not stated in the Contract Data "
     "retrieved for this project. I will not invent a calendar date."
 )
-_PCG_VALUE_RESCUE_PHRASES = (
-    "parent company guarantee",
-    "4.3.7",
-    "not required",
-)
-_COMMENCEMENT_RESCUE_PHRASES = (
-    "commencement date",
-    "not populated",
-    "letter of acceptance",
-)
 
 
 def query_asks_for_parent_company_guarantee(query: str) -> bool:
@@ -4206,11 +4211,11 @@ def query_asks_for_contract_commencement_date(query: str) -> bool:
 
 def _chunk_mentions_pcg(text: str) -> bool:
     blob = _normalize_retrieval_ws(text)
-    return bool(_PCG_ASK_RE.search(blob) or _PCG_CLAUSE_RE.search(blob))
+    return bool(_PCG_ASK_RE.search(blob))
 
 
 def chunk_states_pcg_form_template(text: str) -> bool:
-    """True for Schedule 8 / blank-form PCG wording, not Contract Data."""
+    """True for a guarantee form / blank template, not the Contract Data row."""
     if not text or not _chunk_mentions_pcg(text):
         return False
     if _PCG_NOT_REQUIRED_RE.search(text):
@@ -4231,7 +4236,7 @@ def chunk_states_pcg_not_required(text: str) -> bool:
         return False
     if _PCG_NOT_REQUIRED_RE.search(text):
         return True
-    # Heading + "No." on the next line (fixture S1 / live 4.3.7).
+    # Label on one line and "No." on the next (a scanned particulars row).
     if _PCG_NO_ROW_RE.search(text) and not _PCG_FILLED_VALUE_RE.search(text):
         return True
     return False
@@ -4240,7 +4245,8 @@ def chunk_states_pcg_not_required(text: str) -> bool:
 def chunk_states_pcg_filled_value(text: str) -> bool:
     """True when Contract Data states a PCG amount or percentage.
 
-    The Schedule 8 form's paid-up-capital % is not a filled particular.
+    A guarantee form's percentage of paid-up capital is not a filled
+    particular.
     """
     if not text or not _chunk_mentions_pcg(text):
         return False
@@ -4296,20 +4302,62 @@ def chunk_states_commencement_contract_data(text: str) -> bool:
     )
 
 
+# The clause number a particulars row carries in front of its label:
+# "9.2 | Parent Company Guarantee", "4.3.3(a): | Value of ...".
+_ROW_CLAUSE_BEFORE_LABEL = r"(\d+(?:\.\d+)+(?:\s*\([a-z0-9]+\))?)[\s|:]{0,8}"
+
+
+def particular_citation(text: str, label_rx: "re.Pattern") -> str:
+    """Where the chunk itself says a particular sits: "(Contract Data 9.2)".
+
+    The clause is the number the chunk prints in front of the label; the
+    document kind is the particulars heading the chunk carries. Nothing is
+    supplied that the chunk does not print: no clause, no number.
+    """
+    blob = text or ""
+    clause = ""
+    for match in label_rx.finditer(blob):
+        lead = blob[max(0, match.start() - 24):match.start()]
+        m = re.search(_ROW_CLAUSE_BEFORE_LABEL + r"$", lead)
+        if m:
+            clause = re.sub(r"\s+", "", m.group(1))
+            break
+    heading = _CD_HEADING_IN_CHUNK_RE.search(blob)
+    kind = " ".join(heading.group(0).split()).title() if heading else ""
+    if kind.lower() == "contract data":
+        kind = "Contract Data"
+    parts = " ".join(p for p in (kind, clause) if p)
+    if not parts:
+        return ""
+    return f" ({parts if kind else 'clause ' + clause})"
+
+
+def _pcg_source_excerpt(excerpt: str) -> str:
+    """The block of ``excerpt`` that states the guarantee particular."""
+    for block in re.split(r"\n{2,}|\[doc_id=", excerpt or ""):
+        if chunk_states_pcg_contract_data(block):
+            return block
+    return excerpt or ""
+
+
+def pcg_citation(excerpt: str = "") -> str:
+    """" (Contract Data 9.2)" -- where the stating excerpt says the guarantee sits."""
+    return particular_citation(_pcg_source_excerpt(excerpt), _PCG_ASK_RE)
+
+
 def format_pcg_honest_line(excerpt: str = "") -> str:
-    """User-facing PCG sentence. Does not invent a % from the form."""
-    if chunk_states_pcg_filled_value(excerpt):
-        match = _PCG_FILLED_VALUE_RE.search(excerpt or "")
+    """User-facing PCG sentence. Does not invent a % from the form.
+
+    Cites the clause the stating chunk itself carries, if any.
+    """
+    source = _pcg_source_excerpt(excerpt)
+    cite = pcg_citation(source)
+    if chunk_states_pcg_filled_value(source):
+        match = _PCG_FILLED_VALUE_RE.search(source or "")
         value = (match.group(0) or "").strip() if match else ""
         if value:
-            return (
-                f"The Parent Company Guarantee is {value} "
-                f"(Contract Data 4.3.7)."
-            )
-    return (
-        "A Parent Company Guarantee is not required "
-        "(Contract Data 4.3.7)."
-    )
+            return f"The Parent Company Guarantee is {value}{cite}."
+    return f"A Parent Company Guarantee is not required{cite}."
 
 
 def format_commencement_honest_line(excerpt: str = "") -> str:
@@ -4403,104 +4451,6 @@ def _apply_commencement_date_boost(
         boosted = score + _COMMENCEMENT_HONEST_BONUS
         chunk.score = round(boosted, 6)
         scored[i] = (boosted, chunk)
-
-
-def _rescue_pcg_value_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: Optional[List[str]] = None,
-) -> int:
-    """Pull the Contract Data 4.3.7 / not-required row into ``fused``."""
-    if not query_asks_for_parent_company_guarantee(query):
-        return 0
-    recovered = _pool_lexical_hits_matching(
-        project_id, fused, store, _PCG_VALUE_RESCUE_PHRASES,
-        chunk_states_pcg_contract_data, label="pcg-value",
-        bonus=_PCG_HONEST_BONUS,
-    )
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return recovered
-    pids = [project_id] + [
-        p for p in (extra_pids or []) if p and p != project_id
-    ]
-    needle_sets = (
-        ["parent company guarantee", "not required"],
-        ["parent company guarantee"],
-        ["4.3.7"],
-    )
-    for pid in pids:
-        for needles in needle_sets:
-            try:
-                hits = fetch(pid, needles, k=20)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "pcg-value rescue for %s (%r) failed: %s",
-                    pid, needles, exc,
-                )
-                continue
-            for chunk in hits:
-                if not chunk_states_pcg_contract_data(chunk.text or ""):
-                    continue
-                if chunk.chunk_id in fused:
-                    continue
-                fused[chunk.chunk_id] = (chunk, 0.0, _PCG_HONEST_BONUS)
-                recovered += 1
-    if recovered:
-        logger.info("pcg-value rescue recovered %d chunk(s)", recovered)
-    return recovered
-
-
-def _rescue_commencement_date_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: Optional[List[str]] = None,
-) -> int:
-    """Pull the empty / filled Contract Data commencement row into ``fused``."""
-    if not query_asks_for_contract_commencement_date(query):
-        return 0
-    recovered = _pool_lexical_hits_matching(
-        project_id, fused, store, _COMMENCEMENT_RESCUE_PHRASES,
-        chunk_states_commencement_contract_data, label="commencement-date",
-        bonus=_COMMENCEMENT_HONEST_BONUS,
-    )
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return recovered
-    pids = [project_id] + [
-        p for p in (extra_pids or []) if p and p != project_id
-    ]
-    needle_sets = (
-        ["commencement date", "not populated"],
-        ["commencement date", "loa"],
-        ["commencement date"],
-    )
-    for pid in pids:
-        for needles in needle_sets:
-            try:
-                hits = fetch(pid, needles, k=20)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "commencement-date rescue for %s (%r) failed: %s",
-                    pid, needles, exc,
-                )
-                continue
-            for chunk in hits:
-                if not chunk_states_commencement_contract_data(chunk.text or ""):
-                    continue
-                if chunk.chunk_id in fused:
-                    continue
-                fused[chunk.chunk_id] = (
-                    chunk, 0.0, _COMMENCEMENT_HONEST_BONUS,
-                )
-                recovered += 1
-    if recovered:
-        logger.info("commencement-date rescue recovered %d chunk(s)", recovered)
-    return recovered
 
 
 # Dual-query retrieval (F18, phase-3 campaign). Measured on a 203-page
@@ -4626,15 +4576,14 @@ _CD_SCHEDULE_CONTEXT_RE = re.compile(
     r"(?i)\b(?:contract|contracts|volume|volumes|"
     r"conditions\s+of\s+contract|tender)\b",
 )
-# Arithmetic over a particular that wants a MONEY answer. A daily-amount ask:
-# "Calculate the delay damages per calendar day in SAR for the whole of the
-# Works" retrieved the 0.1%-per-day rate row at rank 1 and then reported the
-# SAR figure as absent — because a percentage is not an amount, and the row
-# carrying the amount shares no wording with the question, so it lost every
-# top-5 slot to rows that do.
+# Arithmetic over a particular that wants a MONEY answer. A daily-amount ask
+# (a rate per day, asked in a currency) retrieved the percentage-per-day rate
+# row at rank 1 and then reported the money figure as absent — because a
+# percentage is not an amount, and the row carrying the amount shares no
+# wording with the question, so it lost every top-5 slot to rows that do.
 _CD_MONEY_ARITHMETIC_ASK_RE = re.compile(
-    # "What are the delay damages in SAR per calendar day" is the same ask as
-    # "calculate the delay damages in SAR". The caller also requires
+    # "What are <particular> in <currency> per <period>" is the same ask as
+    # "calculate <particular> in <currency>". The caller also requires
     # _CD_MONEY_UNIT_ASK_RE, so a plain lookup with no currency and no
     # amount-per token still does not qualify.
     r"(?i)\b(?:calculate|compute|work\s+out|how\s+much|"
@@ -4836,8 +4785,8 @@ def particulars_row_answers_asked_label(query: str, text: str) -> bool:
 
     #496 required label overlap on the chunk body. That still elects a
     mixed window whose TfC / Delay Damages *key* is unfilled. Live
-    d7a4ca8 (TfC and delay-rate asks): DD-2022-175 won, Volume 4 ``548 days`` and Sub-Clause
-    8.8 stayed in the pool, and DD-2023-118's 852-day / 0.1% rows were
+    (TfC and delay-rate asks): another contract won, its schedule durations and its
+    delay-damages clause stayed in the pool, and the asked contract's filled rows were
     fenced out. The asked label's own value must be filled.
 
     When the ask has no named field (a bare "Contract Data" lookup), the
@@ -4921,6 +4870,10 @@ def query_asks_who_the_engineer_is(query: str) -> bool:
 
 
 _DELAY_RATE_KEY_RE = re.compile(r"(?i)(?:delay|liquidated)\s+damages")
+_DELAY_DAMAGES_CLAUSE_RE = re.compile(
+    r"(?i)(?:sub[- ]?clause\s+)?\b\d+(?:\.\d+)+\s*[-–—:|]?\s*"
+    r"(?:delay|liquidated)\s+damages\b"
+)
 _DELAY_CAP_KEY_RE = re.compile(
     r"(?i)\b(?:maximum|max(?:imum)?\s+amount|capped?)\b",
 )
@@ -4934,7 +4887,6 @@ _ENGINEER_GLOSSARY_RE = re.compile(
     r'(?i)"?engineer"?\s+means\s+the\s+person',
 )
 _ENGINEER_REP_RE = re.compile(r"(?i)engineer'?s\s+representative")
-_ENGINEER_KEY_RE = re.compile(r"(?i)\bengineer\b")
 _ENGINEER_KEY_MAX_CHARS = 80
 _NOT_A_PARTY_NAME_RE = re.compile(
     r"(?i)^(?:the\s+)?(?:person\s+appointed|consultant|client|"
@@ -4946,24 +4898,14 @@ _NOT_A_PARTY_NAME_RE = re.compile(
 _PARTY_FIRM_RE = re.compile(
     r"(?i)\b(?:limited|ltd\.?|llc|llp|gmbh|plc|inc\.?)\b",
 )
-_SCANNED_ENGINEER_LINE_RE = re.compile(
-    # Table rows open with cell pipes: ``|: | Engineer EXAMPLECO(EX2M ...) |``.
-    r"(?im)^[ \t|:]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?[ \t|:]*)?"
-    r"(?:(?:the|name\s+of\s+the)\s+)?"
-    r"engineer\b(?!\s*'?s\s+representative)[ \t]*[:|–-]?\s*(.*)$",
-)
-_ENGINEER_IS_RE = re.compile(
-    r"(?i)\b(?:the\s+|name\s+of\s+the\s+)?engineer\b"
-    r"(?!\s*'?s\s+representative)\s*(?:is|are|:)\s+(.{4,80})"
-)
 _ENGINEER_POINTER_VAL_RE = re.compile(
     r"(?i)^(?:named|stated|identified|appointed|set\s+out|specified|"
     r"defined|described|referred\s+to)\s+(?:in|as|under)\b"
 )
 # Inject routing notes ("ENGINEER APPOINTMENT — an excerpt below… That
 # IS the answer. State the appointed firm.") are steering, not a firm
-# name. Live e24aee4 / #587: extract_engineer_identity elected that
-# heading as the Engineer and graft prepended it to JACOBS.
+# name. extract_engineer_identity once elected that heading as the
+# Engineer and the graft prepended it to the appointed firm.
 _ROUTING_HINT_VAL_RE = re.compile(
     r"(?i)(?:that is the answer|an excerpt below|"
     r"state the appointed firm|state only that firm|"  # old + new hint wording
@@ -5034,51 +4976,119 @@ def chunk_states_delay_damages_rate(text: str) -> bool:
 
 
 def chunk_states_engineer_identity(text: str) -> bool:
-    """True when the chunk *appoints* the Engineer.
+    """True when the chunk *appoints* the Engineer (the naming row, not the definition)."""
+    return chunk_names_party(text, "engineer")
 
-    A glossary ``"Engineer" means the person appointed…`` and a PSA
-    Client/Consultant party list are lookalikes. The appointment is a
-    filled ``1.3.1 (b) Engineer`` row (or a scanned line with a firm
-    name). Engineer's Representative is D1 / corpus-blocked — do not
-    invent a signatory.
+
+# ── who is a party: the particulars row that names it ─────────────────────
+#
+# "Who is the <defined party>?" -- the Engineer, the Employer, the
+# Contractor, a Representative, the adjudicator. The answer is the
+# particulars row that NAMES the party: a label row whose value is a proper
+# name. The General Conditions clause that DEFINES the term ("'<Party>'
+# means the person named as ... in the Contract Data") repeats every word of
+# the question and wins on cosine; it is a lookalike, not the answer. A text
+# search on the role word alone hits every clause that mentions the role, so
+# a LIMIT cuts the naming row off; the row is fetched by the role together
+# with the words a legal person's name ends in (a naming lexicon).
+_PARTY_ROLE_ASK_RE = re.compile(
+    r"(?i)\b(?:engineer['’]?s\s+representative|employer['’]?s\s+representative|"
+    r"engineer|employer|contractor|"
+    r"dispute\s+(?:avoidance\s+(?:and|/)\s+)?(?:adjudication\s+)?board|adjudicator)\b"
+)
+_PARTY_NAME_ENDINGS = (
+    "limited", "ltd", "llc", "plc", "gmbh", "inc", "company", "corporation",
+    "consult", "partners", "authority", "group",
+)
+_PARTY_LINE_MAX_NEXT = 2
+
+
+def asked_party_role(query: str) -> str:
+    """The defined party a who-is question asks for ("engineer"), or ""."""
+    q = query or ""
+    if not q or _DEFINITION_QUESTION_RE.search(q) or not _CD_WHO_IS_RE.search(q):
+        return ""
+    match = _PARTY_ROLE_ASK_RE.search(q)
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", match.group(0).lower().replace("’", "'"))
+
+
+def _role_pattern(role: str) -> str:
+    """Regex for the role word in a document, not its Representative (unless asked)."""
+    parts = [re.escape(p) for p in role.replace("'s", "").split()]
+    body = r"\s+".join(parts)
+    if "representative" in role:
+        body = body.replace(r"\s+representative", r"['’]?s\s+representative")
+        return rf"\b{body}\b"
+    return rf"\b{body}\b(?!\s*['’]?s\s+representative)"
+
+
+def chunk_defines_role(text: str, role: str) -> bool:
+    """True when the chunk is the definition of the role term ("X" means ...)."""
+    if not role:
+        return False
+    return bool(re.search(
+        rf"(?i)[\"“']?{_role_pattern(role)}[\"”']?\s+(?:means|shall\s+mean|is\s+defined\s+as)\b",
+        text or "",
+    ))
+
+
+def chunk_names_party(text: str, role: str) -> bool:
+    """True when the chunk has a row that NAMES the asked party.
+
+    A filled particulars row whose key is the role and whose value is a
+    proper name; or a scanned line that opens with the role and carries a
+    name on it or the next lines; or "<role> is <Name Ltd>". The definition
+    of the term, a party list that only repeats role words, and the
+    Representative of the asked party are lookalikes.
     """
     t = text or ""
-    if not t:
+    if not t or not role:
         return False
-    for key, val in filled_particulars_rows(t):
-        if _ENGINEER_REP_RE.search(key):
-            continue
-        if _ENGINEER_KEY_RE.search(key) and _looks_like_appointed_party(val):
+    role_rx = re.compile(rf"(?i){_role_pattern(role)}")
+    rows = filled_particulars_rows(t)
+    for key, val in rows:
+        if role_rx.search(key or "") and _looks_like_appointed_party(val):
             return True
-    if _ENGINEER_GLOSSARY_RE.search(t) and not filled_particulars_rows(t):
+    if chunk_defines_role(t, role) and not rows:
         return False
-    lines = (t or "").splitlines()
+    line_rx = re.compile(
+        r"(?im)^[ \t|:]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?[ \t|:]*)?"
+        r"(?:(?:the|name\s+of\s+the)\s+)?"
+        rf"{_role_pattern(role)}[ \t]*[:|–-]?\s*(.*)$"
+    )
+    lines = t.splitlines()
     for i, line in enumerate(lines):
-        m = _SCANNED_ENGINEER_LINE_RE.match(line)
+        m = line_rx.match(line)
         if not m:
             continue
         rest = (m.group(1) or "").strip()
-        nxt = ""
-        nxt2 = ""
-        if i + 1 < len(lines):
-            nxt = lines[i + 1].strip()
-        if i + 2 < len(lines):
-            nxt2 = lines[i + 2].strip()
-        for cand in (
-            rest, nxt, nxt2,
-            f"{rest} {nxt}".strip(),
-            f"{nxt} {nxt2}".strip(),
-        ):
+        following = [lines[j].strip() for j in range(i + 1, min(len(lines), i + 1 + _PARTY_LINE_MAX_NEXT))]
+        nxt = following[0] if following else ""
+        nxt2 = following[1] if len(following) > 1 else ""
+        for cand in (rest, nxt, nxt2, f"{rest} {nxt}".strip(), f"{nxt} {nxt2}".strip()):
             if _looks_like_appointed_party(cand):
                 return True
     blob = _collapse_retrieval_ws(t)
-    for named in _ENGINEER_IS_RE.finditer(blob):
+    is_rx = re.compile(
+        rf"(?i)\b(?:the\s+|name\s+of\s+the\s+)?{_role_pattern(role)}\s*(?:is|are|:)\s+(.{{4,80}})"
+    )
+    for named in is_rx.finditer(blob):
         cand = named.group(1)
         if _looks_like_appointed_party(cand) and (
             _PARTY_FIRM_RE.search(cand) or re.search(r"\b[A-Z]{3,}\b", cand)
         ):
             return True
     return False
+
+
+def party_name_needle_sets(role: str) -> List[Tuple[str, ...]]:
+    """Text-search needles for the row that names ``role``."""
+    word = role.replace("'s", "").split()[0] if role else ""
+    if not word:
+        return []
+    return [(word, ending) for ending in _PARTY_NAME_ENDINGS]
 
 
 def chunk_answers_asked_particular(query: str, text: str) -> bool:
@@ -5098,9 +5108,9 @@ def chunk_answers_asked_particular(query: str, text: str) -> bool:
             or chunk_states_accepted_contract_amount(text)
         ):
             return True
-    if query_asks_who_the_engineer_is(query):
-        if chunk_states_engineer_identity(text):
-            return True
+    party_role = asked_party_role(query)
+    if party_role and chunk_names_party(text, party_role):
+        return True
     if query_asks_for_aca_including_vat(query):
         if chunk_states_aca_including_vat(text):
             return True
@@ -5124,97 +5134,45 @@ def chunk_answers_asked_particular(query: str, text: str) -> bool:
     )
 
 
-_DELAY_RATE_RESCUE_PHRASES = (
-    "delay damages per calendar day",
-    "delay damages per day",
-    "delay damages contract price",
-)
-_ACA_BASE_RESCUE_PHRASES = (
-    "accepted contract amount excluding vat",
-    "accepted contract amount",
-)
-# Combined GC+Contract Data volumes put Sub-Clause 8.8 at chunks 9–11
-# and the filled 1.1.1 excl-VAT row in a later appendix. identifier_search
-# LIMIT and first-N chunks_for_docs stay on the 8.8 toy windows.
-# #532/#533 prefix-400 + last-400 + ``1.1.1``+``excluding`` needles still
-# miss a middle-of-volume scanned row (live 77a96ac: top-k stayed on
-# chunks 9–11). Walk every chunk of those docs.
-_REAL_ACA_DOC_SCAN = 400
-# Walk mid-volume windows up to this index. A daily-amount ask after
-# #541: a store that caps k_per_doc at 400 (and ignores all_rows)
-# never sees chunk 500 of a 1200-row combined volume via prefix+tail.
-_REAL_ACA_MID_SCAN_MAX = 8000
-_REAL_ACA_TEXT_K = 400
-_REAL_ACA_PAIR_WINDOW = 3
-# Pin rescued 0.1% / excl-VAT rows above Cosine 9–11 (~0.95) so
-# apply_token_cap cannot drop them. A daily-amount ask after #538: sources
-# stayed on chunks 9–11 (3 HIGH) because late-scan operands entered
-# fused at score 0.0 and the cap kept the refuse-prone windows.
-_DAILY_DAMAGES_OPERAND_PIN_SCORE = 2.4
-_E1_REAL_ACA_TEXT_NEEDLES = (
-    # Scanned 1.1.1 rows split "Accepted\\nContract\\nAmount" — a
-    # contiguous "accepted contract amount" LIKE misses. Clause +
-    # excl-VAT tokens still hit the filled appendix and skip 8.8 toys.
-    ("1.1.1", "excluding"),
-    ("1.1.1", "accepted"),
-    ("excl", "vat"),
-    ("accepted", "vat"),
-    # Daily-amount ask after #535: recover Contract Data 0.1% of
-    # Contract Price when top-k is the CoC 0.015%-of-ACA restatement.
-    # "%" is stripped by chunks_containing_all — use price tokens.
-    ("damages", "price"),
-    ("delay", "price"),
-    # Scanned 0.1% of Contract Price — "%" is stripped by
-    # chunks_containing_all, so the decimal + price tokens remain.
-    ("0.1", "price"),
-    ("0.1", "calendar"),
-)
-_ENGINEER_IDENTITY_RESCUE_PHRASES = (
-    "1.3.1 engineer",
-    "engineer limited",
-    "the engineer",
-    "name of the engineer",
-)
-_ACA_INCL_RESCUE_PHRASES = (
-    "accepted contract amount including vat",
-    "amount including vat",
-    "accepted contract amount (including vat)",
-    "amount (including vat)",
-    "1.1.1 including vat",
-)
-# Live Wave-1 A2 on 9ad62cc: identifier_search + first-N neighbors
-# stay on Contract Data chunk #0 (delay damages × a partial ACA).
-# Scanned 1.1.1 including-VAT sits later in the same volume.
-_A2_INCL_TEXT_NEEDLES = (
-    ("1.1.1", "including"),
-    ("including", "vat"),
-    ("accepted", "including"),
-    ("amount", "including"),
-    ("incl", "vat"),
-    ("1.1.1", "vat"),
-)
-_TFC_RESCUE_PHRASES = (
-    "time for completion for the whole of the works",
-    "1.1.75 time for completion",
-)
-_DNP_RESCUE_PHRASES = (
-    "defects notification period",
-    "1.1.27 defects notification",
-    "defects notification period days",
-)
+# ── rows deep inside a pooled document ────────────────────────────────────
+#
+# A bound volume (conditions and particulars together) puts the clause that
+# MENTIONS a particular near its start and the row that STATES it in a later
+# appendix. identifier_search LIMIT and a first-N chunks_for_docs both stay on
+# the early windows, so the stated row never enters the pool. When the
+# question's row is not pooled, the volumes already in the pool are read
+# whole: every row, or -- for a store that caps a fetch -- prefix, tail and
+# fixed windows across the middle, then a text match on the words of the
+# asked labels (a scanned label is split across lines, so its words are
+# matched one by one, never as a phrase).
+_DOC_SCAN_WINDOW = 400
+_DOC_SCAN_MAX = 8000
+_DOC_TEXT_SCAN_K = 400
+_ROW_PAIR_WINDOW = 3
+# Pin pooled composition operands above the early windows' cosine so the
+# token cap cannot drop them.
+_OPERAND_PIN_SCORE = 2.4
 _ASKED_PARTICULAR_VALUE_BONUS = 2.0
 _TFC_DAYS_RE = re.compile(r"(?i)\b(\d{2,4})\s+(?:calendar\s+|working\s+)?days\b")
 _TFC_PERMIT_TRACKER_RE = re.compile(
     r"(?i)permit[- ]track|commencement[- ]completion|"
     r"community\s+[a-z0-9-]+\s+\w{3}-\d{2}\s+to\s+\w{3}-\d{2}",
 )
-# A Time for Completion ask was PARTIAL after #516: a sectional / Vol-2 "within 90 days" figure
-# ranked ahead of DD-2023-118 Contract Data 852 and the graft led with 90.
+# A Time for Completion ask was PARTIAL: a sectional "within N days" figure from a
+# specification ranked ahead of the Contract Data row and the graft led with it.
 _TFC_SECTIONAL_RE = re.compile(
     r"(?i)\bsection(?:al)?s?\s+"
     r"(?:\d+|[ivxlcd]+|[a-z]\b|of\s+(?:the\s+)?works)",
 )
-_TFC_CLAUSE_1175_RE = re.compile(r"(?i)\b1\.1\.75\b")
+# The Time for Completion particulars ROW: a clause number in front of the
+# label, at the start of a line or cell -- whatever number the contract uses.
+_TFC_LABELLED_ROW_RE = re.compile(
+    r"(?im)(?:^|\|)[\s|:]*\d+(?:\.\d+)+(?:\s*\([a-z0-9]+\))?[\s|:]*"
+    r"time\s+for\s+completion\b"
+)
+# A key that is only a clause number (a scanned table puts the label in the
+# value cell).
+_BARE_CLAUSE_KEY_RE = re.compile(r"^[\s|:]*\d+(?:\.\d+)+(?:\s*\([a-z0-9]+\))?[\s|:]*$")
 _TFC_POINTER_RE = re.compile(
     r"(?i)(?:stated|named|identified|set\s+out|specified|defined|"
     r"described|referred\s+to)\s+in\s+(?:the\s+)?contract\s+data",
@@ -5275,22 +5233,26 @@ def _tfc_row_is_whole_works(key: str, chunk_text: str = "") -> bool:
     """Positive test: this key is the whole-Works particular, not a lookalike.
 
     A Vol-2 sentence that mentions Time for Completion and peels
-    ``within 90 days`` as a value is not clause 1.1.75.
+    ``within 90 days`` as a value is not the particulars row.
     """
     k = key or ""
     if not k or _CD_MILESTONE_CHUNK_RE.search(k) or _TFC_SECTIONAL_RE.search(k):
         return False
     if _TFC_POINTER_RE.search(k):
         return False
-    if _CD_WHOLE_WORKS_QUERY_RE.search(k) or _TFC_CLAUSE_1175_RE.search(k):
+    if _CD_WHOLE_WORKS_QUERY_RE.search(k):
         return True
+    if _BARE_CLAUSE_KEY_RE.match(k):
+        return bool(_TFC_LABELLED_ROW_RE.search(chunk_text or "")
+                    or _CD_PARTICULARS_PREFIX_RE.search(chunk_text or ""))
     if not re.search(r"(?i)time\s+for\s+completion", k):
         return False
     if len(k) > 96:
         return False
     return bool(
         _CD_PARTICULARS_PREFIX_RE.search(chunk_text or "")
-        or _TFC_CLAUSE_1175_RE.search(chunk_text or "")
+        or _TFC_LABELLED_ROW_RE.search(k)
+        or _TFC_LABELLED_ROW_RE.search(chunk_text or "")
     )
 
 
@@ -5323,7 +5285,7 @@ def _tfc_days_from_block(block: str) -> Optional[str]:
     if not blob:
         return None
     anchors = (
-        _TFC_CLAUSE_1175_RE,
+        _TFC_LABELLED_ROW_RE,
         re.compile(r"(?i)time\s+for\s+completion"),
         _CD_WHOLE_WORKS_QUERY_RE,
     )
@@ -5355,7 +5317,7 @@ def _score_tfc_candidate(days: str, context: str, *, from_particulars: bool) -> 
     score = 0
     if _CD_WHOLE_WORKS_QUERY_RE.search(ctx):
         score += 100
-    if _TFC_CLAUSE_1175_RE.search(ctx):
+    if _TFC_LABELLED_ROW_RE.search(ctx):
         score += 80
     if from_particulars or _CD_PARTICULARS_PREFIX_RE.search(ctx):
         score += 60
@@ -5476,9 +5438,9 @@ def _chunk_keeps_for_daily_damages(filename: str, text: str) -> bool:
 
 
 def _is_daily_damages_cap_noise(text: str) -> bool:
-    """True for CoC 0.015% or pointer-only 8.8 windows that crowd the cap.
+    """True for a restated milestone rate or pointer-only 8.8 windows that crowd the cap.
 
-    Daily-amount ask after #541: HIGH chunks 9–11 (pointer or 0.015% of
+    Daily-amount ask after #541: HIGH chunks 9–11 (pointer or a milestone rate of
     the filled ACA) fill ``MAX_RAG_TOKENS`` and drop the 0.0-score
     Contract Data 0.1% / excl-VAT operands. Those windows are never
     the daily-amount product — evict them once both operands are protected.
@@ -5494,7 +5456,9 @@ def _is_daily_damages_cap_noise(text: str) -> bool:
     except Exception:  # noqa: BLE001 — treat as noise-unknown, keep the row
         logger.debug("e1 cap-noise test failed; keeping the row", exc_info=True)
         return False
-    if re.search(r"0\.015\s*%", t) and _DELAY_RATE_KEY_RE.search(t):
+    # A delay-damages rate the preference above did not pick (a milestone /
+    # restated rate): it crowds the cap.
+    if _DELAY_RATE_VALUE_RE.search(t) and _DELAY_RATE_KEY_RE.search(t):
         return True
     if _DELAY_RATE_POINTER_RE.search(t) and not chunk_states_delay_damages_rate(t):
         return True
@@ -5504,9 +5468,9 @@ def _is_daily_damages_cap_noise(text: str) -> bool:
 def _has_standalone_excl_vat_aca(text: str) -> bool:
     """True for a 1.1.1 / excl-VAT money row, not a rate window that cites ACA.
 
-    Daily-amount ask after #535: CoC chunks 9–11 state 0.015% of the
+    Daily-amount ask after #535: CoC chunks 9–11 state a milestone rate of the
     filled excl-VAT ACA. ``chunk_has_real_accepted_contract_amount``
-    is True, so the all-chunk scan early-exited and compose used 0.015%.
+    is True, so the all-chunk scan early-exited and compose used a milestone rate.
     """
     try:
         from app.lib.construction_formulas_commercial import (
@@ -5523,7 +5487,7 @@ def _has_standalone_excl_vat_aca(text: str) -> bool:
 
 
 def _daily_rate_preference(text: str) -> int:
-    """Higher wins for the daily-amount rate. Contract Data 0.1% beats CoC 0.015%."""
+    """Higher wins for the daily-amount rate. Contract Data 0.1% beats a restated milestone rate."""
     t = text or ""
     if not chunk_states_delay_damages_rate(t):
         return -1
@@ -5569,8 +5533,8 @@ def _daily_damages_aca_preference(text: str) -> int:
         )
     except Exception:  # noqa: BLE001 — unlabeled ACA still ranks above none
         return 1
-    # Milestone delay damages ask: Contract Data chunk 0 states "1.1.1: | | Accepted Contract
-    # Amount: SAR 1,754,504,456.25 |" with no VAT qualifier, beside the
+    # Milestone delay damages ask: a Contract Data chunk states "Accepted Contract
+    # Amount: <amount> |" with no VAT qualifier, beside the
     # "(including VAT)" particular. The VAT regexes below ranked that chunk
     # 0 (incl matched, excl absent), so the rescue never collected the real
     # base and composed the only excluding-VAT figure left — a partial. The
@@ -5660,7 +5624,7 @@ def chunk_states_time_for_completion(text: str) -> bool:
         return False
     if not (
         _CD_WHOLE_WORKS_QUERY_RE.search(blob)
-        or _TFC_CLAUSE_1175_RE.search(blob)
+        or _TFC_LABELLED_ROW_RE.search(t)
         or _CD_PARTICULARS_PREFIX_RE.search(t)
         or (
             _CD_HEADING_IN_CHUNK_RE.search(t)
@@ -5708,9 +5672,8 @@ def _aca_row_is_including_vat(key: str, val: str) -> bool:
         return False
     if _INCL_VAT_RE.search(k):
         return True
-    # Live Wave-1 A2 on 9ad62cc: filled_particulars_rows glued chunk #0
-    # (delay damages × SAR 39,098,392.98) onto the later including-VAT
-    # label. Including-VAT in the value must precede the first figure —
+    # filled_particulars_rows can glue an early chunk (delay damages × a
+    # partial amount) onto the later including-VAT label. Including-VAT in the value must precede the first figure —
     # otherwise the partial ACA is peeled as the including-VAT amount.
     incl = _INCL_VAT_RE.search(v)
     if not incl:
@@ -5863,7 +5826,7 @@ def extract_aca_including_vat(text: str) -> Optional[Tuple[float, str]]:
 
 
 def extract_time_for_completion_days(text: str) -> Optional[str]:
-    """Whole-Works TfC duration as written (e.g. ``852 days``), or None.
+    """Whole-Works TfC duration as written (e.g. ``NNN days``), or None.
 
     Walks the full RAG blob (graft reads the system message). When a
     sectional / notice-period 90-day lookalike and the Contract Data
@@ -5912,25 +5875,44 @@ def extract_time_for_completion_days(text: str) -> Optional[str]:
 
 def extract_engineer_identity(text: str) -> Optional[str]:
     """Appointed Engineer firm/name from client text, or None."""
+    return extract_party_name(text, "engineer")
+
+
+def party_role_title(role: str) -> str:
+    """"engineer's representative" -> "Engineer's Representative"."""
+    return " ".join(w[:1].upper() + w[1:] for w in (role or "").split())
+
+
+def extract_party_name(text: str, role: str) -> Optional[str]:
+    """The name the client text gives the asked party, or None.
+
+    Read from the row that names the party (see ``chunk_names_party``): a
+    filled particulars row keyed by the role, a scanned line that opens with
+    the role, or "<role> is <Name>". Never the definition of the term.
+    """
     t = _client_excerpt_text(text or "")
-    if not t:
+    if not t or not role:
         return None
+    role_rx = re.compile(rf"(?i){_role_pattern(role)}")
     for key, val in filled_particulars_rows(t):
-        if _ENGINEER_REP_RE.search(key):
-            continue
         # Live bcb5bbf: a flattened page came through as ONE 400-character
         # "key" that merely contained the word Engineer, with the table
         # header as its value -- and "Clause (as" was returned as the firm.
         # A row's key is a label; a label is short.
         if len(key) > _ENGINEER_KEY_MAX_CHARS:
             continue
-        if _ENGINEER_KEY_RE.search(key) and _looks_like_appointed_party(val):
+        if role_rx.search(key) and _looks_like_appointed_party(val):
             return re.sub(r"\s+", " ", val).strip(" \t.:;,-")
+    line_rx = re.compile(
+        r"(?im)^[ \t|:]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?[ \t|:]*)?"
+        r"(?:(?:the|name\s+of\s+the)\s+)?"
+        rf"{_role_pattern(role)}[ \t]*[:|–-]?\s*(.*)$"
+    )
     lines = t.splitlines()
     for i, line in enumerate(lines):
         if _ROUTING_HINT_VAL_RE.search(line):
             continue
-        m = _SCANNED_ENGINEER_LINE_RE.match(line)
+        m = line_rx.match(line)
         if not m:
             continue
         # The name is the first CELL after the role: drop the row's trailing
@@ -5943,7 +5925,10 @@ def extract_engineer_identity(text: str) -> Optional[str]:
                 return re.sub(r"\s+", " ", cand).strip(" \t.:;,-")
             if _looks_like_appointed_party(cand) and re.search(r"[A-Z]{3,}", cand):
                 return re.sub(r"\s+", " ", cand).strip(" \t.:;,-")
-    for m in _ENGINEER_IS_RE.finditer(_collapse_retrieval_ws(t)):
+    is_rx = re.compile(
+        rf"(?i)\b(?:the\s+|name\s+of\s+the\s+)?{_role_pattern(role)}\s*(?:is|are|:)\s+(.{{4,80}})"
+    )
+    for m in is_rx.finditer(_collapse_retrieval_ws(t)):
         cand = m.group(1)
         if _looks_like_appointed_party(cand) and (
             _PARTY_FIRM_RE.search(cand) or re.search(r"\b[A-Z]{3,}\b", cand)
@@ -5952,13 +5937,11 @@ def extract_engineer_identity(text: str) -> Optional[str]:
     return None
 
 
-# ── Defects Notification Period (live OLD-pack A6) ────────────────────────
+# ── Defects Notification Period ───────────────────────────────────────────
 #
-# Live Master Corpus A6 on 82eb9c5 (#522): "Answer only from the client
-# project documents. What is the Defects Notification Period?" retrieved
-# Long Form PSA / CPM TOC / recitals / document registers and refused.
-# Expected 365 days from Taking-Over Certificate / Contract Data under
-# DD-2023-118. The ACA / TfC / delay-rate / Engineer asks already had fences;
+# A Defects Notification Period ask can retrieve service-agreement contents
+# pages, recitals and document registers and refuse. The answer is a
+# duration from the Taking-Over Certificate in the Contract Data. The ACA / TfC / delay-rate / Engineer asks already had fences;
 # the DNP ask was surviving on family-bonus luck and was not named off the
 # precedence-list path. Same shape as TfC: state a duration, fence lookalikes.
 _DNP_ASK_RE = re.compile(
@@ -5966,7 +5949,12 @@ _DNP_ASK_RE = re.compile(
     r"|(?:what\s+is\s+(?:the\s+)?)dnp\b)"
 )
 _DNP_KEY_RE = re.compile(r"(?i)defects\s+notification(?:\s+period)?")
-_DNP_CLAUSE_RE = re.compile(r"(?i)\b1\.1\.27\b")
+# The Defects Notification Period particulars ROW: a clause number in front
+# of the label -- whatever number the contract uses.
+_DNP_LABELLED_ROW_RE = re.compile(
+    r"(?im)(?:^|\|)[\s|:]*\d+(?:\.\d+)+(?:\s*\([a-z0-9]+\))?[\s|:]*"
+    r"defects\s+notification\b"
+)
 _DNP_DURATION_RE = re.compile(
     r"(?i)\b(\d{1,4})\s+(?:calendar\s+|working\s+)?"
     r"(days?|months?|years?)\b"
@@ -6022,16 +6010,13 @@ def _dnp_duration_from_text(text: str) -> Optional[str]:
     blob = _normalize_retrieval_ws(text)
     if not blob:
         return None
-    for rx in (_DNP_KEY_RE, _DNP_CLAUSE_RE):
-        for m in rx.finditer(blob):
-            window = blob[m.start(): m.end() + 140]
-            if _DNP_POINTER_RE.search(window) and not _DNP_DURATION_RE.search(window):
-                continue
-            if rx is _DNP_CLAUSE_RE and not _DNP_KEY_RE.search(window):
-                continue
-            dm = _DNP_DURATION_RE.search(window)
-            if dm:
-                return _format_dnp_duration(dm)
+    for m in _DNP_KEY_RE.finditer(blob):
+        window = blob[m.start(): m.end() + 140]
+        if _DNP_POINTER_RE.search(window) and not _DNP_DURATION_RE.search(window):
+            continue
+        dm = _DNP_DURATION_RE.search(window)
+        if dm:
+            return _format_dnp_duration(dm)
     return None
 
 
@@ -6041,7 +6026,7 @@ def chunk_states_defects_notification_period(text: str) -> bool:
     PSA / CPM table-of-contents, recitals, and document registers that
     only *name* the heading (live A6 on 82eb9c5) are lookalikes. A
     General Conditions pointer (``as stated in the Contract Data``) and
-    a glossary ``means the period…`` are not the filled 1.1.27 row.
+    a glossary ``means the period…`` are not the filled particulars row.
     """
     t = text or ""
     if not t:
@@ -6072,7 +6057,7 @@ def chunk_states_defects_notification_period(text: str) -> bool:
 def extract_defects_notification_period(text: str) -> Optional[str]:
     """DNP duration as written (e.g. ``365 days``), or None.
 
-    Prefers clause 1.1.27 / Taking-Over / Contract Data over a
+    Prefers the numbered particulars row / Taking-Over / Contract Data over a
     glossary or a TOC heading that happens to sit near a duration.
     """
     t = text or ""
@@ -6089,7 +6074,8 @@ def extract_defects_notification_period(text: str) -> Optional[str]:
         days = _format_dnp_duration(m)
         joined = f"{key} {val}"
         score = 60
-        if _DNP_CLAUSE_RE.search(joined) or _DNP_CLAUSE_RE.search(t):
+        # The row's own clause number, not one elsewhere in the blob.
+        if _DNP_LABELLED_ROW_RE.search(joined):
             score += 80
         if _CD_PARTICULARS_PREFIX_RE.search(t):
             score += 40
@@ -6111,7 +6097,7 @@ def extract_defects_notification_period(text: str) -> Optional[str]:
         if not days:
             continue
         score = 0
-        if _DNP_CLAUSE_RE.search(block):
+        if _DNP_LABELLED_ROW_RE.search(block):
             score += 80
         if _CD_PARTICULARS_PREFIX_RE.search(block):
             score += 60
@@ -6133,6 +6119,7 @@ def query_wants_contract_data_file(query: str) -> bool:
         query_asks_for_accepted_contract_amount(query)
         or query_asks_for_time_for_completion(query)
         or query_asks_who_the_engineer_is(query)
+        or bool(asked_party_role(query))
         or query_asks_delay_damages_daily_amount(query)
         or (
             query_asks_for_defects_notification_period(query)
@@ -6154,7 +6141,7 @@ def _pair_adjacent_keep_text(
 ) -> List[Chunk]:
     """Scanned Contract Data often splits a label and its value.
 
-    Engineer ask: ``Engineer`` on chunk N, ``JACOBS (CH2M Saudi Limited)`` on
+    Engineer ask: ``Engineer`` on chunk N, ``<FIRM> (<Firm> Limited)`` on
     N+1. Identifier keep() then fails on both. Pair consecutive same-doc
     chunks so the appointment / TfC / including-VAT row is visible.
     ``window`` > 2 also joins N+2 (the daily-amount excl-VAT amount one row
@@ -6245,10 +6232,11 @@ def _pool_lexical_hits_matching(
     for chunk in _pair_adjacent_keep_text(hits, keep):
         if chunk.chunk_id in fused:
             continue
-        fused[chunk.chunk_id] = (chunk, 0.0, bonus)
+        add = bonus(chunk.text or "") if callable(bonus) else bonus
+        fused[chunk.chunk_id] = (chunk, 0.0, add)
         recovered += 1
     if recovered:
-        logger.info("%s rescue recovered %d chunk(s)", label, recovered)
+        logger.info("%s lexical recall pooled %d chunk(s)", label, recovered)
     return recovered
 
 
@@ -6275,7 +6263,7 @@ def _doc_qualifies_for_late_aca_scan(text: str, name: str) -> bool:
 
     Daily-amount ask after #537: Cosine kept pointer-only Contract Data
     8.8 chunks 9–11. ``chunk_states_delay_damages_rate`` is false on a
-    pointer, and a truncated Sources filename (``…Vol 1.0_Con…``) misses
+    pointer, and a truncated Sources filename (``<id>_Vol N_Con…``) misses
     ``filename_looks_like_conditions_volume``. The bound volume still has
     0.1% + excl-VAT later — qualify the doc from the 8.8 pointer too.
     """
@@ -6286,10 +6274,8 @@ def _doc_qualifies_for_late_aca_scan(text: str, name: str) -> bool:
     t = text or ""
     if _DELAY_RATE_POINTER_RE.search(t):
         return True
-    return bool(
-        re.search(r"(?i)(?:sub[- ]?clause\s+)?8\.8\b", t)
-        and _DELAY_RATE_KEY_RE.search(t)
-    )
+    # A numbered delay-damages clause, whatever its number.
+    return bool(_DELAY_DAMAGES_CLAUSE_RE.search(t))
 
 
 def _late_scan_project_ids(
@@ -6363,7 +6349,7 @@ def _pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
     if doc_ids:
         return doc_ids
     # Daily-amount ask after #538: Cosine 9–11 may be OCR that fails
-    # pointer / 8.8 / filename qualify (Sources: ``Vol 1.0_Con…``).
+    # pointer / 8.8 / filename qualify (a truncated Sources name).
     # Still scan those docs — compose only keeps real operands.
     for entry in fused.values():
         chunk = _fused_chunk(entry)
@@ -6403,26 +6389,40 @@ def _doc_owner_project_ids(doc_ids: List[str]) -> List[str]:
     return out
 
 
-def _fetch_late_aca_chunks(
+def label_word_needle_sets(labels: Iterable[str]) -> List[Tuple[str, ...]]:
+    """One AND-set of words per label, for a text match that survives line splits.
+
+    A scanned label prints "Accepted\\nContract\\nAmount"; a phrase match
+    misses it, a match on each word does not. Words shorter than three
+    characters are dropped (the store ignores them).
+    """
+    out: List[Tuple[str, ...]] = []
+    for label in labels:
+        words = tuple(w for w in re.findall(r"[a-z0-9]+", (label or "").lower()) if len(w) >= 3)
+        if words and words not in out:
+            out.append(words)
+    return out
+
+
+def _scan_whole_documents(
     store,
     project_id: str,
     doc_ids: List[str],
     extra_pids: Optional[Iterable[str]] = None,
     fused: Optional[Dict[str, Tuple]] = None,
+    *,
+    needle_sets: Iterable[Tuple[str, ...]] = (),
+    done=None,
 ) -> List[Chunk]:
-    """Every chunk of the rate-window docs, then text-match / prefix / tail.
+    """Every chunk of ``doc_ids`` this store will give, then a word match.
 
-    Daily-amount ask on 77a96ac (#533): top-k stayed on Contract Data
-    8.8 chunks 9–11. Prefix-400 + last-400 miss a middle appendix;
-    ``1.1.1``+``excluding`` LIKE misses ``excl. VAT`` without a clause
-    number. ``chunks_for_docs`` already loads the file — keep every row.
-
-    Daily-amount ask after #537: a store that accepts ``all_rows`` but
-    still returns first-N, plus CoC 8.8 windows that already cite a
-    real ACA, used to early-exit before the middle 0.1% / excl-VAT
-    rows. Skip prefix/tail/needles only when BOTH compose operands
-    are already in hand. Also retry the cited chunk owners — the UI
-    project id is not always the row owner on Master Corpus.
+    Reads each document whole (``all_rows``); for a store that ignores that
+    or caps a fetch, a very large first-N, then prefix and tail windows,
+    then fixed windows across the middle. ``done(chunks)`` -- when given --
+    stops the walk as soon as the chunks in hand answer; without it the walk
+    always runs to the end. Finally, ``needle_sets`` are matched as text
+    inside the same documents. The row owner is not always the UI project,
+    so the owners of the cited documents are tried too.
     """
     by_id: Dict[str, Chunk] = {}
     allowed = set(doc_ids)
@@ -6439,130 +6439,105 @@ def _fetch_late_aca_chunks(
             return
         by_id.setdefault(chunk.chunk_id, chunk)
 
+    def _answered() -> bool:
+        return bool(done) and done(by_id.values())
+
+    def _fetch(pid: str, **kwargs) -> List[Chunk]:
+        try:
+            return list(fetch(pid, doc_ids, **kwargs) or [])
+        except TypeError:
+            # This store's chunks_for_docs does not take these keywords; the
+            # next fetch shape is tried.
+            logger.debug("chunks_for_docs does not accept %r", sorted(kwargs))
+            return []
+        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+            logger.warning("whole-document scan %r for %s failed: %s", kwargs, pid, exc)
+            return []
+
     if callable(fetch):
         for pid in pids:
-            extra = []
-            try:
-                extra = fetch(pid, doc_ids, all_rows=True)
-            except TypeError:
-                extra = []
-            except Exception as exc:  # noqa: BLE001 — extras must not break
-                logger.warning(
-                    "e1 late-ACA full scan for %s failed: %s", pid, exc,
-                )
-                extra = []
-            for chunk in extra or []:
+            for chunk in _fetch(pid, all_rows=True):
                 _keep(chunk)
-            # A store that accepts all_rows but still returns first-N
-            # (ignored kwarg) looks done after 12 pointer / 0.015%
-            # windows. Fall through to a huge k_per_doc so operands
-            # anywhere in the loaded volume still enter. Live leftover
-            # Daily-amount ask after #537: chunks 9–11 + BOQ refuse, 0.1% / excl-VAT
-            # sitting mid-volume.
-            if not _chunks_have_both_daily_damages_operands(by_id.values()):
-                try:
-                    extra = fetch(pid, doc_ids, k_per_doc=1_000_000)
-                except TypeError:
-                    extra = []
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "e1 late-ACA wide scan for %s failed: %s", pid, exc,
-                    )
-                    extra = []
-                for chunk in extra or []:
+            # A store that ignores all_rows returns first-N: ask for everything.
+            if not _answered():
+                for chunk in _fetch(pid, k_per_doc=1_000_000):
                     _keep(chunk)
-            # Only skip prefix/tail/needles when the loaded volume
-            # already has Contract Data 0.1% AND standalone excl-VAT.
-            # A first-N window that merely cites a real ACA (live
-            # 9–11 / 0.015%+ACA) is not enough — that was the #537
-            # flake: compose rejected the lookalike and the gate
-            # refused.
-            if _chunks_have_both_daily_damages_operands(by_id.values()):
+            if _answered():
                 return list(by_id.values())
             for from_end in (False, True):
-                try:
-                    try:
-                        extra = fetch(
-                            pid, doc_ids,
-                            k_per_doc=_REAL_ACA_DOC_SCAN,
-                            from_end=from_end,
-                        )
-                    except TypeError:
-                        extra = (
-                            [] if from_end
-                            else fetch(
-                                pid, doc_ids,
-                                k_per_doc=_REAL_ACA_DOC_SCAN,
-                            )
-                        )
-                except Exception as exc:  # noqa: BLE001 — extras must not break
-                    logger.warning(
-                        "e1 late-ACA %s scan for %s failed: %s",
-                        "tail" if from_end else "prefix", pid, exc,
-                    )
-                    extra = []
-                for chunk in extra or []:
+                got = _fetch(pid, k_per_doc=_DOC_SCAN_WINDOW, from_end=from_end)
+                if not got and not from_end:
+                    got = _fetch(pid, k_per_doc=_DOC_SCAN_WINDOW)
+                for chunk in got:
                     _keep(chunk)
-            if _chunks_have_both_daily_damages_operands(by_id.values()):
+            if _answered():
                 return list(by_id.values())
-            # Mid-volume windows: prefix-400 + last-400 miss chunk 500
-            # of a 1200-row volume when the store also caps k_per_doc
-            # (k=1_000_000 still returns first-400). Walk offset=400,
-            # 800, … until both operands exist. TypeError means the
-            # store has no offset — fall through to needles.
-            offset = _REAL_ACA_DOC_SCAN
-            while offset < _REAL_ACA_MID_SCAN_MAX:
+            # Windows across the middle, for a store that caps k_per_doc.
+            offset = _DOC_SCAN_WINDOW
+            while offset < _DOC_SCAN_MAX:
                 try:
-                    extra = fetch(
-                        pid, doc_ids,
-                        k_per_doc=_REAL_ACA_DOC_SCAN,
-                        offset=offset,
-                    )
+                    got = list(fetch(
+                        pid, doc_ids, k_per_doc=_DOC_SCAN_WINDOW, offset=offset,
+                    ) or [])
                 except TypeError:
                     break
-                except Exception as exc:  # noqa: BLE001 — extras must not break
+                except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "e1 late-ACA mid-window scan offset=%s for %s failed: %s",
+                        "whole-document window offset=%s for %s failed: %s",
                         offset, pid, exc,
                     )
                     break
-                got = list(extra or [])
                 if not got:
                     break
                 for chunk in got:
                     _keep(chunk)
-                if _chunks_have_both_daily_damages_operands(by_id.values()):
+                if _answered():
                     return list(by_id.values())
-                if len(got) < _REAL_ACA_DOC_SCAN:
+                if len(got) < _DOC_SCAN_WINDOW:
                     break
-                offset += _REAL_ACA_DOC_SCAN
+                offset += _DOC_SCAN_WINDOW
 
     containing = getattr(store, "chunks_containing_all", None)
     if callable(containing):
         for pid in pids:
-            for needles in _E1_REAL_ACA_TEXT_NEEDLES:
+            for needles in needle_sets:
                 try:
                     try:
                         hits = containing(
-                            pid, list(needles),
-                            k=_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                            pid, list(needles), k=_DOC_TEXT_SCAN_K, doc_ids=doc_ids,
                         )
                     except TypeError:
-                        hits = containing(
-                            pid, list(needles), k=_REAL_ACA_TEXT_K,
-                        )
+                        hits = containing(pid, list(needles), k=_DOC_TEXT_SCAN_K)
                 except Exception as exc:  # noqa: BLE001 — extras must not break
-                    logger.warning(
-                        "e1 late-ACA text scan for %s failed: %s", pid, exc,
-                    )
+                    logger.warning("whole-document text scan for %s failed: %s", pid, exc)
                     hits = []
                 for chunk in hits or []:
                     _keep(chunk)
-            if _chunks_have_both_daily_damages_operands(by_id.values()):
+            if _answered():
                 return list(by_id.values())
     return list(by_id.values())
 
 
+# The operands of a delay-damages daily amount: the rate row and the sum it
+# is a share of. Contract-particular names, matched word by word.
+_DAILY_DAMAGES_OPERAND_LABELS = (
+    "delay damages", "contract price", "accepted contract amount",
+)
+
+
+def _scan_documents_for_operands(
+    store,
+    project_id: str,
+    doc_ids: List[str],
+    extra_pids: Optional[Iterable[str]] = None,
+    fused: Optional[Dict[str, Tuple]] = None,
+) -> List[Chunk]:
+    """Whole-document scan that stops once both daily-amount operands are in hand."""
+    return _scan_whole_documents(
+        store, project_id, doc_ids, extra_pids, fused,
+        needle_sets=label_word_needle_sets(_DAILY_DAMAGES_OPERAND_LABELS),
+        done=_chunks_have_both_daily_damages_operands,
+    )
 _RAG_CONTEXT_DOC_ID_RE = re.compile(r"\[doc_id=([^\]\s]+)")
 
 
@@ -6593,7 +6568,7 @@ def daily_damages_excerpts_from_loaded_cd_volume(
     9–11 that do not surface both operands, so compose returned None
     and the cost-grounding gate refused. When those rows exist later
     in the same loaded volume, return them so compose can state
-    SAR/day — do not invent a figure and do not elect CoC 0.015%.
+    SAR/day — do not invent a figure and do not elect a restated milestone rate.
     """
     pids = _late_scan_project_ids(project_id, extra_pids)
     if not (
@@ -6626,7 +6601,7 @@ def daily_damages_excerpts_from_loaded_cd_volume(
 
     extra: List[Chunk] = []
     if cited:
-        extra = _fetch_late_aca_chunks(
+        extra = _scan_documents_for_operands(
             store, project_id or (pids[0] if pids else ""), cited,
             extra_pids=pids,
         )
@@ -6655,7 +6630,7 @@ def daily_damages_excerpts_from_loaded_cd_volume(
             logger.debug("e1 loaded-volume projects import failed", exc_info=True)
         added = [did for did in ids if did not in set(cited)]
         if added:
-            extra = list(extra or []) + _fetch_late_aca_chunks(
+            extra = list(extra or []) + _scan_documents_for_operands(
                 store, project_id or (pids[0] if pids else ""), added[:2],
                 extra_pids=pids,
             )
@@ -6679,7 +6654,7 @@ def daily_damages_excerpts_from_loaded_cd_volume(
             lambda t: (
                 _daily_rate_preference(t) >= 2 or _has_standalone_excl_vat_aca(t)
             ),
-            window=_REAL_ACA_PAIR_WINDOW,
+            window=_ROW_PAIR_WINDOW,
         ):
             _collect(chunk.text or "")
     if not rate_parts or not aca_parts:
@@ -6687,8 +6662,8 @@ def daily_damages_excerpts_from_loaded_cd_volume(
     # The joined excerpt carries NO [doc_id=] markers, so compose reads it as
     # one document and its clause-1.1.1 price search cannot tell the filled
     # base from a partial ACA. If partial excl-VAT rows fill aca_parts[:3] the
-    # real 1.1.1 base is dropped and compose elects the partial (milestone delay damages:
-    # 0.015% x SAR 39,098,392.98). Order the clause-1.1.1 base first so the
+    # real base row is dropped and compose elects the partial (milestone delay
+    # damages: a milestone rate x a partial amount). Order the base row first so the
     # cap can never drop it.
     return "\n\n".join(
         rate_parts[:3] + _aca_parts_clause_111_first(aca_parts)[:3]
@@ -6809,7 +6784,7 @@ def milestone_period_excerpts_from_loaded_cd_volume(
     rag_context: str = "",
     extra_pids: Optional[Iterable[str]] = None,
 ) -> str:
-    """Join Milestone N | 0.015% rows + excl-VAT ACA from the loaded volume.
+    """Join Milestone N | a milestone rate rows + excl-VAT ACA from the loaded volume.
 
     Per-milestone delay damages ask: top-k packed whole-of-Works 0.1% under "per Milestone".
     Scan for the real milestone rate rows. Kill-switch:
@@ -6859,9 +6834,9 @@ def community_tfc_span_excerpts_from_loaded_cd_volume(
 ) -> str:
     """Join named-community Time-for-Completion rows from the loaded volume.
 
-    Live Set3 F1: top-k stopped at Milestone 5 (Southern / Boulevard).
-    Northern Community 547 / 397 sit on the continuation page. Return
-    those rows so compose can state 547 and 150 — do not invent days.
+    The top-k can stop at the page break, before the asked community's
+    milestones, which sit on the continuation page. Return those rows so
+    compose can state the span -- do not invent days.
     """
     if not query_asks_named_community_tfc_span(query):
         return ""
@@ -6896,200 +6871,102 @@ def _fused_entry_chunk(entry) -> Optional[Chunk]:
     return chunk if isinstance(chunk, Chunk) else None
 
 
-def _pool_doc_ids_for_late_including_vat(fused: Dict[str, Tuple]) -> List[str]:
-    """Contract Data / CoC volume docs already in fused for an A2 scan."""
+_DEEP_ROW_TITLE_KINDS = _PARTICULARS_KIND_PHRASES + ("conditions of contract",)
+_DEEP_ROW_MAX_LABELS = 4
+
+
+def _pooled_documents_for_deep_rows(fused: Dict[str, Tuple], phrases: List[str]) -> List[str]:
+    """Pooled documents worth reading whole for an asked particular.
+
+    A particulars or conditions volume by name, or a document whose pooled
+    chunk mentions an asked particular without stating it.
+    """
     doc_ids: List[str] = []
-    seen: Set[str] = set()
     for entry in fused.values():
         chunk = _fused_entry_chunk(entry)
-        if chunk is None or not chunk.doc_id or chunk.doc_id in seen:
+        if chunk is None or not chunk.doc_id or chunk.doc_id in doc_ids:
             continue
-        text = chunk.text or ""
         name = getattr(chunk, "source_name", "") or ""
         if not name:
             try:
                 name = _doc_name_for_id(chunk.doc_id) or ""
             except Exception:  # noqa: BLE001 — filename is optional
                 name = ""
-        if not (
+        blob = _normalize_retrieval_ws(chunk.text or "").lower()
+        if (
             filename_looks_like_contract_data(name)
             or filename_looks_like_conditions_volume(name)
-            or "accepted contract amount" in _normalize_retrieval_ws(text).lower()
+            or any(p and p in blob for p in phrases)
         ):
-            continue
-        seen.add(chunk.doc_id)
-        doc_ids.append(chunk.doc_id)
+            doc_ids.append(chunk.doc_id)
     return doc_ids
 
 
-def _fetch_late_including_vat_chunks(
-    store,
-    project_id: str,
-    doc_ids: List[str],
-    extra_pids: Optional[Iterable[str]] = None,
-    fused: Optional[Dict[str, Tuple]] = None,
-) -> List[Chunk]:
-    """Every chunk of the A2 CD volume — do not stop on a partial ACA.
-
-    ACA including-VAT ask on 9ad62cc / 396cc7b: chunk #0 stated delay damages
-    × SAR 39,098,392.98. That figure is a real money amount, so the daily-amount
-    late-scan early-return (any non-toy ACA) would keep first-N and
-    miss SAR 2,017,680,124.69. Always also run prefix / tail / incl
-    needles. Retry cited chunk owners — Master Corpus UI id is not
-    always the row owner.
-    """
-    by_id: Dict[str, Chunk] = {}
-    allowed = set(doc_ids)
-    fetch = getattr(store, "chunks_for_docs", None)
-    pids = _late_scan_project_ids(project_id, extra_pids, fused)
-    if not pids and project_id:
-        pids = [project_id]
-
-    def _keep(chunk: Chunk) -> None:
-        if chunk.doc_id and chunk.doc_id not in allowed:
-            return
-        by_id.setdefault(chunk.chunk_id, chunk)
-
-    if callable(fetch):
-        for pid in pids:
-            extra = []
+def _particulars_documents_by_title(pids: List[str]) -> List[str]:
+    """Documents whose upload name says they are particulars / conditions."""
+    out: List[str] = []
+    try:
+        from app.core.projects import documents_matching_title_phrase
+    except Exception:  # noqa: BLE001 — listing is optional
+        logger.debug("particulars title listing unavailable", exc_info=True)
+        return out
+    for pid in pids:
+        if not pid:
+            continue
+        for phrase in _DEEP_ROW_TITLE_KINDS:
             try:
-                extra = fetch(pid, doc_ids, all_rows=True)
-            except TypeError:
-                try:
-                    extra = fetch(pid, doc_ids, k_per_doc=1_000_000)
-                except TypeError:
-                    extra = []
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "a2 late-incl full scan for %s failed: %s", pid, exc,
-                    )
-                    extra = []
-            except Exception as exc:  # noqa: BLE001 — extras must not break
-                logger.warning(
-                    "a2 late-incl full scan for %s failed: %s", pid, exc,
-                )
-                extra = []
-            for chunk in extra or []:
-                _keep(chunk)
-            for from_end in (False, True):
-                try:
-                    try:
-                        extra = fetch(
-                            pid, doc_ids,
-                            k_per_doc=_REAL_ACA_DOC_SCAN,
-                            from_end=from_end,
-                        )
-                    except TypeError:
-                        extra = (
-                            [] if from_end
-                            else fetch(
-                                pid, doc_ids,
-                                k_per_doc=_REAL_ACA_DOC_SCAN,
-                            )
-                        )
-                except Exception as exc:  # noqa: BLE001 — extras must not break
-                    logger.warning(
-                        "a2 late-incl %s scan for %s failed: %s",
-                        "tail" if from_end else "prefix", pid, exc,
-                    )
-                    extra = []
-                for chunk in extra or []:
-                    _keep(chunk)
-
-    containing = getattr(store, "chunks_containing_all", None)
-    if callable(containing):
-        for pid in pids:
-            for needles in _A2_INCL_TEXT_NEEDLES:
-                try:
-                    try:
-                        hits = containing(
-                            pid, list(needles),
-                            k=_REAL_ACA_TEXT_K, doc_ids=doc_ids,
-                        )
-                    except TypeError:
-                        hits = containing(
-                            pid, list(needles), k=_REAL_ACA_TEXT_K,
-                        )
-                except Exception as exc:  # noqa: BLE001 — extras must not break
-                    logger.warning(
-                        "a2 late-incl text scan for %s failed: %s", pid, exc,
-                    )
-                    hits = []
-                for chunk in hits or []:
-                    _keep(chunk)
-    return list(by_id.values())
+                matches = documents_matching_title_phrase(pid, phrase) or []
+            except Exception:  # noqa: BLE001 — listing is optional
+                matches = []
+            for doc in matches:
+                did = doc.get("id") or ""
+                if did and did not in out:
+                    out.append(did)
+    return out
 
 
-def _rescue_a2_including_vat_from_pool_docs(
+def recall_rows_deep_in_pooled_documents(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
 ) -> int:
-    """Surface a filled including-VAT ACA that sits past first-N chunk #0.
+    """Pool the asked particular's row when it sits past the early windows.
 
-    Live Wave-1 A2 on 9ad62cc: cosine / filename rescue kept Contract
-    Data chunk #0 (delay damages × a partial ACA). Identifier search
-    + first-24 neighbors never reached the filled 1.1.1 including-VAT
-    row.
+    For a particular whose row shape is known: when no pooled chunk states
+    it, the pooled particulars / conditions volumes (or those that mention
+    the particular) are read whole and the rows that state it are pooled
+    with the asked-value bonus. A daily amount is two rows and has its own
+    pass (``recall_composition_operands``).
     """
-    if not (
-        query_is_aca_including_vat_particular(query)
-    ):
+    test = _known_particular_row_test(query)
+    if test is None or query_asks_delay_damages_daily_amount(query):
         return 0
-
-    def _fused_chunk(entry) -> Optional[Chunk]:
-        return _fused_entry_chunk(entry)
-
-    fused_chunks = [
-        c for c in (_fused_chunk(e) for e in fused.values()) if c is not None
-    ]
-    if any(chunk_states_aca_including_vat(c.text or "") for c in fused_chunks):
+    if not query_wants_contract_data_file(query):
         return 0
-    doc_ids = _pool_doc_ids_for_late_including_vat(fused)
+    fused_chunks = [c for c in (_fused_entry_chunk(e) for e in fused.values()) if c is not None]
+    if any(test(c.text or "") for c in fused_chunks):
+        return 0
+    phrases = list(_asked_particular_key_phrases(query))
+    doc_ids = _pooled_documents_for_deep_rows(fused, phrases)
     pids = _late_scan_project_ids(project_id, None, fused)
     if not doc_ids:
-        try:
-            from app.core.projects import documents_matching_title_phrase
-            for pid in pids or [project_id]:
-                if not pid:
-                    continue
-                for phrase in ("contract data", "conditions of contract"):
-                    try:
-                        matches = documents_matching_title_phrase(
-                            pid, phrase,
-                        ) or []
-                    except Exception:  # noqa: BLE001 — listing is optional
-                        matches = []
-                    for doc in matches:
-                        did = doc.get("id") or ""
-                        if did and did not in doc_ids:
-                            doc_ids.append(did)
-        except Exception:  # noqa: BLE001 — fused doc_ids may still be enough
-            logger.debug("a2 late-incl title listing failed", exc_info=True)
+        doc_ids = _particulars_documents_by_title(pids or [project_id])
     if not doc_ids:
         return 0
-    extra = _fetch_late_including_vat_chunks(
+    labels = asked_row_labels(query)[:_DEEP_ROW_MAX_LABELS]
+    extra = _scan_whole_documents(
         store, project_id, doc_ids, extra_pids=pids, fused=fused,
+        needle_sets=label_word_needle_sets(labels),
     )
     recovered = 0
-    for chunk in _pair_adjacent_keep_text(
-        extra or [],
-        chunk_states_aca_including_vat,
-        window=_REAL_ACA_PAIR_WINDOW,
-    ):
-        if chunk.chunk_id in fused:
-            continue
-        if not chunk_states_aca_including_vat(chunk.text or ""):
+    for chunk in _pair_adjacent_keep_text(extra or [], test, window=_ROW_PAIR_WINDOW):
+        if chunk.chunk_id in fused or not test(chunk.text or ""):
             continue
         fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
         recovered += 1
     if recovered:
-        logger.info(
-            "a2 late-incl scan recovered %d chunk(s) past Contract Data chunk #0",
-            recovered,
-        )
+        logger.info("deep-row recall pooled %d chunk(s) past the early windows", recovered)
     return recovered
 
 
@@ -7102,14 +6979,13 @@ def including_vat_excerpts_from_loaded_cd_volume(
     doc_ids: Optional[List[str]] = None,
     extra_pids: Optional[Iterable[str]] = None,
 ) -> str:
-    """Join including-VAT ACA rows from the loaded CD volume.
+    """Join including-VAT ACA rows from the loaded particulars volume.
 
-    Live Wave-1 A2 on 9ad62cc / 396cc7b: top-k stayed on Contract Data
-    chunk #0 (delay damages × SAR 39,098,392.98). When the filled
-    including-VAT row exists later in the same loaded volume — possibly
-    owned by a cited source project, not the UI id — return it so graft
-    can state SAR 2,017,680,124.69. Do not invent a figure and do not
-    compose delay damages.
+    The top-k can stay on the volume's early windows (a delay-damages clause
+    restating some other amount). When the filled including-VAT row exists
+    later in the same loaded volume -- possibly owned by a cited source
+    project, not the UI id -- return it so the graft can state it. Never
+    invents a figure and never composes delay damages.
     """
     pids = _late_scan_project_ids(project_id, extra_pids)
     if not (
@@ -7135,19 +7011,19 @@ def including_vat_excerpts_from_loaded_cd_volume(
         for pid in pids or [project_id]:
             if not pid:
                 continue
-            for phrase in ("contract data", "conditions of contract"):
+            for phrase in _DEEP_ROW_TITLE_KINDS:
                 try:
                     matches = documents_matching_title_phrase(pid, phrase) or []
                 except Exception:  # noqa: BLE001 — listing is optional
                     logger.debug(
-                        "a2 loaded-volume title listing failed for %r",
+                        "loaded-volume title listing failed for %r",
                         phrase, exc_info=True,
                     )
                     matches = []
                 for doc in matches:
                     _add(doc.get("id") or "")
     except Exception:  # noqa: BLE001 — rag doc_ids may still be enough
-        logger.debug("a2 loaded-volume projects import failed", exc_info=True)
+        logger.debug("loaded-volume projects import failed", exc_info=True)
 
     if not ids:
         return ""
@@ -7155,17 +7031,18 @@ def including_vat_excerpts_from_loaded_cd_volume(
         try:
             store = get_lexical_store()
         except Exception:  # noqa: BLE001 — never break a turn over the store
-            logger.debug("a2 loaded-volume store open failed", exc_info=True)
+            logger.debug("loaded-volume store open failed", exc_info=True)
             return ""
 
-    extra = _fetch_late_including_vat_chunks(
+    extra = _scan_whole_documents(
         store, project_id or (pids[0] if pids else ""), ids, extra_pids=pids,
+        needle_sets=label_word_needle_sets(asked_row_labels(query)[:_DEEP_ROW_MAX_LABELS]),
     )
     parts: List[str] = []
     for chunk in _pair_adjacent_keep_text(
         extra or [],
         chunk_states_aca_including_vat,
-        window=_REAL_ACA_PAIR_WINDOW,
+        window=_ROW_PAIR_WINDOW,
     ):
         text = chunk.text or ""
         if chunk_states_aca_including_vat(text) and text not in parts:
@@ -7232,136 +7109,89 @@ def ensure_kept_has_including_vat(
     return True
 
 
-def _rescue_e1_real_aca_from_pool_docs(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-) -> int:
-    """Surface a filled excl-VAT ACA that sits past first-N on an 8.8 doc.
+def _daily_damages_operands():
+    """The operands of a delay-damages daily amount, as (name, is_pooled, admits).
 
-    Daily-amount ask after #530: identifier_search for ``accepted contract
-    amount excluding vat`` matches the 8.8 worked-example windows (chunks
-    9–11) and LIMIT returns those first. ``chunks_for_docs`` then takes
-    the first 24/40 by index — still the Conditions body — so the filled
-    1.1.1 row never enters fused. Compose skips the toy 10M and the cost
-    gate refuses. #532 scanned the first 400 of those docs; live still
-    missed an appendix past that prefix. Text-match + last-N tail on
-    rate-window / Contract Data docs already in-pool.
+    ``is_pooled(text)`` says a pooled chunk already supplies the operand;
+    ``admits(text)`` says a scanned chunk supplies it.
     """
-    if not (
-        query_asks_delay_damages_daily_amount(query)
-    ):
-        return 0
     try:
         from app.lib.construction_formulas_commercial import (
             chunk_has_real_accepted_contract_amount,
         )
     except Exception:  # noqa: BLE001 — never break a turn over an import
-        logger.debug("e1 late-ACA import failed", exc_info=True)
-        return 0
+        logger.debug("composition operand import failed", exc_info=True)
+        return []
 
-    def _fused_chunk(entry) -> Optional[Chunk]:
-        if isinstance(entry, tuple) and entry:
-            chunk = entry[0]
-        else:
-            chunk = entry
-        return chunk if isinstance(chunk, Chunk) else None
-
-    fused_chunks = [
-        c for c in (_fused_chunk(e) for e in fused.values()) if c is not None
-    ]
-    has_standalone_aca = any(
-        _has_standalone_excl_vat_aca(c.text or "") for c in fused_chunks
-    )
-    has_preferred_rate = any(
-        _daily_rate_preference(c.text or "") >= 2 for c in fused_chunks
-    )
-    # Do not skip when the only "real ACA" sits inside a 0.015% CoC
-    # rate window — that is the live #535 flake (263,175.67/day).
-    if has_standalone_aca and has_preferred_rate:
-        return 0
-    doc_ids = _pool_doc_ids_for_late_aca(fused)
-    if not doc_ids:
-        return 0
-    extra = _fetch_late_aca_chunks(store, project_id, doc_ids, fused=fused)
-    recovered = 0
-    if not has_standalone_aca:
-        for chunk in _pair_adjacent_keep_text(
-            extra or [],
-            chunk_states_accepted_contract_amount,
-            window=_REAL_ACA_PAIR_WINDOW,
-        ):
-            if chunk.chunk_id in fused:
-                continue
-            if not chunk_has_real_accepted_contract_amount(chunk.text or ""):
-                continue
-            if chunk_states_delay_damages_rate(chunk.text or ""):
-                # Rate-base ACA is not the 1.1.1 row. Keep looking.
-                continue
-            fused[chunk.chunk_id] = (chunk, _DAILY_DAMAGES_OPERAND_PIN_SCORE, 0.0)
-            recovered += 1
-    if not has_preferred_rate:
-        for chunk in extra or []:
-            if chunk.chunk_id in fused:
-                continue
-            if _daily_rate_preference(chunk.text or "") < 2:
-                continue
-            fused[chunk.chunk_id] = (chunk, _DAILY_DAMAGES_OPERAND_PIN_SCORE, 0.0)
-            recovered += 1
-    if recovered:
-        logger.info(
-            "e1 late-operand scan recovered %d chunk(s) past first-N 8.8 windows",
-            recovered,
+    def _base_admits(text: str) -> bool:
+        # The sum the rate is a share of, stated as its own row -- not a rate
+        # window that restates some amount.
+        return (
+            chunk_states_accepted_contract_amount(text)
+            and chunk_has_real_accepted_contract_amount(text)
+            and not chunk_states_delay_damages_rate(text)
         )
-    return recovered
+
+    return [
+        ("base", _has_standalone_excl_vat_aca, _base_admits),
+        ("rate", lambda text: _daily_rate_preference(text) >= 2,
+         lambda text: _daily_rate_preference(text) >= 2),
+    ]
 
 
-def _rescue_asked_particular_value_chunks(
+def composition_operands_for(query: str):
+    """The operands a question's composition needs, or [] when it composes nothing."""
+    if query_asks_delay_damages_daily_amount(query):
+        return _daily_damages_operands()
+    return []
+
+
+def recall_composition_operands(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
 ) -> int:
-    """Out-of-pool fetch for ACA incl-VAT, TfC, delay rate, DNP and Engineer asks."""
+    """Pool every operand a composition needs, read from the documents in the pool.
+
+    A computed answer (a daily amount = a rate x the sum it is a share of)
+    needs every operand row in the context, and each operand is a row of a
+    particulars / conditions volume that is often past the early windows the
+    store returns first. When an operand is missing from the pool, the
+    pooled documents that hold the other operand -- or any pooled
+    particulars / conditions volume -- are read whole and the missing
+    operand's rows are pooled, pinned above the early windows so the token
+    cap keeps them. An operand already pooled is not fetched again.
+    """
+    operands = composition_operands_for(query)
+    if not operands:
+        return 0
+    fused_chunks = [c for c in (_fused_entry_chunk(e) for e in fused.values()) if c is not None]
+    missing = [
+        (name, admits) for name, is_pooled, admits in operands
+        if not any(is_pooled(c.text or "") for c in fused_chunks)
+    ]
+    if not missing:
+        return 0
+    doc_ids = _pool_doc_ids_for_late_aca(fused)
+    if not doc_ids:
+        return 0
+    extra = _scan_documents_for_operands(store, project_id, doc_ids, fused=fused)
     recovered = 0
-    if query_asks_for_delay_damages_rate(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
-            chunk_states_delay_damages_rate, label="delay-damages-rate",
+    for name, admits in missing:
+        # A row whose label and value were split across chunks is joined back.
+        candidates = (
+            _pair_adjacent_keep_text(extra or [], chunk_states_accepted_contract_amount,
+                                     window=_ROW_PAIR_WINDOW)
+            if name == "base" else list(extra or [])
         )
-    if query_asks_delay_damages_daily_amount(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
-            chunk_states_delay_damages_rate, label="delay-damages-daily-rate",
-        )
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _ACA_BASE_RESCUE_PHRASES,
-            chunk_states_accepted_contract_amount,
-            label="delay-damages-daily-aca",
-            bonus=0.0,
-        )
-    if query_asks_who_the_engineer_is(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _ENGINEER_IDENTITY_RESCUE_PHRASES,
-            chunk_states_engineer_identity, label="engineer-identity",
-        )
-    if query_asks_for_aca_including_vat(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _ACA_INCL_RESCUE_PHRASES,
-            chunk_states_aca_including_vat, label="aca-including-vat",
-        )
-    if query_asks_for_time_for_completion(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _TFC_RESCUE_PHRASES,
-            chunk_states_time_for_completion, label="time-for-completion",
-        )
-    if query_asks_for_defects_notification_period(query):
-        recovered += _pool_lexical_hits_matching(
-            project_id, fused, store, _DNP_RESCUE_PHRASES,
-            chunk_states_defects_notification_period,
-            label="defects-notification-period",
-        )
+        for chunk in candidates:
+            if chunk.chunk_id in fused or not admits(chunk.text or ""):
+                continue
+            fused[chunk.chunk_id] = (chunk, _OPERAND_PIN_SCORE, 0.0)
+            recovered += 1
+    if recovered:
+        logger.info("composition-operand recall pooled %d chunk(s)", recovered)
     return recovered
 
 
@@ -7373,9 +7203,8 @@ def _apply_asked_particular_value_boost(
     want_rate = (
         query_asks_for_delay_damages_rate(query)
     )
-    want_eng = (
-        query_asks_who_the_engineer_is(query)
-    )
+    party_role = asked_party_role(query)
+    want_eng = bool(party_role)
     want_aca = (
         query_asks_for_aca_including_vat(query)
     )
@@ -7391,7 +7220,7 @@ def _apply_asked_particular_value_boost(
         text = chunk.text or ""
         hit = (
             (want_rate and chunk_states_delay_damages_rate(text))
-            or (want_eng and chunk_states_engineer_identity(text))
+            or (want_eng and chunk_names_party(text, party_role))
             or (want_aca and chunk_states_aca_including_vat(text))
             or (want_tfc and chunk_states_time_for_completion(text))
             or (want_dnp and chunk_states_defects_notification_period(text))
@@ -7403,21 +7232,12 @@ def _apply_asked_particular_value_boost(
         scored[i] = (boosted, chunk)
 
 
-# ── Rate Only BOQ-item rescue ──────────────────────────────────────
+# ── bill items: Rate Only / priced / Excluded ─────────────────────────────
 #
-# Rate Only BOQ item ask (tip 4d8ddb79 / was a65cebb5): "Answer only from
-# the client project documents. What is the total amount for removal of
-# storm water culverts (D529.3)?" returned a generic "I'm ready to help"
-# acknowledgement plus the 3348/3348 coverage footer. The asked row is
-# Rate Only — no amount exists. Cosine prefers priced lookalikes
-# (D549.2 fence, D599.5 carriageway, an Excluded culvert that shares
-# "storm water") and term rescue treats that overlap as already-grounded.
+# "What is the total amount for <item> (<item code>)?" where the asked row is
+# marked Rate Only: no amount exists. Cosine prefers priced lookalikes on
+# the same page and an Excluded item that shares the description's words.
 # Do not invent a money total; elect the Rate Only row as written.
-#
-# Same shape as the delay-rate / Engineer in-pool fence + out-of-pool identifier rescue.
-#
-# Not #504 (delay-damages daily compose), not #505 (duration override),
-# not #506 (Schedule 10 register).
 _RATE_ONLY_BONUS = 2.0
 _PRICED_BOQ_BONUS = 2.0
 _PART_SUMMARY_BONUS = 2.0
@@ -8296,7 +8116,7 @@ def compose_combined_part_summary_total(
 ) -> Optional[Dict[str, Any]]:
     """Sum the printed Part Summary totals of every named page.
 
-    Example: 34,645,529 + 1,852,848 + 17,496,857 = 53,995,234.
+    Example: 1,000 + 2,500 + 4,000 = 7,500.
     Does not invent a missing page and does not elect a neighbour.
     """
     if not part_summary_compose_enabled():
@@ -8517,251 +8337,127 @@ def _apply_priced_boq_boost(
         scored[i] = (boosted, chunk)
 
 
-def _rescue_rate_only_item_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: Optional[List[str]] = None,
-) -> int:
-    """Pull the asked CESMM Rate Only row into ``fused``. Project-first.
-
-    Identifier search collapses OCR ``D 529.3``. ``chunks_containing_all``
-    is the out-of-pool backup when cosine never fetched the short row.
-    Failures never raise. GK rate-book notes are not searched.
-    """
-    if not query_asks_for_boq_item_amount(query):
-        return 0
-    codes = extract_asked_cesmm_codes(query)
-    if not codes:
-        return 0
-
-    def _keep(text: str) -> bool:
-        return chunk_states_rate_only_item(text, codes)
-
-    recovered = _pool_lexical_hits_matching(
-        project_id, fused, store, tuple(codes),
-        _keep, label="rate-only-item",
-    )
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return recovered
-    pids = [project_id] + [
-        p for p in (extra_pids or []) if p and p != project_id
-    ]
-    for pid in pids:
-        for code in codes:
-            rest = code[1:] if len(code) > 1 else code
-            needle_sets = ([code, "rate only"], [rest, "rate only"])
-            for needles in needle_sets:
-                try:
-                    hits = fetch(pid, needles, k=20)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "rate-only rescue for %s (%r) failed: %s",
-                        pid, needles, exc,
-                    )
-                    continue
-                for chunk in hits:
-                    if not _keep(chunk.text or ""):
-                        continue
-                    if chunk.chunk_id in fused:
-                        continue
-                    fused[chunk.chunk_id] = (chunk, 0.0, _RATE_ONLY_BONUS)
-                    recovered += 1
-    if recovered:
-        logger.info(
-            "rate-only rescue recovered %d chunk(s) for codes %r",
-            recovered, codes,
-        )
-    return recovered
-
-
-# ── Spec-precedence list neighbor (live OLD-pack C1) ──────────────────────
+# ── list continuation ─────────────────────────────────────────────────────
 #
-# Live Master Corpus C1 (tip 8f4b465): "Answer only from the client
-# project documents. Under Sub-Clause 1.5.1(d), what is the order of
-# precedence of documents within the Specification? List the first
-# three." retrieved DD-2023-118 Vol 2 chunk_index 2, which ends at
-# "the Specification shall be set out as follows". The list — Post
-# Tender Clarifications / Tender Addenda / Schedule of Project
-# Requirements — is the next same-doc chunk (index 3). Cosine + term
-# rescue treated the open-list intro as already-grounded.
+# A clause that introduces a list ("... shall be set out as follows:", "the
+# following documents:") is often split from its list by the chunker: chunk N
+# ends on the introduction, chunk N+1 opens with the items. Retrieval ranks the
+# introduction -- it carries the question's words -- and the items, which
+# carry none of them, never enter the pool. The answer then stops at "as
+# follows".
 #
-# When a hit is that intro, fetch the next same-doc chunk and elect
-# the list. Do not invent a signatory (D1).
-#
-# Not #501 (year lock), not #516/#520 (ACA VAT), not #517 (TfC
-# 852), not #502 (SPE-identity), not #506 (schedule register), not #507 (Rate Only).
-_SPEC_PRECEDENCE_LIST_BONUS = 2.0
-_SPEC_PRECEDENCE_ASK_RE = re.compile(
-    r"(?i)(?:1\.5\.1\s*\(\s*d\s*\)"
-    r"|order\s+of\s+precedence.{0,80}specification"
-    r"|specification.{0,80}order\s+of\s+precedence"
-    r"|documents\s+within\s+the\s+specification)"
+# The fix reads the split from the chunks themselves: when a chunk in the
+# provisional top-k ends on an open introduction and shares the question's
+# terms, the next chunk of the same document is fetched; if it opens with a
+# run of list items, it is the rest of that clause and is pooled with the
+# list-continuation bonus, ahead of the introduction.
+_LIST_CONTINUATION_BONUS = 2.0
+_LIST_CONTINUATION_MIN_TERMS = 2
+_LIST_CONTINUATION_MIN_ITEMS = 2
+_LIST_CONTINUATION_ITEM_CHARS = 90
+# The introduction ends the chunk: "as follows", "the following", "listed
+# below", optionally with a colon or full stop.
+_OPEN_LIST_TAIL_RE = re.compile(
+    r"(?i)(?:as\s+follows|the\s+following(?:\s+\w+){0,3}|"
+    r"(?:listed|set\s+out|given|shown)\s+below|in\s+the\s+following\s+order)"
+    r"\s*[:.\-–—]?\s*$"
 )
-_AS_FOLLOWS_TAIL_RE = re.compile(r"(?i)as\s+follows\s*[:.]?\s*$")
-_SPEC_PRECEDENCE_INTRO_RE = re.compile(
-    r"(?i)(?:1\.5\.1\s*\(\s*d\s*\)"
-    r"|specification\s+shall\s+be\s+set\s+out"
-    r"|order\s+of\s+precedence"
-    r"|within\s+the\s+specification)"
+_LIST_MARKER_RE = re.compile(
+    r"^\s*(?:[-•*·▪]|\(?[a-z0-9ivx]{1,4}[.)]|\d+(?:\.\d+)*\.?)\s+", re.IGNORECASE,
 )
-_POST_TENDER_CLARIFICATIONS_RE = re.compile(r"(?i)post\s+tender\s+clarifications")
-_TENDER_ADDENDA_RE = re.compile(r"(?i)tender\s+addenda")
-_SOPR_RE = re.compile(r"(?i)schedule\s+of\s+project\s+requirements")
-_SPEC_PRECEDENCE_LIST_NEEDLES = (
-    "Post Tender Clarifications",
-    "Tender Addenda",
-    "Schedule of Project Requirements",
-)
-
-
-def query_asks_for_spec_precedence_list(query: str) -> bool:
-    """True for Sub-Clause 1.5.1(d) / Specification precedence.
-
-    ACA VAT, Time for Completion, delay-damages, DNP,
-    Engineer, and titled-spec asks stay off this path.
-    """
-    return bool(_SPEC_PRECEDENCE_ASK_RE.search(query or ""))
 
 
 def chunk_is_open_list_intro(text: str) -> bool:
-    """True when the excerpt opens a list and then stops.
+    """True when the chunk ends on a clause that introduces a list.
 
-    Live C1: chunk_index 2 ends at ``as follows`` under 1.5.1(d) /
-    ``the Specification shall be set out``.
+    "The design review procedure is as follows" is an introduction too, so
+    callers also require the introduction to share the question's terms.
+    A chunk that goes on to give its items is not open.
     """
     blob = (text or "").strip()
-    if not blob or not _AS_FOLLOWS_TAIL_RE.search(blob):
-        return False
-    return bool(_SPEC_PRECEDENCE_INTRO_RE.search(blob))
+    return bool(blob) and bool(_OPEN_LIST_TAIL_RE.search(blob))
 
 
-def chunk_states_spec_precedence_list(text: str) -> bool:
-    """True when the excerpt names the first three precedence items."""
-    blob = text or ""
-    return bool(
-        _POST_TENDER_CLARIFICATIONS_RE.search(blob)
-        and _TENDER_ADDENDA_RE.search(blob)
-        and _SOPR_RE.search(blob)
-    )
+def _list_items(text: str) -> List[str]:
+    """The leading run of list items in ``text`` (lines or ``;`` cells)."""
+    blob = (text or "").strip()
+    lines = [ln.strip() for ln in blob.splitlines() if ln.strip()]
+    if len(lines) < _LIST_CONTINUATION_MIN_ITEMS and ";" in blob:
+        lines = [part.strip() for part in blob.split(";") if part.strip()]
+    items: List[str] = []
+    for line in lines:
+        item = _LIST_MARKER_RE.sub("", line)
+        if not item or len(item) > _LIST_CONTINUATION_ITEM_CHARS:
+            break
+        # A list item names a thing; a sentence of prose ends with a stop and
+        # runs on.
+        if item.endswith(".") and len(item.split()) > 8:
+            break
+        items.append(item)
+    return items
 
 
-def _apply_spec_precedence_list_boost(
-    query: str,
-    scored: List[Tuple[float, Chunk]],
-) -> None:
-    """In-place: lift the Specification precedence list over the intro."""
-    if not query_asks_for_spec_precedence_list(query):
-        return
-    for i, (score, chunk) in enumerate(scored):
-        if not chunk_states_spec_precedence_list(chunk.text or ""):
-            continue
-        boosted = score + _SPEC_PRECEDENCE_LIST_BONUS
-        chunk.score = round(boosted, 6)
-        scored[i] = (boosted, chunk)
+def chunk_opens_with_list(text: str) -> bool:
+    """True when the chunk opens with a run of short list items."""
+    return len(_list_items(text)) >= _LIST_CONTINUATION_MIN_ITEMS
 
 
-def _rescue_spec_precedence_list_neighbors(
+def recall_list_continuations(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
-    extra_pids: Optional[List[str]] = None,
+    *,
+    k: int = 5,
 ) -> int:
-    """Pull the list chunk that follows an open-list intro into ``fused``.
+    """Pool the chunk that carries the list an in-pool introduction opens.
 
-    Primary path: same-doc neighbor of an in-pool ``as follows`` intro
-    (live C1: chunk 2 → chunk 3). Backup: ``chunks_containing_all`` on
-    the three expected strings if the intro itself missed the pool.
-    Failures never raise. GK notes are not searched.
+    Project corpus only. Returns the number of chunks added or lifted.
+    Failures leave the pool standing.
     """
-    if not query_asks_for_spec_precedence_list(query):
-        return 0
-
-    recovered = 0
     follow = getattr(store, "chunks_following", None)
-    if callable(follow):
-        anchors: List[Tuple[str, int]] = []
-        seen_anchors: Set[Tuple[str, int]] = set()
-        for chunk, _sem, _b in fused.values():
-            if chunk.project_id and chunk.project_id != project_id:
-                continue
-            if not chunk_is_open_list_intro(chunk.text or ""):
-                continue
-            if chunk_states_spec_precedence_list(chunk.text or ""):
-                continue
-            key = (chunk.doc_id, int(chunk.chunk_index or 0))
-            if not key[0] or key in seen_anchors:
-                continue
-            seen_anchors.add(key)
-            anchors.append(key)
-        if anchors:
-            try:
-                extra = follow(project_id, anchors, n=1)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "spec-precedence neighbor fetch for %s failed: %s",
-                    project_id, exc,
-                )
-                extra = []
-            by_key = {(c.doc_id, int(c.chunk_index or 0)): c for c in extra}
-            for doc_id, idx in anchors:
-                nxt = by_key.get((doc_id, idx + 1))
-                if nxt is None:
-                    continue
-                if nxt.chunk_id in fused:
-                    continue
-                if not chunk_states_spec_precedence_list(nxt.text or ""):
-                    continue
-                fused[nxt.chunk_id] = (
-                    nxt, 0.0, _SPEC_PRECEDENCE_LIST_BONUS,
-                )
-                recovered += 1
-
-    if any(
-        chunk_states_spec_precedence_list(c.text or "")
-        for c, _sem, _b in fused.values()
-    ):
-        if recovered:
-            logger.info(
-                "spec-precedence list rescue recovered %d neighbor chunk(s)",
-                recovered,
-            )
-        return recovered
-
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return recovered
-    pids = [project_id] + [
-        p for p in (extra_pids or []) if p and p != project_id
-    ]
-    needles = list(_SPEC_PRECEDENCE_LIST_NEEDLES)
-    for pid in pids:
-        try:
-            hits = fetch(pid, needles, k=20)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "spec-precedence list rescue for %s failed: %s", pid, exc,
-            )
+    if not callable(follow):
+        return 0
+    terms = [stem_query_term(t) for t in distinctive_query_terms(query)]
+    if len(terms) < _LIST_CONTINUATION_MIN_TERMS:
+        return 0
+    ranked = sorted(fused.values(), key=lambda e: -((e[1] or 0.0) + (e[2] or 0.0)))
+    anchors: List[Tuple[str, int]] = []
+    for chunk, _sem, _bonus in ranked[:max(k, 1)]:
+        if chunk.project_id and chunk.project_id != project_id:
             continue
-        for chunk in hits:
-            if not chunk_states_spec_precedence_list(chunk.text or ""):
+        text = chunk.text or ""
+        if not chunk_is_open_list_intro(text):
+            continue
+        low = text.lower()
+        if sum(1 for t in terms if t in low) < _LIST_CONTINUATION_MIN_TERMS:
+            continue
+        key = (chunk.doc_id, int(chunk.chunk_index or 0))
+        if key[0] and key not in anchors:
+            anchors.append(key)
+    if not anchors:
+        return 0
+    try:
+        following = follow(project_id, anchors, n=1) or []
+    except Exception as exc:  # noqa: BLE001 — recall must not break the turn
+        logger.warning("list-continuation fetch for %s failed: %s", project_id, exc)
+        return 0
+    by_key = {(c.doc_id, int(c.chunk_index or 0)): c for c in following}
+    recovered = 0
+    for doc_id, idx in anchors:
+        nxt = by_key.get((doc_id, idx + 1))
+        if nxt is None or not chunk_opens_with_list(nxt.text or ""):
+            continue
+        prev = fused.get(nxt.chunk_id)
+        if prev is not None:
+            if (prev[2] or 0.0) >= _LIST_CONTINUATION_BONUS:
                 continue
-            if chunk.chunk_id in fused:
-                continue
-            fused[chunk.chunk_id] = (
-                chunk, 0.0, _SPEC_PRECEDENCE_LIST_BONUS,
-            )
-            recovered += 1
-        if recovered:
-            break
+            fused[nxt.chunk_id] = (prev[0], prev[1], _LIST_CONTINUATION_BONUS)
+        else:
+            fused[nxt.chunk_id] = (nxt, 0.0, _LIST_CONTINUATION_BONUS)
+        recovered += 1
     if recovered:
-        logger.info(
-            "spec-precedence list rescue recovered %d chunk(s)",
-            recovered,
-        )
+        logger.info("list-continuation recall pooled %d chunk(s)", recovered)
     return recovered
 
 
@@ -8928,7 +8624,7 @@ def reserve_monetary_base_row(
 
     A reservation rather than a bigger bonus, deliberately. The money row
     earns no label bonus — the question says "in SAR", and the row says
-    "SAR 8,640,000.00", and they share no term the overlap can see — so on
+    "SAR <amount>", and they share no term the overlap can see — so on
     the live Contract Data it competes against 200 siblings that each earn
     the full 1.40. Any constant large enough to clear that field is a
     constant fitted to one corpus's cosine spread; one slot is a guarantee.
@@ -8938,7 +8634,7 @@ def reserve_monetary_base_row(
     """
     # Live 39d6b8d E2: "If Milestone 1 is 30 days late, what are the milestone
     # delay damages?" names no currency and says no "calculate", so it was
-    # never a monetary-base ask — yet 30 days × 0.015% of the Contract Price
+    # never a monetary-base ask — yet 30 days × a milestone rate of the Contract Price
     # is money. The sum was fetched and lifted, and still came sixth of five
     # behind copies of the rate row from every copy of the contract.
     delay_scenario = bool(
@@ -8962,8 +8658,8 @@ def reserve_monetary_base_row(
                     chunk_has_real_accepted_contract_amount,
                 )
                 # Toy 8.8 windows and particulars-prefixed 10M examples
-                # are not the rate base. Only a non-toy ACA (live:
-                # excl-VAT SAR 1,754,504,456.25) satisfies reservation.
+                # are not the rate base. Only a non-toy ACA (a filled
+                # excl-VAT amount) satisfies reservation.
                 return chunk_has_real_accepted_contract_amount(text)
             except Exception:  # noqa: BLE001 — fall through to the usual tests
                 logger.debug("toy-ACA money-base test failed", exc_info=True)
@@ -9013,7 +8709,7 @@ def reserve_monetary_base_row(
 # synonym leg, and "retention" alone is too broad to reserve safely).
 # Each entry: (synonym triggers, canonical heading, VALUE regex). The value
 # regex is essential: the pool holds BOTH the figure chunk ("Accepted Contract
-# Amount ... SAR 1,754,504,456.25") and mention-only chunks ("...the Accepted
+# Amount ... SAR <amount>") and mention-only chunks ("...the Accepted
 # Contract Amount stated in the Contract Data..."). Reserving on the heading
 # alone grabbed the FIRST match in score order — a mention with no amount — and
 # the answer layer still declined (live trace 2026-09-14: reserved idx 90, a
@@ -9152,7 +8848,7 @@ def reserve_daily_damages_operands(
                 changed = True
                 break
 
-    # Daily-amount ask after #535: 0.015% CoC windows already satisfy
+    # Daily-amount ask after #535: a milestone rate CoC windows already satisfy
     # chunk_states_delay_damages_rate, so the 0.1% Contract Data row
     # never replaced them. Upgrade when a better rate is in ranked.
     best_rate: Optional[Chunk] = None
@@ -9292,7 +8988,7 @@ def ensure_kept_can_compose_daily_damages(
         kept[idx] = rate
         present.add(rate.chunk_id)
         changed = True
-    rate.score = max(float(rate.score or 0.0), _DAILY_DAMAGES_OPERAND_PIN_SCORE)
+    rate.score = max(float(rate.score or 0.0), _OPERAND_PIN_SCORE)
     if aca.chunk_id not in present:
         idx = _daily_damages_non_operand_index(kept, protect_rate=True, protect_aca=True)
         if idx is None:
@@ -9312,7 +9008,7 @@ def ensure_kept_can_compose_daily_damages(
             idx = 0 if idx != 0 else 1
         kept[idx] = aca
         changed = True
-    aca.score = max(float(aca.score or 0.0), _DAILY_DAMAGES_OPERAND_PIN_SCORE)
+    aca.score = max(float(aca.score or 0.0), _OPERAND_PIN_SCORE)
     return changed
 
 
@@ -9426,7 +9122,7 @@ def _apply_contract_data_particulars_boost(query: str, scored: List[Tuple[float,
             chunk_is_milestone = bool(_CD_MILESTONE_CHUNK_RE.search(text))
             if wants_whole and not wants_milestone and chunk_is_milestone:
                 # Whole-works ask: milestone rows lose the family bonus and
-                # take a penalty so the 1.1.75 whole-works row can surface.
+                # take a penalty so the whole-works row can surface.
                 delta = -_CD_SCOPE_MISMATCH_PENALTY
             elif wants_milestone and not wants_whole and not chunk_is_milestone:
                 # Milestone ask: non-milestone particulars keep their score
@@ -9581,64 +9277,35 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         c.chunk_id: (c, c.score or 0.0, 0.0) for c in candidates
     }
     extra_lex_pids = _general_knowledge_project_ids()
+    recall_asked_quantity_chunks(
+        query, project_id, fused_lex, store, k=k, extra_pids=extra_lex_pids,
+    )
     filename_names = _pool_docs_named_by_query(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
-    filename_names.update(_rescue_spec_title_docs(
+    filename_names.update(recall_titled_documents(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     ))
-    filename_names.update(_rescue_contract_data_docs(
+    filename_names.update(recall_labelled_rows(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     ))
-    _rescue_spec_identity_chunks(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
-    _rescue_asked_particular_value_chunks(
-        query, project_id, fused_lex, store,
-    )
-    _rescue_named_particulars_rows(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
     _pool_named_document_control_block(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
-    _rescue_bill_issue_stamp_chunks(
+    recall_issue_stamps(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
-    _rescue_e1_real_aca_from_pool_docs(
-        query, project_id, fused_lex, store,
-    )
-    _rescue_a2_including_vat_from_pool_docs(
-        query, project_id, fused_lex, store,
-    )
-    _rescue_schedule_register_chunks(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
-    _rescue_pcg_value_chunks(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
-    _rescue_commencement_date_chunks(
-        query, project_id, fused_lex, store,
-        extra_pids=extra_lex_pids,
-    )
-    _rescue_rate_only_item_chunks(
-        query, project_id, fused_lex, store,
-    )
+    recall_composition_operands(query, project_id, fused_lex, store)
+    recall_rows_deep_in_pooled_documents(query, project_id, fused_lex, store)
     _pool_page_total_rows(
         query, project_id, fused_lex, store,
     )
-    _rescue_spec_precedence_list_neighbors(
-        query, project_id, fused_lex, store,
-    )
+    recall_list_continuations(query, project_id, fused_lex, store, k=k)
     if len(fused_lex) > len(candidates):
         seen = {c.chunk_id for c in candidates}
         for chunk, _sem, _b in fused_lex.values():
@@ -9657,8 +9324,8 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _apply_source_class_preference(query, scored_lex, name_by_id)
     _cap_specification_class_bonus(query, scored_lex, name_by_id)
     _apply_numeric_requirement_boost(query, scored_lex, higher_is_better=False)
-    _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
-    _apply_spec_identity_text_boost(query, scored_lex)
+    _apply_title_filename_boost(query, scored_lex, name_by_id)
+    _apply_register_line_boost(query, scored_lex)
     _apply_contract_data_filename_boost(query, scored_lex, name_by_id)
     _apply_asked_particular_value_boost(query, scored_lex)
     _apply_schedule_register_boost(query, scored_lex)
@@ -9667,7 +9334,6 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _apply_rate_only_boost(query, scored_lex)
     _apply_priced_boq_boost(query, scored_lex)
     _apply_part_summary_boost(query, scored_lex)
-    _apply_spec_precedence_list_boost(query, scored_lex)
     candidates = [chunk for _s, chunk in scored_lex]
 
     # Stable sort keeps the active project ahead of GK on equal scores.
@@ -9731,7 +9397,7 @@ def retrieve_with_filter(
     Pulls ``candidate_overfetch(k)`` raw candidates (floor 60, so
     production k=5 yields a pool of 60) from the active project's
     vector store, then ALSO pulls the same over-fetch from each
-    general-knowledge project (``training_material`` by default — see
+    general-knowledge project (the configured default — see
     ``_general_knowledge_project_ids``). The two candidate sets are
     merged, re-ranked by vector score descending, noise-filtered, and
     the top K returned.
@@ -9896,7 +9562,7 @@ def retrieve_with_filter(
 
     # General-knowledge projects (cross-project background context).
     # Only merge GK when the active project already has indexed chunks.
-    # An empty/unindexed project must return [] — not training_material
+    # An empty/unindexed project must return [] — not general-knowledge
     # hits — or search_project_documents, lazy bootstrap, and the
     # "unindexed project" contract all break (Postgres CI shares a DB where
     # GK rows exist from other tests / the migrated corpus).
@@ -10152,38 +9818,23 @@ def retrieve_with_filter(
                     recovered, rescue_terms,
                 )
 
-    # Foundation backfill degree: duct backfill co-occurring with "compacted" makes term rescue
-    # declare the top-k grounded, so the 98% MDD / Modified Proctor clause
-    # stays outside it. This fetch runs only when that degree is not already
-    # in the top-k, and only for this question.
-    _rescue_foundation_backfill_degree(query, project_id, fused, store, k)
+    # The general-knowledge pids the semantic leg searches, plus the empty-
+    # project master-corpus fallback: the recall passes below fetch from the
+    # SAME corpora the semantic leg did.
+    extra_rescue_pids = gk_ids + ([fb_id] if use_fallback and fb_id else [])
 
     # FW4 S1: "per the specification" + a cover ask. The specification's own
     # clause says the cover is "as specified on the Drawings" and states no
     # millimetre, so neither cosine nor the numeric fetch ever pools it.
-    spec_deferral_names = _rescue_spec_deferral_chunks(
-        query, project_id, fused, store,
+    spec_deferral_names = follow_quantity_pointers(
+        query, project_id, fused, store, k=k,
         embedder=embedder, query_vec=query_vec,
     )
-    # CYCLE2 S1: the 75 mm soil-contact notes say "cover to reinforcement"
-    # and "in contact with soil", not the question's words, so no leg above
-    # pools them. Pool them at their own cosine.
-    _rescue_soil_contact_cover_chunks(
-        query, project_id, fused, store,
-        embedder=embedder, query_vec=query_vec,
-    )
-    # The general-knowledge pids the semantic leg searches, plus the empty-
-    # project master-corpus fallback. Computed here (was below) so the
-    # illumination rescue can fetch from the SAME corpora the semantic leg did
-    # — attempts 1-2 scanned only the UI + master-corpus source and missed the
-    # GK layer where the spec volume lives.
-    extra_rescue_pids = gk_ids + ([fb_id] if use_fallback and fb_id else [])
-    # Illumination level ask: the work-activity illumination table ("Concrete placement 50
-    # LUX", "Bricklaying 100 LUX") never enters top-k for an "HSE lighting /
-    # night work" ask, which steers to the HSE plan. Pool it at its cosine.
-    _rescue_illumination_table_chunks(
-        query, project_id, fused, store, extra_rescue_pids,
-        embedder=embedder, query_vec=query_vec,
+    # Asked-quantity recall: the chunk that states the asked figure for the
+    # asked subject (a table row, a drawing note) in the document's own words.
+    recall_asked_quantity_chunks(
+        query, project_id, fused, store, k=k,
+        extra_pids=extra_rescue_pids, embedder=embedder, query_vec=query_vec,
     )
 
     # Letter / named-party filename rescue (D1). Runs EVEN WHEN term rescue
@@ -10196,85 +9847,51 @@ def retrieve_with_filter(
         store,
         extra_pids=extra_rescue_pids,
     )
-    # Spec-title filename rescue (C2). Runs EVEN WHEN term rescue already
-    # found "specification" / "procedure" overlap in a demolition volume
-    # — that in-pool hit is what used to skip the out-of-pool fetch of
-    # the titled Variation Procedure spec.
+    # Titled-document recall. Runs EVEN WHEN term rescue already found the
+    # topic's words in some long volume -- that in-pool hit is what used to
+    # skip the out-of-pool fetch of the document the question names.
     for _did, _nm in spec_deferral_names.items():
         filename_names.setdefault(_did, _nm)
-    filename_names.update(_rescue_spec_title_docs(
+    filename_names.update(recall_titled_documents(
         query,
         project_id,
         fused,
         store,
         extra_pids=extra_rescue_pids,
     ))
-    filename_names.update(_rescue_contract_data_docs(
+    # Labelled-row recall: the filled row for every label the question names
+    # (a particular, a register entry, a bill item), from the particulars
+    # documents and -- for a particulars-shaped question -- the project text.
+    filename_names.update(recall_labelled_rows(
         query,
         project_id,
         fused,
         store,
         extra_pids=extra_rescue_pids,
     ))
-    _rescue_spec_identity_chunks(
-        query,
-        project_id,
-        fused,
-        store,
-        extra_pids=extra_rescue_pids,
-    )
-    # Delay-rate / Engineer asks: the year-lock may already have the right PREFIX-YEAR-SEQ
-    # while the rate / Engineer appointment sit in a later
-    # unprefixed chunk cosine never fetched. Rescue is project-only so
-    # the FIDIC note's illustrative 0.05% cannot impersonate the rate.
-    _rescue_asked_particular_value_chunks(query, project_id, fused, store)
-    # A4/A7/A8: the rest of the Contract Data sheet — any filled row the
-    # question names, not only the seven with a rescue of their own.
-    _rescue_named_particulars_rows(
-        query, project_id, fused, store,
-        extra_pids=extra_rescue_pids,
-    )
-    # B6: number / revision / author of a document the question names.
+    # Number / revision / author of a document the question names.
     _pool_named_document_control_block(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
     )
-    # Set3 C3: Date:/RFP stamp of the named bill. Filename rescue cannot
-    # see a later-year Volume 4 whose name does not repeat the bill title.
-    _rescue_bill_issue_stamp_chunks(
+    # Issue stamp of the named document. Filename recall cannot see a volume
+    # whose name does not repeat the document's title; the stamp does.
+    recall_issue_stamps(
         query, project_id, fused, store,
         extra_pids=extra_rescue_pids,
     )
-    _rescue_e1_real_aca_from_pool_docs(query, project_id, fused, store)
-    _rescue_a2_including_vat_from_pool_docs(query, project_id, fused, store)
-    _rescue_schedule_register_chunks(
-        query,
-        project_id,
-        fused,
-        store,
-        extra_pids=extra_rescue_pids,
-    )
-    # PCG / commencement date asks: Contract Data "not required" / empty commencement over
-    # Schedule 8 form % and commencement-pack dates.
-    _rescue_pcg_value_chunks(
-        query, project_id, fused, store,
-        extra_pids=extra_rescue_pids,
-    )
-    _rescue_commencement_date_chunks(
-        query, project_id, fused, store,
-        extra_pids=extra_rescue_pids,
-    )
-    # Rate Only ask: Rate Only CESMM row (D529.3) vs priced lookalikes. Project-only
-    # so a curated CESMM note cannot impersonate the client's Amount.
-    _rescue_rate_only_item_chunks(query, project_id, fused, store)
-    # Page-total ask: Part Summary footer for page d/3/1 loses to
-    # D110 / D290.1 line items. Project-only so a GK rate note cannot
+    # Rows past the early windows of a pooled volume: every operand a
+    # composition needs, and the asked particular's own row.
+    recall_composition_operands(query, project_id, fused, store)
+    recall_rows_deep_in_pooled_documents(query, project_id, fused, store)
+    # Page-total ask: the page's summary footer loses to the item lines on
+    # the same page. Project-only so a reference rate note cannot
     # impersonate the client's page total.
     _pool_page_total_rows(query, project_id, fused, store)
-    # C1: Sub-Clause 1.5.1(d) intro ends "as follows"; the precedence
-    # list is the next same-doc chunk. Project-only so a FIDIC note
-    # cannot impersonate the client's Specification order.
-    _rescue_spec_precedence_list_neighbors(query, project_id, fused, store)
+    # List continuation: an in-pool introduction that ends "as follows";
+    # the items are the next same-doc chunk. Project-only so a reference
+    # note cannot impersonate the client's list.
+    recall_list_continuations(query, project_id, fused, store, k=k)
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
@@ -10395,9 +10012,9 @@ def retrieve_with_filter(
     _apply_source_class_preference(query, scored, name_by_id)
     _cap_specification_class_bonus(query, scored, name_by_id)
     _apply_numeric_requirement_boost(query, scored)
-    _apply_spec_deferral_boost(query, scored, name_by_id)
-    _apply_spec_title_filename_boost(query, scored, name_by_id)
-    _apply_spec_identity_text_boost(query, scored)
+    _apply_quantity_pointer_boost(query, scored, name_by_id)
+    _apply_title_filename_boost(query, scored, name_by_id)
+    _apply_register_line_boost(query, scored)
     _apply_contract_data_filename_boost(query, scored, name_by_id)
     _apply_asked_particular_value_boost(query, scored)
     _apply_schedule_register_boost(query, scored)
@@ -10406,7 +10023,6 @@ def retrieve_with_filter(
     _apply_rate_only_boost(query, scored)
     _apply_priced_boq_boost(query, scored)
     _apply_part_summary_boost(query, scored)
-    _apply_spec_precedence_list_boost(query, scored)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)

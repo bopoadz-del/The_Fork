@@ -1,8 +1,9 @@
 """Structural backfill under foundations must reach the degree clause.
 
-Live P1a on 209bc83: 2/6. The runs that passed quoted the earthworks clause
-(98% of maximum dry density, Modified Proctor). The runs that failed were
-handed duct backfilling in soft ground from Vol 2 parts 2 and 3.
+Asked-quantity recall end to end for a compaction degree. The runs that
+passed quoted the earthworks clause (a percent of maximum dry density,
+Modified Proctor). The runs that failed were handed duct backfilling in soft
+ground.
 
 The term rescue treats that miss as a success. Its gate asks only whether
 the top-k already co-occurs some pair of query stems. "compacted" and
@@ -50,7 +51,7 @@ DRAIN = (
     "first 300 mm above the pipe. Stones exceeding 40 mm shall be excluded."
 )
 
-SPEC = "DD-2023-118 Vol 2 Specification ({n} of 9).pdf"
+SPEC = "Example Works Vol 2 Specification ({n} of 9).pdf"
 
 
 def _chunk(cid, doc, text, score):
@@ -163,18 +164,18 @@ def test_an_unrelated_question_does_not_pull_the_clause(monkeypatch):
 
 
 def test_a_clause_already_visible_is_not_lifted_again(monkeypatch):
-    """A degree clause already in the top-k must not take this rescue's bonus.
+    """A degree clause already in the top-k is left exactly as it is.
 
-    Other ranking (the S1/S2 numeric-requirement lift, source class) may
-    still move the score. This rescue's own switch must not.
+    Other ranking (the numeric-requirement lift, source class) may still move
+    the score. Asked-quantity recall itself must not: it acts only on what the
+    top-k is missing.
     """
     clause = _chunk("clause", "notes", CLAUSE, 0.91)
     _install(monkeypatch, [clause], [clause])
 
     on, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
-    # Rescue off: its sole entry gate says the ask is not a degree ask.
     monkeypatch.setattr(
-        retriever, "query_asks_foundation_backfill_degree", lambda _q: False,
+        retriever, "recall_asked_quantity_chunks", lambda *_a, **_k: 0,
     )
     off, _noise = retriever.retrieve_with_filter(ASK, "p1", k=5)
     assert [c.chunk_id for c in on] == ["clause"]
