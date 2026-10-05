@@ -95,6 +95,17 @@ def _person_observation(detections: List[Dict[str, Any]],
     return None
 
 
+def _people_observation(person_count: int, observations: List[str]) -> Optional[str]:
+    """How many people the general detector counted, when no other
+    observation already speaks about people. The safety model may be absent
+    or see nothing; the person count still tells the chat who is on site."""
+    if person_count <= 0:
+        return None
+    if any("person" in o.lower() or "people" in o.lower() for o in observations):
+        return None
+    return "1 person visible" if person_count == 1 else f"{person_count} people visible"
+
+
 # Classes whose surfacing is handled by the dedicated vest/hat/person logic
 # above. Everything else above _LOW_CONF_THRESHOLD gets surfaced through the
 # generic "other observations" path -- this is what makes concrete defects,
@@ -188,6 +199,9 @@ async def analyze_chat_photo(
         # Surface QA/QC + general-hazard classes too (crack, porous holes,
         # excavation, ladder, etc.). Vest/hat already handled above.
         observations.extend(_other_observations(detections))
+        people = _people_observation(person_count, observations)
+        if people:
+            observations.insert(0, people)
 
         # Strongest-class summary for any caller that wants the raw top list.
         # Truncated to 8 entries; sorted by confidence descending.

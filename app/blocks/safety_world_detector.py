@@ -20,7 +20,8 @@ list is defined by the prompt JSON, not by safety_classes.json.
 
 Env vars
 ========
-- ``SAFETY_WORLD_WEIGHTS``  path to baked .onnx; if unset, default_detector() returns None
+- ``SAFETY_WORLD_WEIGHTS``  path to the .onnx; if unset, the weights baked
+  into the image (``BAKED_WEIGHTS``) are used when present, else no detector
 - ``SAFETY_WORLD_CONF``     default confidence threshold (0.0-1.0); falls back to 0.05
 """
 from __future__ import annotations
@@ -126,16 +127,40 @@ class SafetyWorldDetector:
         return out
 
 
-def default_detector() -> Optional[SafetyWorldDetector]:
+#: Where the image bakes the detector weights (the Dockerfile copies
+#: data/models/safety_world_v2.onnx here, off the data volume). Used when
+#: SAFETY_WORLD_WEIGHTS is unset: the Render service set the variable, the
+#: ECS task definition never did, and every chat photo came back with no
+#: observations while the weights sat in the image. A dev checkout opts in
+#: with SAFETY_WORLD_WEIGHTS.
+BAKED_WEIGHTS = (Path("/app/models/safety_world_v2.onnx"),)
+
+
+def _weights_path() -> Optional[Path]:
     weights_env = os.getenv("SAFETY_WORLD_WEIGHTS")
-    if not weights_env:
+    if weights_env:
+        return Path(weights_env)
+    return next((p for p in BAKED_WEIGHTS if p.is_file()), None)
+
+
+#: One loaded model per weights file. Callers ask per photo; building the
+#: ONNX model each time cost seconds and a fresh allocation per request.
+_LOADED: Dict[Path, SafetyWorldDetector] = {}
+
+
+def default_detector() -> Optional[SafetyWorldDetector]:
+    weights = _weights_path()
+    if weights is None:
         return None
-    weights = Path(weights_env)
+    if weights in _LOADED:
+        return _LOADED[weights]
     if not weights.is_file():
         logger.warning("SAFETY_WORLD_WEIGHTS=%s not found on disk", weights)
         return None
     try:
-        return SafetyWorldDetector(weights)
+        detector = SafetyWorldDetector(weights)
     except Exception:
         logger.exception("failed to load SafetyWorldDetector from %s", weights)
         return None
+    _LOADED[weights] = detector
+    return detector
