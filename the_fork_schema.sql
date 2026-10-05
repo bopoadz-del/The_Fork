@@ -120,7 +120,8 @@ CREATE TABLE messages (
     role            TEXT NOT NULL
                     CHECK (role IN ('user', 'assistant', 'system')),
     content         TEXT NOT NULL,
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    provenance      TEXT
 );
 
 CREATE INDEX idx_messages_conv ON messages (conversation_id, created_at);

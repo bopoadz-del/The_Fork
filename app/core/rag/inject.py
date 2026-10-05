@@ -662,8 +662,14 @@ def format_chunks_as_system_message(
         # runtime.py both anchor on "chunk=N score=" being adjacent, and an
         # attribute inserted there would silently switch the leak guard off.
         cls_s = f" class={_source_class(c)}"
+        # Provenance: the excerpt's layer and real page ride on the marker so
+        # an answer's figures can be credited to "document, page" -- after
+        # class=, never between chunk= and score=.
+        layer = getattr(c, "layer", None)
+        page = getattr(c, "page", None)
+        prov_s = (f" layer={layer}" if layer else "") + (f" page={page}" if page else "")
         return (f"[doc_id={c.doc_id} chunk={c.chunk_index} "
-                f"score={(c.score or 0):.3f}{cls_s}{rev_s}{sup_s}{src_s}] {c.text}")
+                f"score={(c.score or 0):.3f}{cls_s}{prov_s}{rev_s}{sup_s}{src_s}] {c.text}")
 
     body_parts = [_marker(c) for c in chunks]
     return {"role": "system", "content": header + "\n" + "\n\n".join(body_parts)}
