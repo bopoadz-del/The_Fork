@@ -172,3 +172,15 @@ def test_other_observations_drops_below_low_floor():
     ]
     out = _other_observations(detections)
     assert out == []
+
+
+def test_people_counted_by_the_general_detector_are_an_observation():
+    """The chat answer gets the photo's people even when the safety model
+    saw nothing -- otherwise the attached photo reaches the chat empty."""
+    from app.routers.chat_photos import _people_observation
+
+    assert _people_observation(2, []) == "2 people visible"
+    assert _people_observation(1, []) == "1 person visible"
+    assert _people_observation(0, []) is None
+    assert _people_observation(3, ["no vest detected on a person"]) is None
+    _check_no_violation_language(_people_observation(4, []))

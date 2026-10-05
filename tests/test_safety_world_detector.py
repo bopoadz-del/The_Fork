@@ -9,7 +9,6 @@ We mock ultralytics so the test doesn't need the real 30 MB checkpoint.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -62,10 +61,38 @@ def test_detect_returns_prompt_strings(tmp_path: Path):
     ]
 
 
-def test_default_detector_returns_none_when_env_unset(monkeypatch):
+def test_default_detector_returns_none_when_env_unset(monkeypatch, tmp_path):
+    """No variable and no weights baked into this image: no detector."""
     monkeypatch.delenv("SAFETY_WORLD_WEIGHTS", raising=False)
-    from app.blocks.safety_world_detector import default_detector
-    assert default_detector() is None
+    from app.blocks import safety_world_detector as swd
+    monkeypatch.setattr(swd, "BAKED_WEIGHTS", (tmp_path / "absent.onnx",))
+    monkeypatch.setattr(swd, "_LOADED", {})
+    assert swd.default_detector() is None
+
+
+def test_default_detector_uses_the_weights_baked_into_the_image(monkeypatch, tmp_path):
+    """With SAFETY_WORLD_WEIGHTS unset (the ECS task never set it), the
+    weights the image ships are used, and the model is built once, not per
+    photo."""
+    monkeypatch.delenv("SAFETY_WORLD_WEIGHTS", raising=False)
+    from app.blocks import safety_world_detector as swd
+
+    baked = tmp_path / "baked.onnx"
+    baked.write_bytes(b"onnx")
+    built = []
+
+    class _Stub:
+        def __init__(self, path):
+            built.append(Path(path))
+
+    monkeypatch.setattr(swd, "BAKED_WEIGHTS", (baked,))
+    monkeypatch.setattr(swd, "_LOADED", {})
+    monkeypatch.setattr(swd, "SafetyWorldDetector", _Stub)
+
+    first, second = swd.default_detector(), swd.default_detector()
+
+    assert isinstance(first, _Stub) and first is second
+    assert built == [baked]
 
 
 def test_default_detector_returns_none_when_file_missing(monkeypatch, tmp_path):
