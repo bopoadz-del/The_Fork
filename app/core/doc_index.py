@@ -615,6 +615,7 @@ def _extract_pdf(
     ocr_pages = 0
     ocr_attempts = 0
     empty_text_pages = 0
+    pages_read = 0
     truncated = False
     chars = 0
     text_truncated = False
@@ -662,6 +663,7 @@ def _extract_pdf(
                     if _MAX_EXTRACT_CHARS > 0 and chars >= _MAX_EXTRACT_CHARS:
                         text_truncated = True
                         break
+                    pages_read += 1
                     page_text = (page.get_text() or "").strip()
                     # Always keep any real text layer — never discard digital
                     # text in favour of OCR.
@@ -736,7 +738,8 @@ def _extract_pdf(
                     partial_meta["ocr_attempts"] = ocr_attempts
                 if empty_text_pages:
                     partial_meta["empty_text_pages"] = empty_text_pages
-                if empty_text_pages > 0 and ocr_attempts == 0:
+                partial_meta["pages_read"] = pages_read
+                if _mostly_without_text(empty_text_pages, pages_read) and ocr_attempts == 0:
                     partial_meta["ocr_required"] = True
                 return "\n".join(parts), partial_meta
             # Nothing salvageable. Surface it as the memory failure it is
@@ -756,7 +759,8 @@ def _extract_pdf(
         meta["ocr_attempts"] = ocr_attempts
     if empty_text_pages:
         meta["empty_text_pages"] = empty_text_pages
-    if empty_text_pages > 0 and ocr_attempts == 0:
+    meta["pages_read"] = pages_read
+    if _mostly_without_text(empty_text_pages, pages_read) and ocr_attempts == 0:
         # Cover-only extract: finer chunker can still emit 6 chunks and look
         # like success. Callers must not report that as an indexed body.
         # A single blank digital page that we *did* OCR (attempted, empty
@@ -869,6 +873,7 @@ def _extract_pdf_batched(
     ocr_used = 0
     ocr_attempts = 0
     empty_text_pages = 0
+    pages_read = 0
     for start in range(0, n_pages, batch):
         end = min(start + batch, n_pages)
         remaining = max(0, budget - ocr_attempts)
@@ -883,6 +888,7 @@ def _extract_pdf_batched(
         ocr_used += int((bmeta or {}).get("ocr_pages") or 0)
         ocr_attempts += int((bmeta or {}).get("ocr_attempts") or 0)
         empty_text_pages += int((bmeta or {}).get("empty_text_pages") or 0)
+        pages_read += int((bmeta or {}).get("pages_read") or 0)
         for key in (
             "ocr_low_quality",
             "ocr_truncated",
@@ -908,7 +914,8 @@ def _extract_pdf_batched(
         meta["ocr_attempts"] = ocr_attempts
     if empty_text_pages:
         meta["empty_text_pages"] = empty_text_pages
-    if empty_text_pages > 0 and ocr_attempts == 0:
+    meta["pages_read"] = pages_read
+    if _mostly_without_text(empty_text_pages, pages_read) and ocr_attempts == 0:
         meta["ocr_required"] = True
     return "\n".join(parts), meta
 
@@ -2757,6 +2764,21 @@ def _ifc_census(file_path: str, filename: str) -> list[str]:
     return _ifc_step_census_chunk(file_path, filename)
 
 
+def _mostly_without_text(empty_text_pages: int, pages_read: int) -> bool:
+    """True when at least half the pages read had no usable text layer.
+
+    A scan is mostly image pages. A text-layer reference book with full-page
+    figures or maps has a few empty pages among hundreds of text pages; those
+    are missing figures, not a missing body. ``pages_read`` 0 (unknown, e.g. an
+    older extractor's metadata) keeps the old any-empty-page rule.
+    """
+    if empty_text_pages <= 0:
+        return False
+    if pages_read <= 0:
+        return True
+    return empty_text_pages * 2 >= pages_read
+
+
 def _scanned_pdf_missing_ocr(ext: str, meta: dict[str, Any]) -> bool:
     """True when a PDF had empty body pages and OCR was never invoked.
 
@@ -2768,6 +2790,11 @@ def _scanned_pdf_missing_ocr(ext: str, meta: dict[str, Any]) -> bool:
     not this failure — ``ocr_attempts > 0`` means the trigger fired.
     """
     if (ext or "").lower() != ".pdf":
+        return False
+    pages_read = int(meta.get("pages_read") or 0)
+    if pages_read and not _mostly_without_text(int(meta.get("empty_text_pages") or 0), pages_read):
+        # Most pages carry a text layer: the body is indexed; any image-only
+        # pages are figures, whether or not OCR was skipped for size.
         return False
     if int(meta.get("ocr_pages") or 0) > 0:
         return False
