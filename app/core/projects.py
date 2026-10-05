@@ -67,6 +67,11 @@ _SYSTEM_SEED_ORIGIN = "system_seed"
 _ADMIN_APPROVED_ORIGIN = "admin_drive_approved"
 
 
+#: Default for ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` when the env var is unset.
+#: The retriever reads it from here rather than carrying its own copy.
+DEFAULT_GENERAL_KNOWLEDGE_PROJECTS = "training_material"
+
+
 def general_knowledge_project_ids() -> frozenset[str]:
     """Configured always-on general-knowledge project ids.
 
@@ -74,7 +79,7 @@ def general_knowledge_project_ids() -> frozenset[str]:
     layered RAG, and the retriever use. Default first id is historically
     ``training_material``. Empty / whitespace entries are dropped.
     """
-    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
+    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", DEFAULT_GENERAL_KNOWLEDGE_PROJECTS)
     return frozenset(p.strip() for p in raw.split(",") if p.strip())
 
 

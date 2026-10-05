@@ -127,7 +127,7 @@ def _is_misspelled_word(token: str) -> bool:
 # number — burying the real answer and inducing a fabricated figure lifted from
 # the number-soup (2026-07-14 live cost-query incident). Unit atoms are short
 # symbols; a trailing exponent digit (m2, m3, cm2, mm2) is stripped before the
-# vocabulary check. Reference codes (IP-INF-054, PRC-501, D999.46) are NOT unit
+# vocabulary check. Reference codes (AB-CDE-012, PRC-123, X123.45) are NOT unit
 # atoms, so they survive untouched.
 _UNIT_ATOMS = frozenset({
     "kg", "g", "mg", "t", "ton", "tonne", "lb", "kn", "mn", "n",
@@ -196,9 +196,9 @@ def extract_query_identifiers(query: str) -> List[str]:
 
     Detects, without hardcoding any specific value:
       * quoted phrases (preserved as exact-match candidates)
-      * code-shaped tokens such as PRC-501, IP-INF-054-0000-...
+      * code-shaped tokens such as PRC-123, AB-CDE-012-0000-...
       * labeled references such as "VO Ref 31", "RFI 42", "Clause 13.1"
-      * alphanumeric tokens that clearly contain a digit (e.g. D999.46)
+      * alphanumeric tokens that clearly contain a digit (e.g. X123.45)
 
     Returns a deduplicated list of lowercase identifier strings. The list
     is empty for queries that contain no identifier-like tokens.
@@ -340,9 +340,9 @@ def _identifier_context_overlap(terms: List[str], text: str) -> float:
     return matched / len(terms)
 
 
-# Tender / executed-contract numbers: PREFIX-YEAR-SEQ (DD-2023-118, FX-2044-001).
-# Drawing codes (IP-INF-054-...) and quantities do not match this shape.
-# Underscore-glued filenames ("DD-2023-118_Vol 1.pdf") must still match, so
+# Tender / executed-contract numbers: PREFIX-YEAR-SEQ (AB-2031-007, FX-2044-001).
+# Drawing codes (AB-CDE-012-...) and quantities do not match this shape.
+# Underscore-glued filenames ("AB-2031-007_Vol 1.pdf") must still match, so
 # this is not a \b word-boundary pattern (_ is a word character).
 _CONTRACT_DOC_ID_RE = re.compile(
     r"(?<![A-Za-z0-9])([A-Za-z]{2,}-\d{4}-\d+)(?![A-Za-z0-9])"
@@ -395,8 +395,8 @@ def _contract_id_recency(cid: str) -> Tuple[int, int]:
     """Sort key for PREFIX-YEAR-SEQ: newer year, then higher sequence.
 
     Unnamed Master Corpus questions can retrieve a filled Time for
-    Completion from more than one package (DD-2022-175 demolition at
-    548 days, DD-2023-118 infrastructure at 852). First-in-rank used to
+    Completion from more than one package (an earlier package and a
+    later executed one, each with its own figure). First-in-rank used to
     lock the pool to whichever cosine arrived first. The later executed
     package owns the unnamed ask; the earlier one stays reachable by
     naming its id (#443).
@@ -426,9 +426,9 @@ def elect_answer_bearing_contract(
     does not merely outrank the rest — it DELETES the other contract from the
     result set. On the live Master Corpus that is decided by whichever chunk
     happens to sort first, and both outcomes were measured on one corpus in
-    one session: the ACA and Defects Notification Period asks passed because a DD-2023-118 Contract Data row
-    sorted first, while the delay-damages rate and Engineer asks failed because a DD-2022-175 Conditions of
-    Contract clause did — and once it had, the DD-2023-118 row holding the
+    one session: the ACA and Defects Notification Period asks passed because the asked contract's
+    Contract Data row sorted first, while the delay-damages rate and Engineer asks failed because
+    another contract's Conditions clause did — and once it had, the row holding the
     answer could not appear at any rank.
 
     A General Conditions clause or a defined-term glossary entry is not an
@@ -509,7 +509,7 @@ def elect_answer_bearing_contract(
 class _ContractScope:
     """Drop wrong-contract chunks before top-K selection.
 
-    Named query (DD-2023-118 in the question): keep only that id's files;
+    Named query (a PREFIX-YEAR-SEQ id in the question): keep only that id's files;
     if none remain the result is empty (fail closed — do not fill with
     another year's DD contract).
 
@@ -718,7 +718,7 @@ class _ContractScope:
     def allow(self, filename: str, chunk_text: str = "") -> bool:
         # Named PREFIX-YEAR-SEQ (#443) is fail-closed onto that year.
         # The rate / Engineer fences are unnamed-only — a question that
-        # names DD-2022-175 must still see that year's chunks.
+        # names an earlier contract id must still see that year's chunks.
         daily_damages_ask = query_asks_delay_damages_daily_amount(self.query)
         if self._priced_item_in_pool and not daily_damages_ask:
             # A priced Part Nr. 3 line beats Rate Only /
@@ -947,21 +947,26 @@ def _general_knowledge_project_ids() -> List[str]:
     """Project ids whose chunks count as cross-project general knowledge —
     queried alongside the active project on every retrieval.
 
-    Configured via ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` (comma-separated).
-    Defaults to ``training_material`` which holds the 8 procedure +
-    scanned-reference folders migrated in PR #93. Set to the empty
-    string to disable the merge (the retriever then queries the active
-    project only — the pre-PR-107 behavior).
+    Configured via ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` (comma-separated);
+    the default lives with the project registry
+    (``app.core.projects.DEFAULT_GENERAL_KNOWLEDGE_PROJECTS``), the one place
+    every reader of this variable takes it from. Set to the empty string to
+    disable the merge (the retriever then queries the active project only).
     """
-    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
+    try:
+        from app.core.projects import DEFAULT_GENERAL_KNOWLEDGE_PROJECTS as default
+    except Exception:  # noqa: BLE001 — registry unavailable: no default merge
+        logger.debug("general-knowledge default unavailable", exc_info=True)
+        default = ""
+    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", default)
     ids = [p.strip() for p in raw.split(",") if p.strip()]
     # STEP 0 structural isolation: the master-corpus / client fallback corpus
     # is NEVER part of the always-on GK merge, even when a stale env still lists
-    # it (prod once had drive_archive + client_infra_pack_1 in this var, silently
-    # merging the whole the client project client corpus into every OTHER project's results —
-    # the ha_long -> the client project leak). It may only surface as the disclosed empty/thin
-    # fallback below. This makes the client corpus structurally unreachable from
-    # another project's populated query regardless of score.
+    # it (prod once listed client corpora in this var, silently merging a whole
+    # client corpus into every OTHER project's results). It may only surface as
+    # the disclosed empty/thin fallback below. This makes the client corpus
+    # structurally unreachable from another project's populated query
+    # regardless of score.
     fb = _master_corpus_fallback_id()
     if fb:
         ids = [p for p in ids if p != fb]
@@ -1212,26 +1217,19 @@ def cooccurrence_pair_phrases(terms: List[str]) -> List[str]:
     return [" ".join(pair) for pair in itertools.combinations(stems, 2)]
 
 
-# ── letter / named-party filename rescue (live D1) ──────────────────────────
+# ── letter / named-party filename recall ──────────────────────────────────
 #
-# Live Master Corpus D1 (SHA 567147a): "who signed the UBCC Concrete
-# Batching Plant at Wadi Safar letter" retrieved only Volume 5 Other
-# Documents (geotech / plot agreement / weekly reports). The letter was
-# already in Neon (ids 8199b14b, b5033ec2) — its filename carries Letter +
-# UBCC + Batching Plant + wadi Safar. Term rescue skipped the out-of-pool
-# fetch because Volume 5 already mentioned the place-name in-chunk.
+# "Who signed the letter about <site / party>" retrieved only a long
+# miscellaneous-documents volume that mentions the place. The letter was
+# indexed, and its file name carries "Letter" plus the site and party the
+# question names. The term rescue skipped the out-of-pool fetch because the
+# volume already mentioned the place in-chunk.
 #
-# Re-score on tip d7a4ca8 (2026-09-05, Neon project the-fork): retrieval
-# now finds b5033ec2, but the indexed text is corpus-blocked. 8199b14b is
-# MISSING from ``documents`` (fabricated eval fixture id — FORK_EVAL
-# citation-grounding failure: citations must resolve against documents
-# before render). b5033ec2 is TEXT_SPARSE
-# (``single_window:terminal``, one 1168-char chunk) and ends
-# ``Yours sincerely, ,`` — no signatory name, role, or company. Do not
-# invent a name that is not in the chunk. Re-extract / re-ingest of the
-# richer id is an ingest job, not a ranking delta.
+# A letter whose indexed text ends without a signatory states no name; do
+# not invent one. Re-extracting a sparse letter is an ingest job, not a
+# ranking delta.
 #
-# Filename overlap is the discriminator Volume 5 cannot fake: its name is
+# Filename overlap is the discriminator the volume cannot fake: its name is
 # a contract volume, not a letter.
 _LETTER_OR_SIGNATORY_RE = re.compile(
     r"(?i)\b(?:"
@@ -1311,11 +1309,10 @@ def filename_match_bonus(
 
 # ── governing-source preference ──────────────────────────────────────────
 #
-# Asked "PER THE PROJECT SPECIFICATION for
-# DD-2023-118, to what degree must structural backfill under foundations be
-# compacted?", the answer came from an MTS & Risk Assessment for Site Office
-# Mobilization (95% MDD) instead of the specification (98%, modified Proctor).
-# Same for the HSE lighting levels. The question named the governing document
+# A question that names its governing document ("per the project
+# specification, what compaction ...") was answered from a site-office
+# mobilisation method statement stating its own lesser figure instead of the
+# specification. The question named the governing document
 # class and ranking ignored it: every document was equally eligible.
 #
 # The classes below are the ones a construction question actually names. Each
@@ -3148,18 +3145,15 @@ def recall_titled_documents(
     return names
 
 
-# ── Contract Data filename rescue (live A2) ────────────────────────────────
+# ── particulars documents by kind ──────────────────────────────────────────
 #
-# Live Master Corpus A2 retry on tip d7a4ca8: "What is the Accepted
-# Contract Amount including VAT?" retrieved Long Form PSA / CPM permit
-# trackers and reported the figure absent. The executed amount sits in
-# ``…_Contract Data.pdf`` (scanned table, newlines between Accepted /
-# Contract / Amount). That file has no ``CONTRACT DATA particulars``
-# index-time prefix, so the particulars boost and unnamed election never
-# fire. Filename "Contract Data" is the discriminator PSA/CPM cannot fake.
-#
-# Not #501 (Time for Completion / delay-damages rate newest-year lock). This only gets the Contract Data
-# file into the pool for an Accepted Contract Amount ask.
+# An Accepted Contract Amount ask can retrieve service-agreement and permit
+# trackers and report the figure absent while the executed amount sits in a
+# file whose NAME says it is the Contract Data (a scanned table, newlines
+# between Accepted / Contract / Amount, no index-time particulars prefix, so
+# the particulars boost and the unnamed election never fire). The document
+# kind in the file name is the discriminator the other documents cannot
+# fake.
 _ACA_ASK_RE = re.compile(r"(?i)accepted\s+contract\s+amount")
 _CONTRACT_DATA_FILENAME_BONUS = 2.0
 _INCLUDING_VAT_RE = re.compile(r"(?i)including\s+vat|incl\.?\s+vat")
@@ -3182,8 +3176,8 @@ def filename_looks_like_contract_data(filename: str) -> bool:
 def filename_looks_like_conditions_volume(filename: str) -> bool:
     """True for the bound CoC / Contract Data volume a delay-damages daily-amount scan walks.
 
-    Live sources cite ``DD-2023-118_…_Cond…`` — a complete Conditions
-    volume whose 8.8 windows occupy top-k. Requiring only
+    Sources can cite a truncated ``<id>_…_Cond…`` — a complete Conditions
+    volume whose delay-damages windows occupy top-k. Requiring only
     ``contract data`` in the name left ``_e1_pool_doc_ids`` empty when
     those chunks were pointer-only, so the all-chunk scan never ran.
     """
@@ -3263,20 +3257,15 @@ def _apply_contract_data_filename_boost(
         scored[i] = (boosted, chunk)
 
 
-# ── Named-row rescue: ANY filled Contract Data row the question names ─────
+# ── named particulars rows ─────────────────────────────────────────────────
 #
-# Live b64bbd2, 0/3 each: "What is the value of the Performance Bond?",
-# "...Time for Completion for Milestone 5?", "What is the approved method of
-# electronic communication under the contract?". All three rows are in the
-# index, correctly prefixed, and score 5.0 when the question happens to say
-# "Contract Data". Asked plainly they are absent: a scanned table embeds
-# badly, cosine never pools it, and every bonus below only re-scores the pool.
-#
-# The out-of-pool fetch above is gated by ``query_wants_contract_data_file``
-# — seven rows, each added after it failed live. This is the same fetch for
-# the rest of the sheet: the discriminator is the row itself. A filled row
-# line that carries two or more of the question's own content words is a row
-# the question named; one shared word is a coincidence.
+# A filled particulars row asked plainly (its value, a milestone's duration,
+# a method named in a cell) is absent from the pool even though it is
+# indexed and correctly prefixed: a scanned table embeds badly, cosine never
+# pools it, and every bonus only re-scores the pool. The discriminator is the
+# row itself: a filled row line that carries two or more of the question's
+# own content words is a row the question named; one shared word is a
+# coincidence.
 _NAMED_ROW_MIN_LINE_TERMS = 2
 _NAMED_ROW_MIN_COVERAGE = 0.5
 _NAMED_ROW_MAX_CHUNKS = 2
@@ -3411,7 +3400,7 @@ def named_particulars_row_match(query: str, text: str) -> int:
         tail = low[max(ends):]
         if not _NAMED_ROW_SEPARATOR_RE.search(tail) and i + 1 < len(lines):
             # A scanned key wraps: ``Time for Completion (by`` /
-            # ``Milestone, if applicable): Milestone 1 | 397 days``. A next
+            # ``Milestone, if applicable): Milestone 1 | NNN days``. A next
             # line that opens with a clause number is the next ROW, not the
             # rest of this one.
             nxt = lines[i + 1]
@@ -3434,11 +3423,11 @@ def named_particulars_row_match(query: str, text: str) -> int:
     return covered
 
 
-# One cause behind three failed asks (milestone TfC, delay rate, BOQ WBS). Row 1.1.75 lists ten
-# milestones; the page breaks after Milestone 5 and so does the chunk. The
-# second half opens with the table's repeated header and then "Milestone 7 |
-# 397 days ..." — no "Time for Completion" label anywhere on it — so every
-# answer stopped, honestly, at Milestone 5.
+# One cause behind several failed asks: a particulars row lists many
+# milestones; the page breaks after one of them and so does the chunk. The
+# second half opens with the table's repeated header and then "Milestone N |
+# NNN days ..." — no "Time for Completion" label anywhere on it — so every
+# answer stopped, honestly, at the page break.
 #
 # What marks a continuation is the NUMBERING: the first half ends on
 # "<Word> n" and a following chunk of the same document opens on "<Word> n+1"
@@ -3447,8 +3436,8 @@ def named_particulars_row_match(query: str, text: str) -> int:
 _ENUMERATED_ITEM_RE = re.compile(r"(?m)^[\s|:]*([A-Z][a-z]{3,})\s+(\d{1,2})\b")
 _CONTINUATION_LOOKAHEAD_CHUNKS = 5
 _CONTINUATION_MAX_CHUNKS = 2
-# Live Set3 F1: a repeated OCR header pushed Milestone 6 past 400
-# chars, so enumeration rescue never saw 547 / Northern Community.
+# A repeated OCR header can push the next milestone past 400 chars, so the
+# continuation check reads a longer opening.
 _CONTINUATION_OPENING_CHARS = 1600
 
 
@@ -3542,10 +3531,9 @@ def compose_named_community_tfc_span(
 ) -> Optional[Dict[str, Any]]:
     """Longest / shortest Time for Completion among a named community.
 
-    Live Set3 F1: Northern Community milestones are 397 / 547 / 520 /
-    400 days. Longest 547 exceeds shortest 397 by 150. Does not invent
-    days; every figure must already be printed on a Milestone row that
-    names the community.
+    The longest and shortest durations among the milestones that name the
+    community, and their difference. Does not invent days; every figure
+    must already be printed on a Milestone row that names the community.
     """
     community = extract_asked_community_name(query)
     if not community or not excerpts:
@@ -3554,7 +3542,7 @@ def compose_named_community_tfc_span(
     days_by_ms: Dict[int, int] = {}
     for match in _MILESTONE_DAYS_ROW_RE.finditer(excerpts):
         # Cut at the next Milestone, not a fixed char window — a 200-char
-        # reach stained East Quarter 640 days as Northern Community when
+        # reach stained the next community's days as this community's when
         # the next row named it. A wrap that keeps the community on the
         # same item still counts.
         nxt = re.search(r"(?i)milestone\s+\d+", excerpts[match.end():])
@@ -3948,23 +3936,14 @@ def recall_labelled_rows(
     return names
 
 
-# ── Schedule-register / Not Used rescue ────────────────────────────
+# ── numbered schedule register rows ───────────────────────────────────────
 #
-# Numbered schedule ask: "Answer only from the client project
-# documents. What does Schedule 10 of the contract contain?" retrieved
-# Volume 5 / Volume 4 / CPM and answered with a generic "I will answer from
-# the documents" acknowledgement. The contract's own schedule index says
-# ``Schedule 10: Not Used``. That short register row is the answer — cosine
-# prefers the long volumes that mention "schedule" at length, and term
-# rescue treats that overlap as already-grounded so it never fetches the
-# index line. Do not invent contents; surface the register row as written.
-#
-# Same shape as the spec-title in-chunk identity rescue (``chunks_containing_all``)
-# plus the Contract Data / spec-title fence: when a register row is in the pool, lookalikes
-# drop.
-#
-# Not #500 (routing), not #501 (year lock), not #502
-# (SPE-identity / Contract Data filename).
+# "What does Schedule N of the contract contain?" can retrieve long volumes
+# that mention "schedule" at length and answer with a generic
+# acknowledgement, while the contract's own schedule index row
+# (``Schedule N: Not Used`` / ``Schedule N | <title>``) is the answer. Do not
+# invent contents; surface the register row as written. When a register row
+# is in the pool, lookalikes drop.
 _SCHEDULE_REGISTER_BONUS = 2.0
 _SCHEDULE_REGISTER_ROW_RE = re.compile(
     r"(?i)\b(schedule\s+(?:no\.?\s*)?\d+[A-Za-z]?)"
@@ -4085,31 +4064,24 @@ def _apply_schedule_register_boost(
         scored[i] = (boosted, chunk)
 
 
-# ── PCG / commencement-date honest-refusal (Contract Data over form / pack) ─────────────
+# ── a particular stated as absent beats a lookalike (form / pack) ──────────
 #
-# Observed on BASELINE 0d9fd23:
+#   Guarantee ask: the Contract Data row says the guarantee is not required.
+#   Cosine preferred the blank form of guarantee (a percentage of paid-up
+#   capital) and the model invented a monetary value. The form is a
+#   template; "not required" IS the answer.
 #
-#   PCG ask — "What is the value of the Parent Company Guarantee?"
-#   Contract Data 4.3.7 = No / not required. Cosine preferred the
-#   Schedule 8 form's "20% of paid-up Capital and Reserves" and the
-#   model invented a monetary value. The form is a blank template;
-#   "not required" IS the answer.
+#   Commencement-date ask: the tender's Contract Data field is empty / tied
+#   to the letter of acceptance. Cosine preferred a site commencement pack
+#   report and the model invented the pack's date. That pack is site
+#   commencement, not the contract Commencement Date particular.
 #
-#   Commencement date ask — "What is the Commencement Date of the contract?"
-#   Tender Contract Data field is empty / tied to LOA-NOA. Cosine
-#   preferred a Construction Commencement Pack Report and the model
-#   invented 10 January 2024. That pack is site commencement, not
-#   the contract Commencement Date particular.
-#
-# Same shape as the schedule register (row over Vol 4 prose) and Rate Only
-# (row over priced lookalikes): rescue the Contract Data row, fence the
-# lookalike, instruct compose, graft if the model still invents.
-# Do not invent: the excerpt itself must already say not required /
-# not populated, or a filled CD value/date.
-#
-# Not #506 (schedule register), not #542 (Rate Only). A filled
-# Contract Data value or date still wins — this only refuses the
-# form/pack when CD already answered.
+# Same shape as the schedule register (row over volume prose) and Rate Only
+# (row over priced lookalikes): pool the Contract Data row, fence the
+# lookalike, instruct compose, graft if the model still invents. Do not
+# invent: the excerpt itself must already say not required / not populated,
+# or a filled value / date. A filled value or date still wins -- this only
+# refuses the form / pack when the Contract Data already answered.
 _PCG_HONEST_BONUS = 2.0
 _COMMENCEMENT_HONEST_BONUS = 2.0
 _PCG_ASK_RE = re.compile(r"(?i)\bparent\s+company\s+guarantee\b|\bpcg\b")
@@ -4542,15 +4514,14 @@ _CD_SCHEDULE_CONTEXT_RE = re.compile(
     r"(?i)\b(?:contract|contracts|volume|volumes|"
     r"conditions\s+of\s+contract|tender)\b",
 )
-# Arithmetic over a particular that wants a MONEY answer. A daily-amount ask:
-# "Calculate the delay damages per calendar day in SAR for the whole of the
-# Works" retrieved the 0.1%-per-day rate row at rank 1 and then reported the
-# SAR figure as absent — because a percentage is not an amount, and the row
-# carrying the amount shares no wording with the question, so it lost every
-# top-5 slot to rows that do.
+# Arithmetic over a particular that wants a MONEY answer. A daily-amount ask
+# (a rate per day, asked in a currency) retrieved the percentage-per-day rate
+# row at rank 1 and then reported the money figure as absent — because a
+# percentage is not an amount, and the row carrying the amount shares no
+# wording with the question, so it lost every top-5 slot to rows that do.
 _CD_MONEY_ARITHMETIC_ASK_RE = re.compile(
-    # "What are the delay damages in SAR per calendar day" is the same ask as
-    # "calculate the delay damages in SAR". The caller also requires
+    # "What are <particular> in <currency> per <period>" is the same ask as
+    # "calculate <particular> in <currency>". The caller also requires
     # _CD_MONEY_UNIT_ASK_RE, so a plain lookup with no currency and no
     # amount-per token still does not qualify.
     r"(?i)\b(?:calculate|compute|work\s+out|how\s+much|"
@@ -4752,8 +4723,8 @@ def particulars_row_answers_asked_label(query: str, text: str) -> bool:
 
     #496 required label overlap on the chunk body. That still elects a
     mixed window whose TfC / Delay Damages *key* is unfilled. Live
-    d7a4ca8 (TfC and delay-rate asks): DD-2022-175 won, Volume 4 ``548 days`` and Sub-Clause
-    8.8 stayed in the pool, and DD-2023-118's 852-day / 0.1% rows were
+    (TfC and delay-rate asks): another contract won, its schedule durations and its
+    delay-damages clause stayed in the pool, and the asked contract's filled rows were
     fenced out. The asked label's own value must be filled.
 
     When the ask has no named field (a bare "Contract Data" lookup), the
@@ -4878,8 +4849,8 @@ _ENGINEER_POINTER_VAL_RE = re.compile(
 )
 # Inject routing notes ("ENGINEER APPOINTMENT — an excerpt below… That
 # IS the answer. State the appointed firm.") are steering, not a firm
-# name. Live e24aee4 / #587: extract_engineer_identity elected that
-# heading as the Engineer and graft prepended it to JACOBS.
+# name. extract_engineer_identity once elected that heading as the
+# Engineer and the graft prepended it to the appointed firm.
 _ROUTING_HINT_VAL_RE = re.compile(
     r"(?i)(?:that is the answer|an excerpt below|"
     r"state the appointed firm|state only that firm|"  # old + new hint wording
@@ -5064,8 +5035,8 @@ _TFC_PERMIT_TRACKER_RE = re.compile(
     r"(?i)permit[- ]track|commencement[- ]completion|"
     r"community\s+[a-z0-9-]+\s+\w{3}-\d{2}\s+to\s+\w{3}-\d{2}",
 )
-# A Time for Completion ask was PARTIAL after #516: a sectional / Vol-2 "within 90 days" figure
-# ranked ahead of DD-2023-118 Contract Data 852 and the graft led with 90.
+# A Time for Completion ask was PARTIAL: a sectional "within N days" figure from a
+# specification ranked ahead of the Contract Data row and the graft led with it.
 _TFC_SECTIONAL_RE = re.compile(
     r"(?i)\bsection(?:al)?s?\s+"
     r"(?:\d+|[ivxlcd]+|[a-z]\b|of\s+(?:the\s+)?works)",
@@ -5425,8 +5396,8 @@ def _daily_damages_aca_preference(text: str) -> int:
         )
     except Exception:  # noqa: BLE001 — unlabeled ACA still ranks above none
         return 1
-    # Milestone delay damages ask: Contract Data chunk 0 states "1.1.1: | | Accepted Contract
-    # Amount: SAR 1,754,504,456.25 |" with no VAT qualifier, beside the
+    # Milestone delay damages ask: a Contract Data chunk states "Accepted Contract
+    # Amount: <amount> |" with no VAT qualifier, beside the
     # "(including VAT)" particular. The VAT regexes below ranked that chunk
     # 0 (incl matched, excl absent), so the rescue never collected the real
     # base and composed the only excluding-VAT figure left — a partial. The
@@ -5564,9 +5535,8 @@ def _aca_row_is_including_vat(key: str, val: str) -> bool:
         return False
     if _INCL_VAT_RE.search(k):
         return True
-    # Live Wave-1 A2 on 9ad62cc: filled_particulars_rows glued chunk #0
-    # (delay damages × SAR 39,098,392.98) onto the later including-VAT
-    # label. Including-VAT in the value must precede the first figure —
+    # filled_particulars_rows can glue an early chunk (delay damages × a
+    # partial amount) onto the later including-VAT label. Including-VAT in the value must precede the first figure —
     # otherwise the partial ACA is peeled as the including-VAT amount.
     incl = _INCL_VAT_RE.search(v)
     if not incl:
@@ -5719,7 +5689,7 @@ def extract_aca_including_vat(text: str) -> Optional[Tuple[float, str]]:
 
 
 def extract_time_for_completion_days(text: str) -> Optional[str]:
-    """Whole-Works TfC duration as written (e.g. ``852 days``), or None.
+    """Whole-Works TfC duration as written (e.g. ``NNN days``), or None.
 
     Walks the full RAG blob (graft reads the system message). When a
     sectional / notice-period 90-day lookalike and the Contract Data
@@ -5808,13 +5778,11 @@ def extract_engineer_identity(text: str) -> Optional[str]:
     return None
 
 
-# ── Defects Notification Period (live OLD-pack A6) ────────────────────────
+# ── Defects Notification Period ───────────────────────────────────────────
 #
-# Live Master Corpus A6 on 82eb9c5 (#522): "Answer only from the client
-# project documents. What is the Defects Notification Period?" retrieved
-# Long Form PSA / CPM TOC / recitals / document registers and refused.
-# Expected 365 days from Taking-Over Certificate / Contract Data under
-# DD-2023-118. The ACA / TfC / delay-rate / Engineer asks already had fences;
+# A Defects Notification Period ask can retrieve service-agreement contents
+# pages, recitals and document registers and refuse. The answer is a
+# duration from the Taking-Over Certificate in the Contract Data. The ACA / TfC / delay-rate / Engineer asks already had fences;
 # the DNP ask was surviving on family-bonus luck and was not named off the
 # precedence-list path. Same shape as TfC: state a duration, fence lookalikes.
 _DNP_ASK_RE = re.compile(
@@ -6010,7 +5978,7 @@ def _pair_adjacent_keep_text(
 ) -> List[Chunk]:
     """Scanned Contract Data often splits a label and its value.
 
-    Engineer ask: ``Engineer`` on chunk N, ``JACOBS (CH2M Saudi Limited)`` on
+    Engineer ask: ``Engineer`` on chunk N, ``<FIRM> (<Firm> Limited)`` on
     N+1. Identifier keep() then fails on both. Pair consecutive same-doc
     chunks so the appointment / TfC / including-VAT row is visible.
     ``window`` > 2 also joins N+2 (the daily-amount excl-VAT amount one row
@@ -6317,6 +6285,9 @@ def _scan_whole_documents(
         try:
             return list(fetch(pid, doc_ids, **kwargs) or [])
         except TypeError:
+            # This store's chunks_for_docs does not take these keywords; the
+            # next fetch shape is tried.
+            logger.debug("chunks_for_docs does not accept %r", sorted(kwargs))
             return []
         except Exception as exc:  # noqa: BLE001 — extras must not break the turn
             logger.warning("whole-document scan %r for %s failed: %s", kwargs, pid, exc)
@@ -6530,8 +6501,8 @@ def daily_damages_excerpts_from_loaded_cd_volume(
     # The joined excerpt carries NO [doc_id=] markers, so compose reads it as
     # one document and its clause-1.1.1 price search cannot tell the filled
     # base from a partial ACA. If partial excl-VAT rows fill aca_parts[:3] the
-    # real 1.1.1 base is dropped and compose elects the partial (milestone delay damages:
-    # 0.015% x SAR 39,098,392.98). Order the clause-1.1.1 base first so the
+    # real base row is dropped and compose elects the partial (milestone delay
+    # damages: a milestone rate x a partial amount). Order the base row first so the
     # cap can never drop it.
     return "\n\n".join(
         rate_parts[:3] + _aca_parts_clause_111_first(aca_parts)[:3]
@@ -6702,9 +6673,9 @@ def community_tfc_span_excerpts_from_loaded_cd_volume(
 ) -> str:
     """Join named-community Time-for-Completion rows from the loaded volume.
 
-    Live Set3 F1: top-k stopped at Milestone 5 (Southern / Boulevard).
-    Northern Community 547 / 397 sit on the continuation page. Return
-    those rows so compose can state 547 and 150 — do not invent days.
+    The top-k can stop at the page break, before the asked community's
+    milestones, which sit on the continuation page. Return those rows so
+    compose can state the span -- do not invent days.
     """
     if not query_asks_named_community_tfc_span(query):
         return ""
@@ -7101,21 +7072,12 @@ def _apply_asked_particular_value_boost(
         scored[i] = (boosted, chunk)
 
 
-# ── Rate Only BOQ-item rescue ──────────────────────────────────────
+# ── bill items: Rate Only / priced / Excluded ─────────────────────────────
 #
-# Rate Only BOQ item ask (tip 4d8ddb79 / was a65cebb5): "Answer only from
-# the client project documents. What is the total amount for removal of
-# storm water culverts (D529.3)?" returned a generic "I'm ready to help"
-# acknowledgement plus the 3348/3348 coverage footer. The asked row is
-# Rate Only — no amount exists. Cosine prefers priced lookalikes
-# (D549.2 fence, D599.5 carriageway, an Excluded culvert that shares
-# "storm water") and term rescue treats that overlap as already-grounded.
+# "What is the total amount for <item> (<item code>)?" where the asked row is
+# marked Rate Only: no amount exists. Cosine prefers priced lookalikes on
+# the same page and an Excluded item that shares the description's words.
 # Do not invent a money total; elect the Rate Only row as written.
-#
-# Same shape as the delay-rate / Engineer in-pool fence + out-of-pool identifier rescue.
-#
-# Not #504 (delay-damages daily compose), not #505 (duration override),
-# not #506 (Schedule 10 register).
 _RATE_ONLY_BONUS = 2.0
 _PRICED_BOQ_BONUS = 2.0
 _PART_SUMMARY_BONUS = 2.0
@@ -7994,7 +7956,7 @@ def compose_combined_part_summary_total(
 ) -> Optional[Dict[str, Any]]:
     """Sum the printed Part Summary totals of every named page.
 
-    Example: 34,645,529 + 1,852,848 + 17,496,857 = 53,995,234.
+    Example: 1,000 + 2,500 + 4,000 = 7,500.
     Does not invent a missing page and does not elect a neighbour.
     """
     if not part_summary_compose_enabled():
@@ -8502,7 +8464,7 @@ def reserve_monetary_base_row(
 
     A reservation rather than a bigger bonus, deliberately. The money row
     earns no label bonus — the question says "in SAR", and the row says
-    "SAR 8,640,000.00", and they share no term the overlap can see — so on
+    "SAR <amount>", and they share no term the overlap can see — so on
     the live Contract Data it competes against 200 siblings that each earn
     the full 1.40. Any constant large enough to clear that field is a
     constant fitted to one corpus's cosine spread; one slot is a guarantee.
@@ -8536,8 +8498,8 @@ def reserve_monetary_base_row(
                     chunk_has_real_accepted_contract_amount,
                 )
                 # Toy 8.8 windows and particulars-prefixed 10M examples
-                # are not the rate base. Only a non-toy ACA (live:
-                # excl-VAT SAR 1,754,504,456.25) satisfies reservation.
+                # are not the rate base. Only a non-toy ACA (a filled
+                # excl-VAT amount) satisfies reservation.
                 return chunk_has_real_accepted_contract_amount(text)
             except Exception:  # noqa: BLE001 — fall through to the usual tests
                 logger.debug("toy-ACA money-base test failed", exc_info=True)
@@ -8587,7 +8549,7 @@ def reserve_monetary_base_row(
 # synonym leg, and "retention" alone is too broad to reserve safely).
 # Each entry: (synonym triggers, canonical heading, VALUE regex). The value
 # regex is essential: the pool holds BOTH the figure chunk ("Accepted Contract
-# Amount ... SAR 1,754,504,456.25") and mention-only chunks ("...the Accepted
+# Amount ... SAR <amount>") and mention-only chunks ("...the Accepted
 # Contract Amount stated in the Contract Data..."). Reserving on the heading
 # alone grabbed the FIRST match in score order — a mention with no amount — and
 # the answer layer still declined (live trace 2026-09-14: reserved idx 90, a
@@ -9275,7 +9237,7 @@ def retrieve_with_filter(
     Pulls ``candidate_overfetch(k)`` raw candidates (floor 60, so
     production k=5 yields a pool of 60) from the active project's
     vector store, then ALSO pulls the same over-fetch from each
-    general-knowledge project (``training_material`` by default — see
+    general-knowledge project (the configured default — see
     ``_general_knowledge_project_ids``). The two candidate sets are
     merged, re-ranked by vector score descending, noise-filtered, and
     the top K returned.
@@ -9440,7 +9402,7 @@ def retrieve_with_filter(
 
     # General-knowledge projects (cross-project background context).
     # Only merge GK when the active project already has indexed chunks.
-    # An empty/unindexed project must return [] — not training_material
+    # An empty/unindexed project must return [] — not general-knowledge
     # hits — or search_project_documents, lazy bootstrap, and the
     # "unindexed project" contract all break (Postgres CI shares a DB where
     # GK rows exist from other tests / the migrated corpus).
