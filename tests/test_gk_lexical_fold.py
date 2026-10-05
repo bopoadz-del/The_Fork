@@ -157,9 +157,11 @@ def test_flag_on_gk_without_bonus_unaffected(monkeypatch):
     )
     _set_cfg7(monkeypatch)
     monkeypatch.setenv("RAG_GK_LEXICAL_FOLD", "1")
-    chunks, _ = ret.retrieve_with_filter(QUERY, ACTIVE, k=3)
-    # bar = 0.80 + 0.1 + 0.15 = 1.05: 1.10 survives, 0.95 gated.
-    assert [c.chunk_id for c in chunks] == ["gk_plain_high", "ap1"]
+    # Framed inside the project, so the margin applies.
+    chunks, _ = ret.retrieve_with_filter(QUERY + " under this contract", ACTIVE, k=3)
+    # bar = 0.80 + 0.1 + 0.15 = 1.05: 1.10 survives, 0.95 gated; a
+    # project-framed question puts the project's best chunk first.
+    assert [c.chunk_id for c in chunks] == ["ap1", "gk_plain_high"]
 
 
 @pytest.mark.parametrize("intent", ["calculation", "standards", "knowledge"])

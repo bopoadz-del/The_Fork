@@ -15034,6 +15034,29 @@ def _turn_already_ran_construction_calc(messages: list | None) -> bool:
     return False
 
 
+#: A symbol raised to a power inside a stated formula ("c*T^9", "k*x**9",
+#: "a*d³"). A letter after "/" is a unit ("kN/m^9"), and a bare unit symbol
+#: ("mm^9", "m²") is not a formula.
+_STATED_FORMULA_RE = re.compile(
+    r"(?<![A-Za-z/])([A-Za-z]{1,3})\s*(?:\^|\*\*)\s*\d|(?<![A-Za-z/])([A-Za-z]{1,3})[²³⁴]"
+)
+_UNIT_POWER_SYMBOLS = frozenset({"m", "mm", "cm", "km", "ft", "in", "s", "yd", "mi", "sqm"})
+
+
+def _states_formula_with_input(text: str) -> bool:
+    """True when the ask writes out its own formula AND gives a quantity.
+
+    The user supplied the expression and the value; there is nothing to look
+    up. A formula with no number is a question about the formula, not a
+    calculation; a unit written with a power is not a formula.
+    """
+    raw = text or ""
+    symbols = [a or b for a, b in _STATED_FORMULA_RE.findall(raw)]
+    if not any(s.lower() not in _UNIT_POWER_SYMBOLS for s in symbols):
+        return False
+    return _count_dimensions(raw) >= 1
+
+
 def _message_is_formula_style_ask(text: str) -> bool:
     """True when the turn is a formula / calculator ask, not a doc lookup.
 
@@ -15056,6 +15079,8 @@ def _message_is_formula_style_ask(text: str) -> bool:
     except Exception:  # noqa: BLE001
         _LOG.debug("contract-data lookup check skipped", exc_info=True)
     if _looks_like_self_contained_calculation(raw):
+        return True
+    if _states_formula_with_input(raw):
         return True
     # ACI one-way slab minimum thickness is slab_thickness_min. The
     # question does not spell the registry name, and "thickness of a
