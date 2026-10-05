@@ -1,7 +1,7 @@
 """User-supplied milestone durations are arithmetic, not a Contract Data veto.
 
-Live theshovel.ai ~27d6940: a tester asked, with M1/M3/M5 durations and a
-common start, which milestone drives completion and by how much over M1.
+Live theshovel.ai ~27d6940: a tester asked, with Milestone 1/3/5 durations and a
+common start, which milestone drives completion and by how much over Milestone 1.
 The assistant rejected the premise from Contract Data access-date rows.
 
 Owner rule: the numbers in the question are the operands. Access-date

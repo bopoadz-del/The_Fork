@@ -65,7 +65,7 @@ def _searchable_project_or_404(project_id: str, auth: dict) -> str:
     Master-corpus membership covers the backing source id too (S13 /
     WATCH-1): a caller who can open ``master_corpus`` can search
     ``projects_folder`` (or whatever ``MASTER_CORPUS_SOURCE_PROJECT_ID``
-    is). The picker still 404s the physical id (UI-PHYS H1).
+    is). The picker still 404s the physical id.
 
     Returns the id to retrieve against — for the master-corpus alias that
     is its backing source project, matching what doc_search resolves.

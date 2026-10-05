@@ -14,7 +14,7 @@ registers). None stated a DNP value.
 
 A2/A3/A5/A9 already have exclusive asked-value fences. A6 was not
 named off the C1 path and had no duration fence of its own. This
-rescue elects the filled 1.1.27 row. Kill-switch: RAG_DNP_RESCUE=0.
+rescue elects the filled 1.1.27 row.
 Do not steal A2/A3/A5/A9/C1/E1/F1. Fixture wording only.
 """
 from __future__ import annotations
@@ -264,13 +264,6 @@ def _install_a6_corpus(monkeypatch, *, semantic, rescue_hits, names, seeded=None
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DNP_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_SPEC_PRECEDENCE_LIST_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -346,24 +339,6 @@ def test_a6_drops_toc_when_dnp_is_already_in_the_pool(monkeypatch):
     assert A6_DAYS in chunks[0].text
     assert "table of contents" not in blob.lower()
     assert "document register" not in blob.lower()
-
-
-def test_a6_kill_switch_restores_psa_first(monkeypatch):
-    psa, cpm, cpm16, gc, dnp, names, seeded = _live_lookalikes_and_dnp()
-    ret = _install_a6_corpus(
-        monkeypatch,
-        semantic=[psa, cpm, cpm16, gc],
-        rescue_hits=[dnp],
-        names=names,
-        seeded=seeded,
-    )
-    monkeypatch.setenv("RAG_DNP_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(LIVE_A6, ACTIVE, k=5)
-    blob = " ".join(c.text for c in chunks)
-    assert chunks
-    assert A6_DAYS not in blob
-    assert all(c.doc_id != SCAN_DNP_DOC for c in chunks)
-    assert chunks[0].doc_id in {PSA_DOC, CPM_DOC, CPM16_DOC, GC_DOC}
 
 
 def test_a2_a3_a5_a9_c1_e1_f1_are_not_stolen_onto_the_dnp_row(monkeypatch):

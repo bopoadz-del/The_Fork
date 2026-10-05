@@ -15,7 +15,7 @@ on the page.
 
 Both are bugs against a stated requirement, which is why R3/R4 splits them
 from the capability gaps: markdown rendering and the page footer land now.
-Multi-message A1–A9 report export (H1b) is ``scope=answers`` on the
+Multi-message answer report export is ``scope=answers`` on the
 conversation export endpoint — see ``app/core/answer_report_intent.py``.
 
 WHAT IS SUPPORTED, and why the list stops where it does. Only the shapes

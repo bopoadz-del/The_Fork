@@ -393,7 +393,7 @@ _TIME_TO_HOUR = {
 }
 # Pressure and stress, in kPa. Construction asks for these constantly --
 # concrete grades in MPa and psi, bearing capacity in kg/cm2, a specification
-# in N/mm2 -- and until SET5 E15 there was no table, so every one was done by
+# in N/mm2 -- and until a live pressure-conversion ask there was no table, so every one was done by
 # hand inside the answer. kg/cm2 is 0.0980665 MPa, NOT 0.1: dividing by ten is
 # a 2% error that reads as rounding.
 _PRESSURE_TO_KPA = {

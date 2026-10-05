@@ -37,28 +37,28 @@ DOC_TEXT = ("Earthworks clause 7.4: Compaction of the backfill to a minimum of "
     ("backfill", "backfill"),
 ])
 def test_a_term_reduces_to_the_prefix_of_its_word_family(word, stem):
-    assert retriever.stem_rescue_term(word) == stem
+    assert retriever.stem_query_term(word) == stem
 
 
 def test_one_suffix_at_most():
     # "applications" loses "ations" and stops there -- the stem is not stripped
     # again down to "app", which would co-occur with half the corpus.
-    assert retriever.stem_rescue_term("applications") == "applic"
+    assert retriever.stem_query_term("applications") == "applic"
     # "processes" loses "es" and stops: stripping again would give "proces",
     # which is not a prefix of "processes" and so matches nothing at all.
-    assert retriever.stem_rescue_term("processes") == "process"
+    assert retriever.stem_query_term("processes") == "process"
 
 
 def test_the_stem_never_drops_below_the_floor():
     for word in ("cases", "rings", "tied", "used"):
-        assert retriever.stem_rescue_term(word) == word
+        assert retriever.stem_query_term(word) == word
 
 
 # ── the pairs the rescue searches with ─────────────────────────────────────
 
 def test_the_query_pairs_match_the_documents_own_wording():
-    terms = retriever.extract_rescue_terms(ASKED)
-    pairs = retriever.build_rescue_phrases(terms)
+    terms = retriever.distinctive_query_terms(ASKED)
+    pairs = retriever.cooccurrence_pair_phrases(terms)
     lowered = DOC_TEXT.lower()
     matching = [p for p in pairs if all(tok in lowered for tok in p.split())]
     assert matching, f"no pair of {pairs} co-occurs in the chunk"
@@ -66,7 +66,7 @@ def test_the_query_pairs_match_the_documents_own_wording():
 
 def test_pairs_are_deduplicated_by_stem():
     # "compacted" and "compaction" in one query are one term after stemming.
-    pairs = retriever.build_rescue_phrases(["compacted", "compaction", "backfill"])
+    pairs = retriever.cooccurrence_pair_phrases(["compacted", "compaction", "backfill"])
     assert pairs == ["compact backfill"]
 
 

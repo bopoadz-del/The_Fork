@@ -1,6 +1,6 @@
 """Conversation-scoped WBS / schedule snapshot.
 
-F-BAT-D H2: after a chat-built WBS (e.g. leftover F1, 2 BOQ-derived
+After a chat-built WBS (e.g. a BOQ-scope WBS with 2 BOQ-derived
 activities) the export path used to re-run ``generate_wbs`` from the
 export ask or from ``schedule-from-brief`` without the conversation's
 staged activities. That silently served the 204-activity building
@@ -17,9 +17,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
-
-# Verbatim live H2 ask (UI-PHYS "Question (ask exactly)").
-H2_EXPORT_ASK = "Export F1 WBS as xlsx"
 
 _EXPORT_VERB_RE = re.compile(
     r"\b(export|download|save|send\s+me|give\s+me)\b",
@@ -69,7 +66,7 @@ def staged_wbs_path(conversation_id: str) -> Path:
 def message_wants_wbs_export(text: str) -> bool:
     """True when the turn wants the already-built WBS as a file.
 
-    Positive: the live H2 string; 'download the WBS as excel';
+    Positive: the live 'Export ... WBS as xlsx' ask; 'download the WBS as excel';
     'export this schedule as xlsx'.
 
     Negative: 'generate a high-level WBS…' (build, not export);
@@ -192,7 +189,7 @@ def stage_conversation_wbs(
     if snap is None:
         return None
     # A BOQ-scope ask that fell through to the building template must not
-    # become the conversation's exportable WBS (F-BAT-D H2 / WATCH-2).
+    # become the conversation's exportable WBS.
     refusal = refuse_scaffold_for_boq_wbs_ask(
         str((wbs or {}).get("brief") or ""),
         str((wbs or {}).get("user_message") or (wbs or {}).get("brief") or ""),

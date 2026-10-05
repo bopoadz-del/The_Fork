@@ -1,6 +1,6 @@
 """Conversation-answer report export — not an RFP / attachment lookup.
 
-Live UI-PHYS H1 (Master Corpus / theshovel.ai), ask exactly::
+A live answer-report export ask (Master Corpus / theshovel.ai), exactly::
 
     Export A1-A9 answers as a docx report
 
@@ -21,9 +21,6 @@ from __future__ import annotations
 import os
 import re
 from typing import Any, Iterable, Optional
-
-# Verbatim live H1 ask (UI-PHYS "Question (ask exactly)").
-H1_EXPORT_ASK = "Export A1-A9 answers as a docx report"
 
 # A1-A9 / A1 to A9 / A1–A9. The letter is the battery label, not a file.
 _ANSWER_RANGE_RE = re.compile(
@@ -101,12 +98,12 @@ def parse_answer_report_range(text: str) -> Optional[tuple[int, int]]:
 def message_wants_answer_report(text: str) -> bool:
     """True when the turn wants a docx of conversation answers, not files.
 
-    Positive: the live H1 string; 'export this conversation as a Word
+    Positive: the live export ask; 'export this conversation as a Word
     document'; 'save answers A1 to A9 as docx'.
 
     Negative: RFP/attachment listing; a single-letter code lookup
     ('what does A1 of the RFP say'); generic 'give me a docx copy'
-    (last-message UI button); Contract Data Q&A (A9).
+    (last-message UI button); a Contract Data question (who is the Engineer).
     """
     raw = text or ""
     if not raw.strip():

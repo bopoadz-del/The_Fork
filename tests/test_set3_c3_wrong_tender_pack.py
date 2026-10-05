@@ -158,7 +158,6 @@ def ret(monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DOCUMENT_IDENTITY_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     retriever._seen_c3_lookup = seen
     return retriever
@@ -267,11 +266,3 @@ def test_prefixed_live_ask_is_the_same_election(ret):
     texts = _top_texts(ret, LIVE_C3)
     assert texts and DD23_DATE in texts[0]
     assert "RFP No. DD-2023-118" in texts[0]
-
-
-def test_kill_switch_restores_the_2022_win(ret, monkeypatch):
-    monkeypatch.setenv("RAG_DOCUMENT_IDENTITY_RESCUE", "0")
-    texts = _top_texts(ret)
-    blob = "\n".join(texts)
-    assert DD22_DATE in blob
-    assert DD23_DATE not in blob
