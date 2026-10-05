@@ -489,7 +489,7 @@ async def _reject_oversize_bodies(request: Request, call_next):
             declared = int(raw_length)
         except ValueError:
             declared = 0
-        limit = upload_limits.request_body_limit()
+        limit = upload_limits.request_body_limit(request.url.path)
         # Multipart framing adds boundary/header overhead around the file, so
         # compare with headroom: the per-route check does the exact accounting
         # on the file itself. This guard only catches bodies no route could

@@ -8416,6 +8416,19 @@ def _extract_cited_chunk_indexes(text: str) -> list[tuple[str, int]]:
     return out
 
 
+def page_or_section_label(chunk_meta: dict[str, Any]) -> str:
+    """Where in its source a cited chunk sits: ``p. N`` when the page is known
+    (PDF sources), else the chunk label."""
+    page = chunk_meta.get("page")
+    try:
+        page_no = int(page) if page is not None else 0
+    except (TypeError, ValueError):
+        page_no = 0
+    if page_no > 0:
+        return f"p. {page_no}"
+    return f"chunk #{chunk_meta.get('chunk_index')}"
+
+
 def _build_sources_from_audit(
     audit_rec: dict[str, Any],
     final_text: str = "",
@@ -8559,7 +8572,8 @@ def _build_sources_from_audit(
         return {
             "doc_id": chunk_meta["doc_id"],
             "doc_name": display_name,
-            "page_or_section": f"chunk #{chunk_meta['chunk_index']}",
+            "page_or_section": page_or_section_label(chunk_meta),
+            "page": chunk_meta.get("page"),
             "chunk_index": chunk_meta.get("chunk_index"),
             "chunk_id": chunk_meta.get("chunk_id"),
             # Owning project of the cited file (Master Corpus / GK), not

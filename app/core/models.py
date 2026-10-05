@@ -208,6 +208,9 @@ def make_rag_chunk_class(
         # Nullable so pre-migration rows and RAG_LAYERED=off read as unlayered.
         "knowledge_layer": mapped_column(String, nullable=True),
         "authority": mapped_column(String, nullable=True),
+        # 1-based page of the source PDF where the chunk's text starts
+        # (Alembic 0021). NULL for non-PDF sources and older rows.
+        "page": mapped_column(Integer, nullable=True),
         # Embedding identity — stamped on every row and verified at startup.
         "embedding_model": mapped_column(String, nullable=False, default=model_name),
         "embedding_dim": mapped_column(Integer, nullable=False, default=dim),
@@ -567,6 +570,9 @@ class RagChunk(Base):
     # the RAG_LAYERED=off path read as unlayered. Values: app/core/rag/layers.py.
     knowledge_layer: Mapped[str | None] = mapped_column(String, nullable=True)
     authority: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 1-based page of the source PDF where the chunk's text starts (Alembic
+    # 0021). NULL for non-PDF sources and rows indexed before pages existed.
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # NOTE: the hybrid BM25 leg uses a ``text_search`` tsvector column on
     # PostgreSQL — added by Alembic migration 0003 as GENERATED ALWAYS
     # AS STORED, with a GIN index. It is intentionally NOT declared on

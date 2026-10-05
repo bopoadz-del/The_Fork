@@ -2275,7 +2275,6 @@ def admin_sweep_plaintext(
 
 @router.post("/v1/admin/knowledge/documents", status_code=201)
 async def admin_add_knowledge_document(
-    background_tasks: BackgroundTasks,
     response: Response,
     file: UploadFile = File(...),
     auth: dict = Depends(require_api_key),
@@ -2286,15 +2285,23 @@ async def admin_add_knowledge_document(
     reads, not one project's record. The file is stored in the configured
     general-knowledge project with ``provenance: admin_knowledge`` -- never
     ``user_upload``, which the layered RAG files under the uploader's own
-    session layer -- and indexed by the platform's pipeline and embedder.
-    The same content twice returns the existing document (200), not a copy.
+    session layer. The same content twice returns the existing document
+    (200), not a copy.
+
+    A reference work is uploaded ONCE, whole, up to its own cap
+    (``ADMIN_KNOWLEDGE_MAX_UPLOAD_MB``). This route only stores it: the file
+    is streamed to disk and hashed block by block (memory does not grow with
+    the file), the row is recorded as pending, and the answer returns at
+    once. Extraction and embedding run in the ingest task
+    (``app.core.knowledge_ingest``), never inside the live web process.
     """
     _require_admin(auth)
     import hashlib
     import uuid
 
-    from app.core import compressed, doc_index, projects as store, upload_limits
+    from app.core import compressed, projects as store, upload_limits
     from app.core.ingest_status import TEXT_BEARING_EXTS
+    from app.core.knowledge_ingest import pending_indexing_metadata
     from app.core.system_projects import primary_general_knowledge_project
     from app.core.users import SYSTEM_USER_ID, ensure_user_exists
 
@@ -2322,17 +2329,21 @@ async def admin_add_knowledge_document(
             # concurrently, or get_project hides it. Either way it is there.
             logger.info("general-knowledge project %s already exists", gk)
 
-    max_size = upload_limits.max_document_bytes()
     data_dir = os.getenv("DATA_DIR", "./data")
     os.makedirs(data_dir, exist_ok=True)
     stored_as = f"{str(uuid.uuid4())[:8]}_{name}"
     filepath = os.path.join(data_dir, stored_as)
+    hasher = hashlib.sha256()
     try:
-        size = file_crypto.write_document_stream(filepath, file.file, max_bytes=max_size)
+        size = file_crypto.write_document_stream(
+            filepath, file.file,
+            max_bytes=upload_limits.admin_knowledge_max_bytes(),
+            hasher=hasher,
+        )
     except file_crypto.UploadTooLarge as exc:
         raise HTTPException(413, f"File too large. Max is {exc.limit} bytes.") from exc
 
-    sha = hashlib.sha256(file_crypto.read_document(filepath)).hexdigest()
+    sha = hasher.hexdigest()
     existing = store.find_document_by_sha(gk, sha)
     if existing:
         os.remove(filepath)
@@ -2341,6 +2352,6 @@ async def admin_add_knowledge_document(
 
     doc = store.add_document(gk, name, stored_as, filepath, size, content_sha256=sha,
                              metadata={"provenance": "admin_knowledge",
-                                       "uploader_id": auth.get("user_id")})
-    background_tasks.add_task(doc_index.maybe_eager_index, gk, doc["id"])
-    return {"status": "indexing", "document": doc}
+                                       "uploader_id": auth.get("user_id"),
+                                       **pending_indexing_metadata()})
+    return {"status": "pending", "document": doc}
