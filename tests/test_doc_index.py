@@ -17,6 +17,7 @@ from cryptography.fernet import Fernet
 
 from app.core import file_crypto
 from app.core import projects as projects_mod
+from tests._real_embedder import use_real_embedder
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1477,17 +1478,20 @@ async def test_search_builds_index_lazily(tmp_path, monkeypatch):
     assert isinstance(results, list)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="GK crowds project docs out of top-5 - tracked by TASK H knobs (RAG_AUDIT_V2)",
-)
 @pytest.mark.asyncio
-async def test_search_uses_hybrid_retriever(search_project):
+async def test_search_uses_hybrid_retriever(search_project, monkeypatch):
     """PR #94: search_project_documents must query the same chunks table
     the RAG injection layer queries. Verify by seeding the chunks table
     directly and confirming the function returns results without going
     through the legacy JSON index path.
+
+    Ranking assertion, so it runs on the real embedder: under the fake one
+    (hash-of-text vectors) the retriever's cosine order is noise, and
+    landscaping.txt outranked concrete.txt for "concrete curing" on every
+    run -- that, not GK (which the fixture already disables), is why this
+    sat behind xfail(strict=False) and never asserted anything.
     """
+    use_real_embedder(monkeypatch)
     doc_index = search_project["doc_index"]
     pid = search_project["pid"]
     concrete_id = search_project["doc_concrete"]["id"]

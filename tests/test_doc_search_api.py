@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.doc_index import _load_index
+from tests._real_embedder import use_real_embedder
 
 # Run-unique suffix so parallel test runs don't collide on user emails.
 _RUN = uuid.uuid4().hex[:8]
@@ -57,12 +58,20 @@ def _upload_txt(client, headers, pid, filename, content_bytes):
 
 # ── Task 1 tests ─────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="GK crowds project docs out of top-5 - tracked by TASK H knobs (RAG_AUDIT_V2)",
-)
-def test_search_returns_ranked_results(client):
-    """Two docs with disjoint content: search for a term from one ranks it first."""
+def test_search_returns_ranked_results(client, monkeypatch):
+    """Two docs with disjoint content: search for a term from one ranks it first.
+
+    The fixture is two synthetic uploads, so it is isolated from the two
+    things that made this an xfail(strict=False) coin toss (XPASS on the
+    SQLite jobs, XFAIL on PostgreSQL):
+      * the curated general-knowledge layer (construction_kb.md and friends,
+        seeded at app start), whose lexical bonus filled the top 5 for this
+        concrete-heavy query -- GK merging is switched off for this search;
+      * CI's fake embedder, whose hash-of-text vectors make cosine order
+        noise -- the real model is used (see tests/_real_embedder.py).
+    """
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    use_real_embedder(monkeypatch)
     tok = _user_token(client, f"search-ranked-{_RUN}@x.com")
     h = _headers(tok)
     pid = _create_project(client, h, "Ranked Results Project")
@@ -79,19 +88,12 @@ def test_search_returns_ranked_results(client):
     assert body["project_id"] == pid
     assert body["query"] == "concrete curing Portland cement"
     assert body["count"] == len(body["results"])
-    assert body["count"] >= 1
-    # Ranking intent: the concrete-heavy query must rank the uploaded
-    # concrete.txt ABOVE the uploaded electrical.txt. We assert their
-    # RELATIVE order among the uploaded docs rather than absolute rank #1:
-    # the hybrid retriever intentionally blends in general-knowledge (GK)
-    # curated docs (e.g. construction_kb.md) and applies a lexical-overlap
-    # bonus (app.core.rag.retriever._gk_lexical_bonus), so a GK doc matching
-    # the query can legitimately outrank a freshly-uploaded project doc.
-    # (See TODO.md — recall@K note: GK bonus outranking a user's own upload.)
+    # Only the project's own two uploads can be returned, and the
+    # concrete-heavy query must rank concrete.txt first.
     filenames = [r["filename"] for r in body["results"]]
-    assert "concrete.txt" in filenames, filenames
-    if "electrical.txt" in filenames:
-        assert filenames.index("concrete.txt") < filenames.index("electrical.txt"), filenames
+    assert filenames, body
+    assert filenames[0] == "concrete.txt", filenames
+    assert set(filenames) <= {"concrete.txt", "electrical.txt"}, filenames
     # Result shape
     for result in body["results"]:
         assert "document_id" in result
