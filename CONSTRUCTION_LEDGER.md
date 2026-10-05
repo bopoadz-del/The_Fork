@@ -157,3 +157,18 @@ Overwhelmingly REAL. Fabrication surface: **ALL 4 killed — F1/F2/F3 (PR #206, 
 **STEP 5 (RAG SOP ingestion): NOT STARTED** — 5a SOP folders (no approval; needs Drive access this session), 5b ⛔ SOURCE_MANIFEST gate (Chadi), 5c referee.
 **STEP 6 (battery + PILOT_READINESS rebuild): TERMINAL, not yet run.**
 See `HANDOFF.md` for the full continuation plan.
+
+## LABEL EXPORT — document-type router (2026-10-05)
+
+Read-only export of every project in the connected Neon `the-fork` database. `scripts/export_router_labels.py` copied `documents.doc_type` as stored and took text from the active RAG table (`chunks_v2`). No product path changed.
+
+| field | value |
+|---|---|
+| export id | `2cedebdb-80f0-45a4-affb-3fccc22434d8` |
+| row count | 6580 |
+| sha256 of `labels.jsonl` | `79ad78b1373a03e598473eb2982c89348597e1eb3660245ff42aebd6442a0c2b` |
+| rows with no chunk text | 140 (`first_512_tokens` empty) |
+
+Projects included (33): `01261d1c`, `05473bd7`, `0aa13c77`, `10470a75`, `1bf7ffb8`, `1db7bf5b`, `22f333e2`, `308460e6`, `39b05c9e`, `418bf42c`, `4364f3db`, `4bc38151`, `513ad617`, `74f6d30a`, `7ce9804a`, `84dfa38a`, `8f1df5ba`, `9067d458`, `94c9d54d`, `9f00a43e`, `b860981f`, `bd7accc2`, `c33e885e`, `client_infra_pack_1`, `curated_kb`, `d2879cb4`, `d4d93c61`, `daa3726a`, `drive_archive`, `ec7cdc5b`, `ed91efd5`, `f68ce143`, `training_material`.
+
+Rows by stored `declared_type`: `document` 6428, `contract` 39, `specification` 38, `boq` 28, `drawing` 26, `schedule` 20, `bim` 1.
