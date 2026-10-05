@@ -15034,9 +15034,9 @@ def _turn_already_ran_construction_calc(messages: list | None) -> bool:
     return False
 
 
-#: A symbol raised to a power inside a stated formula: "0.613V^2", "wL^2/8",
-#: "rho*V**2", "5wL^4/384EI", "V²". A letter after "/" or another letter is a
-#: unit ("kN/m^2"), and a bare unit symbol ("m^2", "mm²") is not a formula.
+#: A symbol raised to a power inside a stated formula ("c*T^9", "k*x**9",
+#: "a*d³"). A letter after "/" is a unit ("kN/m^9"), and a bare unit symbol
+#: ("mm^9", "m²") is not a formula.
 _STATED_FORMULA_RE = re.compile(
     r"(?<![A-Za-z/])([A-Za-z]{1,3})\s*(?:\^|\*\*)\s*\d|(?<![A-Za-z/])([A-Za-z]{1,3})[²³⁴]"
 )
