@@ -72,6 +72,23 @@ def test_probe_count_growth_is_flagged(tmp_path: Path):
     assert any(f.startswith("GREW ") and "::probe::E1" in f for f in findings)
 
 
+def test_line_allowlist_skips_only_the_named_fragment(tmp_path: Path):
+    """An allowlisted (file, ID, fragment) line is skipped; the same ID on any
+    other line of that file, or in another file, still counts."""
+    sh = _load()
+    pkg = tmp_path / "app" / "lib"
+    pkg.mkdir(parents=True)
+    (pkg / "pm_excel.py").write_text(
+        'ws.add_chart(chart, "G3")\n'
+        "# tuned for G3\n",
+        encoding="utf-8",
+    )
+    (pkg / "other.py").write_text('ws.add_chart(chart, "G3")\n', encoding="utf-8")
+    _syms, probes = sh.inventory(tmp_path)
+    assert probes.get("app/lib/pm_excel.py::probe::G3") == 1
+    assert probes.get("app/lib/other.py::probe::G3") == 1
+
+
 def test_real_baseline_is_a_ceiling_with_no_stale_keys():
     """The committed baseline matches reality: nothing new, nothing grown, and
     every baselined key still exists (a deleted form must be removed by

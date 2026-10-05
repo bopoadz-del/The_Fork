@@ -82,8 +82,8 @@ def configure_structured_logging() -> bool:
     root.handlers = [handler]
     # The old `if root.level == logging.NOTSET` guard never fired — root
     # defaults to WARNING, so the intended INFO level was never applied and
-    # every module INFO line was dropped in prod (the whole R18/R19 saga was
-    # blinded by this). Set the level outright; LOG_LEVEL dials it back
+    # every module INFO line was dropped in prod (the whole illumination-table
+    # investigation was blinded by this). Set the level outright; LOG_LEVEL dials it back
     # (e.g. WARNING) without a code change if CloudWatch volume bites.
     root.setLevel((os.getenv("LOG_LEVEL") or "INFO").strip().upper())
     _structured_logging_enabled = True

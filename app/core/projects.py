@@ -107,7 +107,7 @@ def ui_project_id(project_id: Optional[str]) -> Optional[str]:
     ``MASTER_CORPUS_SOURCE_PROJECT_ID`` (live: ``drive_archive``) so RAG
     hits the backing corpus. That remapped id is not a user-visible
     project: ``get_project('drive_archive')`` 404s for a signed-in user
-    on Master Corpus (UI-PHYS H1). Reverse-map the source back to the
+    on Master Corpus. Reverse-map the source back to the
     alias. Any other id is returned unchanged.
     """
     if project_id and project_id == MASTER_CORPUS_SOURCE_PROJECT_ID:
@@ -659,7 +659,7 @@ def get_project(
     ``is_approved=False`` rows stay owner-only regardless of origin
     (defensive — admins shouldn't leak detected-but-pending candidates
     to users). The physical master-corpus source id stays owner-only
-    here (UI-PHYS H1); ``get_project_accessible`` remaps that path.
+    here; ``get_project_accessible`` remaps that path.
 
     Pilot: a virtual master-corpus project (default ``master_corpus``)
     is backed by the existing full-drive corpus (default ``projects_folder``).
@@ -774,7 +774,7 @@ def get_project_accessible(project_id: str, user_id: Optional[str] = None):
         return proj
     # S13 / WATCH-1: the backing corpus id is the same ACL as the
     # master-corpus alias. get_project(source) stays owner-only so the
-    # physical id stays hidden from the project picker (UI-PHYS H1);
+    # physical id stays hidden from the project picker;
     # this data-path helper must still let a master-corpus member
     # search/chat against the source id. A 404 here was being read as
     # "auth failed" or "retrieval empty".

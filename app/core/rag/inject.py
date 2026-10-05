@@ -73,7 +73,7 @@ def apply_token_cap(
     Never truncates mid-chunk; a chunk is included or excluded whole.
     Returns ``(kept_chunks, total_estimated_tokens)``.
 
-    Leftover E1: when ``query`` is a daily delay-damages ask, keep the
+    When ``query`` is a daily delay-damages ask, keep the
     Contract Data 0.1% and standalone excl-VAT operands even if Cosine
     scored them 0.0. Live 396cc7b: sources stayed on chunks 9–11 because
     the cap admitted the three HIGH pointer windows and dropped the
@@ -134,9 +134,9 @@ def apply_token_cap(
     rest.sort(key=lambda c: -(c.score or 0))
     kept: List[Chunk] = []
     total = 0
-    # Always keep E1 operands — even when a single scanned page exceeds
-    # the leftover cap. Refusing to inject 0.1% / excl-VAT is the
-    # leftover E1 flake (refuse or CoC 0.015%). Non-E1: protected is
+    # Always keep the daily-amount operands — even when a single scanned page
+    # exceeds the leftover cap. Refusing to inject 0.1% / excl-VAT is the
+    # daily-amount flake (refuse or CoC 0.015%). Any other ask: protected is
     # empty and this loop is a no-op.
     for c in protected:
         t = _estimate_tokens(c.text)
@@ -239,7 +239,7 @@ def format_chunks_as_system_message(
         return {"role": "system", "content": ""}
     scores = [c.score or 0.0 for c in chunks]
     header = (
-        # A9 leak (2026-09-13): the answer-routing hints below are phrased as
+        # Engineer-answer leak (2026-09-13): the answer-routing hints below are phrased as
         # declarative answer-text ("… That IS the answer. State the appointed
         # firm.") and the model sometimes parrots one verbatim into the reply
         # (live: the Engineer answer opened with the raw ENGINEER APPOINTMENT
@@ -309,8 +309,9 @@ def format_chunks_as_system_message(
     # SOURCE CLASS PRECEDENCE (owner's numbered item 2). Two battery
     # failures had one cause: nothing in the context said which excerpt was
     # the project's own record and which was reference material or a blank
-    # form. G1 quoted contract TEMPLATE wording as the contract's Schedule
-    # 10 (the project's own says "Not Used"); A5 reproduced the FIDIC
+    # form. A schedule-register ask quoted contract TEMPLATE wording as the
+    # contract's Schedule 10 (the project's own says "Not Used"); a delay-rate
+    # ask reproduced the FIDIC
     # knowledge-base note instead of the project's own 0.1% at 8.8.1.
     #
     # Emitted only when the excerpts are actually mixed. On a single-class
@@ -341,7 +342,7 @@ def format_chunks_as_system_message(
     # uses such a synonym; the INTERNAL GUIDANCE directive above governs it.
     header += _term_equivalence_note(query)
 
-    # OLD-pack G1: even on a single-class set, a retrieved register row
+    # Schedule register: even on a single-class set, a retrieved register row
     # that says Not Used is the answer. Without this the model restated
     # "answer only from the documents" and never named the row. Do not
     # invent contents — only fire when an excerpt already says Not Used.
@@ -385,10 +386,10 @@ def format_chunks_as_system_message(
             "form.\n"
         )
 
-    # WAVE 2 B4/B5 then G4: a priced CESMM row in the excerpts IS the
+    # BOQ item amount: a priced CESMM row in the excerpts IS the
     # answer even when Rate Only / Excluded siblings share the code.
     # Without this the model refused a Rate Only vs Excluded conflict
-    # and never wrote 280,320 (live B5). G4 Rate Only fires only when
+    # and never wrote 280,320. The Rate Only line fires only when
     # no priced triple exists for the asked item.
     _boq_codes = (
         extract_asked_cesmm_codes(query)
@@ -474,7 +475,7 @@ def format_chunks_as_system_message(
         # Live 4b3f4b9, Set 1 E2: both operands were in the excerpts and the
         # model still stopped at "0.45% of the Contract Price ... confirm which
         # base the contract intends before I extend it". The platform settles
-        # that for E1 (rate x Accepted Contract Amount, excluding VAT) and the
+        # that for the daily amount (rate x Accepted Contract Amount, excluding VAT) and the
         # same rule answers a delay of N days. Only when BOTH are in front of
         # it: told to use a sum it cannot see, a model invents one.
         _dd_texts = [c.text or "" for c in chunks]
@@ -763,7 +764,7 @@ def followup_context_enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
-# A message can be long and still not stand alone. Live 24d1c0c, D3: "What
+# A message can be long and still not stand alone. Live 24d1c0c: "What
 # reason does the letter give for no longer needing a pre-cast factory?" has
 # seven content terms, so it was never "thin" — and it retrieved precast
 # SPECIFICATIONS two runs in three, because the only words with signal were
@@ -939,7 +940,7 @@ def _emit_retrieval_trace(
 # soil-contact note had no slot even once pooled. Two extra slots for this
 # ask only; every other question keeps RAG_K.
 _SPEC_DEFERRED_COVER_EXTRA_K = 2
-# R18/R19: the illumination-table rescue pools the work-activity table (live
+# Illumination level ask: the illumination-table rescue pools the work-activity table (live
 # admitted=4), but the pooled chunks lose the top-k cut — HSE-plan chunks hold
 # the default 5 slots and the table pools at a lower cosine, so the model still
 # refuses. Extra slots for this ask only, exactly like the spec-deferred cover
@@ -1041,7 +1042,7 @@ def rag_inject(
         ):
             identifier_miss = True
 
-    # A3: a named contract/doc id is scoped to that id's files. Token-soup
+    # A named contract/doc id is scoped to that id's files. Token-soup
     # identifier matching can accept a DD-2022 chunk for a DD-2023 query
     # (prefix + a year in a date + a clause number). Filename is authority.
     named_contracts = extract_contract_doc_ids(user_message or "")

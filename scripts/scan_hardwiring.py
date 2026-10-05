@@ -85,6 +85,22 @@ PROBE_IDS: tuple[str, ...] = (
 _PROBE_RES = {pid: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(pid) + r"(?![A-Za-z0-9_])")
               for pid in PROBE_IDS}
 
+#: Lines whose probe-ID match is NOT a probe ID. Keyed by (file, probe ID,
+#: a fragment of the matching line), never by line number, so the entry
+#: follows the line when code above it moves. Narrow on purpose: only a
+#: line in that file that contains that exact fragment is skipped, and only
+#: for that probe ID -- the same ID elsewhere on another line still counts.
+PROBE_LINE_ALLOWLIST: dict[tuple[str, str, str], str] = {
+    ("app/blocks/bim.py", "A3", "(A0|A1|A2|A3|A4)"):
+        "ISO 216 drawing sheet sizes (A0-A4), not a probe ID",
+    ("app/containers/construction/__init__.py", "R1", "R1+R2 < design"):
+        "BS 7671 continuity test R1+R2 (conductor resistances), not a probe ID",
+    ("app/lib/pm_excel.py", "G3", '"G3")'):
+        "Excel cell G3 as a chart anchor, not a probe ID",
+    ("app/lib/pm_excel.py", "G4", "=SUM(G4:G{"):
+        "Excel cell G4 in a SUM range formula, not a probe ID",
+}
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
@@ -129,11 +145,26 @@ def _symbol_findings(rel: str, tree: ast.AST) -> list[str]:
     return out
 
 
+def _allowlisted_fragments(rel: str, pid: str) -> list[str]:
+    return [frag for (f, p, frag) in PROBE_LINE_ALLOWLIST if f == rel and p == pid]
+
+
 def _probe_counts(rel: str, text: str) -> dict[str, int]:
-    """``rel::probe::ID -> occurrences`` for every probe ID present in the file."""
+    """``rel::probe::ID -> occurrences`` for every probe ID present in the file.
+
+    A line covered by ``PROBE_LINE_ALLOWLIST`` for that ID is not counted.
+    """
     out: dict[str, int] = {}
     for pid, rx in _PROBE_RES.items():
-        n = len(rx.findall(text))
+        frags = _allowlisted_fragments(rel, pid)
+        if frags:
+            n = sum(
+                len(rx.findall(line))
+                for line in text.splitlines()
+                if not any(frag in line for frag in frags)
+            )
+        else:
+            n = len(rx.findall(text))
         if n:
             out[f"{rel}::probe::{pid}"] = n
     return out

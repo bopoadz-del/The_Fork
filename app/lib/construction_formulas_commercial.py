@@ -75,13 +75,14 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
     }
 
 
-# Live OLD-pack E1: "Calculate the delay damages per calendar day in SAR
-# for the whole of the Works." A5 already surfaces the rate string
-# (0.1% of Contract Price per calendar day) and A2 surfaces the ACA.
+# Live delay-damages daily-amount ask: "Calculate the delay damages per
+# calendar day in SAR for the whole of the Works." The delay-rate ask already
+# surfaces the rate string (0.1% of Contract Price per calendar day) and the
+# ACA ask surfaces the ACA.
 # The model quoted sources and never multiplied. This path composes
 # rate × ACA into a daily figure and must not invent either operand.
 # Kill-switch: COMPOSE_DELAY_DAMAGES_DAILY=0 restores the FAIL (rate
-# quoted, no SAR/day). Distinct from the A5 rate-rescue (#503).
+# quoted, no SAR/day). Distinct from the delay-rate rescue (#503).
 _DD_ASK_RE = re.compile(r"(?i)(?:delay|liquidated)\s+damages")
 _DD_CAP_KEY_RE = re.compile(
     r"(?i)\b(?:maximum|max(?:imum)?\s+amount|capped?)\b",
@@ -119,14 +120,14 @@ _CONTRACT_DATA_CTX_RE = re.compile(
 )
 _WHOLE_WORKS_RE = re.compile(r"(?i)\bwhole\s+of\s+the\s+works\b")
 _SUBCLAUSE_87_RE = re.compile(r"(?i)\b(?:sub[- ]?clause\s+)?8\.7\b")
-# Live leftover E1 after #535: CoC 8.7/8.8 windows state 0.015% of the
+# Live daily-amount ask after #535: CoC 8.7/8.8 windows state 0.015% of the
 # excl-VAT ACA (SAR 263,175.67/day). Contract Data 8.8 is 0.1% of the
 # Contract Price (SAR 1,754,504.46/day). First-match compose elected
 # 0.015% whenever that window led the excerpts. Kill-switch
 # COMPOSE_REJECT_E1_LOOKALIKE_RATE=0 restores electing 0.015%.
 _LOOKALIKE_RATE_PERCENT = 0.015
 _PREFERRED_WHOLE_WORKS_RATE = 0.1
-# Live leftover E1 on c5c6dfa: Contract Data 8.8 chunks 9–11 carried a
+# Live daily-amount ask on c5c6dfa: Contract Data 8.8 chunks 9–11 carried a
 # FIDIC worked-example ACA of SAR 10,000,000. Compose elected it
 # (0.1% → SAR 10,000/day) instead of the filled excl-VAT row
 # (~SAR 1,754,504,456.25). Kill-switch COMPOSE_REJECT_E1_TOY_ACA=0
@@ -163,7 +164,7 @@ def reject_e1_lookalike_rate_enabled() -> bool:
 def delay_damages_rate_is_coc_lookalike(rate: float, ctx: str = "") -> bool:
     """True for CoC 8.7/8.8 0.015%-of-ACA, not Contract Data 0.1% of Price.
 
-    Live leftover E1: chunks 9–11 restated delay damages as 0.015% of
+    Live daily-amount ask: chunks 9–11 restated delay damages as 0.015% of
     the filled excl-VAT ACA. That product is SAR 263,175.67/day. The
     Contract Data particular is 0.1% of the Contract Price. A genuine
     Contract Data row that itself says 0.015% of the Contract Price is
@@ -195,7 +196,7 @@ def ask_is_about_a_milestone_or_section(query: str) -> bool:
     Milestone. The other daily rate is 0.1% of the Contract Price for
     the whole of the Works. The parser never saw the question, so a
     Milestone ask was scored by whole-of-Works preferences and the
-    Milestone row lost (live SET4 M3).
+    Milestone row lost (live milestone delay-damages ask).
     """
     return bool(_MILESTONE_OR_SECTION_ASK_RE.search(query or ""))
 
@@ -235,7 +236,7 @@ def delay_damages_rate_preference_score(
 def aca_amount_is_toy_example(amount: float, ctx: str = "") -> bool:
     """True for a FIDIC worked-example / placeholder ACA, not a filled row.
 
-    Live E1: unlabeled ``SAR 10,000,000`` in an 8.8 window and its
+    Live daily-amount ask: unlabeled ``SAR 10,000,000`` in an 8.8 window and its
     0.1% daily product ``SAR 10,000``. A filled 1.1.1 excluding-VAT
     particular of exactly 10M is not a toy. Non-10M/10k figures are
     never the worked example — Contract Data template cues
@@ -271,7 +272,7 @@ def chunk_accepted_contract_amount_is_only_toy(text: str) -> bool:
 
 
 def query_asks_delay_damages_daily_amount(query: str) -> bool:
-    """True for E1 (calculate … delay damages … in SAR), not A5 rate lookup.
+    """True for a daily-amount ask (calculate … delay damages … in SAR), not a rate lookup.
 
     Delegates to the retriever twin so retrieval rescue and compose
     cannot drift on the ask class.
@@ -344,7 +345,7 @@ def _iter_delay_rate_candidates(text: str, ask: str = "") -> list[tuple[float, i
     # A Milestone ask reads each candidate's OWN row: in a Contract Data block
     # the Milestone rate sits between the whole-of-Works rate and the cap row,
     # and the wide window let the cap guard disqualify it. The whole-of-Works
-    # path keeps the window it was tuned with (leftover E1).
+    # path keeps the window it was tuned with (daily-amount ask).
     row_scoped = ask_is_about_a_milestone_or_section(ask)
     for m in _DD_RATE_PCT_RE.finditer(blob):
         ctx = (_row_around(blob, m.start(), m.end()) if row_scoped
@@ -398,8 +399,8 @@ def _iter_aca_candidates(text: str) -> list[tuple[float, str, str, bool]]:
         # A delay-damages *rate* sentence names Contract Price / ACA as
         # the percentage base and is not itself the money row. Do not
         # stain a real Accepted Contract Amount figure just because the
-        # 0.1%-per-day row sits in the same 160-char window (live E1
-        # scanned Contract Data: rate chunk then excl-VAT ACA).
+        # 0.1%-per-day row sits in the same 160-char window (live daily-amount
+        # ask, scanned Contract Data: rate chunk then excl-VAT ACA).
         if _DD_ASK_RE.search(ctx) and "%" in ctx:
             if not re.search(r"(?i)accepted\s+contract\s+amount", ctx):
                 return
@@ -461,7 +462,7 @@ def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
 
     any_real = any(buckets[k] for k in ("excl", "neutral", "incl"))
     if not any_real:
-        # Live leftover E1 after #529: electing the toy when no real
+        # Live daily-amount ask after #529: electing the toy when no real
         # row is in-window produced SAR 10,000/day. Skip it so the
         # reservation can still surface the filled excl-VAT ACA.
         if reject_e1_toy_aca_enabled():
@@ -490,7 +491,7 @@ def delay_damages_daily(
     """Daily delay damages = rate% × Accepted Contract Amount / Contract Price.
 
     FIDIC Sub-Clause 8.8: the Contractor pays the rate stated in the
-    Contract Data for every calendar day of delay. Live E1 is 0.1% of
+    Contract Data for every calendar day of delay. The live daily amount is 0.1% of
     the net ACA. Operands are parameters — this function does not invent
     a rate or an amount.
     """
@@ -500,7 +501,7 @@ def delay_damages_daily(
         return {"error": "rate_percent and contract_amount must be >= 0."}
     # Empty-args / unbound class: defaults are 0, 0. Emitting
     # "0% of SAR 0.00" looks like a successful rate and poisons the
-    # turn (live Set3 E3). A genuine 0% rate against a real base is
+    # turn (live per-milestone delay-damages ask). A genuine 0% rate against a real base is
     # still 0/day — only a missing contract amount is unbound.
     if base <= 0:
         return {
@@ -612,8 +613,8 @@ def _figure_is_clause_111(text: str, amount: float) -> bool:
     ``1.1.1: | | Accepted Contract Amount: SAR 1,754,504,456.25(One Billion …) |``
     — with NO VAT qualifier; the including-VAT figure is a separate
     particular in the same chunk. Demanding the literal "excluding VAT"
-    scored the real base 0 and left a partial ACA to compose (live M3
-    0/6, twice). Clause 1.1.1 IS the net figure the rate applies to, so a
+    scored the real base 0 and left a partial ACA to compose (live milestone
+    delay-damages ask 0/6, twice). Clause 1.1.1 IS the net figure the rate applies to, so a
     row is the base unless it says *including* VAT. The clause token sits
     in its own cell ahead of the ``|``, so it is read from the wider
     window, not the pipe-clipped row.
@@ -657,7 +658,7 @@ def text_states_clause_111_aca(text: str) -> bool:
     joins loaded Contract Data chunks (retriever.py) uses this to keep the
     1.1.1 base ahead of partial ACA rows before it caps the excerpt, so an
     unmarked bundle still composes off the filled clause and not a partial
-    (live M3: 0.015% x SAR 39,098,392.98).
+    (live milestone delay-damages ask: 0.015% x SAR 39,098,392.98).
     """
     blob = _collapse_ws(text)
     for m in _MONEY_RE.finditer(blob):
@@ -680,7 +681,7 @@ def _contract_price_beside_the_rate(
     Clause 1.1.1 excluding VAT in the document that states the rate
     wins. The same clause retrieved under another doc id still beats a
     partial Accepted Contract Amount that only shares the rate's chunk
-    (live M3: SAR 39,098,392.98 on the leading chunk, clause 1.1.1
+    (live milestone delay-damages ask: SAR 39,098,392.98 on the leading chunk, clause 1.1.1
     later). A non-1.1.1 amount from another document is not the price.
     The rate document's own clause 1.1.1 beats another document's
     clause 1.1.1 (a purchase order of SAR 55,000,000.00 ahead of the
@@ -928,7 +929,7 @@ def compose_delay_damages_daily_from_excerpts(
 ) -> dict | None:
     """Compose rate × ACA from retrieved client text, or None.
 
-    Returns None when the ask is not E1-shaped, the kill-switch is off,
+    Returns None when the ask is not a daily-amount ask, the kill-switch is off,
     or either operand is missing — never invents a figure.
     """
     if not compose_delay_damages_daily_enabled():
@@ -973,7 +974,7 @@ def answer_states_daily_amount(text: str, daily_amount: float) -> bool:
     )
 
 
-# ── Named percentage particulars (Set3 A7/A9) and % × ACA (E1) ─────────────
+# ── Named percentage particulars and % × ACA ───────────────────────────────
 #
 # Live a8498b3: Advance Payment / Limitation of Liability rows were in
 # the excerpts (retrieval scores 54–88) and synthesis hung empty.
@@ -1107,7 +1108,7 @@ def query_asks_named_percentage_particular(query: str) -> bool:
 
 
 def query_asks_percentage_particular_in_money(query: str) -> bool:
-    """True for E1-shaped "Calculate the Advance Payment in SAR"."""
+    """True for a %-of-ACA ask like "Calculate the Advance Payment in SAR"."""
     if not query_asks_named_percentage_particular(query):
         return False
     q = query or ""
@@ -1385,7 +1386,7 @@ def strip_vat_inclusive_percentage_alternative(
     return " ".join(kept).strip()
 
 
-# ── Delay damages over a period (Set3 E3 / E2 class) ──────────────────────
+# ── Delay damages over a period ───────────────────────────────────────────
 
 
 def query_applies_a_delay_duration(query: str) -> bool:
@@ -1394,9 +1395,9 @@ def query_applies_a_delay_duration(query: str) -> bool:
 
 
 def query_asks_delay_damages_over_a_period(query: str) -> bool:
-    """True for "M3 and M4 are each 20 days late … delay damages".
+    """True for "Milestone 3 and 4 are each 20 days late … delay damages".
 
-    A5 (rate lookup, no duration) and a per-calendar-day E1 with no
+    A rate lookup (no duration) and a per-calendar-day amount with no
     delay period stay off this path.
     """
     q = query or ""
@@ -1434,7 +1435,7 @@ def parse_delay_period_days(query: str) -> int | None:
 def _window_is_whole_of_works_rate(blob: str) -> bool:
     """True when the window is the whole-of-Works daily rate, not a Milestone.
 
-    Live Set3 E3 on 4ab5561: a packed particulars row said "per Milestone"
+    Live per-milestone delay-damages ask on 4ab5561: a packed particulars row said "per Milestone"
     and then "Delay Damages (for the whole of the Works): 0.1%". First-
     percent parse elected 0.1% and composed 70,180,178.25. The Contract
     Data milestone rate is 0.015%.
@@ -1449,7 +1450,7 @@ def parse_milestone_delay_rate_percent(
     """Per-day % for one Milestone row. Does not invent; ignores the cap.
 
     Rejects a whole-of-Works 0.1% packed under a "per Milestone" label —
-    that product is a different figure (live E3 vs 0.1% × 40).
+    that product is a different figure (live per-milestone ask vs 0.1% × 40).
     """
     t = excerpts or ""
     if not t or milestone <= 0:
@@ -1506,7 +1507,7 @@ def compose_delay_damages_over_period_from_excerpts(
 
     Uses the Milestone row the question names. Does not fall through to
     the whole-of-Works 0.1% when the ask is a Milestone scenario — that
-    product is a different figure (live E3 vs 0.1% × 40).
+    product is a different figure (live per-milestone ask vs 0.1% × 40).
     """
     if not compose_delay_damages_period_enabled():
         return None
@@ -1587,7 +1588,7 @@ def answer_is_unbound_delay_damages(text: str) -> bool:
     return bool(_UNBOUND_DD_NOTE_RE.search(text or ""))
 
 
-# ── User-priced concrete take-off (Cost-gate A3-1) ─────────────────────────
+# ── User-priced concrete take-off (cost gate) ─────────────────────────────
 # Live SO probe: construction_calc succeeded, force_synthesis emitted 0
 # tokens, and the bubble stayed blank. Volume-only recover also fails
 # the gate because the operator asked for SAR 410 + waste + contingency.
@@ -1809,7 +1810,7 @@ def format_stated_total_follow_up_line(composed: dict) -> str:
 
 
 def format_user_priced_takeoff_line(composed: dict) -> str:
-    """User-facing A3-1 line from ``compose_user_priced_takeoff_from_ask``."""
+    """User-facing take-off line from ``compose_user_priced_takeoff_from_ask``."""
     cur = composed.get("currency") or "SAR"
     count = int(composed["count"])
     length = float(composed["length"])

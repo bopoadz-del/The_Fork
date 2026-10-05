@@ -29,7 +29,7 @@ def wind_pressure(
     kz: float = 1.0,
     kzt: float = 1.0,
     # Unity, not 0.85. A directionality factor the caller never supplied is an
-    # invented site assumption: live SET4 T14 asked for the BASIC velocity
+    # invented site assumption: a live wind-load ask wanted the BASIC velocity
     # pressure at 40 m/s and got 833.7 Pa instead of 980.8, 15% low, with
     # "Kd = 0.85" printed in the working as though it had been given.
     kd: float = 1.0,

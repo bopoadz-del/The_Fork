@@ -1,6 +1,6 @@
 """Contract Data Q&A must stay on RAG — not generate_wbs / schedule.
 
-Live UI-PHYS: "What is the Time for Completion for the whole of the Works?"
+Live: "What is the Time for Completion for the whole of the Works?"
 and "Milestone 5 Time for Completion" were stolen to the predefined
 schedule workflow and answered "Schedule built: N activities…". Those
 are Contract Data lookups. Clash stays off unless the user types clash;
@@ -80,7 +80,7 @@ _LOOKUP_CUES = (
 )
 
 # Numbered contract-volume Schedules ("Schedule 10: Not Used"), not a P6
-# programme. UI-PHYS G1 / diagnostic D5: "What does Schedule 10 of the
+# programme. Live: "What does Schedule 10 of the
 # contract contain?" missed every cue below, so the keyword router stole
 # the turn to parse_primavera_schedule / generate_wbs at conf 0.2.
 _CONTRACT_SCHEDULE_N_RE = re.compile(

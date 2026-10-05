@@ -140,11 +140,11 @@ def is_definition_question(message: str) -> bool:
     return not is_deliverable_request(msg)
 
 
-# "How long will X take?" with no figures in it. Live SET5 A3: six words
+# "How long will X take?" with no figures in it. A live bare-duration ask: six words
 # routed to generate_wbs and came back "Schedule built: 204 activities over
 # 688 working days" -- a whole programme invented for a scope nobody named.
 # A duration ask that carries its own quantities and rates is a calculation
-# (E18, T11) and is deliberately NOT matched here.
+# (a productivity / rate duration ask) and is deliberately NOT matched here.
 _BARE_DURATION_RE = re.compile(
     r"\bhow\s+long\b.{0,60}?\b(?:take|takes|last|complete|finish)\b"
     r"|\bhow\s+(?:many|much)\s+(?:working\s+|calendar\s+)?"
@@ -205,7 +205,7 @@ def lookup_question_hijack(message: str, confidence: float) -> bool:
         return True
     # Also before the cut-off, and for the same reason: a confident route is
     # evidence the user wants the tool for every shape EXCEPT one that has
-    # nothing for the tool to work from. Live A3 was routed at high
+    # nothing for the tool to work from. The live bare-duration ask was routed at high
     # confidence and answered with an invented 204-activity programme.
     if is_bare_duration_question(message):
         return True
@@ -268,10 +268,10 @@ def message_wants_wbs_outline(message: str) -> bool:
     return bool(_WBS_OUTLINE_ASK_RE.search(message or ""))
 
 
-# Live leftover F1 after #521: the hierarchy rendered, but generate_wbs still
+# Live BOQ-scope WBS ask after #521: the hierarchy rendered, but generate_wbs still
 # elected the building template. A demolition / site-clearance + BOQ WBS ask
-# must consume retrieved measured rows instead. A2/A3/A5/A9/C1/E1 stay off
-# this path — they are Contract Data / spec-precedence / delay-damages asks.
+# must consume retrieved measured rows instead. Contract Data particulars,
+# spec-precedence and delay-damages asks stay off this path.
 _DEMO_SITE_CLEAR_ASK_RE = re.compile(
     r"(?i)\b(?:demolition|site\s+clearance|site\s+clearing)\b",
 )
@@ -407,7 +407,7 @@ def _export_descriptor(context: Dict[str, Any]) -> Dict[str, Any] | None:
     the deliverable should be produced from, on click. None when no project.
 
     When a conversation already has a staged WBS, the offer binds to that
-    snapshot (F-BAT-D H2). Re-running schedule-from-brief from the current
+    snapshot. Re-running schedule-from-brief from the current
     message used to serve the 204-activity building scaffold instead.
     """
     project_id = context.get("project_id")

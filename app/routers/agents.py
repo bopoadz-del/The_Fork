@@ -81,8 +81,8 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
       platform-shared row (``admin_drive_approved``, boot-seeded
       ``system_seed``, or an id in ``RAG_GENERAL_KNOWLEDGE_PROJECTS``).
       Covers both "project doesn't exist" and "private project belongs to
-      someone else". The physical master-corpus source id stays owner-only
-      (UI-PHYS H1); only the alias is shared.
+      someone else". The physical master-corpus source id stays owner-only;
+      only the alias is shared.
     - non-``ws-`` id   → not a project-scoped workspace conversation. If a stored
       conversation row exists with a ``project_id``, that same read grant is
       checked; a stored row with NO ``project_id`` has no ownership binding → 404;
