@@ -225,3 +225,20 @@ def test_generic_document_name_is_flagged_only_in_its_file_name_form(tmp_path: P
     found = sh.leakage_findings(cases=None, live=live, root=tmp_path)
     files = {f.split()[1].rstrip(":") for f in found if f.startswith("DOCUMENT-NAME")}
     assert files == {"app/fname.py", "app/fext.py", "app/digit.py"}
+
+
+def test_live_document_ids_in_product_text_are_flagged(tmp_path: Path):
+    """A live document id (or its 8-char prefix), word-bounded, in product text
+    is a DOCUMENT-ID finding; the same hex run inside a longer token is not."""
+    sh = _load()
+    pkg = tmp_path / "app"
+    pkg.mkdir()
+    (pkg / "seed.py").write_text('STALE = "c0ffee12"\n', encoding="utf-8")
+    (pkg / "prefix.py").write_text("# see doc 7e57ab1e for the copy\n", encoding="utf-8")
+    (pkg / "inside.py").write_text('SHA = "00c0ffee1299"\n', encoding="utf-8")
+    live = {"documents": [], "projects": [], "document_ids": ["c0ffee12", "7e57ab1e-9f00-4c1d-8e2a-1234567890ab", "abc"]}
+    found = sh.leakage_findings(cases=None, live=live, root=tmp_path)
+    assert found == [
+        "DOCUMENT-ID app/prefix.py: 7e57ab1e",
+        "DOCUMENT-ID app/seed.py: c0ffee12",
+    ]

@@ -55,6 +55,8 @@ Leakage rules worth knowing (see the comments at each constant):
   * DOCUMENT-NAME: a name of four+ words or carrying a digit is caught as a
     phrase; a name of three or fewer plain words is domain vocabulary and is
     caught only in its file-name form.
+  * DOCUMENT-ID: a live document id (its first 8 characters, word-bounded)
+    in product text fails -- a row id is a photograph of one corpus.
 """
 from __future__ import annotations
 
@@ -327,7 +329,7 @@ def load_cases(path: str) -> dict[str, dict[str, list[str]]]:
 
 
 def load_live_names() -> dict[str, list[str]]:
-    """Document names and project ids from the live database (read-only)."""
+    """Document names, document ids and project ids from the live database (read-only)."""
     import sqlalchemy as sa
 
     url = os.environ.get("DATABASE_URL", "")
@@ -337,9 +339,10 @@ def load_live_names() -> dict[str, list[str]]:
     with sa.create_engine(url).connect() as c:
         c.execute(sa.text("SET TRANSACTION READ ONLY"))
         names = [r[0] for r in c.execute(sa.text("SELECT DISTINCT original_name FROM documents")) if r[0]]
+        doc_ids = [r[0] for r in c.execute(sa.text("SELECT id FROM documents")) if r[0]]
         projects = [r[0] for r in c.execute(sa.text("SELECT id FROM projects")) if r[0]]
         c.rollback()
-    return {"documents": names, "projects": projects}
+    return {"documents": names, "document_ids": doc_ids, "projects": projects}
 
 
 def _words(text: str) -> list[str]:
@@ -458,6 +461,11 @@ def leakage_findings(cases: dict | None = None, live: dict | None = None,
         projects = {p: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(p) + r"(?![A-Za-z0-9_])")
                     for p in live.get("projects", []) if len(p) >= 6}
         code_rx = {c: re.compile(r"(?<![A-Za-z0-9])" + re.escape(c) + r"(?![A-Za-z0-9])") for c in codes}
+        # A live document id is named by its first 8 characters (ids are
+        # uuid4()[:8]; a longer id is matched on the same prefix). Shorter
+        # ids are too likely to collide with ordinary hex and are skipped.
+        id_rx = {d[:8]: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(d[:8]) + r"(?![A-Za-z0-9_])")
+                 for d in (str(x) for x in live.get("document_ids", [])) if len(d) >= 8}
         form_rx = {f: re.compile(r"(?<![A-Za-z0-9])" + re.escape(f) + r"(?![A-Za-z0-9])", re.IGNORECASE)
                    for f in file_forms}
         for rel, text in files:
@@ -471,6 +479,9 @@ def leakage_findings(cases: dict | None = None, live: dict | None = None,
             for c, rx in code_rx.items():
                 if rx.search(text):
                     findings.append(f"DOCUMENT-REF {rel}: {c}")
+            for d, rx in id_rx.items():
+                if rx.search(text):
+                    findings.append(f"DOCUMENT-ID {rel}: {d}")
             for p, rx in projects.items():
                 if p in system_ids and rel == SYSTEM_PROJECTS_REGISTRY:
                     continue  # the one place a system namespace is declared

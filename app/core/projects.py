@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -47,9 +48,6 @@ class DuplicateContentError(ValueError):
         )
 
 
-# Live D1 letter pair. Seed is a no-op when either id is absent.
-D1_STALE_DOC_ID = "b5033ec2"
-D1_LIVE_DOC_ID = "93982d45"
 
 # ── pilot master-corpus alias ───────────────────────────────────────────────
 # Per-project Drive approval/indexing is not pilot-ready. Expose the existing
@@ -1664,32 +1662,60 @@ def backfill_chunk_counts_from_table(
     }
 
 
-def seed_d1_letter_supersede() -> Dict[str, Any]:
-    """Ops helper: hide ``b5033ec2`` behind ``93982d45`` when both exist.
+# A copy marker an operator's re-upload adds to the same file name:
+# "Letter (1).docx", "Letter - Copy.docx", "Letter copy 2.docx".
+_COPY_MARKER_RE = re.compile(r"(?:\s*[-_]?\s*\bcopy\b(?:\s*\d+)?|\s*\(\d+\))+$", re.IGNORECASE)
 
-    No-op (and never a delete) when either id is missing. Same seed as
-    migration 0017 so a late-arriving corrected copy can be wired after
-    deploy.
+
+def _duplicate_name_key(original_name: str) -> str:
+    """Name identity for "the same document uploaded again".
+
+    Extension, case, runs of whitespace/underscores and trailing copy markers
+    are ignored; nothing else is.
+    """
+    stem = os.path.splitext((original_name or "").strip())[0]
+    stem = _COPY_MARKER_RE.sub("", stem)
+    return re.sub(r"[\s_]+", " ", stem).strip().lower()
+
+
+def supersede_older_duplicates(
+    project_id: Optional[str] = None, *, apply: bool = False,
+) -> Dict[str, Any]:
+    """Hide older uploads behind the newest copy of the same document.
+
+    The structural rule a stale extract needs: within one project, visible
+    documents whose names agree under ``_duplicate_name_key`` are copies of one
+    document, and the most recently uploaded copy is the live one. Each older
+    copy is pointed at it with ``supersede_document`` (reversible, never a
+    delete). Dry-run unless ``apply``: returns the planned ``pairs`` either way.
+    ``project_id=None`` scans every project.
     """
     _ensure_db()
-    stale = get_document(D1_STALE_DOC_ID)
-    live = get_document(D1_LIVE_DOC_ID)
-    if stale is None or live is None:
-        return {
-            "applied": False,
-            "stale_id": D1_STALE_DOC_ID,
-            "live_id": D1_LIVE_DOC_ID,
-            "stale_present": stale is not None,
-            "live_present": live is not None,
-        }
-    updated = supersede_document(D1_STALE_DOC_ID, D1_LIVE_DOC_ID)
-    return {
-        "applied": True,
-        "stale_id": D1_STALE_DOC_ID,
-        "live_id": D1_LIVE_DOC_ID,
-        "superseded_by": (updated or {}).get("superseded_by"),
-        "retrieval_visible": (updated or {}).get("retrieval_visible"),
-    }
+    with SessionLocal() as session:
+        stmt = select(Document).where(Document.superseded_by.is_(None))
+        if project_id:
+            stmt = stmt.where(Document.project_id == project_id)
+        rows = [
+            d for d in session.scalars(stmt).all()
+            if d.retrieval_visible is None or d.retrieval_visible
+        ]
+    groups: Dict[Tuple[str, str], List[Any]] = {}
+    for d in rows:
+        key = _duplicate_name_key(d.original_name or "")
+        if key:
+            groups.setdefault((d.project_id, key), []).append(d)
+    pairs: List[Dict[str, str]] = []
+    for docs in groups.values():
+        if len(docs) < 2:
+            continue
+        docs.sort(key=lambda d: (d.uploaded_at is not None, d.uploaded_at, d.id))
+        live = docs[-1]
+        pairs.extend({"stale_id": d.id, "live_id": live.id} for d in docs[:-1])
+    pairs.sort(key=lambda pr: (pr["live_id"], pr["stale_id"]))
+    if apply:
+        for pr in pairs:
+            supersede_document(pr["stale_id"], pr["live_id"])
+    return {"applied": bool(apply), "project_id": project_id, "pairs": pairs}
 
 
 def documents_matching_filename_terms(
