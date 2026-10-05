@@ -2311,9 +2311,16 @@ async def admin_add_knowledge_document(
         raise HTTPException(415, "Only text-bearing formats go into the knowledge base.")
 
     if not store.get_project(gk):
+        from sqlalchemy.exc import IntegrityError
+
         ensure_user_exists(SYSTEM_USER_ID, role="admin")
-        store.create_project("General Knowledge", user_id=SYSTEM_USER_ID,
-                             project_id=gk, origin="admin_drive_approved")
+        try:
+            store.create_project("General Knowledge", user_id=SYSTEM_USER_ID,
+                                 project_id=gk, origin="admin_drive_approved")
+        except IntegrityError:
+            # The row exists already: the boot seed creates the same project
+            # concurrently, or get_project hides it. Either way it is there.
+            logger.info("general-knowledge project %s already exists", gk)
 
     max_size = upload_limits.max_document_bytes()
     data_dir = os.getenv("DATA_DIR", "./data")
