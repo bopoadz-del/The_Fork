@@ -109,9 +109,11 @@ def test_following_rows_skip_only_the_retired_document(store):
 
 
 def test_chunk_reads_never_select_the_embedding(store):
-    from app.core.db import get_engine
+    from app.core.db import _engine_for_url
 
-    engine = get_engine()
+    # The store's own engine: another module may have re-pointed the
+    # process default (DATA_DIR reloads) since the store was opened.
+    engine = _engine_for_url(store._database_url)
     seen = []
 
     def _rec(conn, cursor, statement, parameters, context, executemany):
