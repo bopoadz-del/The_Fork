@@ -99,7 +99,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/blocks/ocr.py:327": "baseline 2026-09-10",
     "app/blocks/primavera_parser.py:344": "baseline 2026-09-10",
     "app/blocks/primavera_parser.py:359": "baseline 2026-09-10",
-    "app/blocks/safety_world_detector.py:64": "baseline 2026-09-10",
+    "app/blocks/safety_world_detector.py:65": "baseline 2026-09-10",
     "app/blocks/smart_orchestrator.py:567": "baseline 2026-09-10",
     "app/blocks/smart_orchestrator.py:588": "baseline 2026-09-10",
     "app/blocks/validation_pipeline.py:159": "baseline 2026-09-10",
