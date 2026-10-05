@@ -1,27 +1,40 @@
-"""Live Google Drive acceptance test — skipped unless GOOGLE_CLIENT_ID is set
-AND a token has been obtained by completing the OAuth flow once in a browser.
-Run manually after connecting Drive."""
-import os
+"""Live Google Drive acceptance test, against the DEPLOYED build.
+
+The deployment holds the Drive connection: an API-key caller resolves to the
+``system`` user (``require_user``), whose OAuth token the deployed
+``drive_auth`` stores and refreshes. So the live routes exercise exactly what
+the old in-process version did with a locally connected token -- a real
+``get_access_token("system")`` (refreshing at Google if expired) and a real
+``GoogleDriveBlock`` list call -- which CI can never hold itself.
+
+Gated by tests/_live_api.py: CI's production-like job runs it with the
+FORK_API_KEY repository secret (skips without a key; fails under
+LIVE_API_REQUIRED=1). Mocked contracts: test_drive_auth.py, test_drive_router.py.
+"""
+from __future__ import annotations
+
 import pytest
-from app.core import drive_auth
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("GOOGLE_CLIENT_ID") or drive_auth.load_token("system") is None,
-    reason="Needs GOOGLE_CLIENT_ID and a connected Drive (run /v1/drive/connect first)",
-)
+from tests._live_api import call, require_live_api
 
 
-@pytest.mark.asyncio
-async def test_live_get_access_token():
-    token = await drive_auth.get_access_token("system")
-    assert isinstance(token, str) and len(token) > 10
+@pytest.fixture(autouse=True)
+def _live():
+    require_live_api()
 
 
-@pytest.mark.asyncio
-async def test_live_list_files():
-    from app.blocks.google_drive import GoogleDriveBlock
-    token = await drive_auth.get_access_token("system")
-    result = await GoogleDriveBlock().process(
-        "", {"operation": "list", "access_token": token, "limit": 5})
-    assert result["status"] == "success"
-    assert isinstance(result["files"], list)
+def test_live_drive_is_connected():
+    status, body = call("GET", "/v1/drive/status", timeout=60)
+    # The body names the connected account's email; report only the flags.
+    flags = {k: body.get(k) for k in ("configured", "connected")}         if isinstance(body, dict) else body
+    assert status == 200, (status, flags)
+    assert flags == {"configured": True, "connected": True}, flags
+
+
+def test_live_list_files():
+    # 409 here means get_access_token found no token or Google refused the
+    # refresh; 502 means the Drive list call itself failed.
+    status, body = call("GET", "/v1/drive/files", timeout=60)
+    assert status == 200, (status, body)
+    assert isinstance(body.get("files"), list), sorted(body)
+    assert body["folder_id"] == "root", body["folder_id"]

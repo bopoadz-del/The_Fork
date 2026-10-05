@@ -6,8 +6,10 @@ answered "The Engineer is 90 days of the effective date of a Letter of Award…"
 (JACOBS / CH2M Saudi Limited). Fixed by rewording the inject hint to ENGINEER
 IDENTITY (state the firm, not the date/period).
 
-This test hits the LIVE deployed build, so it is SKIPPED unless FORK_API_KEY is
-set (CI has no key). Run it after deploy:
+This test hits the LIVE deployed build (tests/_live_api.py). CI runs it in
+the production-like job's "Live-deploy tests" step with the FORK_API_KEY
+repository secret; without a key it skips (fails under LIVE_API_REQUIRED=1).
+Run it after deploy:
 
     FORK_API_KEY=... python -m pytest tests/test_engineer_identity_live.py -q -s
 
@@ -16,40 +18,18 @@ tokens ("Letter of Award", "90 days").
 """
 from __future__ import annotations
 
-import json
-import os
-import urllib.request
-
 import pytest
 
-FORK_API_KEY = os.getenv("FORK_API_KEY")
-BASE = os.getenv("FORK_BASE_URL", "https://theshovel.ai")
+from tests._live_api import require_live_api, stream_chat
 
-pytestmark = pytest.mark.skipif(
-    not FORK_API_KEY, reason="FORK_API_KEY not set — live deploy test"
-)
+
+@pytest.fixture(autouse=True)
+def _live():
+    require_live_api()
 
 
 def _ask(message: str) -> str:
-    body = json.dumps({"message": message, "project_id": "master_corpus"}).encode()
-    req = urllib.request.Request(
-        f"{BASE}/v1/chat/stream", data=body,
-        headers={"Authorization": f"Bearer {FORK_API_KEY}",
-                 "Content-Type": "application/json"},
-        method="POST",
-    )
-    raw = urllib.request.urlopen(req, timeout=120).read().decode("utf-8", "replace")
-    text = ""
-    for line in raw.splitlines():
-        if not line.startswith("data:"):
-            continue
-        try:
-            ev = json.loads(line[5:].strip())
-        except Exception:
-            continue
-        if ev.get("type") == "token":
-            text += ev.get("content", "")
-    return " ".join(text.split())
+    return stream_chat(message, project_id="master_corpus", timeout=120)
 
 
 def test_who_is_the_engineer_answers_jacobs_5x():
