@@ -205,8 +205,11 @@ def test_knowledge_phase_indexes_pending_once_and_then_does_nothing(gk, tmp_path
 
     monkeypatch.setattr(doc_index, "index_document", _index)
     first = knowledge_ingest.process_pending_knowledge_documents()
-    assert first == {"pending": 1, "indexed": 1, "failed": 0}
-    assert calls == [(gk, doc["id"])]
+    # The phase takes every pending admin-knowledge row in the database (rows
+    # other tests left behind included), so assert on this test's own rows.
+    assert first["pending"] >= 1 and first["indexed"] == first["pending"]
+    assert (gk, doc["id"]) in calls
+    calls[:] = [(gk, doc["id"])]
     indexing = store.get_document(doc["id"])["metadata"]["indexing"]
     assert indexing["status"] == "ok" and indexing["chunks"] == 4
 
@@ -366,3 +369,19 @@ def test_only_shard_zero_runs_the_knowledge_phase(monkeypatch):
     assert seen == []
     p1b.run_knowledge_phase(dry_run=True, shard_index=0)
     assert seen == [{"dry_run": True, "log": p1b.log}]
+
+
+def test_knowledge_phase_finds_rows_outside_its_own_configured_projects(gk, tmp_path, monkeypatch):
+    """The ingest task may not carry the web task's general-knowledge config:
+    a pending admin-knowledge row is processed wherever it was stored."""
+    from app.core import doc_index, knowledge_ingest
+
+    doc = _pending_doc(gk, "synthetic_code_book.txt", b"Synthetic code text.", tmp_path)
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "some_other_layer_id")
+    calls = []
+    monkeypatch.setattr(doc_index, "index_document",
+                        lambda pid, did, *a, **k: calls.append((pid, did)) or
+                        {"status": "ok", "indexed": 1, "total_chunks": 2})
+    knowledge_ingest.process_pending_knowledge_documents()
+    assert (gk, doc["id"]) in calls
+

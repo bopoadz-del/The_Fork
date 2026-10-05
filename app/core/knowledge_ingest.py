@@ -35,13 +35,6 @@ def pending_indexing_metadata() -> Dict[str, Any]:
     }}
 
 
-def general_knowledge_projects() -> List[str]:
-    """Every configured general-knowledge project id."""
-    from app.core.system_projects import general_knowledge_env
-
-    return [p.strip() for p in general_knowledge_env().split(",") if p.strip()]
-
-
 def is_pending(doc: Dict[str, Any]) -> bool:
     """True for an admin-knowledge row stored but not yet indexed."""
     from app.core.projects import coerce_document_metadata
@@ -53,14 +46,30 @@ def is_pending(doc: Dict[str, Any]) -> bool:
 
 
 def pending_knowledge_documents() -> List[Dict[str, Any]]:
-    """Pending admin-knowledge rows across the general-knowledge projects."""
-    from app.core import projects as store
+    """Every pending admin-knowledge row, in whichever project it was stored.
 
+    Selected by what the row IS (admin-knowledge provenance, status pending),
+    not by a project list read from this process's environment: the web task
+    chose the general-knowledge project when it stored the row, and the ingest
+    task may not carry the same configuration. Only the admin knowledge route
+    creates such rows, and only in the general-knowledge layer.
+    """
+    from sqlalchemy import or_
+
+    from app.core import projects as store
+    from app.core.db import SessionLocal
+    from app.core.ingest_status import UNVERIFIED
+    from app.core.models import Document
+
+    with SessionLocal() as session:
+        ids = [row[0] for row in session.query(Document.id).filter(
+            or_(Document.ingest_status == UNVERIFIED, Document.ingest_status.is_(None))
+        ).all()]
     out: List[Dict[str, Any]] = []
-    for project_id in general_knowledge_projects():
-        if not store.get_project(project_id):
-            continue
-        out.extend(d for d in store.list_documents(project_id) if is_pending(d))
+    for doc_id in ids:
+        doc = store.get_document(doc_id)
+        if doc and is_pending(doc):
+            out.append(doc)
     return out
 
 
