@@ -52,6 +52,13 @@ def test_component_uses_existing_token_utility(component_source: str):
     assert "import { getToken } from '../lib/token'" in component_source
 
 
+def _unavailable(reason: str) -> None:
+    """Skip locally; fail where the run promised a type-checker."""
+    if os.getenv("FRONTEND_TYPECHECK_REQUIRED", "").strip() == "1":
+        pytest.fail(f"FRONTEND_TYPECHECK_REQUIRED=1 but {reason}")
+    pytest.skip(reason)
+
+
 def test_component_type_checks():
     """Run the front-end TypeScript compiler to prove the shim compiles."""
     assert FRONTEND_DIR.is_dir()
@@ -63,14 +70,14 @@ def test_component_type_checks():
 
     node = shutil.which("node", path=env["PATH"])
     if node is None:
-        pytest.skip("Node.js not available; cannot type-check the component")
+        _unavailable("Node.js not available; cannot type-check the component")
 
     tsc = FRONTEND_DIR / "node_modules" / "typescript" / "bin" / "tsc"
     if not tsc.exists():
-        # CI installs Python deps only — frontend node_modules is never
-        # populated there, so a missing tsc is an environment limitation
-        # (like missing node above), not a product regression.
-        pytest.skip("typescript compiler not installed in frontend/node_modules")
+        # A bare checkout has no frontend/node_modules. CI's production-like
+        # job runs `npm ci` first and sets FRONTEND_TYPECHECK_REQUIRED=1, so
+        # there this is a failure, not a skip.
+        _unavailable("typescript compiler not installed in frontend/node_modules")
 
     proc = subprocess.run(
         [node, str(tsc), "-p", "tsconfig.app.json", "--noEmit"],

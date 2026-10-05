@@ -136,8 +136,11 @@ def test_a_photo_with_nothing_detectable_yields_an_honest_empty(detector):
     """q08 produced zero detections in the eval — it must produce zero
     observations, not a hedge or a placeholder."""
     analysis = _analyse(detector, "q08_peeling_paint_bathroom.jpg")
-    if analysis[0]["detections"]:
-        pytest.skip("model now detects something in this image; empties are covered "
-                    "deterministically in test_photo_observations.py")
+    # The weights are committed, so "no detections on q08" is a fixed fact of
+    # this build, not luck. A retrained model that finds something here must
+    # fail this precondition (pick another empty photo), not skip the test.
+    assert not analysis[0]["detections"], (
+        "safety_world_v2.onnx now detects something in q08; choose a photo "
+        "the committed model returns no detections for")
     assert quality_observations(analysis) == []
     assert equipment_from_photos(analysis) == []
