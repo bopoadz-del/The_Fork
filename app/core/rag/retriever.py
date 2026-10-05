@@ -1447,7 +1447,7 @@ _COVER_PHRASE_WINDOW = 64
 # figure. Otherwise the +1.2 class bonus is capped so it cannot stack on
 # an unrelated millimetre and outrank the clause that states the length.
 _SOURCE_CLASS_BONUS_CAP = 0.25
-_COVER_LEXICAL_TERMS = "nominal cover cast against soil casted against blinding"
+_COVER_LEXICAL_TERMS = "nominal cover cast against soil cast against blinding"
 _MDD_RE = re.compile(r"(?i)\b(?:maximum\s+dry\s+density|mdd)\b")
 _PERCENT_FIGURE_RE = re.compile(
     r"(?i)(?:\d+(?:\.\d+)?\s*%|\b(?:twenty|thirty|forty|fifty|sixty|"
@@ -1504,9 +1504,9 @@ def numeric_requirement_expansion(query: str) -> str:
     if "length_mm" in kinds:
         parts.append("nominal cover millimetre millimeter blinding")
         if spec_boost_guard_enabled():
-            # The clause says "nominal cover" and "casted against soil",
-            # not "minimum cover to reinforcement".
-            parts.append("cast against soil casted against blinding")
+            # A cover clause names the condition ("cast against soil /
+            # blinding"), not "minimum cover to reinforcement".
+            parts.append("cast against soil blinding")
     if "compaction" in kinds:
         parts.append(
             "compacted sub-grade subgrade embankment maximum dry density CBR percent"
@@ -3185,9 +3185,8 @@ def filename_looks_like_conditions_volume(filename: str) -> bool:
     return bool(re.search(
         r"(?i)contract\s+data|conditions?\s+of\s+contract|"
         r"particular\s+conditions|"
-        # Live Sources truncate to ``Vol 1.0_Con…`` / ``Cond of Contract``.
-        r"cond(?:itions?)?\s+of\s+con|"
-        r"vol\.?\s*\d[\d.]*\s+con",
+        # Abbreviated / truncated "Cond of Contract".
+        r"cond(?:itions?)?\.?\s+of\s+con",
         blob,
     ))
 
@@ -3490,9 +3489,12 @@ def _enumeration_continuations(parent: Chunk, sheet: List[Chunk]) -> List[Chunk]
 _NAMED_COMMUNITY_AMONG_RE = re.compile(
     r"(?i)\bamong\s+the\s+(.+?)\s+milestones\b",
 )
+# A named group of milestones: up to three words before a group noun
+# ("<Name> Quarter", "<Name Name> District"). The group nouns are a
+# vocabulary of how a site is divided, not any project's place names.
+_MILESTONE_GROUP_NOUNS = r"(?:community|quarter|district|precinct|zone|phase|sector|area|parcel)"
 _NAMED_COMMUNITY_NAME_RE = re.compile(
-    r"(?i)\b((?:northern|southern|boulevard|eastern|western|central|east|west)"
-    r"(?:\s+community|\s+quarter))\b",
+    rf"(?i)\b((?:[a-z][\w'-]*\s+){{1,3}}?{_MILESTONE_GROUP_NOUNS})\b",
 )
 _NAMED_COMMUNITY_SPAN_RE = re.compile(
     r"(?i)\b(?:longest|shortest|exceed)\b",
@@ -3508,14 +3510,22 @@ def extract_asked_community_name(query: str) -> str:
     among = _NAMED_COMMUNITY_AMONG_RE.search(q)
     if among:
         return re.sub(r"\s+", " ", among.group(1)).strip()
-    named = _NAMED_COMMUNITY_NAME_RE.search(q)
-    if named:
-        return re.sub(r"\s+", " ", named.group(1)).strip()
+    for named in _NAMED_COMMUNITY_NAME_RE.finditer(q):
+        words = named.group(1).split()
+        # The question's own frame words are not part of the name.
+        while words and (
+            words[0].lower() in _LABEL_PHRASE_STOPWORDS
+            or words[0].lower() in _NAMED_ROW_UBIQUITOUS_TERMS
+            or words[0].lower() in _GK_STOPWORDS
+        ):
+            words = words[1:]
+        if len(words) >= 2:
+            return " ".join(words)
     return ""
 
 
 def query_asks_named_community_tfc_span(query: str) -> bool:
-    """True for F1: longest/shortest Time for Completion in a named community."""
+    """True for longest/shortest Time for Completion in a named group of milestones."""
     q = query or ""
     if not extract_asked_community_name(q):
         return False
@@ -4101,9 +4111,12 @@ _PCG_NOT_REQUIRED_RE = re.compile(
 _PCG_NO_ROW_RE = re.compile(
     r"(?i)(?:^|\n)\s*(?:no\.?|none)\s*(?:[.\n]|$)",
 )
+# A guarantee FORM: the form's own title, its operative wording, or a blank
+# placeholder -- in whichever schedule / annex a contract binds it.
 _PCG_FORM_RE = re.compile(
-    r"(?i)(?:paid[- ]up\s+capital|form\s+of\s+parent\s+company|"
-    r"schedule\s+8\b|the\s+guarantor\s+shall|"
+    r"(?i)(?:paid[- ]up\s+capital|shareholders['’]?\s+funds|"
+    r"form\s+of\s+(?:parent\s+company\s+)?guarantee|"
+    r"the\s+guarantor\s+(?:shall|irrevocably|hereby)|"
     r"\[\s*(?:insert|name|amount|date)\b)",
 )
 _PCG_FILLED_VALUE_RE = re.compile(
@@ -4111,7 +4124,6 @@ _PCG_FILLED_VALUE_RE = re.compile(
     r"\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b"
     r"[^\n]{0,12}\d{1,3}(?:,\d{3})+(?:\.\d+)?)",
 )
-_PCG_CLAUSE_RE = re.compile(r"(?i)\b4\.3\.7\b")
 _COMMENCEMENT_DATE_ASK_RE = re.compile(
     r"(?i)(?:\bcommencement\s+date\b|"
     r"\bcontract\s+commencement\b|"
@@ -4199,11 +4211,11 @@ def query_asks_for_contract_commencement_date(query: str) -> bool:
 
 def _chunk_mentions_pcg(text: str) -> bool:
     blob = _normalize_retrieval_ws(text)
-    return bool(_PCG_ASK_RE.search(blob) or _PCG_CLAUSE_RE.search(blob))
+    return bool(_PCG_ASK_RE.search(blob))
 
 
 def chunk_states_pcg_form_template(text: str) -> bool:
-    """True for Schedule 8 / blank-form PCG wording, not Contract Data."""
+    """True for a guarantee form / blank template, not the Contract Data row."""
     if not text or not _chunk_mentions_pcg(text):
         return False
     if _PCG_NOT_REQUIRED_RE.search(text):
@@ -4224,7 +4236,7 @@ def chunk_states_pcg_not_required(text: str) -> bool:
         return False
     if _PCG_NOT_REQUIRED_RE.search(text):
         return True
-    # Heading + "No." on the next line (fixture S1 / live 4.3.7).
+    # Label on one line and "No." on the next (a scanned particulars row).
     if _PCG_NO_ROW_RE.search(text) and not _PCG_FILLED_VALUE_RE.search(text):
         return True
     return False
@@ -4233,7 +4245,8 @@ def chunk_states_pcg_not_required(text: str) -> bool:
 def chunk_states_pcg_filled_value(text: str) -> bool:
     """True when Contract Data states a PCG amount or percentage.
 
-    The Schedule 8 form's paid-up-capital % is not a filled particular.
+    A guarantee form's percentage of paid-up capital is not a filled
+    particular.
     """
     if not text or not _chunk_mentions_pcg(text):
         return False
@@ -4289,20 +4302,62 @@ def chunk_states_commencement_contract_data(text: str) -> bool:
     )
 
 
+# The clause number a particulars row carries in front of its label:
+# "9.2 | Parent Company Guarantee", "4.3.3(a): | Value of ...".
+_ROW_CLAUSE_BEFORE_LABEL = r"(\d+(?:\.\d+)+(?:\s*\([a-z0-9]+\))?)[\s|:]{0,8}"
+
+
+def particular_citation(text: str, label_rx: "re.Pattern") -> str:
+    """Where the chunk itself says a particular sits: "(Contract Data 9.2)".
+
+    The clause is the number the chunk prints in front of the label; the
+    document kind is the particulars heading the chunk carries. Nothing is
+    supplied that the chunk does not print: no clause, no number.
+    """
+    blob = text or ""
+    clause = ""
+    for match in label_rx.finditer(blob):
+        lead = blob[max(0, match.start() - 24):match.start()]
+        m = re.search(_ROW_CLAUSE_BEFORE_LABEL + r"$", lead)
+        if m:
+            clause = re.sub(r"\s+", "", m.group(1))
+            break
+    heading = _CD_HEADING_IN_CHUNK_RE.search(blob)
+    kind = " ".join(heading.group(0).split()).title() if heading else ""
+    if kind.lower() == "contract data":
+        kind = "Contract Data"
+    parts = " ".join(p for p in (kind, clause) if p)
+    if not parts:
+        return ""
+    return f" ({parts if kind else 'clause ' + clause})"
+
+
+def _pcg_source_excerpt(excerpt: str) -> str:
+    """The block of ``excerpt`` that states the guarantee particular."""
+    for block in re.split(r"\n{2,}|\[doc_id=", excerpt or ""):
+        if chunk_states_pcg_contract_data(block):
+            return block
+    return excerpt or ""
+
+
+def pcg_citation(excerpt: str = "") -> str:
+    """" (Contract Data 9.2)" -- where the stating excerpt says the guarantee sits."""
+    return particular_citation(_pcg_source_excerpt(excerpt), _PCG_ASK_RE)
+
+
 def format_pcg_honest_line(excerpt: str = "") -> str:
-    """User-facing PCG sentence. Does not invent a % from the form."""
-    if chunk_states_pcg_filled_value(excerpt):
-        match = _PCG_FILLED_VALUE_RE.search(excerpt or "")
+    """User-facing PCG sentence. Does not invent a % from the form.
+
+    Cites the clause the stating chunk itself carries, if any.
+    """
+    source = _pcg_source_excerpt(excerpt)
+    cite = pcg_citation(source)
+    if chunk_states_pcg_filled_value(source):
+        match = _PCG_FILLED_VALUE_RE.search(source or "")
         value = (match.group(0) or "").strip() if match else ""
         if value:
-            return (
-                f"The Parent Company Guarantee is {value} "
-                f"(Contract Data 4.3.7)."
-            )
-    return (
-        "A Parent Company Guarantee is not required "
-        "(Contract Data 4.3.7)."
-    )
+            return f"The Parent Company Guarantee is {value}{cite}."
+    return f"A Parent Company Guarantee is not required{cite}."
 
 
 def format_commencement_honest_line(excerpt: str = "") -> str:
@@ -4815,6 +4870,10 @@ def query_asks_who_the_engineer_is(query: str) -> bool:
 
 
 _DELAY_RATE_KEY_RE = re.compile(r"(?i)(?:delay|liquidated)\s+damages")
+_DELAY_DAMAGES_CLAUSE_RE = re.compile(
+    r"(?i)(?:sub[- ]?clause\s+)?\b\d+(?:\.\d+)+\s*[-–—:|]?\s*"
+    r"(?:delay|liquidated)\s+damages\b"
+)
 _DELAY_CAP_KEY_RE = re.compile(
     r"(?i)\b(?:maximum|max(?:imum)?\s+amount|capped?)\b",
 )
@@ -4828,7 +4887,6 @@ _ENGINEER_GLOSSARY_RE = re.compile(
     r'(?i)"?engineer"?\s+means\s+the\s+person',
 )
 _ENGINEER_REP_RE = re.compile(r"(?i)engineer'?s\s+representative")
-_ENGINEER_KEY_RE = re.compile(r"(?i)\bengineer\b")
 _ENGINEER_KEY_MAX_CHARS = 80
 _NOT_A_PARTY_NAME_RE = re.compile(
     r"(?i)^(?:the\s+)?(?:person\s+appointed|consultant|client|"
@@ -4839,16 +4897,6 @@ _NOT_A_PARTY_NAME_RE = re.compile(
 )
 _PARTY_FIRM_RE = re.compile(
     r"(?i)\b(?:limited|ltd\.?|llc|llp|gmbh|plc|inc\.?)\b",
-)
-_SCANNED_ENGINEER_LINE_RE = re.compile(
-    # Table rows open with cell pipes: ``|: | Engineer EXAMPLECO(EX2M ...) |``.
-    r"(?im)^[ \t|:]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?[ \t|:]*)?"
-    r"(?:(?:the|name\s+of\s+the)\s+)?"
-    r"engineer\b(?!\s*'?s\s+representative)[ \t]*[:|–-]?\s*(.*)$",
-)
-_ENGINEER_IS_RE = re.compile(
-    r"(?i)\b(?:the\s+|name\s+of\s+the\s+)?engineer\b"
-    r"(?!\s*'?s\s+representative)\s*(?:is|are|:)\s+(.{4,80})"
 )
 _ENGINEER_POINTER_VAL_RE = re.compile(
     r"(?i)^(?:named|stated|identified|appointed|set\s+out|specified|"
@@ -5116,7 +5164,15 @@ _TFC_SECTIONAL_RE = re.compile(
     r"(?i)\bsection(?:al)?s?\s+"
     r"(?:\d+|[ivxlcd]+|[a-z]\b|of\s+(?:the\s+)?works)",
 )
-_TFC_CLAUSE_1175_RE = re.compile(r"(?i)\b1\.1\.75\b")
+# The Time for Completion particulars ROW: a clause number in front of the
+# label, at the start of a line or cell -- whatever number the contract uses.
+_TFC_LABELLED_ROW_RE = re.compile(
+    r"(?im)(?:^|\|)[\s|:]*\d+(?:\.\d+)+(?:\s*\([a-z0-9]+\))?[\s|:]*"
+    r"time\s+for\s+completion\b"
+)
+# A key that is only a clause number (a scanned table puts the label in the
+# value cell).
+_BARE_CLAUSE_KEY_RE = re.compile(r"^[\s|:]*\d+(?:\.\d+)+(?:\s*\([a-z0-9]+\))?[\s|:]*$")
 _TFC_POINTER_RE = re.compile(
     r"(?i)(?:stated|named|identified|set\s+out|specified|defined|"
     r"described|referred\s+to)\s+in\s+(?:the\s+)?contract\s+data",
@@ -5177,22 +5233,26 @@ def _tfc_row_is_whole_works(key: str, chunk_text: str = "") -> bool:
     """Positive test: this key is the whole-Works particular, not a lookalike.
 
     A Vol-2 sentence that mentions Time for Completion and peels
-    ``within 90 days`` as a value is not clause 1.1.75.
+    ``within 90 days`` as a value is not the particulars row.
     """
     k = key or ""
     if not k or _CD_MILESTONE_CHUNK_RE.search(k) or _TFC_SECTIONAL_RE.search(k):
         return False
     if _TFC_POINTER_RE.search(k):
         return False
-    if _CD_WHOLE_WORKS_QUERY_RE.search(k) or _TFC_CLAUSE_1175_RE.search(k):
+    if _CD_WHOLE_WORKS_QUERY_RE.search(k):
         return True
+    if _BARE_CLAUSE_KEY_RE.match(k):
+        return bool(_TFC_LABELLED_ROW_RE.search(chunk_text or "")
+                    or _CD_PARTICULARS_PREFIX_RE.search(chunk_text or ""))
     if not re.search(r"(?i)time\s+for\s+completion", k):
         return False
     if len(k) > 96:
         return False
     return bool(
         _CD_PARTICULARS_PREFIX_RE.search(chunk_text or "")
-        or _TFC_CLAUSE_1175_RE.search(chunk_text or "")
+        or _TFC_LABELLED_ROW_RE.search(k)
+        or _TFC_LABELLED_ROW_RE.search(chunk_text or "")
     )
 
 
@@ -5225,7 +5285,7 @@ def _tfc_days_from_block(block: str) -> Optional[str]:
     if not blob:
         return None
     anchors = (
-        _TFC_CLAUSE_1175_RE,
+        _TFC_LABELLED_ROW_RE,
         re.compile(r"(?i)time\s+for\s+completion"),
         _CD_WHOLE_WORKS_QUERY_RE,
     )
@@ -5257,7 +5317,7 @@ def _score_tfc_candidate(days: str, context: str, *, from_particulars: bool) -> 
     score = 0
     if _CD_WHOLE_WORKS_QUERY_RE.search(ctx):
         score += 100
-    if _TFC_CLAUSE_1175_RE.search(ctx):
+    if _TFC_LABELLED_ROW_RE.search(ctx):
         score += 80
     if from_particulars or _CD_PARTICULARS_PREFIX_RE.search(ctx):
         score += 60
@@ -5378,9 +5438,9 @@ def _chunk_keeps_for_daily_damages(filename: str, text: str) -> bool:
 
 
 def _is_daily_damages_cap_noise(text: str) -> bool:
-    """True for CoC 0.015% or pointer-only 8.8 windows that crowd the cap.
+    """True for a restated milestone rate or pointer-only 8.8 windows that crowd the cap.
 
-    Daily-amount ask after #541: HIGH chunks 9–11 (pointer or 0.015% of
+    Daily-amount ask after #541: HIGH chunks 9–11 (pointer or a milestone rate of
     the filled ACA) fill ``MAX_RAG_TOKENS`` and drop the 0.0-score
     Contract Data 0.1% / excl-VAT operands. Those windows are never
     the daily-amount product — evict them once both operands are protected.
@@ -5396,7 +5456,9 @@ def _is_daily_damages_cap_noise(text: str) -> bool:
     except Exception:  # noqa: BLE001 — treat as noise-unknown, keep the row
         logger.debug("e1 cap-noise test failed; keeping the row", exc_info=True)
         return False
-    if re.search(r"0\.015\s*%", t) and _DELAY_RATE_KEY_RE.search(t):
+    # A delay-damages rate the preference above did not pick (a milestone /
+    # restated rate): it crowds the cap.
+    if _DELAY_RATE_VALUE_RE.search(t) and _DELAY_RATE_KEY_RE.search(t):
         return True
     if _DELAY_RATE_POINTER_RE.search(t) and not chunk_states_delay_damages_rate(t):
         return True
@@ -5406,9 +5468,9 @@ def _is_daily_damages_cap_noise(text: str) -> bool:
 def _has_standalone_excl_vat_aca(text: str) -> bool:
     """True for a 1.1.1 / excl-VAT money row, not a rate window that cites ACA.
 
-    Daily-amount ask after #535: CoC chunks 9–11 state 0.015% of the
+    Daily-amount ask after #535: CoC chunks 9–11 state a milestone rate of the
     filled excl-VAT ACA. ``chunk_has_real_accepted_contract_amount``
-    is True, so the all-chunk scan early-exited and compose used 0.015%.
+    is True, so the all-chunk scan early-exited and compose used a milestone rate.
     """
     try:
         from app.lib.construction_formulas_commercial import (
@@ -5425,7 +5487,7 @@ def _has_standalone_excl_vat_aca(text: str) -> bool:
 
 
 def _daily_rate_preference(text: str) -> int:
-    """Higher wins for the daily-amount rate. Contract Data 0.1% beats CoC 0.015%."""
+    """Higher wins for the daily-amount rate. Contract Data 0.1% beats a restated milestone rate."""
     t = text or ""
     if not chunk_states_delay_damages_rate(t):
         return -1
@@ -5562,7 +5624,7 @@ def chunk_states_time_for_completion(text: str) -> bool:
         return False
     if not (
         _CD_WHOLE_WORKS_QUERY_RE.search(blob)
-        or _TFC_CLAUSE_1175_RE.search(blob)
+        or _TFC_LABELLED_ROW_RE.search(t)
         or _CD_PARTICULARS_PREFIX_RE.search(t)
         or (
             _CD_HEADING_IN_CHUNK_RE.search(t)
@@ -5813,25 +5875,44 @@ def extract_time_for_completion_days(text: str) -> Optional[str]:
 
 def extract_engineer_identity(text: str) -> Optional[str]:
     """Appointed Engineer firm/name from client text, or None."""
+    return extract_party_name(text, "engineer")
+
+
+def party_role_title(role: str) -> str:
+    """"engineer's representative" -> "Engineer's Representative"."""
+    return " ".join(w[:1].upper() + w[1:] for w in (role or "").split())
+
+
+def extract_party_name(text: str, role: str) -> Optional[str]:
+    """The name the client text gives the asked party, or None.
+
+    Read from the row that names the party (see ``chunk_names_party``): a
+    filled particulars row keyed by the role, a scanned line that opens with
+    the role, or "<role> is <Name>". Never the definition of the term.
+    """
     t = _client_excerpt_text(text or "")
-    if not t:
+    if not t or not role:
         return None
+    role_rx = re.compile(rf"(?i){_role_pattern(role)}")
     for key, val in filled_particulars_rows(t):
-        if _ENGINEER_REP_RE.search(key):
-            continue
         # Live bcb5bbf: a flattened page came through as ONE 400-character
         # "key" that merely contained the word Engineer, with the table
         # header as its value -- and "Clause (as" was returned as the firm.
         # A row's key is a label; a label is short.
         if len(key) > _ENGINEER_KEY_MAX_CHARS:
             continue
-        if _ENGINEER_KEY_RE.search(key) and _looks_like_appointed_party(val):
+        if role_rx.search(key) and _looks_like_appointed_party(val):
             return re.sub(r"\s+", " ", val).strip(" \t.:;,-")
+    line_rx = re.compile(
+        r"(?im)^[ \t|:]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?[ \t|:]*)?"
+        r"(?:(?:the|name\s+of\s+the)\s+)?"
+        rf"{_role_pattern(role)}[ \t]*[:|–-]?\s*(.*)$"
+    )
     lines = t.splitlines()
     for i, line in enumerate(lines):
         if _ROUTING_HINT_VAL_RE.search(line):
             continue
-        m = _SCANNED_ENGINEER_LINE_RE.match(line)
+        m = line_rx.match(line)
         if not m:
             continue
         # The name is the first CELL after the role: drop the row's trailing
@@ -5844,7 +5925,10 @@ def extract_engineer_identity(text: str) -> Optional[str]:
                 return re.sub(r"\s+", " ", cand).strip(" \t.:;,-")
             if _looks_like_appointed_party(cand) and re.search(r"[A-Z]{3,}", cand):
                 return re.sub(r"\s+", " ", cand).strip(" \t.:;,-")
-    for m in _ENGINEER_IS_RE.finditer(_collapse_retrieval_ws(t)):
+    is_rx = re.compile(
+        rf"(?i)\b(?:the\s+|name\s+of\s+the\s+)?{_role_pattern(role)}\s*(?:is|are|:)\s+(.{{4,80}})"
+    )
+    for m in is_rx.finditer(_collapse_retrieval_ws(t)):
         cand = m.group(1)
         if _looks_like_appointed_party(cand) and (
             _PARTY_FIRM_RE.search(cand) or re.search(r"\b[A-Z]{3,}\b", cand)
@@ -5865,7 +5949,12 @@ _DNP_ASK_RE = re.compile(
     r"|(?:what\s+is\s+(?:the\s+)?)dnp\b)"
 )
 _DNP_KEY_RE = re.compile(r"(?i)defects\s+notification(?:\s+period)?")
-_DNP_CLAUSE_RE = re.compile(r"(?i)\b1\.1\.27\b")
+# The Defects Notification Period particulars ROW: a clause number in front
+# of the label -- whatever number the contract uses.
+_DNP_LABELLED_ROW_RE = re.compile(
+    r"(?im)(?:^|\|)[\s|:]*\d+(?:\.\d+)+(?:\s*\([a-z0-9]+\))?[\s|:]*"
+    r"defects\s+notification\b"
+)
 _DNP_DURATION_RE = re.compile(
     r"(?i)\b(\d{1,4})\s+(?:calendar\s+|working\s+)?"
     r"(days?|months?|years?)\b"
@@ -5921,16 +6010,13 @@ def _dnp_duration_from_text(text: str) -> Optional[str]:
     blob = _normalize_retrieval_ws(text)
     if not blob:
         return None
-    for rx in (_DNP_KEY_RE, _DNP_CLAUSE_RE):
-        for m in rx.finditer(blob):
-            window = blob[m.start(): m.end() + 140]
-            if _DNP_POINTER_RE.search(window) and not _DNP_DURATION_RE.search(window):
-                continue
-            if rx is _DNP_CLAUSE_RE and not _DNP_KEY_RE.search(window):
-                continue
-            dm = _DNP_DURATION_RE.search(window)
-            if dm:
-                return _format_dnp_duration(dm)
+    for m in _DNP_KEY_RE.finditer(blob):
+        window = blob[m.start(): m.end() + 140]
+        if _DNP_POINTER_RE.search(window) and not _DNP_DURATION_RE.search(window):
+            continue
+        dm = _DNP_DURATION_RE.search(window)
+        if dm:
+            return _format_dnp_duration(dm)
     return None
 
 
@@ -5940,7 +6026,7 @@ def chunk_states_defects_notification_period(text: str) -> bool:
     PSA / CPM table-of-contents, recitals, and document registers that
     only *name* the heading (live A6 on 82eb9c5) are lookalikes. A
     General Conditions pointer (``as stated in the Contract Data``) and
-    a glossary ``means the period…`` are not the filled 1.1.27 row.
+    a glossary ``means the period…`` are not the filled particulars row.
     """
     t = text or ""
     if not t:
@@ -5971,7 +6057,7 @@ def chunk_states_defects_notification_period(text: str) -> bool:
 def extract_defects_notification_period(text: str) -> Optional[str]:
     """DNP duration as written (e.g. ``365 days``), or None.
 
-    Prefers clause 1.1.27 / Taking-Over / Contract Data over a
+    Prefers the numbered particulars row / Taking-Over / Contract Data over a
     glossary or a TOC heading that happens to sit near a duration.
     """
     t = text or ""
@@ -5988,7 +6074,8 @@ def extract_defects_notification_period(text: str) -> Optional[str]:
         days = _format_dnp_duration(m)
         joined = f"{key} {val}"
         score = 60
-        if _DNP_CLAUSE_RE.search(joined) or _DNP_CLAUSE_RE.search(t):
+        # The row's own clause number, not one elsewhere in the blob.
+        if _DNP_LABELLED_ROW_RE.search(joined):
             score += 80
         if _CD_PARTICULARS_PREFIX_RE.search(t):
             score += 40
@@ -6010,7 +6097,7 @@ def extract_defects_notification_period(text: str) -> Optional[str]:
         if not days:
             continue
         score = 0
-        if _DNP_CLAUSE_RE.search(block):
+        if _DNP_LABELLED_ROW_RE.search(block):
             score += 80
         if _CD_PARTICULARS_PREFIX_RE.search(block):
             score += 60
@@ -6176,7 +6263,7 @@ def _doc_qualifies_for_late_aca_scan(text: str, name: str) -> bool:
 
     Daily-amount ask after #537: Cosine kept pointer-only Contract Data
     8.8 chunks 9–11. ``chunk_states_delay_damages_rate`` is false on a
-    pointer, and a truncated Sources filename (``…Vol 1.0_Con…``) misses
+    pointer, and a truncated Sources filename (``<id>_Vol N_Con…``) misses
     ``filename_looks_like_conditions_volume``. The bound volume still has
     0.1% + excl-VAT later — qualify the doc from the 8.8 pointer too.
     """
@@ -6187,10 +6274,8 @@ def _doc_qualifies_for_late_aca_scan(text: str, name: str) -> bool:
     t = text or ""
     if _DELAY_RATE_POINTER_RE.search(t):
         return True
-    return bool(
-        re.search(r"(?i)(?:sub[- ]?clause\s+)?8\.8\b", t)
-        and _DELAY_RATE_KEY_RE.search(t)
-    )
+    # A numbered delay-damages clause, whatever its number.
+    return bool(_DELAY_DAMAGES_CLAUSE_RE.search(t))
 
 
 def _late_scan_project_ids(
@@ -6264,7 +6349,7 @@ def _pool_doc_ids_for_late_aca(fused: Dict[str, Tuple]) -> List[str]:
     if doc_ids:
         return doc_ids
     # Daily-amount ask after #538: Cosine 9–11 may be OCR that fails
-    # pointer / 8.8 / filename qualify (Sources: ``Vol 1.0_Con…``).
+    # pointer / 8.8 / filename qualify (a truncated Sources name).
     # Still scan those docs — compose only keeps real operands.
     for entry in fused.values():
         chunk = _fused_chunk(entry)
@@ -6483,7 +6568,7 @@ def daily_damages_excerpts_from_loaded_cd_volume(
     9–11 that do not surface both operands, so compose returned None
     and the cost-grounding gate refused. When those rows exist later
     in the same loaded volume, return them so compose can state
-    SAR/day — do not invent a figure and do not elect CoC 0.015%.
+    SAR/day — do not invent a figure and do not elect a restated milestone rate.
     """
     pids = _late_scan_project_ids(project_id, extra_pids)
     if not (
@@ -6699,7 +6784,7 @@ def milestone_period_excerpts_from_loaded_cd_volume(
     rag_context: str = "",
     extra_pids: Optional[Iterable[str]] = None,
 ) -> str:
-    """Join Milestone N | 0.015% rows + excl-VAT ACA from the loaded volume.
+    """Join Milestone N | a milestone rate rows + excl-VAT ACA from the loaded volume.
 
     Per-milestone delay damages ask: top-k packed whole-of-Works 0.1% under "per Milestone".
     Scan for the real milestone rate rows. Kill-switch:
@@ -8549,7 +8634,7 @@ def reserve_monetary_base_row(
     """
     # Live 39d6b8d E2: "If Milestone 1 is 30 days late, what are the milestone
     # delay damages?" names no currency and says no "calculate", so it was
-    # never a monetary-base ask — yet 30 days × 0.015% of the Contract Price
+    # never a monetary-base ask — yet 30 days × a milestone rate of the Contract Price
     # is money. The sum was fetched and lifted, and still came sixth of five
     # behind copies of the rate row from every copy of the contract.
     delay_scenario = bool(
@@ -8763,7 +8848,7 @@ def reserve_daily_damages_operands(
                 changed = True
                 break
 
-    # Daily-amount ask after #535: 0.015% CoC windows already satisfy
+    # Daily-amount ask after #535: a milestone rate CoC windows already satisfy
     # chunk_states_delay_damages_rate, so the 0.1% Contract Data row
     # never replaced them. Upgrade when a better rate is in ranked.
     best_rate: Optional[Chunk] = None
@@ -9037,7 +9122,7 @@ def _apply_contract_data_particulars_boost(query: str, scored: List[Tuple[float,
             chunk_is_milestone = bool(_CD_MILESTONE_CHUNK_RE.search(text))
             if wants_whole and not wants_milestone and chunk_is_milestone:
                 # Whole-works ask: milestone rows lose the family bonus and
-                # take a penalty so the 1.1.75 whole-works row can surface.
+                # take a penalty so the whole-works row can surface.
                 delta = -_CD_SCOPE_MISMATCH_PENALTY
             elif wants_milestone and not wants_whole and not chunk_is_milestone:
                 # Milestone ask: non-milestone particulars keep their score

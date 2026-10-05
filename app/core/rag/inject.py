@@ -32,8 +32,8 @@ def _truncate_source_name(name: str) -> str:
     The tail is kept (expiry dates / revision letters live there). When
     the filename also carries a PREFIX-YEAR-SEQ contract id, that id is
     preserved at the front so a contract answer can name the cited
-    contract — tail-only truncation used to drop ``DD-2023-118`` from
-    long Infrastructure Package filenames.
+    contract — tail-only truncation used to drop the contract id from
+    long package filenames.
     """
     if not name:
         return ""
@@ -82,7 +82,7 @@ def apply_token_cap(
     After #541 the same cold New-chat still flaked: a huge 9–11 window
     that also parsed as an operand filled the leftover cap, the 0.0
     sibling was skipped, and the model either refused or elected CoC
-    0.015%. Force-keep every protected operand and evict pointer /
+    a restated milestone rate. Force-keep every protected operand and evict pointer /
     lookalike windows once both operands are in hand.
     """
     # Default sized for the CURRENT chunker output. Live failure 2026-08-15
@@ -136,7 +136,7 @@ def apply_token_cap(
     total = 0
     # Always keep the daily-amount operands — even when a single scanned page
     # exceeds the leftover cap. Refusing to inject 0.1% / excl-VAT is the
-    # daily-amount flake (refuse or CoC 0.015%). Any other ask: protected is
+    # daily-amount flake (refuse or a restated milestone rate). Any other ask: protected is
     # empty and this loop is a no-op.
     for c in protected:
         t = _estimate_tokens(c.text)
@@ -310,9 +310,9 @@ def format_chunks_as_system_message(
     # failures had one cause: nothing in the context said which excerpt was
     # the project's own record and which was reference material or a blank
     # form. A schedule-register ask quoted contract TEMPLATE wording as the
-    # contract's Schedule 10 (the project's own says "Not Used"); a delay-rate
-    # ask reproduced the FIDIC
-    # knowledge-base note instead of the project's own 0.1% at 8.8.1.
+    # contract's numbered schedule (the project's own says "Not Used"); a
+    # delay-rate ask reproduced the FIDIC knowledge-base note instead of the
+    # project's own Contract Data rate.
     #
     # Emitted only when the excerpts are actually mixed. On a single-class
     # set the rule cannot change any answer, and an instruction that never
@@ -353,7 +353,8 @@ def format_chunks_as_system_message(
         chunk_states_commencement_filled_date,
         chunk_states_commencement_not_populated,
         chunk_states_delay_damages_rate,
-        chunk_states_engineer_identity,
+        asked_party_role,
+        chunk_names_party,
         chunk_states_pcg_contract_data,
         chunk_states_pcg_filled_value,
         chunk_states_pcg_not_required,
@@ -375,7 +376,7 @@ def format_chunks_as_system_message(
         query_asks_for_parent_company_guarantee,
         query_asks_for_part_summary_total,
         query_asks_for_time_for_completion,
-        query_asks_who_the_engineer_is,
+        party_role_title,
     )
     if any(chunk_states_schedule_not_used(c.text or "") for c in chunks):
         header += (
@@ -528,11 +529,13 @@ def format_chunks_as_system_message(
     )
     _withhold = party_names_withheld()
     if query and _withhold and (
-        query_asks_who_a_party_is(query) or query_asks_who_the_engineer_is(query)
+        query_asks_who_a_party_is(query) or asked_party_role(query)
     ):
         header += WITHHELD_INSTRUCTION
-    if query and not _withhold and query_asks_who_the_engineer_is(query):
-        if any(chunk_states_engineer_identity(c.text or "") for c in chunks):
+    _party_role = asked_party_role(query) if query else ""
+    if _party_role and not _withhold:
+        if any(chunk_names_party(c.text or "", _party_role) for c in chunks):
+            _party = party_role_title(_party_role)
             header += (
                 # Deepseek-flash conflated identity with the appointment-timing
                 # excerpt ("The Engineer is 90 days of the effective date of a
@@ -540,21 +543,26 @@ def format_chunks_as_system_message(
                 # heading/word "APPOINTMENT" + "State the appointed firm" pulled
                 # the timing row. Name the answer explicitly: the FIRM, never the
                 # date/period.
-                "ENGINEER IDENTITY — an excerpt below names the Engineer (a "
-                "firm/company). State ONLY that firm's name. Do NOT state the "
+                f"{_party.upper()} IDENTITY — an excerpt below names the "
+                f"{_party} (a firm/company). State ONLY that firm's name. Do NOT state the "
                 "appointment date or period, and do NOT say the identity is "
                 "absent or answer from a Conditions of Contract glossary or "
                 "drawing note instead.\n"
             )
     if query and query_asks_for_parent_company_guarantee(query):
         _pcg_texts = [c.text or "" for c in chunks]
-        if any(chunk_states_pcg_not_required(t) for t in _pcg_texts):
+        _pcg_no = [t for t in _pcg_texts if chunk_states_pcg_not_required(t)]
+        if _pcg_no:
+            from app.core.rag.retriever import pcg_citation
+
+            # Cite the clause the stating excerpt itself prints, if any.
             header += (
                 "PARENT COMPANY GUARANTEE — an excerpt below states that a "
-                "Parent Company Guarantee is not required (Contract Data "
-                "4.3.7 = No). That IS the answer. State that it is not "
+                "Parent Company Guarantee is not required"
+                + pcg_citation(_pcg_no[0])
+                + ". That IS the answer. State that it is not "
                 "required. Do not invent a monetary or percentage value "
-                "from a Schedule 8 form, specimen, or blank guarantee "
+                "from a guarantee form, specimen, or blank guarantee "
                 "template.\n"
             )
         elif any(chunk_states_pcg_filled_value(t) for t in _pcg_texts):
@@ -562,7 +570,7 @@ def format_chunks_as_system_message(
                 "PARENT COMPANY GUARANTEE — an excerpt below states the "
                 "Parent Company Guarantee value in Contract Data. That IS "
                 "the answer. State that Contract Data figure. Do not "
-                "replace it with a Schedule 8 form percentage of paid-up "
+                "replace it with a guarantee form's percentage of paid-up "
                 "capital.\n"
             )
         elif any(chunk_states_pcg_contract_data(t) for t in _pcg_texts):
@@ -1031,7 +1039,7 @@ def rag_inject(
             identifier_miss = True
 
     # A named contract/doc id is scoped to that id's files. Token-soup
-    # identifier matching can accept a DD-2022 chunk for a DD-2023 query
+    # identifier matching can accept an earlier contract's chunk for a later id
     # (prefix + a year in a date + a clause number). Filename is authority.
     named_contracts = extract_contract_doc_ids(user_message or "")
     if named_contracts and chunks:

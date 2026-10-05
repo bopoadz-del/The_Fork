@@ -140,3 +140,40 @@ def test_a_naming_row_is_a_role_label_and_a_proper_name():
     assert chunk_names_party(REPRESENTATIVE_ROW, "engineer's representative")
     assert chunk_defines_role(EMPLOYER_DEFINITION, "employer")
     assert not chunk_defines_role(EMPLOYER_ROW, "employer")
+
+
+# ── the answer path follows the asked party, not the Engineer only ────────
+
+EMPLOYER_RAG = (
+    "[doc_id=part] " + EMPLOYER_ROW + "\n\n[doc_id=gc] " + EMPLOYER_DEFINITION
+)
+
+
+def test_the_graft_states_the_asked_party_from_its_naming_row(monkeypatch):
+    monkeypatch.setenv("RAG_WITHHOLD_PARTY_NAMES", "0")
+    from app.agents.runtime import _graft_asked_contract_particular
+
+    out = _graft_asked_contract_particular(
+        "The excerpts do not state the Employer.",
+        {"content": EMPLOYER_RAG},
+        [{"role": "user", "content": EMPLOYER_ASK}],
+    )
+    assert out.startswith("The Employer is Harbourview Port Authority Ltd."), out
+
+
+def test_the_party_name_is_read_for_any_role():
+    from app.core.rag.retriever import extract_party_name
+
+    assert extract_party_name(EMPLOYER_RAG, "employer") == "Harbourview Port Authority Ltd"
+    assert extract_party_name(ENGINEER_ROW, "engineer") == "Acme Consulting Ltd"
+    assert extract_party_name(EMPLOYER_DEFINITION, "employer") is None
+
+
+def test_inject_names_the_asked_party_in_its_hint(monkeypatch):
+    monkeypatch.setenv("RAG_WITHHOLD_PARTY_NAMES", "0")
+    from app.core.rag.inject import format_chunks_as_system_message
+
+    msg = format_chunks_as_system_message(
+        [_chunk("row", "part", 0.9, EMPLOYER_ROW)], 4, query=EMPLOYER_ASK,
+    )
+    assert "EMPLOYER IDENTITY" in msg["content"], msg["content"][:400]

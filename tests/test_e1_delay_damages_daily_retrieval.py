@@ -1958,29 +1958,33 @@ def test_e1_retrieve_ignore_all_rows_refuse_window_still_composes(monkeypatch):
     assert "263,175.67" not in posted
 
 
-LIVE_TRUNC_NAME = "DD-2023-118_DG2 Infra P1_Vol 1.0_Con..."
+LIVE_TRUNC_NAME = "AB-2031-007_Package 1_Vol 1.0_Con..."
 OCR_NOISE_9_11 = (
     "this contract class=project_corpus scanned page header "
     "drawing title block no extractable rate"
 )
 
 
-def test_truncated_vol_con_filename_qualifies_as_e1_rate_volume():
-    """Live Sources truncate to Vol 1.0_Con… — that must still qualify."""
+def test_a_truncated_volume_name_is_still_scanned_through_the_pool():
+    """A truncated Sources name ("<id>_Vol N_Con...") says nothing about the
+    document's kind, so it no longer qualifies the volume by NAME (that was
+    one corpus's naming convention). The volume is still scanned: when no
+    pooled document qualifies, the pooled documents themselves are read."""
     from app.core.rag.retriever import (
         _doc_qualifies_for_late_aca_scan,
+        _pool_doc_ids_for_late_aca,
         filename_looks_like_conditions_volume,
     )
 
-    assert filename_looks_like_conditions_volume(LIVE_TRUNC_NAME)
-    assert filename_looks_like_conditions_volume("Vol 1.0_Con...")
+    assert not filename_looks_like_conditions_volume(LIVE_TRUNC_NAME)
     assert filename_looks_like_conditions_volume(
-        "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract"
+        "AB-2031-007_Package 1_Vol 1.0_Cond of Contract"
     )
     assert not filename_looks_like_conditions_volume("Media - Progr.pdf")
-    assert _doc_qualifies_for_late_aca_scan(OCR_NOISE_9_11, LIVE_TRUNC_NAME)
     assert not _doc_qualifies_for_late_aca_scan(OCR_NOISE_9_11, "Media - Progr.pdf")
-    assert not _doc_qualifies_for_late_aca_scan(OCR_NOISE_9_11, "")
+    noise = _chunk("noise", GC_DOC, 0.9, OCR_NOISE_9_11, chunk_index=9)
+    noise.source_name = LIVE_TRUNC_NAME
+    assert _pool_doc_ids_for_late_aca({"noise": (noise, 0.9, 0.0)}) == [GC_DOC]
 
 
 def test_e1_pool_falls_back_to_fused_doc_ids_when_ocr_fails_qualify():
