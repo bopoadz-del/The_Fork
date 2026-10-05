@@ -10231,8 +10231,13 @@ def index_chunks(
     project_id: str,
     doc_id: str,
     chunks: List[str],
+    *,
+    pages: Optional[List[Optional[int]]] = None,
 ) -> int:
     """Embed ``chunks`` and write them to the store for retrieval.
+
+    ``pages`` (optional, aligned with ``chunks``) is the 1-based source page
+    each chunk starts on; None entries, or None, mean no page is known.
 
     Returns the number of chunks indexed. Returns 0 silently when the
     embedding stack isn't installed — the doc indexer treats this as
@@ -10258,7 +10263,7 @@ def index_chunks(
             project_id, name, is_user_upload=is_user_upload)
     return store.upsert_chunks(
         project_id, doc_id, chunks, embeddings,
-        knowledge_layer=knowledge_layer, authority=authority)
+        knowledge_layer=knowledge_layer, authority=authority, pages=pages)
 
 
 def _doc_name_and_provenance(doc_id: str) -> tuple:

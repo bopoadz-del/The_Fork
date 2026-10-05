@@ -4,7 +4,8 @@ A reference work (a code, a standard, a contract-form guide) belongs in the
 general-knowledge layer, not in anyone's project: the admin uploads it here, it
 is stored in the configured general-knowledge project with admin provenance
 (never ``user_upload``, which the layered RAG files under the uploader's own
-session layer), and it is indexed by the platform's own pipeline and embedder.
+session layer), and recorded as pending: the ingest task indexes it with the
+platform's own pipeline and embedder, never the live web process.
 
 Synthetic file names and text only.
 """
@@ -29,6 +30,8 @@ def client(monkeypatch):
     indexed = []
     monkeypatch.setattr("app.core.doc_index.maybe_eager_index",
                         lambda pid, did: indexed.append((pid, did)))
+    monkeypatch.setattr("app.core.doc_index.index_document",
+                        lambda pid, did, *a, **k: indexed.append((pid, did)))
     with TestClient(app) as c:
         c.indexed = indexed
         yield c
@@ -54,7 +57,11 @@ def test_admin_upload_lands_in_general_knowledge_with_admin_provenance(client):
     assert doc["project_id"] == GK
     row = store.get_document(doc["id"])
     assert (row.get("metadata") or {}).get("provenance") == "admin_knowledge"
-    assert (GK, doc["id"]) in client.indexed
+    # Stored and pending; extraction is the ingest task's job, not this request's.
+    assert r.json()["status"] == "pending"
+    assert (row.get("metadata") or {}).get("indexing", {}).get("status") == "pending"
+    assert row["ingest_status"] == "UNVERIFIED"
+    assert client.indexed == []
 
 
 def test_same_content_twice_is_one_document(client):

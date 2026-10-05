@@ -219,6 +219,7 @@ CREATE TABLE chunks (
     created_at  TEXT NOT NULL,
     knowledge_layer TEXT,
     authority       TEXT,
+    page            INTEGER,
     UNIQUE (project_id, doc_id, chunk_index)
 );
 

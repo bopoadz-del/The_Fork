@@ -772,6 +772,28 @@ def run_under_supervisor(args: argparse.Namespace, argv: List[str] | None = None
     )
 
 
+def run_knowledge_phase(*, dry_run: bool, shard_index: int = 0) -> Dict[str, int]:
+    """Index pending admin-knowledge documents; return their tally.
+
+    Idempotent: only rows still pending are touched, so a run after a
+    complete one indexes nothing and writes nothing. Shards other than 0
+    skip the phase. A failure here is logged and counted, never fatal to the
+    Drive phase that follows.
+    """
+    tally = {"pending": 0, "indexed": 0, "failed": 0}
+    if shard_index != 0:
+        return tally
+    try:
+        from app.core.knowledge_ingest import process_pending_knowledge_documents
+
+        tally.update(process_pending_knowledge_documents(dry_run=dry_run, log=log))
+    except Exception as exc:  # noqa: BLE001 — the Drive phase still runs
+        log(f"ERROR: knowledge phase failed: {type(exc).__name__}: {exc}")
+        tally["failed"] += 1
+    log("KNOWLEDGESUMMARY " + json.dumps(tally, sort_keys=True, separators=(",", ":")))
+    return tally
+
+
 def main() -> int:
     from app.core import ingest_lifecycle as lifecycle
     from app.core import ingest_sharding as sharding
@@ -796,13 +818,18 @@ def main() -> int:
     from app.core import gdrive_service, projects as projects_mod
     from app.core.rag import embeddings as _emb, vector_store as _vs
 
-    if not gdrive_service.is_configured():
-        log("ERROR: GDRIVE_SERVICE_ACCOUNT_JSON is not set.")
-        return 1
-
     if not dry_run:
         _emb.reset_embedder_cache()
         _vs.reset_store_cache()
+
+    # Admin-added reference works first. They need no Drive, so this phase
+    # runs whether or not Drive is configured; one shard does it, so
+    # concurrent shards never index the same book twice.
+    knowledge_tally = run_knowledge_phase(dry_run=dry_run, shard_index=shard_index)
+
+    if not gdrive_service.is_configured():
+        log("ERROR: GDRIVE_SERVICE_ACCOUNT_JSON is not set.")
+        return 1
 
     data_dir = Path(os.getenv("DATA_DIR", "./data"))
     if not dry_run:
@@ -901,6 +928,11 @@ def main() -> int:
         "stale_extractor_open": 0,
         "retried": 0,
         "now_indexed": 0,
+        # Pending admin-knowledge documents this run found / indexed / could
+        # not index (run_knowledge_phase). A second run finds none pending.
+        "knowledge_pending": knowledge_tally["pending"],
+        "knowledge_indexed": knowledge_tally["indexed"],
+        "knowledge_failed": knowledge_tally["failed"],
     }
     folder_accounting: List[Dict[str, Any]] = []
     walk_error_messages: List[str] = []

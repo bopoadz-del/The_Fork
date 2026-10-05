@@ -117,22 +117,24 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # (0018); the same handlers, only the line numbers moved. No new silent
     # returns.
     "app/core/doc_index.py:194": "baseline 2026-09-10",
-    "app/core/doc_index.py:289": "baseline 2026-09-10",
-    "app/core/doc_index.py:305": "baseline 2026-09-10",
-    "app/core/doc_index.py:396": "baseline 2026-09-10",
-    "app/core/doc_index.py:405": "baseline 2026-09-10",
+    # Re-indexed 2026-10-05: whole-document config and page offsets shifted
+    # the doc_index / vector_store entries below. Same handlers; no new ones.
+    "app/core/doc_index.py:333": "baseline 2026-09-10",
+    "app/core/doc_index.py:349": "baseline 2026-09-10",
+    "app/core/doc_index.py:440": "baseline 2026-09-10",
+    "app/core/doc_index.py:449": "baseline 2026-09-10",
     # Re-indexed 2026-09-28: quarantine head probe above _extract_pdf
     # and the Office gate shifted these same handlers. No new silent returns.
-    "app/core/doc_index.py:999": "baseline 2026-09-10",
-    "app/core/doc_index.py:1021": "baseline 2026-09-10",
-    "app/core/doc_index.py:1110": "baseline 2026-09-10",
+    "app/core/doc_index.py:1078": "baseline 2026-09-10",
+    "app/core/doc_index.py:1100": "baseline 2026-09-10",
+    "app/core/doc_index.py:1189": "baseline 2026-09-10",
     # Re-indexed 2026-09-28: drawing wiring plaintext open added 5 lines
     # above this handler. Same handler. No new silent return.
     # Shifted again the same day: the recoverable-skip helper sits above
     # _ifc_step_census_chunk. Same empty return. No new silent return.
-    "app/core/doc_index.py:2717": "baseline 2026-09-10",
+    "app/core/doc_index.py:2890": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:333": "baseline 2026-09-10",
-    "app/core/rag/vector_store.py:1816": "baseline 2026-09-10",
+    "app/core/rag/vector_store.py:1859": "baseline 2026-09-10",
     "app/infra/monitoring.py:324": "baseline 2026-09-10",
     "app/lib/boq_excel.py:188": "baseline 2026-09-10",
     "app/lib/boq_pricing.py:128": "baseline 2026-09-10",
