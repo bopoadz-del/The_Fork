@@ -7,5 +7,5 @@
 #   pip install -r requirements-posture.txt
 #
 # The Store block sha is separate and lives in locks/store_pins.lock.json.
-# scripts/bump_store_pin.py is the only writer of that sha.
+# It stays null until scripts/bump_store_pin.py records a certified sha.
 cerebrum-slm @ git+https://github.com/bopoadz-del/cerebrum-slm.git@4e167a7

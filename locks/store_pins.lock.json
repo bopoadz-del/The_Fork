@@ -3,8 +3,8 @@
   "blocks": {
     "posture_model": {
       "store_block_id": "posture_model",
-      "store_sha": "a839c8e513765750dffa068d1dd161f5474d3bca",
-      "status": "pinned",
+      "store_sha": null,
+      "status": "awaiting_store_certification",
       "client": {
         "distribution": "cerebrum-slm",
         "git_sha": "4e167a7",

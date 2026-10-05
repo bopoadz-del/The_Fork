@@ -1,4 +1,4 @@
-"""Store pin lock: posture_model is pinned; retrieval_core is absent."""
+"""Store pin lock: posture_model is bump-ready; retrieval_core is absent."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 REQ = ROOT / "requirements-posture.txt"
 
 
-def test_lock_pins_signed_posture_store_sha():
+def test_lock_pins_posture_client_and_leaves_store_sha_open():
     pin = posture_client_pin()
     assert pin["store_block_id"] == "posture_model"
-    assert pin["store_sha"] == "a839c8e513765750dffa068d1dd161f5474d3bca"
-    assert pin["status"] == "pinned"
+    assert pin["store_sha"] is None
+    assert pin["status"] == "awaiting_store_certification"
     assert pin["distribution"] == "cerebrum-slm"
     assert pin["git_sha"] == "4e167a7"
     assert pin["import_root"] == "src/posture_model"
@@ -67,6 +67,4 @@ def test_bump_refuses_unknown_and_retrieval_core(tmp_path: Path):
     with pytest.raises(SystemExit):
         bump("posture_model", "not-a-sha", path)
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["blocks"]["posture_model"]["store_sha"] == (
-        "a839c8e513765750dffa068d1dd161f5474d3bca"
-    )
+    assert saved["blocks"]["posture_model"]["store_sha"] is None
