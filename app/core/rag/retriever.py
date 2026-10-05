@@ -568,9 +568,6 @@ class _ContractScope:
         # page total when it is in the pool.
         self._part_summary_refs: List[str] = []
         self._part_summary_in_pool = False
-        # Specification precedence list: Sub-Clause 1.5.1(d) intro ends "as follows";
-        # the precedence list is the next same-doc chunk.
-        self._spec_precedence_list_in_pool = False
         docs: Optional[List[Tuple[str, str]]] = (
             list(ranked_docs) if ranked_docs is not None else None
         )
@@ -713,12 +710,6 @@ class _ContractScope:
                         )
                         for _n, text in docs
                     )
-            if (
-                query_asks_for_spec_precedence_list(self.query)
-            ):
-                self._spec_precedence_list_in_pool = any(
-                    chunk_states_spec_precedence_list(text) for _n, text in docs
-                )
         if not self.named and docs is not None:
             self.winning = elect_answer_bearing_contract(self.query, docs)
 
@@ -746,9 +737,6 @@ class _ContractScope:
             if not chunk_states_part_summary_total(
                 chunk_text, self._part_summary_refs,
             ):
-                return False
-        if self._spec_precedence_list_in_pool:
-            if not chunk_states_spec_precedence_list(chunk_text):
                 return False
         if not self.named:
             if self._delay_rate_in_pool:
@@ -8505,191 +8493,127 @@ def _rescue_rate_only_item_chunks(
     return recovered
 
 
-# ── Spec-precedence list neighbor (live OLD-pack C1) ──────────────────────
+# ── list continuation ─────────────────────────────────────────────────────
 #
-# Live Master Corpus C1 (tip 8f4b465): "Answer only from the client
-# project documents. Under Sub-Clause 1.5.1(d), what is the order of
-# precedence of documents within the Specification? List the first
-# three." retrieved DD-2023-118 Vol 2 chunk_index 2, which ends at
-# "the Specification shall be set out as follows". The list — Post
-# Tender Clarifications / Tender Addenda / Schedule of Project
-# Requirements — is the next same-doc chunk (index 3). Cosine + term
-# rescue treated the open-list intro as already-grounded.
+# A clause that introduces a list ("... shall be set out as follows:", "the
+# following documents:") is often split from its list by the chunker: chunk N
+# ends on the introduction, chunk N+1 opens with the items. Retrieval ranks the
+# introduction -- it carries the question's words -- and the items, which
+# carry none of them, never enter the pool. The answer then stops at "as
+# follows".
 #
-# When a hit is that intro, fetch the next same-doc chunk and elect
-# the list. Do not invent a signatory (D1).
-#
-# Not #501 (year lock), not #516/#520 (ACA VAT), not #517 (TfC
-# 852), not #502 (SPE-identity), not #506 (schedule register), not #507 (Rate Only).
-_SPEC_PRECEDENCE_LIST_BONUS = 2.0
-_SPEC_PRECEDENCE_ASK_RE = re.compile(
-    r"(?i)(?:1\.5\.1\s*\(\s*d\s*\)"
-    r"|order\s+of\s+precedence.{0,80}specification"
-    r"|specification.{0,80}order\s+of\s+precedence"
-    r"|documents\s+within\s+the\s+specification)"
+# The fix reads the split from the chunks themselves: when a chunk in the
+# provisional top-k ends on an open introduction and shares the question's
+# terms, the next chunk of the same document is fetched; if it opens with a
+# run of list items, it is the rest of that clause and is pooled with the
+# list-continuation bonus, ahead of the introduction.
+_LIST_CONTINUATION_BONUS = 2.0
+_LIST_CONTINUATION_MIN_TERMS = 2
+_LIST_CONTINUATION_MIN_ITEMS = 2
+_LIST_CONTINUATION_ITEM_CHARS = 90
+# The introduction ends the chunk: "as follows", "the following", "listed
+# below", optionally with a colon or full stop.
+_OPEN_LIST_TAIL_RE = re.compile(
+    r"(?i)(?:as\s+follows|the\s+following(?:\s+\w+){0,3}|"
+    r"(?:listed|set\s+out|given|shown)\s+below|in\s+the\s+following\s+order)"
+    r"\s*[:.\-–—]?\s*$"
 )
-_AS_FOLLOWS_TAIL_RE = re.compile(r"(?i)as\s+follows\s*[:.]?\s*$")
-_SPEC_PRECEDENCE_INTRO_RE = re.compile(
-    r"(?i)(?:1\.5\.1\s*\(\s*d\s*\)"
-    r"|specification\s+shall\s+be\s+set\s+out"
-    r"|order\s+of\s+precedence"
-    r"|within\s+the\s+specification)"
+_LIST_MARKER_RE = re.compile(
+    r"^\s*(?:[-•*·▪]|\(?[a-z0-9ivx]{1,4}[.)]|\d+(?:\.\d+)*\.?)\s+", re.IGNORECASE,
 )
-_POST_TENDER_CLARIFICATIONS_RE = re.compile(r"(?i)post\s+tender\s+clarifications")
-_TENDER_ADDENDA_RE = re.compile(r"(?i)tender\s+addenda")
-_SOPR_RE = re.compile(r"(?i)schedule\s+of\s+project\s+requirements")
-_SPEC_PRECEDENCE_LIST_NEEDLES = (
-    "Post Tender Clarifications",
-    "Tender Addenda",
-    "Schedule of Project Requirements",
-)
-
-
-def query_asks_for_spec_precedence_list(query: str) -> bool:
-    """True for Sub-Clause 1.5.1(d) / Specification precedence.
-
-    ACA VAT, Time for Completion, delay-damages, DNP,
-    Engineer, and titled-spec asks stay off this path.
-    """
-    return bool(_SPEC_PRECEDENCE_ASK_RE.search(query or ""))
 
 
 def chunk_is_open_list_intro(text: str) -> bool:
-    """True when the excerpt opens a list and then stops.
+    """True when the chunk ends on a clause that introduces a list.
 
-    Live C1: chunk_index 2 ends at ``as follows`` under 1.5.1(d) /
-    ``the Specification shall be set out``.
+    "The design review procedure is as follows" is an introduction too, so
+    callers also require the introduction to share the question's terms.
+    A chunk that goes on to give its items is not open.
     """
     blob = (text or "").strip()
-    if not blob or not _AS_FOLLOWS_TAIL_RE.search(blob):
-        return False
-    return bool(_SPEC_PRECEDENCE_INTRO_RE.search(blob))
+    return bool(blob) and bool(_OPEN_LIST_TAIL_RE.search(blob))
 
 
-def chunk_states_spec_precedence_list(text: str) -> bool:
-    """True when the excerpt names the first three precedence items."""
-    blob = text or ""
-    return bool(
-        _POST_TENDER_CLARIFICATIONS_RE.search(blob)
-        and _TENDER_ADDENDA_RE.search(blob)
-        and _SOPR_RE.search(blob)
-    )
+def _list_items(text: str) -> List[str]:
+    """The leading run of list items in ``text`` (lines or ``;`` cells)."""
+    blob = (text or "").strip()
+    lines = [ln.strip() for ln in blob.splitlines() if ln.strip()]
+    if len(lines) < _LIST_CONTINUATION_MIN_ITEMS and ";" in blob:
+        lines = [part.strip() for part in blob.split(";") if part.strip()]
+    items: List[str] = []
+    for line in lines:
+        item = _LIST_MARKER_RE.sub("", line)
+        if not item or len(item) > _LIST_CONTINUATION_ITEM_CHARS:
+            break
+        # A list item names a thing; a sentence of prose ends with a stop and
+        # runs on.
+        if item.endswith(".") and len(item.split()) > 8:
+            break
+        items.append(item)
+    return items
 
 
-def _apply_spec_precedence_list_boost(
-    query: str,
-    scored: List[Tuple[float, Chunk]],
-) -> None:
-    """In-place: lift the Specification precedence list over the intro."""
-    if not query_asks_for_spec_precedence_list(query):
-        return
-    for i, (score, chunk) in enumerate(scored):
-        if not chunk_states_spec_precedence_list(chunk.text or ""):
-            continue
-        boosted = score + _SPEC_PRECEDENCE_LIST_BONUS
-        chunk.score = round(boosted, 6)
-        scored[i] = (boosted, chunk)
+def chunk_opens_with_list(text: str) -> bool:
+    """True when the chunk opens with a run of short list items."""
+    return len(_list_items(text)) >= _LIST_CONTINUATION_MIN_ITEMS
 
 
-def _rescue_spec_precedence_list_neighbors(
+def recall_list_continuations(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
-    extra_pids: Optional[List[str]] = None,
+    *,
+    k: int = 5,
 ) -> int:
-    """Pull the list chunk that follows an open-list intro into ``fused``.
+    """Pool the chunk that carries the list an in-pool introduction opens.
 
-    Primary path: same-doc neighbor of an in-pool ``as follows`` intro
-    (live C1: chunk 2 → chunk 3). Backup: ``chunks_containing_all`` on
-    the three expected strings if the intro itself missed the pool.
-    Failures never raise. GK notes are not searched.
+    Project corpus only. Returns the number of chunks added or lifted.
+    Failures leave the pool standing.
     """
-    if not query_asks_for_spec_precedence_list(query):
-        return 0
-
-    recovered = 0
     follow = getattr(store, "chunks_following", None)
-    if callable(follow):
-        anchors: List[Tuple[str, int]] = []
-        seen_anchors: Set[Tuple[str, int]] = set()
-        for chunk, _sem, _b in fused.values():
-            if chunk.project_id and chunk.project_id != project_id:
-                continue
-            if not chunk_is_open_list_intro(chunk.text or ""):
-                continue
-            if chunk_states_spec_precedence_list(chunk.text or ""):
-                continue
-            key = (chunk.doc_id, int(chunk.chunk_index or 0))
-            if not key[0] or key in seen_anchors:
-                continue
-            seen_anchors.add(key)
-            anchors.append(key)
-        if anchors:
-            try:
-                extra = follow(project_id, anchors, n=1)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "spec-precedence neighbor fetch for %s failed: %s",
-                    project_id, exc,
-                )
-                extra = []
-            by_key = {(c.doc_id, int(c.chunk_index or 0)): c for c in extra}
-            for doc_id, idx in anchors:
-                nxt = by_key.get((doc_id, idx + 1))
-                if nxt is None:
-                    continue
-                if nxt.chunk_id in fused:
-                    continue
-                if not chunk_states_spec_precedence_list(nxt.text or ""):
-                    continue
-                fused[nxt.chunk_id] = (
-                    nxt, 0.0, _SPEC_PRECEDENCE_LIST_BONUS,
-                )
-                recovered += 1
-
-    if any(
-        chunk_states_spec_precedence_list(c.text or "")
-        for c, _sem, _b in fused.values()
-    ):
-        if recovered:
-            logger.info(
-                "spec-precedence list rescue recovered %d neighbor chunk(s)",
-                recovered,
-            )
-        return recovered
-
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return recovered
-    pids = [project_id] + [
-        p for p in (extra_pids or []) if p and p != project_id
-    ]
-    needles = list(_SPEC_PRECEDENCE_LIST_NEEDLES)
-    for pid in pids:
-        try:
-            hits = fetch(pid, needles, k=20)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "spec-precedence list rescue for %s failed: %s", pid, exc,
-            )
+    if not callable(follow):
+        return 0
+    terms = [stem_query_term(t) for t in distinctive_query_terms(query)]
+    if len(terms) < _LIST_CONTINUATION_MIN_TERMS:
+        return 0
+    ranked = sorted(fused.values(), key=lambda e: -((e[1] or 0.0) + (e[2] or 0.0)))
+    anchors: List[Tuple[str, int]] = []
+    for chunk, _sem, _bonus in ranked[:max(k, 1)]:
+        if chunk.project_id and chunk.project_id != project_id:
             continue
-        for chunk in hits:
-            if not chunk_states_spec_precedence_list(chunk.text or ""):
+        text = chunk.text or ""
+        if not chunk_is_open_list_intro(text):
+            continue
+        low = text.lower()
+        if sum(1 for t in terms if t in low) < _LIST_CONTINUATION_MIN_TERMS:
+            continue
+        key = (chunk.doc_id, int(chunk.chunk_index or 0))
+        if key[0] and key not in anchors:
+            anchors.append(key)
+    if not anchors:
+        return 0
+    try:
+        following = follow(project_id, anchors, n=1) or []
+    except Exception as exc:  # noqa: BLE001 — recall must not break the turn
+        logger.warning("list-continuation fetch for %s failed: %s", project_id, exc)
+        return 0
+    by_key = {(c.doc_id, int(c.chunk_index or 0)): c for c in following}
+    recovered = 0
+    for doc_id, idx in anchors:
+        nxt = by_key.get((doc_id, idx + 1))
+        if nxt is None or not chunk_opens_with_list(nxt.text or ""):
+            continue
+        prev = fused.get(nxt.chunk_id)
+        if prev is not None:
+            if (prev[2] or 0.0) >= _LIST_CONTINUATION_BONUS:
                 continue
-            if chunk.chunk_id in fused:
-                continue
-            fused[chunk.chunk_id] = (
-                chunk, 0.0, _SPEC_PRECEDENCE_LIST_BONUS,
-            )
-            recovered += 1
-        if recovered:
-            break
+            fused[nxt.chunk_id] = (prev[0], prev[1], _LIST_CONTINUATION_BONUS)
+        else:
+            fused[nxt.chunk_id] = (nxt, 0.0, _LIST_CONTINUATION_BONUS)
+        recovered += 1
     if recovered:
-        logger.info(
-            "spec-precedence list rescue recovered %d chunk(s)",
-            recovered,
-        )
+        logger.info("list-continuation recall pooled %d chunk(s)", recovered)
     return recovered
 
 
@@ -9567,9 +9491,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _pool_page_total_rows(
         query, project_id, fused_lex, store,
     )
-    _rescue_spec_precedence_list_neighbors(
-        query, project_id, fused_lex, store,
-    )
+    recall_list_continuations(query, project_id, fused_lex, store, k=k)
     if len(fused_lex) > len(candidates):
         seen = {c.chunk_id for c in candidates}
         for chunk, _sem, _b in fused_lex.values():
@@ -9598,7 +9520,6 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _apply_rate_only_boost(query, scored_lex)
     _apply_priced_boq_boost(query, scored_lex)
     _apply_part_summary_boost(query, scored_lex)
-    _apply_spec_precedence_list_boost(query, scored_lex)
     candidates = [chunk for _s, chunk in scored_lex]
 
     # Stable sort keeps the active project ahead of GK on equal scores.
@@ -10187,10 +10108,10 @@ def retrieve_with_filter(
     # D110 / D290.1 line items. Project-only so a GK rate note cannot
     # impersonate the client's page total.
     _pool_page_total_rows(query, project_id, fused, store)
-    # C1: Sub-Clause 1.5.1(d) intro ends "as follows"; the precedence
-    # list is the next same-doc chunk. Project-only so a FIDIC note
-    # cannot impersonate the client's Specification order.
-    _rescue_spec_precedence_list_neighbors(query, project_id, fused, store)
+    # List continuation: an in-pool introduction that ends "as follows";
+    # the items are the next same-doc chunk. Project-only so a reference
+    # note cannot impersonate the client's list.
+    recall_list_continuations(query, project_id, fused, store, k=k)
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
@@ -10322,7 +10243,6 @@ def retrieve_with_filter(
     _apply_rate_only_boost(query, scored)
     _apply_priced_boq_boost(query, scored)
     _apply_part_summary_boost(query, scored)
-    _apply_spec_precedence_list_boost(query, scored)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
