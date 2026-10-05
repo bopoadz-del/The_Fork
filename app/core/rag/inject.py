@@ -933,34 +933,22 @@ def _emit_retrieval_trace(
         _LOG.warning("retrieval trace line failed", exc_info=True)
 
 
-# CYCLE2 S1: a specification-scoped cover ask needs the specification's
-# own clause (it defers the cover to the drawings) AND the drawing notes it
-# points to, one per condition. Live on 0b1d13a three of the five slots went
-# to footing-cover chunks repeating the 100 mm figure, so the 75 mm
-# soil-contact note had no slot even once pooled. Two extra slots for this
-# ask only; every other question keeps RAG_K.
-_SPEC_DEFERRED_COVER_EXTRA_K = 2
-# Illumination level ask: the illumination-table rescue pools the work-activity table (live
-# admitted=4), but the pooled chunks lose the top-k cut — HSE-plan chunks hold
-# the default 5 slots and the table pools at a lower cosine, so the model still
-# refuses. Extra slots for this ask only, exactly like the spec-deferred cover
-# ask.
-_ILLUMINATION_EXTRA_K = 2
+# A measured-quantity question that names its governing source ("per the
+# project specification, what minimum cover ...") is often answered in two
+# places: the source's own clause (which may only point elsewhere) and the
+# document it points to, sometimes one figure per condition. Figure-stating
+# chunks for neighbouring conditions crowd the default slots, so this
+# question shape gets two more; every other question keeps RAG_K.
+_SOURCE_SCOPED_QUANTITY_EXTRA_SLOTS = 2
 
 
 def rag_retrieval_k(user_message: str, requested_k: int) -> int:
     """How many chunks pre-injection retrieval asks for on this turn."""
     msg = user_message or ""
-    from app.core.rag.retriever import (
-        query_asks_illumination_level,
-        query_asks_spec_deferred_cover,
-    )
-    cover_extra = _SPEC_DEFERRED_COVER_EXTRA_K
-    if cover_extra > 0 and query_asks_spec_deferred_cover(msg):
-        return requested_k + cover_extra
-    illum_extra = _ILLUMINATION_EXTRA_K
-    if illum_extra > 0 and query_asks_illumination_level(msg):
-        return requested_k + illum_extra
+    from app.core.rag.retriever import query_asks_source_scoped_quantity
+
+    if query_asks_source_scoped_quantity(msg):
+        return requested_k + _SOURCE_SCOPED_QUANTITY_EXTRA_SLOTS
     return requested_k
 
 

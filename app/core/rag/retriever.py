@@ -1222,145 +1222,6 @@ def cooccurrence_pair_phrases(terms: List[str]) -> List[str]:
     return [" ".join(pair) for pair in itertools.combinations(stems, 2)]
 
 
-# ── foundation-backfill degree ─────────────────────────────────────────
-#
-# A foundation backfill compaction degree ask: "Per the project specification, to what degree must
-# structural backfill under foundations be compacted, and by which test?"
-# The specification states 98% of maximum dry density, Modified Proctor,
-# near-optimum moisture. Retrieval returned duct backfilling (50 mm sand,
-# BS 1377 Part 9) and the MOT embankment test instead.
-#
-# Term rescue did not correct it. The rescue stands down once ANY pair of
-# query stems co-occurs in the top-k, and "compact" + "backfill" co-occur
-# in the duct chunk. The degree clause, outside that pool, is never fetched.
-# On 7c0b255 the tool path also searches the operator's words, so that
-# distractor list is merged into every run and crowds out a model query
-# that had reached the clause.
-#
-# This rescue asks a narrower question: does the top-k already state a
-# backfill compaction degree (a percent of MDD, or Modified Proctor /
-# ASTM D1557)? Generic "properly compacted" does not count. When it does
-# not, chunks that do state the degree are fetched and lifted. Nothing is
-# invented when the corpus has no such chunk. A degree clause already in
-# the top-k is left alone, score included.
-#
-# Below IDENTIFIER_BONUS_MAX so an exact reference code still outranks it.
-_FOUNDATION_BACKFILL_ASK_RE = re.compile(
-    r"(?i)\bstructural\s+backfill\b"
-    r"|\bbackfill\b(?:\s+\w+){0,5}\s+(?:under|beneath)\s+foundations?\b",
-)
-_FOUNDATION_BACKFILL_TOPIC_RE = re.compile(
-    r"(?i)\b(?:compact\w*|degree|proctor|density|mdd|test)\b",
-)
-_BACKFILL_WORD_RE = re.compile(r"(?i)\bbackfill")
-_BACKFILL_DEGREE_RE = re.compile(
-    r"(?i)(?:"
-    r"\b\d+(?:\.\d+)?\s*(?:%|percent\b)"
-    r"(?:\s+of)?(?:\s+the)?\s+(?:maximum\s+dry\s+density|\bmdd\b)"
-    r"|modified\s+proctor"
-    r"|astm\s*d\s*1557"
-    r")",
-)
-_STRUCTURAL_BACKFILL_RE = re.compile(
-    r"(?i)\bstructural\s+backfill\b"
-    r"|\bbackfill\s+(?:under|beneath)\s+foundations?\b"
-    r"|\bfoundation\s+backfill\b",
-)
-# AND-matched by identifier_search. Kept specific so a concrete clause that
-# merely says "maximum dry density" is not the whole candidate list.
-_FOUNDATION_BACKFILL_PHRASES = (
-    "structural backfill",
-    "foundation backfill",
-    "backfill modified proctor",
-    "backfill maximum dry density",
-    "backfill mdd",
-)
-_FOUNDATION_BACKFILL_DEGREE_BONUS = 1.15
-_FOUNDATION_BACKFILL_STRUCTURAL_EXTRA = 0.25
-
-
-def query_asks_foundation_backfill_degree(query: str) -> bool:
-    """True when the question asks how structural / foundation backfill is compacted."""
-    text = query or ""
-    return bool(
-        _FOUNDATION_BACKFILL_ASK_RE.search(text)
-        and _FOUNDATION_BACKFILL_TOPIC_RE.search(text)
-    )
-
-
-def chunk_states_backfill_compaction_degree(text: str) -> bool:
-    """True when ``text`` states a backfill compaction degree or Proctor test.
-
-    Duct sand cover, "properly compacted", and BS 1377 / MOT method lines
-    do not. They name neither a percent of maximum dry density nor
-    Modified Proctor.
-    """
-    body = text or ""
-    return bool(_BACKFILL_WORD_RE.search(body) and _BACKFILL_DEGREE_RE.search(body))
-
-
-def foundation_backfill_degree_bonus(text: str) -> float:
-    """Lift for a chunk that states the degree. 0 when it does not.
-
-    A chunk that also says the backfill is structural or under foundations
-    ranks above a generic backfill-density sentence.
-    """
-    if not chunk_states_backfill_compaction_degree(text):
-        return 0.0
-    bonus = _FOUNDATION_BACKFILL_DEGREE_BONUS
-    if _STRUCTURAL_BACKFILL_RE.search(text or ""):
-        bonus += _FOUNDATION_BACKFILL_STRUCTURAL_EXTRA
-    return bonus
-
-
-def _rescue_foundation_backfill_degree(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    k: int,
-) -> None:
-    """Pull the backfill degree clause into ``fused`` when the top-k lacks it.
-
-    Project corpus only: a general-knowledge note must not supply a figure
-    the project's specification does not. Failures leave the semantic pool
-    standing.
-    """
-    if not query_asks_foundation_backfill_degree(query):
-        return
-    ranked = sorted(
-        fused.values(), key=lambda entry: -((entry[1] or 0.0) + (entry[2] or 0.0)),
-    )
-    if any(
-        chunk_states_backfill_compaction_degree(chunk.text or "")
-        for chunk, _sem, _bonus in ranked[: max(k, 1)]
-    ):
-        return
-
-    def _lift(chunk_id: str, chunk, sem: float, bonus: float) -> None:
-        add = foundation_backfill_degree_bonus(chunk.text or "")
-        if add <= 0.0:
-            return
-        fused[chunk_id] = (chunk, sem, max(bonus, add))
-
-    for chunk_id, (chunk, sem, bonus) in list(fused.items()):
-        _lift(chunk_id, chunk, sem, bonus)
-
-    try:
-        hits = store.identifier_search(
-            project_id, list(_FOUNDATION_BACKFILL_PHRASES), k=max(k * 8, 40),
-        )
-    except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-        logger.warning("foundation-backfill degree rescue failed: %s", exc)
-        return
-    for chunk in hits or []:
-        prev = fused.get(chunk.chunk_id)
-        if prev is None:
-            _lift(chunk.chunk_id, chunk, 0.0, 0.0)
-        else:
-            _lift(chunk.chunk_id, prev[0], prev[1], prev[2])
-
-
 # ── letter / named-party filename rescue (live D1) ──────────────────────────
 #
 # Live Master Corpus D1 (SHA 567147a): "who signed the UBCC Concrete
@@ -1577,15 +1438,23 @@ _COVER_ASK_RE = re.compile(
 _COMPACTION_ASK_RE = re.compile(
     r"(?i)\b(?:compact\w*|sub-?grades?|cbr|dry\s+density)\b"
 )
+# Illuminance: lux / lx, or a foot-candle column. "lighting design" or a
+# "light fitting" is not an asked level; an illumination / lux / lighting
+# level is.
+_ILLUMINANCE_ASK_RE = re.compile(
+    r"(?i)\b(?:illuminat\w*|illuminance|lux|lighting\s+levels?|"
+    r"light(?:ing)?\s+intensit\w*|foot[-\s]*candles?)\b"
+)
+# A lux figure: "50 lux", "300lx", or a table whose header carries a lux /
+# foot-candle column and whose rows carry numeric cells.
+_LUX_FIGURE_RE = re.compile(r"(?i)\b\d+(?:\.\d+)?\s*(?:lux|lx)\b")
+_LUX_COLUMN_RE = re.compile(r"(?i)\|[^|\n]{0,40}\b(?:lux|lx|foot[-\s]*candles?)\b[^|\n]{0,20}\|")
+_NUMERIC_CELL_RE = re.compile(r"\|\s*\d+(?:\.\d+)?\s*(?=\|)")
 _COVER_WORD_RE = re.compile(r"(?i)\bcovers?\b")
 _MM_FIGURE_RE = re.compile(r"(?i)\b\d+(?:\.\d+)?\s*mm\b")
 # A cover *length* is a millimetre next to the cover phrase. "200 mm"
 # bollard bands and "600 mm" floor panels in the same chunk as the word
 # "cover" are not that length. Window covers "nominal cover should be 50mm".
-_COVER_PHRASE_RE = re.compile(
-    r"(?i)(?:nominal\s+cover|concrete\s+cover|"
-    r"cover\s+to\s+(?:the\s+)?reinforcement)"
-)
 _COVER_PHRASE_WINDOW = 64
 # Filename lift kept when a specification chunk actually states the asked
 # figure. Otherwise the +1.2 class bonus is capped so it cannot stack on
@@ -1632,6 +1501,8 @@ def asked_quantity_kinds(query: str) -> frozenset:
         kinds.add("length_mm")
     if _COMPACTION_ASK_RE.search(text):
         kinds.add("compaction")
+    if _ILLUMINANCE_ASK_RE.search(text):
+        kinds.add("illuminance")
     return frozenset(kinds)
 
 
@@ -1653,6 +1524,8 @@ def numeric_requirement_expansion(query: str) -> str:
         parts.append(
             "compacted sub-grade subgrade embankment maximum dry density CBR percent"
         )
+    if "illuminance" in kinds:
+        parts.append("illumination lux lighting level foot candle")
     return " ".join(parts)
 
 
@@ -1660,18 +1533,6 @@ def _spans_within(text: str, left: re.Pattern, right: re.Pattern, window: int) -
     a = [m.start() for m in left.finditer(text or "")]
     b = [m.start() for m in right.finditer(text or "")]
     return any(abs(x - y) <= window for x in a for y in b)
-
-
-def _mm_near_cover_phrase(text: str) -> bool:
-    """True when a millimetre figure sits next to a cover-length phrase."""
-    blob = text or ""
-    phrases = [m.start() for m in _COVER_PHRASE_RE.finditer(blob)]
-    figures = [m.start() for m in _MM_FIGURE_RE.finditer(blob)]
-    return any(
-        abs(phrase - figure) <= _COVER_PHRASE_WINDOW
-        for phrase in phrases
-        for figure in figures
-    )
 
 
 def chunk_states_cover_length(text: str) -> bool:
@@ -1685,9 +1546,7 @@ def chunk_states_cover_length(text: str) -> bool:
     """
     blob = text or ""
     if spec_boost_guard_enabled():
-        if spec_deferral_enabled():
-            return _cover_clause_states_length(blob)
-        return _mm_near_cover_phrase(blob)
+        return _cover_clause_states_length(blob)
     return bool(_COVER_WORD_RE.search(blob) and _MM_FIGURE_RE.search(blob))
 
 
@@ -1704,11 +1563,26 @@ def chunk_states_compaction_figure(text: str) -> bool:
     return False
 
 
+def chunk_states_illuminance(text: str) -> bool:
+    """True when the chunk states a lux figure.
+
+    Either a number with its unit ("50 lux"), or a table whose header has a
+    lux / foot-candle column and whose rows carry numeric cells. Prose that
+    names lighting and states no figure does not count.
+    """
+    blob = text or ""
+    if _LUX_FIGURE_RE.search(blob):
+        return True
+    return bool(_LUX_COLUMN_RE.search(blob) and _NUMERIC_CELL_RE.search(blob))
+
+
 def chunk_states_asked_quantity(text: str, kinds: frozenset) -> bool:
     """True when ``text`` states a number for one of ``kinds``."""
     if "length_mm" in kinds and chunk_states_cover_length(text):
         return True
     if "compaction" in kinds and chunk_states_compaction_figure(text):
+        return True
+    if "illuminance" in kinds and chunk_states_illuminance(text):
         return True
     return False
 
@@ -1748,10 +1622,22 @@ def compaction_subject_agrees(query: str, text: str) -> bool:
 
 
 def chunk_matches_quantity_question(query: str, text: str, kinds: frozenset) -> bool:
-    """Figure present, and — for compaction — about the asked element."""
+    """Figure present, and about the asked subject.
+
+    Compaction keeps its element groups (a road sub-grade figure does not
+    answer a backfill question). An illumination table lists levels for many
+    subjects at once, so a lux figure counts only when the chunk also names
+    the question's subject.
+    """
     if not chunk_states_asked_quantity(text, kinds):
         return False
     if "compaction" in kinds and not compaction_subject_agrees(query, text):
+        return False
+    if (
+        "illuminance" in kinds
+        and not chunk_states_asked_quantity(text, kinds - {"illuminance"})
+        and not chunk_names_quantity_subject(text, quantity_subject_terms(query))
+    ):
         return False
     return True
 
@@ -1806,7 +1692,7 @@ def _cap_specification_class_bonus(
             continue
         if chunk_matches_quantity_question(query, chunk.text or "", kinds):
             continue
-        if spec_deferral_enabled() and chunk_defers_cover_to_drawings(chunk.text or ""):
+        if chunk_points_quantity_elsewhere(chunk.text or "", kinds):
             continue
         if not _loose_cover_and_millimetre(chunk.text or ""):
             continue
@@ -1816,33 +1702,32 @@ def _cap_specification_class_bonus(
         scored[i] = (adjusted, chunk)
 
 
-# ── specification defers the asked cover to the drawings (FW4 S1) ────────
+# ── pointer-following: the named source sends the figure elsewhere ───────
 #
-# "Per the project specification, what is the minimum concrete cover for
-# foundations cast directly against soil?" The specification states no
-# figure. Its reinforcement clause sends the cover to the drawings and
-# states no cover millimetre. The drawings carry the figures (bottom of
-# footings in contact with soil 100 mm; other elements in contact with
-# soil 75 mm). Local rag_inject on b13aed07 injected neither:
+# "Per the project specification, what is the minimum <quantity> for
+# <subject>?" The named source often states no figure. Its clause sends the
+# reader to another document -- "the cover specified ... on the Drawings",
+# "compacted as shown on the drawings", "lighting levels as listed in the
+# Schedule" -- and that document states the figure. Two things go wrong
+# without this block:
 #
-#   * The deferral clause was never a candidate. It shares no cover
-#     millimetre with the question, so ``_fetch_numeric_requirement_chunks``
-#     rejects it, and cosine for a spacer paragraph is low. When it did
-#     reach the pool its +1.2 class lift was capped, because an unrelated
-#     wire-gauge millimetre sits in the same chunk.
-#   * The drawing note was pooled but never lifted. Its 100 mm is a list
-#     item under the cover heading, about 120 characters after the cover
-#     phrase, past the 64-character proximity window.
+#   * The pointer clause is never a candidate: it states no figure, so the
+#     numeric fetch rejects it, and cosine for a clause about something else
+#     (bar fixing, spacer blocks) is low.
+#   * Every slot goes to chunks from other documents that state some figure
+#     of the asked quantity, and nothing prefers the document the source
+#     points to.
 #
-# Every passed slot then went to non-specification chunks that state a
-# millimetre next to "cover" (+2.5), which is exactly what the model
-# answered from. This block: fetch the specification clause that defers
-# the cover to the drawings; lift it like a stated figure (it IS the
-# specification's answer); once it is in the pool, prefer drawing chunks
-# that state the cover (the authority the clause names) and chunks about
-# the element the question names. A cover list item under its heading
-# counts as a stated length; a lid size "250mm x 250mm x 10mm" does not.
-# Kill-switch: RETRIEVAL_SPEC_DEFERRAL=0 restores b13aed07 exactly.
+# The pointer is read from the chunk itself: one sentence names the asked
+# quantity and points at a document class (drawings, a schedule, an
+# appendix, the contract data). When the question names its source, such a
+# clause from a document of that source class is fetched, enters the pool
+# at its cosine and is lifted like a stated figure (it IS the source's
+# answer); once it is pooled, chunks from the pointed-to class that state the
+# quantity, and chunks about the element the question names, are preferred.
+#
+# Cover lengths: a cover list item under its heading counts as a stated
+# length; a lid size "250mm x 250mm x 10mm" does not.
 _COVER_CLAUSE_PHRASE_RE = re.compile(
     r"(?i)(?:nominal\s+cover|concrete\s+cover|clear\s+cover|minimum\s+cover|"
     r"cover\s+to\s+(?:the\s+)?(?:steel\s+)?reinforce)"
@@ -1859,28 +1744,43 @@ _COVER_REF_RE = re.compile(
     r"cover\s+to\s+(?:the\s+)?(?:steel\s+)?reinforce\w*|"
     r"cover\s+specified|specified\s+(?:minimum\s+)?(?:concrete\s+)?cover)\b"
 )
-_DRAWINGS_REF_RE = re.compile(
-    r"(?i)\b(?:(?:on|in|by)\s+the\s+drawings?|"
-    r"(?:shown|indicated|detailed|noted|specified|given)\s+(?:on|in)\s+"
-    r"(?:the\s+)?drawings?|(?:as\s+)?per\s+(?:the\s+)?drawings?)\b"
+# How a clause names each quantity when it points elsewhere for the figure.
+# A manhole "cover" is not the concrete cover; a "lighting fitting" is not a
+# lighting level.
+_QUANTITY_REFERENCE_RES: Dict[str, "re.Pattern"] = {
+    "length_mm": _COVER_REF_RE,
+    "compaction": re.compile(
+        r"(?i)\b(?:compaction|compacted|degree\s+of\s+compaction|"
+        r"(?:maximum\s+)?dry\s+density)\b"
+    ),
+    "illuminance": re.compile(
+        r"(?i)\b(?:illuminat\w*|illuminance|lighting\s+levels?|lux)\b"
+    ),
+}
+# The document classes a clause can send the reader to, each with the test
+# that tells a document of that class by its name. Vocabulary of document
+# kinds, not names of documents.
+_POINTER_TARGET_CLASSES: Tuple[Tuple[str, "re.Pattern", "re.Pattern"], ...] = (
+    ("drawings", re.compile(r"(?i)\bdrawings?\b"),
+     re.compile(r"(?i)(?:(?:^|[^a-z])dwg(?:[^a-z]|$)|\bdrawings?\b)")),
+    ("schedule", re.compile(r"(?i)\bschedules?\b"),
+     re.compile(r"(?i)\bschedules?\b")),
+    ("appendix", re.compile(r"(?i)\b(?:appendix|appendices|annex\w*)\b"),
+     re.compile(r"(?i)\b(?:appendix|appendices|annex\w*)\b")),
+    ("contract data", re.compile(r"(?i)\bcontract\s+data\b"),
+     re.compile(r"(?i)contract[\s_]+data")),
+)
+# "shown on the Drawings", "as specified in the Schedule", "per the drawings",
+# "refer to the Appendix", "on the Drawings or as the engineer directs".
+_POINTER_LEAD_RE = re.compile(
+    r"(?i)\b(?:(?:on|in|by)\s+the|"
+    r"(?:shown|indicated|detailed|noted|specified|given|stated|listed|"
+    r"scheduled|set\s+out|tabulated)\s+(?:on|in)\s+(?:the)?|"
+    r"(?:as\s+)?per\s+(?:the)?|refer(?:red)?\s+to\s+(?:the)?|see\s+(?:the)?)\s*$"
 )
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.;!?])\s+")
-_DRAWING_NAME_RE = re.compile(r"(?i)(?:(?:^|[^a-z])dwg(?:[^a-z]|$)|\bdrawings?\b)")
-# Needles for the deferral fetch. Every set carries "drawings"; the scoped
-# pass runs inside specification volumes already in the pool, the open
-# pass only on the phrasings that are rare outside a reinforcement clause.
-_SPEC_DEFERRAL_SCOPED_NEEDLES = (
-    ("cover specified", "drawings"),
-    ("specified cover", "drawings"),
-    ("concrete cover", "drawings"),
-    ("cover to", "reinforcement", "drawings"),
-)
-_SPEC_DEFERRAL_OPEN_NEEDLES = (
-    ("cover specified", "drawings"),
-    ("specified cover", "drawings"),
-)
-_SPEC_DEFERRAL_FETCH_K = 60
-_SPEC_DEFERRAL_MAX_SCOPED_DOCS = 24
+_POINTER_FETCH_K = 60
+_POINTER_MAX_SCOPED_DOCS = 24
 _DEFERRED_AUTHORITY_BONUS = 0.5
 _COVER_SUBJECT_BONUS = 0.3
 # A cover question names what is covered. Same idea as the compaction
@@ -1892,14 +1792,6 @@ _COVER_SUBJECT_GROUPS: tuple[tuple[str, ...], ...] = (
     ("column",),
     ("beam",),
 )
-
-
-def spec_deferral_enabled() -> bool:
-    """ON by default. ``RETRIEVAL_SPEC_DEFERRAL=0`` restores the b13aed07
-    cover detector, candidate pool and scores."""
-    return (os.getenv("RETRIEVAL_SPEC_DEFERRAL", "1") or "").strip().lower() not in (
-        "0", "false", "no", "off",
-    )
 
 
 def _figure_is_dimension(blob: str, start: int, end: int) -> bool:
@@ -1936,22 +1828,53 @@ def _cover_clause_states_length(text: str) -> bool:
     return False
 
 
-def chunk_defers_cover_to_drawings(text: str) -> bool:
-    """True when one sentence names the cover and sends it to the drawings.
+def _sentence_points_to(sentence: str) -> Optional[str]:
+    """The document class a sentence sends the reader to, or None."""
+    for name, noun_rx, _name_rx in _POINTER_TARGET_CLASSES:
+        for match in noun_rx.finditer(sentence):
+            lead = sentence[max(0, match.start() - 40):match.start()]
+            if _POINTER_LEAD_RE.search(lead):
+                return name
+    return None
 
-    One sentence must name the concrete or reinforcement cover and point
-    at the drawings. A manhole-cover sentence does not count: the cover
-    has to be the reinforcement / concrete cover.
+
+def chunk_points_quantity_elsewhere(text: str, kinds: frozenset) -> Optional[str]:
+    """The document class one sentence sends an asked quantity to, or None.
+
+    The same sentence must name the quantity ("the cover specified",
+    "compacted", "lighting levels") and point at a document class ("on the
+    Drawings", "as listed in the Schedule"). A manhole-cover sentence does
+    not name the concrete cover; a quantity and a pointer in different
+    sentences are not a deferral.
     """
+    refs = [_QUANTITY_REFERENCE_RES[k] for k in sorted(kinds) if k in _QUANTITY_REFERENCE_RES]
+    if not refs:
+        return None
     for sentence in _SENTENCE_SPLIT_RE.split(text or ""):
-        if _COVER_REF_RE.search(sentence) and _DRAWINGS_REF_RE.search(sentence):
-            return True
+        if not any(rx.search(sentence) for rx in refs):
+            continue
+        target = _sentence_points_to(sentence)
+        if target:
+            return target
+    return None
+
+
+def chunk_defers_cover_to_drawings(text: str) -> bool:
+    """True when one sentence names the concrete cover and sends it to the drawings."""
+    return chunk_points_quantity_elsewhere(text, frozenset({"length_mm"})) == "drawings"
+
+
+def filename_is_pointer_target(filename: str, target: str) -> bool:
+    """True when the document name says it is of the pointed-to class."""
+    for name, _noun_rx, name_rx in _POINTER_TARGET_CLASSES:
+        if name == target:
+            return bool(name_rx.search(filename or ""))
     return False
 
 
 def filename_is_drawing(filename: str) -> bool:
     """True when the document name says it is a drawing or drawings volume."""
-    return bool(_DRAWING_NAME_RE.search(filename or ""))
+    return filename_is_pointer_target(filename, "drawings")
 
 
 def cover_subject_named(query: str) -> List[tuple]:
@@ -2016,95 +1939,129 @@ def query_asks_concrete_cover(query: str) -> bool:
     )
 
 
-def query_asks_spec_deferred_cover(query: str) -> bool:
-    """Specification-scoped cover-length question."""
-    if not spec_deferral_enabled() or not spec_boost_guard_enabled():
+def query_names_its_source(query: str) -> str:
+    """The document class the question names as its source, or ""."""
+    named = source_class_named_by(query)
+    if named:
+        return named
+    if query_names_specification(query):
+        return "specification"
+    return ""
+
+
+def query_follows_source_pointers(query: str) -> bool:
+    """A measured-quantity question scoped to a named source document."""
+    if not spec_boost_guard_enabled():
         return False
-    return query_names_specification(query) and query_asks_concrete_cover(query)
+    return bool(query_names_its_source(query)) and bool(measured_quantity_kinds(query))
 
 
-def _rescue_spec_deferral_chunks(
+# The word a pointer clause uses for each quantity, for the text fetch. The
+# detector above is the real gate.
+_QUANTITY_POINTER_ANCHORS: Dict[str, Tuple[str, ...]] = {
+    "length_mm": ("cover",),
+    "compaction": ("compact",),
+    "illuminance": ("illuminat", "lighting"),
+}
+_POINTER_TARGET_WORDS = ("drawing", "schedule", "appendix", "contract data")
+
+
+def follow_quantity_pointers(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     *,
+    k: int = 5,
     embedder=None,
     query_vec=None,
 ) -> Dict[str, str]:
-    """Pool the specification clause that defers the cover to the drawings.
+    """Pool the named source's clause that sends the asked figure elsewhere.
 
     Returns ``{doc_id: name}`` for every doc resolved here, so the later
-    name pass does not look them up twice. Project corpus only. No-op when
-    a specification-class deferral clause is already pooled. Failures
-    leave the pool standing.
-
-    A pooled clause enters with its own cosine to the query when the
-    embedder is at hand (0.0 otherwise), like any semantic candidate.
+    name pass does not look them up twice. Project corpus only. A pointer
+    clause already pooled outside the provisional top-``k`` with no bonus of
+    its own competes on its cosine (a lexical-only entry carries a BM25 rank
+    in that slot); when none is pooled, one is fetched -- first inside the
+    source documents already in the pool, then across the project. New
+    clauses enter at their cosine (0.0 without an embedder). Failures leave
+    the pool standing.
     """
     names: Dict[str, str] = {}
-    if not query_asks_spec_deferred_cover(query):
+    if not query_follows_source_pointers(query):
         return names
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return names
+    source = query_names_its_source(query)
+    kinds = measured_quantity_kinds(query)
 
     def _name(doc_id: str) -> str:
         if doc_id not in names:
             names[doc_id] = _doc_name_for_id(doc_id)
         return names[doc_id]
 
-    def _is_spec(doc_id: str) -> bool:
-        return filename_is_source_class(_name(doc_id), "specification")
+    def _is_source(doc_id: str) -> bool:
+        return filename_is_source_class(_name(doc_id), source)
 
-    spec_docs: List[str] = []
-    for chunk, _sem, _bonus in list(fused.values()):
+    ranked = sorted(fused.items(), key=lambda kv: -((kv[1][1] or 0.0) + (kv[1][2] or 0.0)))
+    top_ids = {cid for cid, _e in ranked[:max(k, 1)]}
+    source_docs: List[str] = []
+    admitted: List[Chunk] = []
+    found_pooled = False
+    for chunk_id, (chunk, _sem, bonus) in ranked:
         if getattr(chunk, "project_id", project_id) != project_id:
             continue
-        if not _is_spec(chunk.doc_id):
+        if not _is_source(chunk.doc_id):
             continue
-        if chunk_defers_cover_to_drawings(chunk.text or ""):
-            return names
-        if chunk.doc_id not in spec_docs:
-            spec_docs.append(chunk.doc_id)
-
-    passes: List[Tuple[tuple, Optional[List[str]]]] = []
-    if spec_docs:
-        scoped = spec_docs[:_SPEC_DEFERRAL_MAX_SCOPED_DOCS]
-        passes.extend((needles, scoped) for needles in _SPEC_DEFERRAL_SCOPED_NEEDLES)
-    passes.extend((needles, None) for needles in _SPEC_DEFERRAL_OPEN_NEEDLES)
-
-    admitted: List[Chunk] = []
-    for needles, doc_ids in passes:
-        try:
-            hits = fetch(
-                project_id, list(needles), k=_SPEC_DEFERRAL_FETCH_K, doc_ids=doc_ids,
-            )
-        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-            logger.warning(
-                "spec-deferral rescue for %s (%r) failed: %s",
-                project_id, needles, exc,
-            )
+        if chunk.doc_id not in source_docs:
+            source_docs.append(chunk.doc_id)
+        if not chunk_points_quantity_elsewhere(chunk.text or "", kinds):
             continue
-        for chunk in hits or []:
-            if chunk.chunk_id in fused:
-                continue
-            if not chunk_defers_cover_to_drawings(chunk.text or ""):
-                continue
-            if not _is_spec(chunk.doc_id):
-                continue
-            if any(c.chunk_id == chunk.chunk_id for c in admitted):
-                continue
+        found_pooled = True
+        if chunk_id not in top_ids and not (bonus or 0.0):
             admitted.append(chunk)
+
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not found_pooled and callable(fetch):
+        anchors = [a for kind in sorted(kinds) for a in _QUANTITY_POINTER_ANCHORS.get(kind, ())]
+        needle_sets = [(anchor, target) for anchor in anchors for target in _POINTER_TARGET_WORDS]
+        seen: Set[str] = set(fused)
+        scopes: List[Optional[List[str]]] = []
+        if source_docs:
+            scopes.append(source_docs[:_POINTER_MAX_SCOPED_DOCS])
+        scopes.append(None)
+        for doc_ids in scopes:
+            if admitted:
+                break  # the source's own documents answered; skip the open pass
+            for needles in needle_sets:
+                try:
+                    hits = fetch(
+                        project_id, list(needles), k=_POINTER_FETCH_K, doc_ids=doc_ids,
+                    )
+                except Exception as exc:  # noqa: BLE001 — recall must not break the turn
+                    logger.warning(
+                        "pointer-following fetch for %s (%r) failed: %s",
+                        project_id, needles, exc,
+                    )
+                    continue
+                for chunk in hits or []:
+                    if chunk.chunk_id in seen:
+                        continue
+                    seen.add(chunk.chunk_id)
+                    if not chunk_points_quantity_elsewhere(chunk.text or "", kinds):
+                        continue
+                    if not _is_source(chunk.doc_id):
+                        continue
+                    admitted.append(chunk)
     sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
     for chunk, sim in zip(admitted, sims):
+        prior = fused.get(chunk.chunk_id)
+        if prior is not None and (prior[1] or 0.0) > 0.0:
+            sim = max(sim, prior[1] or 0.0)
         chunk.score = round(sim, 6)
         fused[chunk.chunk_id] = (chunk, sim, 0.0)
-    recovered = len(admitted)
-    if recovered:
+    if admitted:
         logger.info(
-            "spec-deferral rescue pooled %d specification clause(s) that "
-            "defer the cover to the drawings", recovered,
+            "pointer-following pooled %d %s clause(s) that send the asked "
+            "figure to another document", len(admitted), source,
         )
     return names
 
@@ -2126,54 +2083,66 @@ def _cosine_to_query(embedder, query_vec, texts: List[str]) -> List[float]:
         return [0.0] * len(texts)
 
 
-def _apply_spec_deferral_boost(
+def _apply_quantity_pointer_boost(
     query: str,
     scored: List[Tuple[float, Chunk]],
     name_by_id: Dict[str, str],
 ) -> None:
-    """In-place: rank the deferral clause and the drawings it names.
+    """In-place: rank the source's pointer clause and the documents it names.
 
-    A specification chunk that sends the asked cover to the drawings takes
-    the stated-figure lift. With such a clause in the pool, a drawing chunk
-    that states the cover gets a small lift over other documents, and a
-    cover chunk about the element the question names gets another. No-op
-    unless the question is a specification-scoped cover ask.
+    A chunk of the named source class that sends the asked quantity to
+    another document takes the stated-figure lift. With such a clause in the
+    pool, a chunk from the pointed-to document class that states the figure
+    gets a small lift over other documents, and a figure chunk about the
+    element the question names gets another. No-op unless the question is a
+    source-scoped quantity question.
     """
-    if not query_asks_spec_deferred_cover(query):
+    if not query_follows_source_pointers(query):
         return
     if not numeric_requirement_boost_enabled():
         return
-    # A bare "cover" ask is a cover-length ask on this path.
-    kinds = asked_quantity_kinds(query) | frozenset({"length_mm"})
+    kinds = measured_quantity_kinds(query)
+    source = query_names_its_source(query)
 
     def _nm(chunk) -> str:
         return name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
 
-    deferral_idx = [
-        i for i, (_s, c) in enumerate(scored)
-        if filename_is_source_class(_nm(c), "specification")
-        and chunk_defers_cover_to_drawings(c.text or "")
-        and not chunk_matches_quantity_question(query, c.text or "", kinds)
-    ]
-    if not deferral_idx:
+    pointer_idx: List[int] = []
+    targets: Set[str] = set()
+    for i, (_s, c) in enumerate(scored):
+        if not filename_is_source_class(_nm(c), source):
+            continue
+        target = chunk_points_quantity_elsewhere(c.text or "", kinds)
+        if not target:
+            continue
+        if chunk_matches_quantity_question(query, c.text or "", kinds):
+            continue
+        pointer_idx.append(i)
+        targets.add(target)
+    if not pointer_idx:
         return
-    for i in deferral_idx:
+    for i in pointer_idx:
         score, chunk = scored[i]
         adjusted = score + _NUMERIC_REQUIREMENT_BONUS
         chunk.score = round(adjusted, 6)
         scored[i] = (adjusted, chunk)
-    groups = cover_subject_named(query)
+    groups = cover_subject_named(query) if "length_mm" in kinds else []
+    terms = quantity_subject_terms(query)
     for i, (score, chunk) in enumerate(scored):
-        if i in deferral_idx:
+        if i in pointer_idx:
             continue
-        if not chunk_matches_quantity_question(query, chunk.text or "", kinds):
+        text = chunk.text or ""
+        if not chunk_matches_quantity_question(query, text, kinds):
             continue
         add = 0.0
-        # Name only: a parsed drawing_number also fires on contract ids
-        # ("DD-2023-118 ... Other Documents"), which are not drawings.
-        if filename_is_drawing(_nm(chunk)):
+        # The document's name says which class it is; a parsed drawing_number
+        # also fires on contract ids, which are not drawings.
+        if any(filename_is_pointer_target(_nm(chunk), t) for t in targets):
             add += _DEFERRED_AUTHORITY_BONUS
-        if cover_subject_agrees(groups, chunk.text or ""):
+        if groups:
+            if cover_subject_agrees(groups, text):
+                add += _COVER_SUBJECT_BONUS
+        elif terms and chunk_names_quantity_subject(text, terms):
             add += _COVER_SUBJECT_BONUS
         if add:
             adjusted = score + add
@@ -2181,331 +2150,290 @@ def _apply_spec_deferral_boost(
             scored[i] = (adjusted, chunk)
 
 
-# ── soil-contact cover in the document's own words (CYCLE2 S1) ──────────
+# ── asked-quantity recall ────────────────────────────────────────────────
 #
-# Live trace on 0b1d13a (e-c2s1-r1..r6): the drawing chunks that state
-# 75 mm for structure in contact with soil were never retrieved. The
-# question says "concrete cover" and "cast directly against soil"; those
-# chunks say "cover to reinforcement" and "in contact with soil". The cover
-# expansion adds "cast against soil" only, so neither 50-deep hybrid leg
-# (cosine, BM25) nor the numeric BM25 fetch reached them on the full
-# corpus, while three footing-cover chunks that repeat the question's words
-# filled the slots. This block: when a cover ask names the soil-contact
-# condition, pool every cover chunk that states a millimetre for that
-# condition (LIKE on the documents' own wording), at its own cosine.
-# A chunk that reached the pool through a lexical leg only carries no
-# cosine: a BM25-only hybrid hit keeps its ts_rank as .score (live, the
-# deferral clause d8c63ec7:109 scored 3.754625 = 0.054625 ts_rank + 2.5 +
-# 1.2; its cosine is about 0.63) and the numeric fetch sets 0.0. On this
-# path such a soil-contact cover chunk, and the specification clause that
-# defers the cover to the drawings, keep the higher of that value and
-# their cosine. Ranking lifts are unchanged. Kill-switch:
-# RETRIEVAL_SOIL_CONTACT_COVER=0 restores 0b1d13a exactly.
-_SOIL_CONTACT_RE = re.compile(
-    r"(?i)\b(?:(?:in\s+)?contact\s+with\s+(?:the\s+)?(?:soil|earth|ground)|"
-    r"(?:cast|placed|poured|concreted)\s+(?:directly\s+)?against\s+(?:the\s+)?"
-    r"(?:soil|earth|ground|excavat\w*)|"
-    r"against\s+(?:the\s+)?(?:soil|earth)|below\s+ground|earth[-\s]faced|"
-    r"exposed\s+to\s+(?:the\s+)?(?:soil|earth|ground))\b"
+# A question that asks for a measured quantity ("what minimum <quantity> is
+# required for <subject>") is answered by a chunk that states a number of that
+# quantity next to the subject. That chunk is often a table row or a drawing
+# note whose wording shares little with the question: the question says
+# "cast directly against soil", the note says "in contact with soil"; the
+# question says "minimum illumination for <task>", the table prints
+# "| <task> | 50 |" under a "Lux" header. Neither retrieval leg pools it, and
+# prose that repeats the question's words (but states no figure) fills the
+# slots. The term rescue does not help either: that prose already co-occurs
+# the question's terms, so the top-k looks grounded.
+#
+# Recall, for every quantity class the question asks for:
+#   * the subject is the question's own content words, minus the words that
+#     name the quantity and minus the clause that names the source document
+#     ("per the project specification");
+#   * candidates are chunks carrying one subject word together with a word a
+#     document prints beside that quantity's figure (the anchor lexicon below
+#     -- a units vocabulary, not text from any one document);
+#   * a candidate is admitted only if it states a figure of that class and
+#     names the subject in an affirmed (not negated) mention.
+# Admitted chunks enter the pool at their own cosine, like any semantic
+# candidate. Ranking is left to the numeric-requirement lift, which already
+# prefers a chunk that states the asked figure. A chunk already pooled is left
+# exactly as it is, and a corpus that states no such figure gets nothing.
+_QUANTITY_ANCHOR_WORDS: Dict[str, Tuple[str, ...]] = {
+    "length_mm": ("cover",),
+    "compaction": ("dry density", "proctor", "cbr"),
+    "illuminance": ("lux", "foot candle"),
+}
+# Words that name the quantity itself, per class. They say WHAT is measured,
+# not what it is measured for.
+_QUANTITY_NAME_WORDS: Dict[str, frozenset] = {
+    "length_mm": frozenset({
+        "cover", "covers", "concrete", "nominal", "clear", "reinforcement",
+        "reinforcing", "rebar", "steel", "length", "thickness",
+    }),
+    "compaction": frozenset({
+        "compact", "compacted", "compaction", "compacting", "degree", "density",
+        "maximum", "proctor", "modified", "test", "tests", "percent",
+    }),
+    "illuminance": frozenset({
+        "illumination", "illuminance", "lighting", "light", "level", "levels",
+        "intensity", "candle", "candles",
+    }),
+}
+# The frame of a requirement question, in any domain.
+_QUANTITY_FRAME_WORDS = frozenset({
+    "minimum", "maximum", "required", "require", "requires", "requirement",
+    "requirements", "must", "shall", "should", "need", "needed", "needs",
+    "value", "figure", "amount", "much", "many", "what", "which", "under",
+    "during", "given", "stated", "state", "states", "says", "apply", "applies",
+    "directly", "against", "where", "within",
+    # the source a question names, wherever it sits in the sentence
+    "project", "specification", "specifications", "spec", "specs", "drawing",
+    "drawings", "plan", "plans", "procedure", "procedures", "document",
+})
+# "Per the project specification", "according to the site safety plan",
+# "under the HSE lighting requirements": the clause that names the source.
+_QUANTITY_SOURCE_CLAUSE_RE = re.compile(
+    r"(?i)\b(?:per|as\s+per|according\s+to|under|in|from|by)\s+the\s+"
+    r"(?:[a-z0-9'&-]+\s+){0,4}?"
+    r"(?:specifications?|specs?|plans?|requirements?|procedures?|drawings?|"
+    r"standards?|codes?)\b"
 )
-# LIKE needles. Every set carries "mm" so a qualitative mention (backfill,
-# waterproofing) is not a candidate; the detector below is the real gate.
-_SOIL_CONTACT_NEEDLES = (
-    ("cover", "contact with soil", "mm"),
-    ("cover", "contact with the soil", "mm"),
-    ("cover", "contact with earth", "mm"),
-    ("cover", "contact with the ground", "mm"),
-    ("cover", "against soil", "mm"),
+# A subject mention governed by a negation in the same clause: "not in
+# contact with <subject>", "elements not on <subject>".
+_QUANTITY_NEGATED_LEAD_RE = re.compile(
+    r"(?i)\b(?:not|no|non|without|except)\b[^.;:\n|]{0,24}$"
 )
-_SOIL_CONTACT_FETCH_K = 60
+_QUANTITY_RECALL_FETCH_K = 80
+_QUANTITY_RECALL_MAX_TERMS = 6
+_QUANTITY_RECALL_MAX_CHUNKS = 8
 
 
-def soil_contact_cover_enabled() -> bool:
-    """ON by default. ``RETRIEVAL_SOIL_CONTACT_COVER=0`` restores 0b1d13a."""
-    return (os.getenv("RETRIEVAL_SOIL_CONTACT_COVER", "1") or "").strip().lower() not in (
-        "0", "false", "no", "off",
-    )
+def measured_quantity_kinds(query: str) -> frozenset:
+    """Every quantity class ``query`` asks a figure for.
 
-
-def _affirmed_soil_contact(text: str) -> bool:
-    """A soil-contact phrase that is not immediately negated.
-
-    ``not in contact with soil`` contains the positive phrase. A chunk or
-    question that only states the negated condition is a different cover
-    (the 50 mm case) and must not take this pool. A chunk that states both
-    still matches on the affirmed phrase.
+    ``asked_quantity_kinds`` plus a bare "cover" asked about concrete work.
+    Empty for an ordinary question.
     """
-    blob = text or ""
-    for match in _SOIL_CONTACT_RE.finditer(blob):
-        prefix = blob[max(0, match.start() - 16):match.start()]
-        if re.search(r"(?i)\bnot\s+$", prefix):
+    kinds = set(asked_quantity_kinds(query))
+    if query_asks_concrete_cover(query):
+        kinds.add("length_mm")
+    return frozenset(kinds)
+
+
+def query_asks_source_scoped_quantity(query: str) -> bool:
+    """A measured-quantity question that names the document governing it.
+
+    "Per the project specification, what minimum cover ...", "under the site
+    safety plan, what lighting level ...". Its answer can sit in two places:
+    the named source's own clause and the document that clause points to.
+    """
+    if not measured_quantity_kinds(query):
+        return False
+    return bool(source_class_named_by(query)) or query_names_specification(query)
+
+
+def quantity_subject_terms(query: str) -> List[str]:
+    """Stems of the words that name what the quantity is asked FOR.
+
+    The source clause, the question frame and the words naming an asked
+    quantity are removed; what is left is the subject ("formwork erection",
+    "pile caps poured against rock"). Order of first appearance.
+    """
+    kinds = measured_quantity_kinds(query)
+    drop: Set[str] = set(_QUANTITY_FRAME_WORDS)
+    for kind in kinds:
+        drop |= _QUANTITY_NAME_WORDS.get(kind, frozenset())
+    scope = _QUANTITY_SOURCE_CLAUSE_RE.sub(" ", query or "")
+    out: List[str] = []
+    for word in re.findall(r"[a-z0-9]{4,}", scope.lower()):
+        if word in drop or word in _GK_STOPWORDS or word in _STOPWORDS:
+            continue
+        if word.isdigit():
+            continue
+        stem = stem_query_term(word)
+        if stem not in out:
+            out.append(stem)
+    return out
+
+
+# Words a document uses for the same element or ground condition as the
+# question: a note says "in contact with soil" where the question said "cast
+# against earth", "footings" where it said "foundations". A construction
+# thesaurus, not phrases from any one document.
+_SUBJECT_SYNONYM_GROUPS: Tuple[Tuple[str, ...], ...] = (
+    ("soil", "earth", "ground"),
+    ("foundation", "footing", "raft", "pile cap"),
+    ("pavement", "road", "carriageway", "sub-grade", "subgrade", "embankment"),
+    ("backfill", "fill"),
+)
+_SUBJECT_FETCH_MAX_WORDS = 10
+
+
+def subject_alternatives(term: str) -> List[str]:
+    """``term`` and the words its synonym group uses for the same thing."""
+    out = [term]
+    for group in _SUBJECT_SYNONYM_GROUPS:
+        if any(word == term or word.startswith(term) for word in group):
+            out.extend(word for word in group if word not in out)
+    return out
+
+
+def _affirmed_mention(blob: str, word: str) -> bool:
+    for match in re.finditer(rf"(?i)\b{re.escape(word)}", blob):
+        lead = blob[max(0, match.start() - 32):match.start()]
+        if _QUANTITY_NEGATED_LEAD_RE.search(lead):
             continue
         return True
     return False
 
 
-def query_asks_soil_contact_cover(query: str) -> bool:
-    """A concrete-cover ask that names the soil-contact condition."""
-    if not soil_contact_cover_enabled() or not spec_boost_guard_enabled():
-        return False
-    text = query or ""
-    return _affirmed_soil_contact(text) and query_asks_concrete_cover(text)
+def chunk_names_quantity_subject(text: str, terms: List[str]) -> bool:
+    """True when ``text`` mentions one of ``terms`` and that mention is affirmed.
 
-
-def chunk_states_soil_contact_cover(text: str) -> bool:
-    """The chunk states a cover length and names the soil-contact condition."""
+    A term also matches the words of its synonym group. Vacuously true when
+    the question names no subject. A mention inside a negated clause ("not in
+    contact with <subject>") does not count; a chunk that also states the
+    affirmed condition still does.
+    """
+    if not terms:
+        return True
     blob = text or ""
-    return _affirmed_soil_contact(blob) and chunk_states_cover_length(blob)
+    return any(
+        _affirmed_mention(blob, word)
+        for term in terms
+        for word in subject_alternatives(term)
+    )
 
 
-def _rescue_soil_contact_cover_chunks(
+def _quantity_subject_coverage(text: str, terms: List[str]) -> int:
+    """How many of the question's subject terms the chunk names (affirmed)."""
+    blob = text or ""
+    return sum(
+        1 for term in terms
+        if any(_affirmed_mention(blob, word) for word in subject_alternatives(term))
+    )
+
+
+def recall_asked_quantity_chunks(
     query: str,
     project_id: str,
     fused: Dict[str, Tuple],
     store,
     *,
+    k: int = 5,
+    extra_pids: Optional[List[str]] = None,
     embedder=None,
     query_vec=None,
 ) -> int:
-    """Pool the cover chunks that state a millimetre for soil contact.
+    """Pool chunks that state the asked quantity for the asked subject.
 
-    Project corpus only. New chunks enter with their own cosine to the
-    query (0.0 without an embedder), like any semantic candidate. A pooled
-    soil-contact cover chunk, or specification clause deferring the cover
-    to the drawings, without an identifier/rescue bonus keeps the higher of
-    its pooled score and its cosine, so a lexical-only entry (BM25 rank or
-    0.0 in the score slot) competes on cosine like the rest.
-    Returns the number of chunks added or re-scored. Failures leave the
-    pool standing.
+    Scans the project and ``extra_pids`` (the corpora the semantic leg
+    searched). New chunks enter at their own cosine to the query (0.0
+    without an embedder). A matching chunk already pooled but outside the
+    provisional top-``k`` with no bonus of its own competes on its cosine
+    too: a lexical-only entry carries a BM25 rank, not a cosine, in that
+    slot. The top-``k`` itself is never touched. Returns the number of chunks
+    added or re-scored. Store failures leave the pool standing.
     """
-    if not query_asks_soil_contact_cover(query):
+    kinds = measured_quantity_kinds(query)
+    if not kinds:
         return 0
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
+    terms = quantity_subject_terms(query)[:_QUANTITY_RECALL_MAX_TERMS]
+    if not terms:
         return 0
-    admitted: List[Chunk] = []
-    seen: Set[str] = set()
-    for chunk_id, (chunk, _sem, bonus) in list(fused.items()):
-        if getattr(chunk, "project_id", project_id) != project_id or (bonus or 0.0):
-            continue
-        text = chunk.text or ""
-        if chunk_states_soil_contact_cover(text) or (
-            spec_deferral_enabled() and chunk_defers_cover_to_drawings(text)
-            and filename_is_source_class(_doc_name_for_id(chunk.doc_id), "specification")
-        ):
-            seen.add(chunk_id)
-            admitted.append(chunk)
-    for needles in _SOIL_CONTACT_NEEDLES:
-        try:
-            hits = fetch(project_id, list(needles), k=_SOIL_CONTACT_FETCH_K)
-        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-            logger.warning(
-                "soil-contact cover rescue for %s (%r) failed: %s",
-                project_id, needles, exc,
-            )
-            continue
-        for chunk in hits or []:
-            if chunk.chunk_id in seen:
-                continue
-            seen.add(chunk.chunk_id)
-            if chunk.chunk_id in fused:
-                continue  # pooled: handled above (or carries a bonus)
-            if not chunk_states_soil_contact_cover(chunk.text or ""):
-                continue
-            admitted.append(chunk)
-    sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
-    for chunk, sim in zip(admitted, sims):
+    contain = getattr(store, "chunks_containing_all", None)
+    ident = getattr(store, "identifier_search", None)
+    anchors = [
+        anchor for kind in sorted(kinds)
+        for anchor in _QUANTITY_ANCHOR_WORDS.get(kind, ())
+    ]
+    # The question's own words first, then the words their synonym groups add.
+    words: List[str] = list(terms)
+    for term in terms:
+        for word in subject_alternatives(term):
+            # A text match on "found" already finds "foundation".
+            if not any(have in word for have in words):
+                words.append(word)
+    groups = [(word, anchor) for word in words[:_SUBJECT_FETCH_MAX_WORDS] for anchor in anchors]
+    pids = [project_id] + [p for p in (extra_pids or []) if p and p != project_id]
+    top = sorted(fused.items(), key=lambda kv: -((kv[1][1] or 0.0) + (kv[1][2] or 0.0)))
+    seen: Set[str] = {cid for cid, _entry in top[:max(k, 1)]}
+    admitted: List[Tuple[int, Chunk]] = []
+
+    def _consider(chunk: Chunk) -> None:
+        if chunk.chunk_id in seen:
+            return
+        seen.add(chunk.chunk_id)
         prior = fused.get(chunk.chunk_id)
-        if prior is not None:
-            sim = max(sim, prior[1] or 0.0) if (prior[1] or 0.0) > 0.0 else sim
+        if prior is not None and (prior[2] or 0.0):
+            return  # carries another mechanism's lift; leave it
+        text = chunk.text or ""
+        if not chunk_matches_quantity_question(query, text, kinds):
+            return
+        if not chunk_names_quantity_subject(text, terms):
+            return
+        admitted.append((_quantity_subject_coverage(text, terms), prior[0] if prior else chunk))
+
+    for _cid, (chunk, _sem, _bonus) in top[max(k, 1):]:
+        _consider(chunk)
+    for pid in pids:
+        if callable(contain):
+            for term, anchor in groups:
+                try:
+                    hits = contain(pid, [term, anchor], k=_QUANTITY_RECALL_FETCH_K)
+                except Exception as exc:  # noqa: BLE001 — recall must not break the turn
+                    logger.warning(
+                        "asked-quantity recall for %s (%s + %s) failed: %s",
+                        pid, term, anchor, exc,
+                    )
+                    continue
+                for chunk in hits or []:
+                    _consider(chunk)
+        if callable(ident):
+            try:
+                hits = ident(
+                    pid, [f"{term} {anchor}" for term, anchor in groups],
+                    k=_QUANTITY_RECALL_FETCH_K,
+                )
+            except Exception as exc:  # noqa: BLE001 — recall must not break the turn
+                logger.warning("asked-quantity recall for %s failed: %s", pid, exc)
+                hits = []
+            for chunk in hits or []:
+                _consider(chunk)
+    if not admitted:
+        return 0
+    admitted.sort(key=lambda item: -item[0])
+    chosen = [chunk for _cov, chunk in admitted[:_QUANTITY_RECALL_MAX_CHUNKS]]
+    sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in chosen])
+    for chunk, sim in zip(chosen, sims):
+        prior = fused.get(chunk.chunk_id)
+        if prior is not None and (prior[1] or 0.0) > 0.0:
+            sim = max(sim, prior[1] or 0.0)
         chunk.score = round(sim, 6)
         fused[chunk.chunk_id] = (chunk, sim, 0.0)
-    if admitted:
-        logger.info(
-            "soil-contact cover rescue pooled %d chunk(s) that state the cover "
-            "for the soil-contact condition", len(admitted),
-        )
-    return len(admitted)
-
-
-# ── work-activity illumination table rescue ──────────────────────────
-# Live 4bbb632: "minimum illumination for concrete placement during night
-# work" (50 lux) and "… for bricklaying" (100 lux) both refused 0/6. The
-# spec's work-activity illumination table (doc e6e0702b chunk 661 / 9a56fb14
-# chunk 73, Vol 2 - Specification (6 of 9).pdf) states the figures, but the
-# "HSE lighting / night work" wording steers hybrid retrieval to the HSE plan
-# and a pre-condition site-survey doc, and the table never enters top-k even
-# though its BM25 tokens match. Same class and same shape as the soil-contact
-# cover rescue: pool the table at its own cosine when the ask has no lux row.
-_ILLUMINATION_TOKEN_RE = re.compile(r"(?i)\b(illuminat\w*|lighting|lux|lx)\b")
-# A construction WORK ACTIVITY (this table), not a room (that is the MEP
-# room-lux table, a different table with "Service Luminance" / "Uo").
-_ILLUMINATION_ACTIVITY_RE = re.compile(
-    r"(?i)\b(concrete\s+plac\w*|bricklay\w*|brick\s+lay\w*|reinforc\w*|"
-    r"plaster\w*|handling\s+material|rough\s+work|bench\s+work|"
-    r"drawing\s+board|interior\s+movement|night\s+work|work\s+activit\w*|"
-    r"(?:type|kind)\s+of\s+work)\b"
-)
-# The table's own introduction, unique enough to identify it on its own.
-_ILLUMINATION_TABLE_INTRO_RE = re.compile(
-    r"(?i)minimum\s+levels?\s+of\s+area\s+illuminat\w*"
-)
-_ILLUMINATION_FOOT_CANDLE_RE = re.compile(r"(?i)\bfoot\s*candle")
-_ILLUMINATION_ROW_RE = re.compile(
-    r"(?i)\b(concrete\s+plac\w*|bricklay\w*|interior\s+reinforc\w*|"
-    r"handling\s+material|general\s+rough\s+work|bench\s+work|"
-    r"interior\s+movement|drawing\s+board)\b"
-)
-_ILLUMINATION_LUX_RE = re.compile(r"(?i)\b(lux|lx)\b")
-_ILLUMINATION_NEEDLES = (
-    ("illumination", "lux", "foot candle"),
-    ("minimum levels of area illumination",),
-    ("concrete placement", "lux"),
-    ("bricklaying", "lux"),
-)
-_ILLUMINATION_FETCH_K = 60
-# The pooled table loses the top-k cut: the cut sorts fused by sem + bonus
-# (see retrieve_with_filter), and the rescue pooled at bonus 0.0, so the table
-# competed on raw cosine and lost to the HSE-plan chunks (0 of 6 passes; extra-k
-# alone lifted one ask to 1 of 6). A bonus on the table's two best copies lifts it in.
-# 2.0 matches the file's _DOC_IDENTITY_BONUS / spec-title bonus and dominates a
-# cosine (<= 1).
-_ILLUMINATION_TABLE_BONUS = 2.0
-_ILLUMINATION_TABLE_BONUS_MAX_CHUNKS = 2
-
-
-def query_asks_illumination_level(query: str) -> bool:
-    """An ask for the minimum illumination/lux of a construction work activity.
-
-    Fires only when both an illumination token and a work-activity token are
-    present, so a room-lighting-design ask (the MEP room table) does not
-    trigger it.
-    """
-    q = query or ""
-    return bool(
-        _ILLUMINATION_TOKEN_RE.search(q) and _ILLUMINATION_ACTIVITY_RE.search(q)
+    logger.info(
+        "asked-quantity recall pooled %d chunk(s) for %s (subject %r)",
+        len(chosen), sorted(kinds), terms,
     )
-
-
-def chunk_states_work_activity_illumination(text: str) -> bool:
-    """The chunk carries the work-activity illumination table.
-
-    Identified by its unique intro, or by a lux figure alongside the
-    Foot-Candle column and at least one activity row. The MEP room-lux table
-    ("Service Luminance", "Uo", room names, no Foot Candle) is excluded, as is
-    HSE prose that names lighting but states no lux figure.
-    """
-    blob = text or ""
-    if not _ILLUMINATION_LUX_RE.search(blob):
-        return False
-    if _ILLUMINATION_TABLE_INTRO_RE.search(blob):
-        return True
-    return bool(
-        _ILLUMINATION_FOOT_CANDLE_RE.search(blob)
-        and _ILLUMINATION_ROW_RE.search(blob)
-    )
-
-
-def _rescue_illumination_table_chunks(
-    query: str,
-    project_id: str,
-    fused: Dict[str, Tuple],
-    store,
-    extra_pids: Optional[List[str]] = None,
-    *,
-    embedder=None,
-    query_vec=None,
-) -> int:
-    """Pool the work-activity illumination table when the ask lacks a lux row.
-
-    Mirrors ``_rescue_soil_contact_cover_chunks``: project corpus only, fetch
-    by lexical needles, keep only chunks that ARE the table, and pool each at
-    its own cosine (0.0 without an embedder) so it competes like any semantic
-    candidate. Returns the number added/re-scored. Failures leave the pool.
-    """
-    if not query_asks_illumination_level(query):
-        return 0
-    fetch = getattr(store, "chunks_containing_all", None)
-    if not callable(fetch):
-        return 0
-    admitted: List[Chunk] = []
-    seen: Set[str] = set()
-    # An already-pooled table chunk (any owner pid) is kept, not re-fetched.
-    for chunk_id, (chunk, _sem, bonus) in list(fused.items()):
-        if bonus or 0.0:
-            continue
-        if chunk_states_work_activity_illumination(chunk.text or ""):
-            seen.add(chunk_id)
-            admitted.append(chunk)
-    # Scan the SAME pid set the semantic leg searches: the UI pid, the Master
-    # Corpus fallback/source, AND the general-knowledge pids (gk_ids), passed
-    # by the call site as extra_pids. Attempts 1-2 (0/6 live) omitted the GK
-    # layer, where the spec volume lives, so chunks_containing_all — which
-    # matches project_id EXACTLY — returned nothing for every pid it tried.
-    pids = _late_scan_project_ids(project_id, extra_pids, fused)
-    needle_hits: Dict[str, int] = {}
-    for pid in pids:
-        for needles in _ILLUMINATION_NEEDLES:
-            try:
-                hits = fetch(pid, list(needles), k=_ILLUMINATION_FETCH_K)
-            except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
-                logger.warning(
-                    "illumination-table rescue for %s (%r) failed: %s",
-                    pid, needles, exc,
-                )
-                continue
-            needle_hits[" ".join(needles)] = (
-                needle_hits.get(" ".join(needles), 0) + len(hits or [])
-            )
-            for chunk in hits or []:
-                if chunk.chunk_id in seen:
-                    continue
-                seen.add(chunk.chunk_id)
-                if chunk.chunk_id in fused:
-                    continue  # pooled: handled above (or carries a bonus)
-                if not chunk_states_work_activity_illumination(chunk.text or ""):
-                    continue
-                admitted.append(chunk)
-    # Always-on diagnostic (the query matched but production is unobservable
-    # otherwise): which pids were scanned, raw needle-hit counts BEFORE the
-    # table predicate, and how many were admitted. WARNING, not INFO: prod's
-    # root logger sits at WARNING (the setup_structured_logging NOTSET guard
-    # never fires), so a module INFO line never reaches CloudWatch — which is
-    # exactly why attempts 1-3 saw "no rescue log" and learned nothing.
-    sims = _cosine_to_query(embedder, query_vec, [c.text or "" for c in admitted])
-    # Bonus the two highest-cosine copies of the table so they clear the top-k
-    # cut (the cut sorts fused by sem + bonus; pooling at 0.0 lost). The 4
-    # admitted chunks are copies of one table — two in the excerpts answer the
-    # ask without flooding it; the rest pool at their cosine as before.
-    bonus_val = _ILLUMINATION_TABLE_BONUS
-    bonus_rank = sorted(range(len(admitted)), key=lambda i: -(sims[i] or 0.0))
-    bonus_idx = set(bonus_rank[:_ILLUMINATION_TABLE_BONUS_MAX_CHUNKS]) if bonus_val > 0 else set()
-    bonus_applied = 0
-    for i, (chunk, sim) in enumerate(zip(admitted, sims)):
-        prior = fused.get(chunk.chunk_id)
-        if prior is not None:
-            sim = max(sim, prior[1] or 0.0) if (prior[1] or 0.0) > 0.0 else sim
-        this_bonus = bonus_val if i in bonus_idx else 0.0
-        if prior is not None:
-            this_bonus = max(this_bonus, prior[2] or 0.0)  # never lower an existing bonus
-        chunk.score = round(sim, 6)
-        fused[chunk.chunk_id] = (chunk, sim, this_bonus)
-        if this_bonus > 0:
-            bonus_applied += 1
-    # Always-on diagnostic at WARNING (prod root logger is at WARNING, so a
-    # module INFO line never reaches CloudWatch — attempts 1-3 learned nothing
-    # from its absence). pids scanned, raw needle-hit counts BEFORE the table
-    # predicate, how many admitted, and how many got the top-k bonus.
-    logger.warning(
-        "illumination-table rescue: pids=%s needle_hits=%s admitted=%d bonus_applied=%d",
-        pids, needle_hits, len(admitted), bonus_applied,
-    )
-    if admitted:
-        logger.warning(
-            "illumination-table rescue pooled %d chunk(s) that state the "
-            "work-activity illumination table", len(admitted),
-        )
-    return len(admitted)
+    return len(chosen)
 
 
 _SOURCE_HEADER_RE = re.compile(r"(?i)^\[source:[^\]]*\]\s*")
@@ -9581,6 +9509,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         c.chunk_id: (c, c.score or 0.0, 0.0) for c in candidates
     }
     extra_lex_pids = _general_knowledge_project_ids()
+    recall_asked_quantity_chunks(
+        query, project_id, fused_lex, store, k=k, extra_pids=extra_lex_pids,
+    )
     filename_names = _pool_docs_named_by_query(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
@@ -10152,38 +10083,23 @@ def retrieve_with_filter(
                     recovered, rescue_terms,
                 )
 
-    # Foundation backfill degree: duct backfill co-occurring with "compacted" makes term rescue
-    # declare the top-k grounded, so the 98% MDD / Modified Proctor clause
-    # stays outside it. This fetch runs only when that degree is not already
-    # in the top-k, and only for this question.
-    _rescue_foundation_backfill_degree(query, project_id, fused, store, k)
+    # The general-knowledge pids the semantic leg searches, plus the empty-
+    # project master-corpus fallback: the recall passes below fetch from the
+    # SAME corpora the semantic leg did.
+    extra_rescue_pids = gk_ids + ([fb_id] if use_fallback and fb_id else [])
 
     # FW4 S1: "per the specification" + a cover ask. The specification's own
     # clause says the cover is "as specified on the Drawings" and states no
     # millimetre, so neither cosine nor the numeric fetch ever pools it.
-    spec_deferral_names = _rescue_spec_deferral_chunks(
-        query, project_id, fused, store,
+    spec_deferral_names = follow_quantity_pointers(
+        query, project_id, fused, store, k=k,
         embedder=embedder, query_vec=query_vec,
     )
-    # CYCLE2 S1: the 75 mm soil-contact notes say "cover to reinforcement"
-    # and "in contact with soil", not the question's words, so no leg above
-    # pools them. Pool them at their own cosine.
-    _rescue_soil_contact_cover_chunks(
-        query, project_id, fused, store,
-        embedder=embedder, query_vec=query_vec,
-    )
-    # The general-knowledge pids the semantic leg searches, plus the empty-
-    # project master-corpus fallback. Computed here (was below) so the
-    # illumination rescue can fetch from the SAME corpora the semantic leg did
-    # — attempts 1-2 scanned only the UI + master-corpus source and missed the
-    # GK layer where the spec volume lives.
-    extra_rescue_pids = gk_ids + ([fb_id] if use_fallback and fb_id else [])
-    # Illumination level ask: the work-activity illumination table ("Concrete placement 50
-    # LUX", "Bricklaying 100 LUX") never enters top-k for an "HSE lighting /
-    # night work" ask, which steers to the HSE plan. Pool it at its cosine.
-    _rescue_illumination_table_chunks(
-        query, project_id, fused, store, extra_rescue_pids,
-        embedder=embedder, query_vec=query_vec,
+    # Asked-quantity recall: the chunk that states the asked figure for the
+    # asked subject (a table row, a drawing note) in the document's own words.
+    recall_asked_quantity_chunks(
+        query, project_id, fused, store, k=k,
+        extra_pids=extra_rescue_pids, embedder=embedder, query_vec=query_vec,
     )
 
     # Letter / named-party filename rescue (D1). Runs EVEN WHEN term rescue
@@ -10395,7 +10311,7 @@ def retrieve_with_filter(
     _apply_source_class_preference(query, scored, name_by_id)
     _cap_specification_class_bonus(query, scored, name_by_id)
     _apply_numeric_requirement_boost(query, scored)
-    _apply_spec_deferral_boost(query, scored, name_by_id)
+    _apply_quantity_pointer_boost(query, scored, name_by_id)
     _apply_spec_title_filename_boost(query, scored, name_by_id)
     _apply_spec_identity_text_boost(query, scored)
     _apply_contract_data_filename_boost(query, scored, name_by_id)
