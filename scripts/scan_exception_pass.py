@@ -123,14 +123,14 @@ RETURN_ALLOWLIST: dict[str, str] = {
     "app/core/doc_index.py:405": "baseline 2026-09-10",
     # Re-indexed 2026-09-28: quarantine head probe above _extract_pdf
     # and the Office gate shifted these same handlers. No new silent returns.
-    "app/core/doc_index.py:985": "baseline 2026-09-10",
-    "app/core/doc_index.py:1007": "baseline 2026-09-10",
-    "app/core/doc_index.py:1096": "baseline 2026-09-10",
+    "app/core/doc_index.py:992": "baseline 2026-09-10",
+    "app/core/doc_index.py:1014": "baseline 2026-09-10",
+    "app/core/doc_index.py:1103": "baseline 2026-09-10",
     # Re-indexed 2026-09-28: drawing wiring plaintext open added 5 lines
     # above this handler. Same handler. No new silent return.
     # Shifted again the same day: the recoverable-skip helper sits above
     # _ifc_step_census_chunk. Same empty return. No new silent return.
-    "app/core/doc_index.py:2703": "baseline 2026-09-10",
+    "app/core/doc_index.py:2710": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:333": "baseline 2026-09-10",
     "app/core/rag/vector_store.py:1816": "baseline 2026-09-10",
     "app/infra/monitoring.py:324": "baseline 2026-09-10",
