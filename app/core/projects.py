@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.ingest_status import EXTRACTOR_VERSION, INDEXED, NO_CHUNK_STATUSES, TOMBSTONED
 from app.core.models import Document, IngestionJob, Project, ProjectFact
+from app.core.system_projects import general_knowledge_env, primary_general_knowledge_project
 
 import logging
 
@@ -61,8 +62,8 @@ MASTER_CORPUS_SOURCE_PROJECT_ID = os.getenv(
 )
 MASTER_CORPUS_NAME = os.getenv("MASTER_CORPUS_NAME", "Master Corpus")
 
-# Boot-seeded general-knowledge origin. Live rows (curated_kb, training_material)
-# were created with this before the shared-platform grant existed.
+# Boot-seeded general-knowledge origin. Seeded general-knowledge rows were
+# created with this before the shared-platform grant existed.
 _SYSTEM_SEED_ORIGIN = "system_seed"
 _ADMIN_APPROVED_ORIGIN = "admin_drive_approved"
 
@@ -76,10 +77,11 @@ def general_knowledge_project_ids() -> frozenset[str]:
     """Configured always-on general-knowledge project ids.
 
     Same ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` env that ``knowledge_seed``,
-    layered RAG, and the retriever use. Default first id is historically
-    ``training_material``. Empty / whitespace entries are dropped.
+    layered RAG, and the retriever use. Default is the product's
+    general-knowledge project (``app.core.system_projects``). Empty /
+    whitespace entries are dropped.
     """
-    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", DEFAULT_GENERAL_KNOWLEDGE_PROJECTS)
+    raw = general_knowledge_env()
     return frozenset(p.strip() for p in raw.split(",") if p.strip())
 
 
@@ -109,9 +111,9 @@ def ui_project_id(project_id: Optional[str]) -> Optional[str]:
     """The project id export URLs and owner gates must use.
 
     Chat remaps ``MASTER_CORPUS_PROJECT_ID`` (``master_corpus``) to
-    ``MASTER_CORPUS_SOURCE_PROJECT_ID`` (live: ``drive_archive``) so RAG
+    ``MASTER_CORPUS_SOURCE_PROJECT_ID`` (the backing source project) so RAG
     hits the backing corpus. That remapped id is not a user-visible
-    project: ``get_project('drive_archive')`` 404s for a signed-in user
+    project: ``get_project(<source id>)`` 404s for a signed-in user
     on Master Corpus. Reverse-map the source back to the
     alias. Any other id is returned unchanged.
     """
@@ -882,7 +884,7 @@ def delete_project(project_id: str) -> bool:
 _PURGE_PROTECTED_IDS = {
     MASTER_CORPUS_PROJECT_ID,
     MASTER_CORPUS_SOURCE_PROJECT_ID,
-    os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material").split(",")[0].strip(),
+    primary_general_knowledge_project(),
 }
 
 
