@@ -193,7 +193,6 @@ def _install_d1_corpus(monkeypatch, *, letter_in_semantic: bool, rescue_docs=Non
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_LETTER_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -216,15 +215,6 @@ def test_d1_lifts_a_buried_letter_already_in_the_pool(monkeypatch):
     chunks, _ = ret.retrieve_with_filter(D1_QUERY, ACTIVE, k=5)
     assert chunks[0].doc_id == LETTER_DOC
     assert "Barry Muir" in chunks[0].text
-
-
-def test_kill_switch_restores_vol5_first_when_letter_is_out_of_pool(monkeypatch):
-    ret = _install_d1_corpus(monkeypatch, letter_in_semantic=False)
-    monkeypatch.setenv("RAG_LETTER_FILENAME_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(D1_QUERY, ACTIVE, k=5)
-    assert chunks
-    assert chunks[0].doc_id == VOL5_DOC
-    assert "Barry Muir" not in " ".join(c.text for c in chunks)
 
 
 def test_mutation_filename_bonus_is_what_lifts_the_letter(monkeypatch):

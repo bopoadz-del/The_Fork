@@ -13,8 +13,7 @@ Live Master Corpus (tip 8f4b465 / leftover pack E1):
 E1 is a monetary-base ask, so A5's exclusive rate rescue is correctly
 off (that fence would drop the ACA). This path is a dual-operand
 rescue: scanned Contract Data rate + ACA, then the existing compose
-graft. Kill-switch ``RAG_DELAY_DAMAGES_DAILY_RESCUE=0`` restores the
-FAIL (lookalikes, no SAR/day). Do not steal A2/A3/A5/A6/A9.
+graft. Do not steal A2/A3/A5/A6/A9.
 """
 from __future__ import annotations
 
@@ -303,12 +302,6 @@ def _install_e1_corpus(monkeypatch, *, semantic, rescue_hits, names, seeded=None
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -397,26 +390,6 @@ def test_e1_live_prefix_and_catalog_ask_both_rescue(monkeypatch):
         chunks, _ = ret.retrieve_with_filter(ask, ACTIVE, k=5)
         blob = " ".join(c.text for c in chunks)
         assert RATE in blob and NET_ACA_TXT in blob, ask
-
-
-def test_e1_kill_switch_restores_spec_first(monkeypatch):
-    spec, day, ins, rate, aca, names, seeded = _live_lookalikes_and_operands()
-    ret = _install_e1_corpus(
-        monkeypatch,
-        semantic=[spec, day, ins],
-        rescue_hits=[rate, aca],
-        names=names,
-        seeded=seeded,
-    )
-    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=5)
-    blob = " ".join(c.text for c in chunks)
-    assert chunks
-    assert chunks[0].doc_id in {SPEC_DOC, DAY_DOC, INS_DOC}
-    assert RATE not in blob
-    assert NET_ACA_TXT not in blob
-    excerpts = "\n\n".join(c.text or "" for c in chunks)
-    assert compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts) is None
 
 
 def test_a5_still_surfaces_the_rate_without_requiring_aca(monkeypatch):
@@ -836,12 +809,6 @@ def _install_live_e1_late_aca_corpus(monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret, toys, aca
 
@@ -879,18 +846,6 @@ def test_e1_surfaces_late_excl_vat_when_id_search_returns_only_8_8_toys(
     assert "10,000.00" not in posted.split("\n", 1)[0]
     assert "0.015%" not in posted
     assert "263,175.67" not in posted
-
-
-def test_e1_late_aca_scan_respects_daily_rescue_kill_switch(monkeypatch):
-    ret, _toys, _aca = _install_live_e1_late_aca_corpus(monkeypatch)
-    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=5)
-    blob = " ".join(c.text for c in chunks)
-    # Without the late scan the 1.1.1 row stays past first-N. Year-lock
-    # may fail-closed to [] when no filled ACA elects the volume.
-    assert NET_ACA_TXT not in blob
-    excerpts = "\n\n".join(c.text or "" for c in chunks)
-    assert compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts) is None
 
 
 def test_e1_late_aca_helper_scans_past_first_n_on_rate_docs():
@@ -1324,12 +1279,6 @@ def test_e1_retrieve_middle_excl_vat_when_top_k_is_only_chunks_9_11(monkeypatch)
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
 
     chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=3)
@@ -1524,12 +1473,6 @@ def test_e1_retrieve_015_top_k_still_composes_point_one(monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
 
     chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=3)
@@ -1658,7 +1601,6 @@ def test_e1_loaded_cd_volume_helper_composes_when_top_k_is_refuse_prone(
             {"id": GC_DOC, "original_name": CD_SCANNED_NAME},
         ] if "contract" in (phrase or "").lower() else [],
     )
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     rag = _sys(*(c.text for c in windows))
     extra = e1_compose_excerpts_from_loaded_cd_volume(
         LIVE_E1, ACTIVE, _refuse_store(all_chunks),
@@ -1675,25 +1617,11 @@ def test_e1_loaded_cd_volume_helper_composes_when_top_k_is_refuse_prone(
     assert out["daily_amount"] != LOOKALIKE_DAILY
 
 
-def test_e1_loaded_cd_volume_helper_respects_kill_switch(monkeypatch):
-    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
-
-    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
-    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
-    extra = e1_compose_excerpts_from_loaded_cd_volume(
-        LIVE_E1, ACTIVE, _refuse_store(all_chunks),
-        rag_context=_sys(*(c.text for c in windows))["content"],
-        doc_ids=[GC_DOC],
-    )
-    assert extra == ""
-
-
 def test_e1_loaded_cd_volume_helper_does_not_steal_neighbor_asks(monkeypatch):
     from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
 
     all_chunks, _windows, _rate, _aca = _refuse_prone_volume_chunks()
     store = _refuse_store(all_chunks)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     for ask in (A2_ASK, A3_ASK, A5_ASK, A6_ASK, A9_ASK, C1_ASK, F1_ASK):
         assert e1_compose_excerpts_from_loaded_cd_volume(
             ask, ACTIVE, store, doc_ids=[GC_DOC],
@@ -1714,7 +1642,6 @@ def test_e1_loaded_cd_volume_helper_keeps_015_reject(monkeypatch):
         "aca500", GC_DOC, 0.21, LIVE_SCANNED_EXCL_ACA, chunk_index=MIDDLE_ACA_INDEX,
     )
     all_chunks = list(lookalikes) + [aca]
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     extra = e1_compose_excerpts_from_loaded_cd_volume(
         LIVE_E1, ACTIVE, _refuse_store(all_chunks),
         doc_ids=[GC_DOC],
@@ -1807,12 +1734,6 @@ def test_e1_retrieve_refuse_prone_9_11_still_composes_point_one(monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
 
     chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=3)
@@ -1898,7 +1819,6 @@ def test_e1_loaded_volume_composes_when_all_rows_ignored_and_operands_mid_doc(
     from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
 
     all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     rag = _live_refuse_sys(*windows)
     extra = e1_compose_excerpts_from_loaded_cd_volume(
         LIVE_E1, ACTIVE, _ignore_all_rows_store(all_chunks),
@@ -1922,7 +1842,6 @@ def test_e1_loaded_volume_composes_from_015_windows_when_all_rows_ignored(
     from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
 
     all_chunks, windows, _rate, _aca = _015_early_exit_all_chunks()
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     extra = e1_compose_excerpts_from_loaded_cd_volume(
         LIVE_E1, ACTIVE, _ignore_all_rows_store(all_chunks),
         rag_context=_live_refuse_sys(*windows)["content"],
@@ -1943,7 +1862,6 @@ def test_e1_loaded_volume_uses_cited_chunk_project_id(monkeypatch):
     all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
     for chunk in all_chunks:
         chunk.project_id = source
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     extra = e1_compose_excerpts_from_loaded_cd_volume(
         LIVE_E1, ACTIVE, _ignore_all_rows_store(all_chunks, owner_pid=source),
         rag_context=_live_refuse_sys(*windows)["content"],
@@ -2016,12 +1934,6 @@ def test_e1_retrieve_ignore_all_rows_refuse_window_still_composes(monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
 
     chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=3)
@@ -2162,7 +2074,6 @@ def test_e1_loaded_volume_resolves_owner_pid_when_ui_pid_is_alias(
     all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
     for chunk in all_chunks:
         chunk.project_id = owner
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
     monkeypatch.setattr(
         "app.core.projects.get_document",
@@ -2200,7 +2111,6 @@ def test_e1_loaded_volume_does_not_need_title_listing_when_cited_composes(
     from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
 
     all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
 
     def _boom(pid, phrase, limit=8):
         raise AssertionError(
@@ -2239,7 +2149,6 @@ def test_e1_graft_last_chance_composes_from_cited_rag_when_ui_pid_empty(
     all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
     for chunk in all_chunks:
         chunk.project_id = owner
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
     monkeypatch.setattr(
         "app.core.projects.get_document",
@@ -2378,7 +2287,6 @@ def test_e1_loaded_volume_composes_when_k_is_capped(monkeypatch):
     from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
 
     all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
     extra = e1_compose_excerpts_from_loaded_cd_volume(
         LIVE_E1, ACTIVE, _capped_k_store(all_chunks),
         rag_context=_live_refuse_sys(*windows)["content"],
@@ -2389,29 +2297,6 @@ def test_e1_loaded_volume_composes_when_k_is_capped(monkeypatch):
     assert out["daily_amount"] == DAILY
     assert out["rate_percent"] == 0.1
     assert out["daily_amount"] != LOOKALIKE_DAILY
-
-
-def test_e1_mid_window_scan_respects_daily_rescue_kill_switch(monkeypatch):
-    from app.core.rag.retriever import (
-        _e1_fetch_late_aca_chunks,
-        e1_compose_excerpts_from_loaded_cd_volume,
-    )
-
-    all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
-    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
-    extra = e1_compose_excerpts_from_loaded_cd_volume(
-        LIVE_E1, ACTIVE, _capped_k_store(all_chunks),
-        rag_context=_live_refuse_sys(*windows)["content"],
-        doc_ids=[GC_DOC],
-    )
-    assert extra == ""
-    # Direct fetch is the store walk (no kill-switch of its own); the
-    # public helper above is the gated path. Confirm the walk still
-    # finds rows so a missing kill-switch on fetch is not the product.
-    found = _e1_fetch_late_aca_chunks(
-        _capped_k_store(all_chunks), ACTIVE, [GC_DOC],
-    )
-    assert found
 
 
 def test_e1_token_cap_force_keeps_huge_operand_over_leftover_cap(monkeypatch):
@@ -2503,27 +2388,3 @@ def test_e1_token_cap_protect_survives_one_bad_chunk(monkeypatch):
     kept_ids = {c.chunk_id for c in kept}
     assert "cdrate" in kept_ids
     assert "aca500" in kept_ids
-
-
-def test_e1_token_cap_protect_respects_daily_rescue_kill_switch(monkeypatch):
-    from app.core.rag.inject import apply_token_cap
-
-    pad = "x" * (4000 - len(REFUSE_PRONE_8_8))
-    pointers = [
-        _chunk(
-            f"gc{i}", GC_DOC, 0.95 - i * 0.01,
-            REFUSE_PRONE_8_8 + pad, chunk_index=9 + i,
-        )
-        for i in range(3)
-    ]
-    rate = _chunk("cdrate", GC_DOC, 0.0, CD_POINT_ONE_RATE, chunk_index=480)
-    aca = _chunk("aca500", GC_DOC, 0.0, LIVE_SCANNED_EXCL_ACA, chunk_index=500)
-    monkeypatch.setenv("MAX_RAG_TOKENS", "2000")
-    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
-    kept, _ = apply_token_cap(list(pointers) + [rate, aca], query=LIVE_E1)
-    kept_ids = {c.chunk_id for c in kept}
-    assert "cdrate" not in kept_ids
-    assert "aca500" not in kept_ids
-    assert compose_delay_damages_daily_from_excerpts(
-        LIVE_E1, "\n\n".join(c.text or "" for c in kept),
-    ) is None

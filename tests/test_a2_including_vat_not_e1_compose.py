@@ -10,7 +10,7 @@ Live Master Corpus (cold New-chat ×3, not contamination):
 Leftover E1 on the same SHA can still compose the excl-VAT ACA →
 SAR 1,754,504.46/day when it passes. A2 must not enter that compose
 path and must late-scan the filled including-VAT row past chunk #0.
-Do not invent a figure. Kill-switch ``RAG_ACA_INCLUDING_VAT_RESCUE=0``.
+Do not invent a figure.
 Do not steal A3/A5/A6/A9/B2/E1/C1/F1.
 """
 from __future__ import annotations
@@ -277,10 +277,6 @@ def _install_chunk0_misses_incl(monkeypatch, *, delay, late, names, seeded):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
-    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -300,19 +296,7 @@ def test_a2_late_scan_surfaces_incl_vat_past_chunk0_delay(monkeypatch):
     assert compose_delay_damages_daily_from_excerpts(LIVE_A2, blob) is None
 
 
-def test_a2_late_scan_kill_switch_restores_chunk0(monkeypatch):
-    delay, incl, names, seeded = _chunk0_and_late_incl()
-    ret = _install_chunk0_misses_incl(
-        monkeypatch, delay=delay, late=incl, names=names, seeded=seeded,
-    )
-    monkeypatch.setenv("RAG_ACA_INCLUDING_VAT_RESCUE", "0")
-    chunks, _ = ret.retrieve_with_filter(LIVE_A2, ACTIVE, k=5)
-    blob = " ".join(c.text for c in chunks)
-    assert ACA_INCL not in blob
-    assert all(int(getattr(c, "chunk_index", 0) or 0) != LATE_INCL_INDEX for c in chunks)
-
-
-def test_a2_volume_helper_returns_incl_and_respects_kill_switch(monkeypatch):
+def test_a2_volume_helper_returns_incl(monkeypatch):
     from app.core.rag.retriever import a2_including_vat_excerpts_from_loaded_cd_volume
 
     delay, incl, _names, _seeded = _chunk0_and_late_incl()
@@ -335,7 +319,6 @@ def test_a2_volume_helper_returns_incl_and_respects_kill_switch(monkeypatch):
         "app.core.projects.documents_matching_title_phrase",
         lambda *a, **k: [],
     )
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
     extra = a2_including_vat_excerpts_from_loaded_cd_volume(
         LIVE_A2, ACTIVE, _Store(),
         rag_context=_sys(CHUNK0_DELAY_PARTIAL)["content"],
@@ -345,10 +328,6 @@ def test_a2_volume_helper_returns_incl_and_respects_kill_switch(monkeypatch):
     assert PARTIAL_ACA_TXT not in extra
     assert a2_including_vat_excerpts_from_loaded_cd_volume(
         LIVE_E1, ACTIVE, _Store(), doc_ids=[CD_DOC],
-    ) == ""
-    monkeypatch.setenv("RAG_ACA_INCLUDING_VAT_RESCUE", "0")
-    assert a2_including_vat_excerpts_from_loaded_cd_volume(
-        LIVE_A2, ACTIVE, _Store(), doc_ids=[CD_DOC],
     ) == ""
 
 
@@ -375,7 +354,6 @@ def test_graft_a2_last_chance_from_loaded_cd_volume(monkeypatch):
         "app.core.projects.documents_matching_title_phrase",
         lambda *a, **k: [{"id": CD_DOC, "original_name": CD_NAME}],
     )
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
     extra = a2_including_vat_excerpts_from_loaded_cd_volume(
         LIVE_A2, ACTIVE, rag_context=_sys(CHUNK0_DELAY_PARTIAL)["content"],
     )
@@ -402,7 +380,6 @@ def test_a2_volume_helper_does_not_steal_neighbor_asks(monkeypatch):
         def chunks_containing_all(self, *a, **k):
             return []
 
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
     for ask in (A3_ASK, A5_ASK, A6_ASK, A9_ASK, B2_ASK, C1_ASK, E1_ASK, F1_ASK):
         assert a2_including_vat_excerpts_from_loaded_cd_volume(
             ask, ACTIVE, _Store(), doc_ids=[CD_DOC],
@@ -526,7 +503,6 @@ def test_graft_a2_last_chance_scans_cited_chunk_owner_pid(monkeypatch):
         "app.core.rag.retriever.get_lexical_store",
         lambda: _Store(),
     )
-    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
     rag_ctx = (
         f"[doc_id={CD_DOC} chunk=0 score=0.80] {CHUNK0_DELAY_PARTIAL}"
     )

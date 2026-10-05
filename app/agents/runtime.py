@@ -6666,8 +6666,7 @@ def _graft_composed_delay_damages_daily(
     Compose from retrieved excerpts only — no invented operands. A
     fabricated SAR/day still loses when the ACA is absent. When top-k
     is refuse-prone, a last-chance scan of the loaded CD volume may
-    still supply both operands (kill-switch
-    RAG_DELAY_DAMAGES_DAILY_RESCUE=0). The composed envelope is
+    still supply both operands. The composed envelope is
     appended as a tool message so the cost gate can ground the product
     (0.1% × ACA is not a pairwise product of the raw numbers 0.1 and
     the ACA).
@@ -7006,7 +7005,7 @@ def _graft_rate_only_item(
 
     Live Master Corpus greeted and never named D529.3. Compose nothing —
     only fire when an excerpt already says Rate Only on the asked item.
-    A fabricated money total is replaced. Kill-switch: RAG_RATE_ONLY_RESCUE=0.
+    A fabricated money total is replaced.
     """
     try:
         from app.core.rag.retriever import (
@@ -7016,10 +7015,7 @@ def _graft_rate_only_item(
             extract_asked_cesmm_codes,
             format_rate_only_line,
             query_asks_for_boq_item_amount,
-            rate_only_rescue_enabled,
         )
-        if not rate_only_rescue_enabled():
-            return text
         user = _latest_operator_ask(messages)
         if not query_asks_for_boq_item_amount(user):
             return text
@@ -7064,8 +7060,7 @@ def _graft_honest_contract_refusal(
     this path.
 
     Compose nothing — only fire when an excerpt already states the
-    CD row. Kill-switches: RAG_PCG_VALUE_RESCUE=0 /
-    RAG_COMMENCEMENT_DATE_RESCUE=0.
+    CD row.
     """
     try:
         from app.core.rag.retriever import (
@@ -7078,11 +7073,9 @@ def _graft_honest_contract_refusal(
             chunk_states_pcg_contract_data,
             chunk_states_pcg_filled_value,
             chunk_states_pcg_not_required,
-            commencement_date_rescue_enabled,
             format_commencement_honest_line,
             format_commencement_unsupported_line,
             format_pcg_honest_line,
-            pcg_value_rescue_enabled,
             query_asks_for_contract_commencement_date,
             query_asks_for_parent_company_guarantee,
         )
@@ -7090,8 +7083,7 @@ def _graft_honest_contract_refusal(
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         raw = text or ""
         if (
-            pcg_value_rescue_enabled()
-            and query_asks_for_parent_company_guarantee(user)
+            query_asks_for_parent_company_guarantee(user)
             and chunk_states_pcg_contract_data(rag)
         ):
             line = format_pcg_honest_line(rag)
@@ -7122,8 +7114,7 @@ def _graft_honest_contract_refusal(
                 return line
             return f"{line}\n\n{raw.strip()}" if raw.strip() else line
         if (
-            commencement_date_rescue_enabled()
-            and query_asks_for_contract_commencement_date(user)
+            query_asks_for_contract_commencement_date(user)
         ):
             # Filled Contract Data date still wins. Anything else — empty
             # CD, TBA, pack-only RAG, or no CD row at all — must not

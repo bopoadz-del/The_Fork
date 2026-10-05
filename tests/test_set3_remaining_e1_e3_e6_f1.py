@@ -355,7 +355,6 @@ def _f1_sheet(monkeypatch):
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
-    monkeypatch.delenv("RAG_NAMED_PARTICULARS_ROW_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return chunks
 

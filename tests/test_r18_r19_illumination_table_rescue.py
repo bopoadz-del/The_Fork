@@ -26,7 +26,7 @@ The MEP room table (chunks 435/437: "Service Luminance — Avg Lux",
 "Control Rooms 500", "Uo (uniformity)") is a DIFFERENT table and must not be
 mistaken for this one.
 
-Fix: a targeted retrieval rescue (RAG_ILLUMINATION_TABLE_RESCUE, default on)
+Fix: a targeted retrieval rescue (always on)
 that pools the work-activity illumination table when an illumination-for-an-
 activity ask has no lux row in top-k — same shape as the soil-contact-cover
 rescue. Synthetic text throughout.
@@ -247,7 +247,7 @@ def test_pooled_diagnostic_is_logged_at_warning(monkeypatch):
 
 # ── Task 1B: the pooled table chunks lose the k-cut (live: admitted=4, still
 # 0/6). Give the illumination ask extra retrieval slots, exactly like the
-# spec-deferred-cover ask does (RAG_SPEC_DEFERRED_COVER_EXTRA_K).
+# spec-deferred-cover ask does (_SPEC_DEFERRED_COVER_EXTRA_K).
 
 def test_illumination_ask_gets_extra_retrieval_slots():
     from app.core.rag.inject import rag_retrieval_k
@@ -298,17 +298,6 @@ def test_rescue_never_lowers_an_existing_bonus(monkeypatch):
         R18, "P", fused, store, embedder=object(), query_vec=[1.0],
     )
     assert fused["spec-0"][2] == 3.0  # untouched, not lowered to 2.0 or 0.0
-
-
-def test_bonus_kill_switch(monkeypatch):
-    monkeypatch.setenv("RAG_ILLUMINATION_TABLE_BONUS", "0")
-    monkeypatch.setattr(ret, "_cosine_to_query", _cos_by_marker)
-    store = _FakeStore([_table("spec-0", 0), _table("spec-1", 1)])
-    fused = {}
-    ret._rescue_illumination_table_chunks(
-        R18, "P", fused, store, embedder=object(), query_vec=[1.0],
-    )
-    assert all(e[2] == 0.0 for e in fused.values())
 
 
 def test_unrelated_ask_applies_no_bonus(monkeypatch):

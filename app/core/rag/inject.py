@@ -83,8 +83,7 @@ def apply_token_cap(
     that also parsed as an operand filled the leftover cap, the 0.0
     sibling was skipped, and the model either refused or elected CoC
     0.015%. Force-keep every protected operand and evict pointer /
-    lookalike windows once both operands are in hand. Kill-switch
-    ``RAG_DELAY_DAMAGES_DAILY_RESCUE=0`` disables the protect.
+    lookalike windows once both operands are in hand.
     """
     # Default sized for the CURRENT chunker output. Live failure 2026-08-15
     # (F20): doc-reindex emits ~3,000-char chunks (~750-950 est. tokens), so
@@ -101,12 +100,10 @@ def apply_token_cap(
             from app.core.rag.retriever import (
                 _e1_has_standalone_excl_vat,
                 _e1_rate_preference,
-                delay_damages_daily_rescue_enabled,
                 query_asks_delay_damages_daily_amount,
             )
             if (
-                delay_damages_daily_rescue_enabled()
-                and query_asks_delay_damages_daily_amount(query)
+                query_asks_delay_damages_daily_amount(query)
             ):
                 e1_ask = True
                 for chunk in chunks:
@@ -378,7 +375,6 @@ def format_chunks_as_system_message(
         query_asks_for_part_summary_total,
         query_asks_for_time_for_completion,
         query_asks_who_the_engineer_is,
-        rate_only_rescue_enabled,
     )
     if any(chunk_states_schedule_not_used(c.text or "") for c in chunks):
         header += (
@@ -420,7 +416,6 @@ def format_chunks_as_system_message(
         )
     elif (
         _boq_codes
-        and rate_only_rescue_enabled()
         and any(
             chunk_states_rate_only_item(c.text or "", _boq_codes) for c in chunks
         )
@@ -942,14 +937,14 @@ def _emit_retrieval_trace(
 # points to, one per condition. Live on 0b1d13a three of the five slots went
 # to footing-cover chunks repeating the 100 mm figure, so the 75 mm
 # soil-contact note had no slot even once pooled. Two extra slots for this
-# ask only; every other question keeps RAG_K. ``0`` restores 0b1d13a.
-_SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT = 2
+# ask only; every other question keeps RAG_K.
+_SPEC_DEFERRED_COVER_EXTRA_K = 2
 # R18/R19: the illumination-table rescue pools the work-activity table (live
 # admitted=4), but the pooled chunks lose the top-k cut — HSE-plan chunks hold
 # the default 5 slots and the table pools at a lower cosine, so the model still
 # refuses. Extra slots for this ask only, exactly like the spec-deferred cover
-# ask. ``0`` restores the pre-fix miss.
-_ILLUMINATION_EXTRA_K_DEFAULT = 2
+# ask.
+_ILLUMINATION_EXTRA_K = 2
 
 
 def rag_retrieval_k(user_message: str, requested_k: int) -> int:
@@ -959,21 +954,10 @@ def rag_retrieval_k(user_message: str, requested_k: int) -> int:
         query_asks_illumination_level,
         query_asks_spec_deferred_cover,
     )
-    try:
-        cover_extra = int(os.getenv(
-            "RAG_SPEC_DEFERRED_COVER_EXTRA_K",
-            str(_SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT),
-        ))
-    except ValueError:
-        cover_extra = _SPEC_DEFERRED_COVER_EXTRA_K_DEFAULT
+    cover_extra = _SPEC_DEFERRED_COVER_EXTRA_K
     if cover_extra > 0 and query_asks_spec_deferred_cover(msg):
         return requested_k + cover_extra
-    try:
-        illum_extra = int(os.getenv(
-            "RAG_ILLUMINATION_EXTRA_K", str(_ILLUMINATION_EXTRA_K_DEFAULT),
-        ))
-    except ValueError:
-        illum_extra = _ILLUMINATION_EXTRA_K_DEFAULT
+    illum_extra = _ILLUMINATION_EXTRA_K
     if illum_extra > 0 and query_asks_illumination_level(msg):
         return requested_k + illum_extra
     return requested_k

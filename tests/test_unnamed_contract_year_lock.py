@@ -735,10 +735,12 @@ def test_mutation_probe_arrival_order_election_brings_the_failure_back(
     # Post-#501 A5/A9 (and later A2/A3) rescues also lift the
     # answer-bearing row. This probe measures #483 arrival-order
     # election alone.
-    monkeypatch.setenv("RAG_DELAY_DAMAGES_RATE_RESCUE", "0")
-    monkeypatch.setenv("RAG_ENGINEER_IDENTITY_RESCUE", "0")
-    monkeypatch.setenv("RAG_ACA_INCLUDING_VAT_RESCUE", "0")
-    monkeypatch.setenv("RAG_TIME_FOR_COMPLETION_RESCUE", "0")
+    monkeypatch.setattr(
+        ret, "_apply_asked_particular_value_boost", lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        ret, "_rescue_asked_particular_value_chunks", lambda *_a, **_k: 0,
+    )
     monkeypatch.setattr(
         ret, "elect_answer_bearing_contract", lambda _q, _docs: None,
     )
