@@ -175,6 +175,7 @@ def _audit_chunk(c) -> Dict[str, Any]:
         "doc_id": c.doc_id,
         "chunk_index": c.chunk_index,
         "chunk_id": c.chunk_id,
+        "page": getattr(c, "page", None),
         "project_id": c.project_id,
         "score": c.score,
         "layer": getattr(c, "layer", "own"),

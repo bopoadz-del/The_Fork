@@ -210,6 +210,9 @@ class Chunk:
     # compare=False so neither affects Chunk equality in tests.
     knowledge_layer: Optional[str] = field(default=None, compare=False)
     authority: Optional[str] = field(default=None, compare=False)
+    # 1-based page of the source PDF where this chunk's text starts; None for
+    # non-PDF sources and for rows indexed before pages were recorded.
+    page: Optional[int] = field(default=None, compare=False)
     # Revision currency (app.core.rag.revision, audit §5.2). Filename-derived,
     # set by ``retrieve_with_filter`` on every search: ``revision`` is the
     # parsed single-char revision token ("" when none), ``drawing_number`` the
@@ -256,6 +259,8 @@ class Chunk:
         d.pop("layer", None)
         d.pop("knowledge_layer", None)
         d.pop("authority", None)
+        if d.get("page") is None:
+            d.pop("page", None)
         # Revision-currency signals are internal (ranking + disclosure), not wire
         d.pop("revision", None)
         d.pop("drawing_number", None)
@@ -531,6 +536,27 @@ def ensure_table(table, *, bind) -> None:
         )
 
 
+def _ensure_page_column(eng, table_name: str) -> None:
+    """Add the nullable ``page`` column to a chunk table that predates it.
+
+    Namespaced tables are created here, not by Alembic, so a table created
+    before 0021 must gain the column here too or every read that selects
+    ``page`` fails. Idempotent; a failure is logged, never raised.
+    """
+    try:
+        from sqlalchemy import inspect as _inspect
+
+        columns = {c["name"] for c in _inspect(eng).get_columns(table_name)}
+        if "page" in columns:
+            return
+        with eng.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN page INTEGER"))
+    except Exception:  # noqa: BLE001 — never block startup; reads log their own failure
+        logger.warning(
+            "could not ensure the page column on %s", table_name, exc_info=True,
+        )
+
+
 def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
     global _INITIALIZED_NAMESPACES
     table_name = rag_chunk_cls.__tablename__
@@ -543,6 +569,7 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
         _ensure_sqlite_parent_dir(url)
         eng = _engine_for_url(url)
         ensure_table(rag_chunk_cls.__table__, bind=eng)
+        _ensure_page_column(eng, table_name)
         # `checkfirst=True` above SKIPS the whole table create — indexes
         # included — when the table already exists. A prod table that predates
         # the idx_chunks_project declaration therefore never got the btree, so
@@ -883,10 +910,14 @@ class VectorStore:
         *,
         knowledge_layer: Optional[str] = None,
         authority: Optional[str] = None,
+        pages: Optional[List[Optional[int]]] = None,
     ) -> int:
         """Replace all existing chunks for ``(project_id, doc_id)`` with
         the supplied set. Idempotent — calling twice with the same input
         is a no-op net change.
+
+        ``pages`` (aligned with ``chunks``) is each chunk's 1-based source
+        page; omitted, or of another length, every page is stored as NULL.
 
         ``embeddings`` must be a 2-D array of shape ``(len(chunks), dim)``.
         Returns the number of chunks written.
@@ -910,6 +941,8 @@ class VectorStore:
                 f"embedding dim {emb.shape[1]} != store dim {self.dim}"
             )
 
+        if pages is None or len(pages) != len(chunks):
+            pages = [None] * len(chunks)
         now = _now()
         with self._lock:
             with self._session_factory()() as session:
@@ -920,7 +953,7 @@ class VectorStore:
                         self._rag_chunk_cls.doc_id == doc_id,
                     )
                 )
-                for i, (txt, vec) in enumerate(zip(chunks, emb)):
+                for i, (txt, vec, page) in enumerate(zip(chunks, emb, pages)):
                     if "\x00" in txt:
                         # PostgreSQL rejects NUL bytes in text columns with
                         # DataError, which would abort this whole document's
@@ -941,6 +974,7 @@ class VectorStore:
                             created_at=now,
                             knowledge_layer=knowledge_layer,
                             authority=authority,
+                            page=int(page) if page else None,
                         )
                     )
                 session.commit()
@@ -1103,6 +1137,7 @@ class VectorStore:
                 score=0.0,
                 knowledge_layer=getattr(r, "knowledge_layer", None),
                 authority=getattr(r, "authority", None),
+                page=getattr(r, "page", None),
             )
 
         if all_rows:
@@ -1206,7 +1241,7 @@ class VectorStore:
                         vis = self._hidden_doc_sql(self._table_name)
                     sql = text(
                         "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
-                        "knowledge_layer, authority "
+                        "knowledge_layer, authority, page "
                         f"FROM {self._table_name} "
                         "WHERE project_id = :project_id "
                         f"AND {' AND '.join(clauses)} "
@@ -1231,6 +1266,7 @@ class VectorStore:
                 score=0.0,
                 knowledge_layer=getattr(r, "knowledge_layer", None),
                 authority=getattr(r, "authority", None),
+                page=getattr(r, "page", None),
             )
             for r in rows
         ]
@@ -1312,6 +1348,7 @@ class VectorStore:
                 score=0.0,
                 knowledge_layer=getattr(r, "knowledge_layer", None),
                 authority=getattr(r, "authority", None),
+                page=getattr(r, "page", None),
             )
             for r in rows
         ]
@@ -1449,7 +1486,7 @@ class VectorStore:
                         vis = self._hidden_doc_sql(self._table_name)
                     sql = text(
                         "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
-                        "knowledge_layer, authority "
+                        "knowledge_layer, authority, page "
                         f"FROM {self._table_name} "
                         "WHERE project_id = :project_id "
                         f"AND ({like_clauses}) "
@@ -1487,6 +1524,7 @@ class VectorStore:
                     score=round(score, 4),
                     knowledge_layer=r.knowledge_layer,
                     authority=r.authority,
+                    page=getattr(r, "page", None),
                 )
             )
         # Discard SQL pre-filter false positives: a chunk that passed the
@@ -1547,6 +1585,7 @@ class VectorStore:
                 self._rag_chunk_cls.text,
                 self._rag_chunk_cls.knowledge_layer,
                 self._rag_chunk_cls.authority,
+                self._rag_chunk_cls.page,
                 score_expr,
             )
             .where(self._rag_chunk_cls.project_id == project_id)
@@ -1576,6 +1615,7 @@ class VectorStore:
                 score=float(row.score),
                 knowledge_layer=row.knowledge_layer,
                 authority=row.authority,
+                page=getattr(row, "page", None),
             )
             for row in rows
         ]
@@ -1611,6 +1651,7 @@ class VectorStore:
                     score=float(sims[int(idx)]),
                     knowledge_layer=getattr(r, "knowledge_layer", None),
                     authority=getattr(r, "authority", None),
+                    page=getattr(r, "page", None),
                 )
             )
         return out
@@ -1671,7 +1712,7 @@ class VectorStore:
                     sql = text(
                         f"""
                         SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
-                               c.text, c.knowledge_layer, c.authority,
+                               c.text, c.knowledge_layer, c.authority, c.page,
                                ts_rank(c.text_search, q) AS rank
                         FROM {table} c, websearch_to_tsquery('english', :q) AS q
                         WHERE c.text_search @@ q
@@ -1709,6 +1750,7 @@ class VectorStore:
                 score=float(r.rank),
                 knowledge_layer=r.knowledge_layer,
                 authority=r.authority,
+                page=getattr(r, "page", None),
             )
             for r in rows
         ]
@@ -1732,7 +1774,7 @@ class VectorStore:
                     sql = text(
                         f"""
                         SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
-                               c.text, c.knowledge_layer, c.authority,
+                               c.text, c.knowledge_layer, c.authority, c.page,
                                {fts_table}.rank AS bm25_rank
                         FROM {fts_table}
                         JOIN {table} c ON c.rowid = {fts_table}.rowid
@@ -1765,6 +1807,7 @@ class VectorStore:
                 score=float(r.bm25_rank),
                 knowledge_layer=r.knowledge_layer,
                 authority=r.authority,
+                page=getattr(r, "page", None),
             )
             for r in rows
         ]

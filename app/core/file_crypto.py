@@ -184,8 +184,12 @@ def write_document_stream(
     *,
     max_bytes: Optional[int] = None,
     chunk_size: int = 1024 * 1024,
+    hasher=None,
 ) -> int:
     """Copy ``fileobj`` to ``path``, returning the PLAINTEXT byte count written.
+
+    ``hasher`` (e.g. ``hashlib.sha256()``) is fed every plaintext block as it
+    passes, so a caller gets the content hash without reading the file back.
 
     Why this exists: the upload routes used ``file.file.read()``, which holds
     the ENTIRE document in memory (and again while encrypting) — a 345 MB
@@ -213,6 +217,8 @@ def write_document_stream(
             block = fileobj.read(chunk_size)
             if not block:
                 break
+            if hasher is not None:
+                hasher.update(block)
             buf.extend(block)
             if max_bytes is not None and len(buf) > max_bytes:
                 raise UploadTooLarge(max_bytes)
@@ -231,6 +237,8 @@ def write_document_stream(
                 written += len(block)
                 if max_bytes is not None and written > max_bytes:
                     raise UploadTooLarge(max_bytes)
+                if hasher is not None:
+                    hasher.update(block)
                 out.write(block)
     except UploadTooLarge:
         # Never leave a truncated document behind for a rejected upload — a

@@ -55,13 +55,41 @@ def max_document_bytes() -> int:
     return _read_limit("MAX_DOC_UPLOAD_SIZE")
 
 
-def request_body_limit() -> int:
+#: The admin route that adds a whole reference work to general knowledge. It
+#: alone takes ``ADMIN_KNOWLEDGE_MAX_UPLOAD_MB``; every other route keeps the
+#: user caps above.
+ADMIN_KNOWLEDGE_UPLOAD_PATH = "/v1/admin/knowledge/documents"
+
+# A reference work is uploaded once as one document, not split by hand.
+_DEFAULT_ADMIN_KNOWLEDGE_MAX_UPLOAD_MB = 200
+
+
+def admin_knowledge_max_bytes() -> int:
+    """Cap for ``ADMIN_KNOWLEDGE_UPLOAD_PATH`` (``ADMIN_KNOWLEDGE_MAX_UPLOAD_MB``)."""
+    raw = (os.getenv("ADMIN_KNOWLEDGE_MAX_UPLOAD_MB") or "").strip()
+    mb = _DEFAULT_ADMIN_KNOWLEDGE_MAX_UPLOAD_MB
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = 0
+        if value > 0:
+            mb = value
+    return int(mb * 1024 * 1024)
+
+
+def request_body_limit(path: str | None = None) -> int:
     """Largest body any upload route could legitimately accept.
 
     Used by the early Content-Length guard in ``app/main.py``: a request over
     this can be refused before its body is read, since no route would take it.
+    ``path`` is the request path; only the admin knowledge route is allowed
+    its own, larger cap.
     """
-    return max(max_upload_bytes(), max_document_bytes())
+    limit = max(max_upload_bytes(), max_document_bytes())
+    if path and path.rstrip("/") == ADMIN_KNOWLEDGE_UPLOAD_PATH:
+        limit = max(limit, admin_knowledge_max_bytes())
+    return limit
 
 
 def _read_limit(var: str) -> int:

@@ -202,6 +202,50 @@ def pdf_ocr_batch_pages() -> int:
 def pdf_batch_min_mb() -> float:
     return _env_float("PDF_BATCH_MIN_MB", _DEFAULT_PDF_BATCH_MIN_MB)
 
+
+# Share of the pages read that must lack a text layer before a PDF counts as
+# a scan (``_mostly_without_text``). Below it, empty pages are figures/maps in
+# a text document: counted on the row, not a reason to call the body missing.
+_DEFAULT_PDF_SCANNED_EMPTY_PAGE_SHARE = 0.5
+
+
+def pdf_scanned_empty_page_share() -> float:
+    """``PDF_SCANNED_EMPTY_PAGE_SHARE`` in (0, 1]; anything else -> default."""
+    share = _env_float("PDF_SCANNED_EMPTY_PAGE_SHARE", _DEFAULT_PDF_SCANNED_EMPTY_PAGE_SHARE)
+    if not 0 < share <= 1:
+        return _DEFAULT_PDF_SCANNED_EMPTY_PAGE_SHARE
+    return share
+
+
+# Whole-document ceiling for admin-added reference works. A reference work is
+# uploaded once as one document and always extracts in isolated page batches,
+# so it is not held to ``PDF_MAX_SIZE_MB`` (the live-upload skip ceiling).
+_DEFAULT_ADMIN_KNOWLEDGE_PDF_MAX_MB = 200.0
+
+#: Document provenances that are processed as whole documents (page batches,
+#: own size ceiling) rather than under the per-upload PDF ceiling.
+WHOLE_DOCUMENT_PROVENANCES = frozenset({"admin_knowledge"})
+
+
+def admin_knowledge_pdf_max_mb() -> float:
+    """``ADMIN_KNOWLEDGE_PDF_MAX_MB``: skip ceiling for whole reference works."""
+    return _env_float("ADMIN_KNOWLEDGE_PDF_MAX_MB", _DEFAULT_ADMIN_KNOWLEDGE_PDF_MAX_MB)
+
+
+def is_whole_document(doc: dict[str, Any] | None) -> bool:
+    """True when ``doc`` is processed as one whole document in page batches."""
+    meta = _projects.coerce_document_metadata((doc or {}).get("metadata"))
+    return meta.get("provenance") in WHOLE_DOCUMENT_PROVENANCES
+
+
+# How many leading letters/digits of a chunk are matched against the extracted
+# text to find the page the chunk starts on (``chunk_start_pages``).
+_DEFAULT_CHUNK_PAGE_PROBE_CHARS = 48
+
+
+def chunk_page_probe_chars() -> int:
+    return max(8, _env_int("CHUNK_PAGE_PROBE_CHARS", _DEFAULT_CHUNK_PAGE_PROBE_CHARS))
+
 # In-process guard around index writes. Cross-process safety comes from the
 # SQLite BEGIN IMMEDIATE transaction in _update_index; this lock just avoids
 # threads in one process contending on the DB lock unnecessarily.
@@ -612,6 +656,20 @@ def _extract_pdf(
     import fitz
 
     parts: list[str] = []
+    # [1-based page, offset in "\n".join(parts)] where each page's text
+    # starts -- how a chunk is later given the real page it begins on,
+    # without putting any marker into the text itself.
+    page_starts: list[list[int]] = []
+    joined_len = 0
+
+    def _add(part: str, page_index: int) -> None:
+        nonlocal joined_len
+        start = joined_len + (1 if parts else 0)
+        if not page_starts or page_starts[-1][0] != page_index + 1:
+            page_starts.append([page_index + 1, start])
+        parts.append(part)
+        joined_len = start + len(part)
+
     ocr_pages = 0
     ocr_attempts = 0
     empty_text_pages = 0
@@ -668,7 +726,7 @@ def _extract_pdf(
                     # Always keep any real text layer — never discard digital
                     # text in favour of OCR.
                     if page_text:
-                        parts.append(page_text)
+                        _add(page_text, i)
                         chars += len(page_text)
                     # A page whose text layer is too thin is image-only (or
                     # near-empty) — OCR it, bounded by the page cap so a long
@@ -679,7 +737,7 @@ def _extract_pdf(
                             ocr_attempts += 1
                             ocr_text = _ocr_pdf_page(page)
                             if ocr_text.strip():
-                                parts.append(ocr_text)
+                                _add(ocr_text, i)
                                 chars += len(ocr_text)
                                 ocr_pages += 1
                         elif page_cap > 0:
@@ -694,7 +752,7 @@ def _extract_pdf(
                             # book held ~1.3 GB and tripped the memory guard.
                             plumber_page.close()
                         if table_md:
-                            parts.append(table_md)
+                            _add(table_md, i)
                             chars += len(table_md)
             finally:
                 doc.close()
@@ -746,6 +804,8 @@ def _extract_pdf(
                 if empty_text_pages:
                     partial_meta["empty_text_pages"] = empty_text_pages
                 partial_meta["pages_read"] = pages_read
+                if page_starts:
+                    partial_meta["page_starts"] = page_starts
                 if _mostly_without_text(empty_text_pages, pages_read) and ocr_attempts == 0:
                     partial_meta["ocr_required"] = True
                 return "\n".join(parts), partial_meta
@@ -767,6 +827,8 @@ def _extract_pdf(
     if empty_text_pages:
         meta["empty_text_pages"] = empty_text_pages
     meta["pages_read"] = pages_read
+    if page_starts:
+        meta["page_starts"] = page_starts
     if _mostly_without_text(empty_text_pages, pages_read) and ocr_attempts == 0:
         # Cover-only extract: finer chunker can still emit 6 chunks and look
         # like success. Callers must not report that as an indexed body.
@@ -831,7 +893,11 @@ def _extract_pdf_range_job(
 
 
 def _extract_pdf_batched(
-    file_path: str, filename: str, *, force_ocr: bool = False
+    file_path: str,
+    filename: str,
+    *,
+    force_ocr: bool = False,
+    max_size_mb: float | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Extract a large PDF as isolated page batches, keeping prior text.
 
@@ -839,6 +905,9 @@ def _extract_pdf_batched(
     on batch N keeps batches 1..N-1 and flags ``extract_partial`` instead of
     returning an empty document (the isolation fallback that used to wipe a
     28 MB scan that had already OCR'd its first pages).
+
+    ``max_size_mb`` replaces the whole-PDF skip ceiling (``PDF_MAX_SIZE_MB``)
+    for callers with their own, e.g. whole reference works.
     """
     from app.core.extract_isolated import run_isolated
 
@@ -847,7 +916,7 @@ def _extract_pdf_batched(
         return "", blocked
 
     size_mb = _document_size_mb(file_path)
-    max_mb = pdf_max_size_mb()
+    max_mb = pdf_max_size_mb() if max_size_mb is None else max_size_mb
     if max_mb > 0 and size_mb > max_mb:
         return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
 
@@ -877,6 +946,8 @@ def _extract_pdf_batched(
 
     parts: list[str] = []
     meta: dict[str, Any] = {}
+    page_starts: list[list[int]] = []
+    joined_len = 0
     ocr_used = 0
     ocr_attempts = 0
     empty_text_pages = 0
@@ -891,7 +962,13 @@ def _extract_pdf_batched(
             label=f"extraction of {filename} pages {start + 1}-{end}",
         )
         if text:
+            # Batch offsets are relative to the batch text; shift them to
+            # where that text lands in the whole document's "\n".join.
+            base = joined_len + (1 if parts else 0)
+            for page, offset in (bmeta or {}).get("page_starts") or []:
+                page_starts.append([int(page), base + int(offset)])
             parts.append(text)
+            joined_len = base + len(text)
         ocr_used += int((bmeta or {}).get("ocr_pages") or 0)
         ocr_attempts += int((bmeta or {}).get("ocr_attempts") or 0)
         empty_text_pages += int((bmeta or {}).get("empty_text_pages") or 0)
@@ -922,6 +999,8 @@ def _extract_pdf_batched(
     if empty_text_pages:
         meta["empty_text_pages"] = empty_text_pages
     meta["pages_read"] = pages_read
+    if page_starts:
+        meta["page_starts"] = page_starts
     if _mostly_without_text(empty_text_pages, pages_read) and ocr_attempts == 0:
         meta["ocr_required"] = True
     return "\n".join(parts), meta
@@ -1150,8 +1229,26 @@ def _legacy_index_dir() -> str:
 
 # ── text extraction ───────────────────────────────────────────────────────────
 
+def _strip_nul(text: str, meta: dict[str, Any]) -> str:
+    """Remove NUL bytes, moving any recorded page offsets with the text."""
+    if "\x00" not in text:
+        return text
+    starts = (meta or {}).get("page_starts")
+    if starts:
+        shifted: list[list[int]] = []
+        removed = 0
+        prev = 0
+        for page, offset in sorted(starts, key=lambda s: s[1]):
+            removed += text.count("\x00", prev, offset)
+            prev = offset
+            shifted.append([page, offset - removed])
+        meta["page_starts"] = shifted
+    return text.replace("\x00", "")
+
+
 def _extract_with_meta(
-    file_path: str, filename: str, force_ocr: bool = False
+    file_path: str, filename: str, force_ocr: bool = False,
+    *, whole_document: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Extract plaintext from a document, plus a small metadata dict.
 
@@ -1177,26 +1274,32 @@ def _extract_with_meta(
     # taking the single uvicorn worker -- and every request in flight -- down.
     from app.core.extract_isolated import run_isolated, worth_isolating
 
+    _, ext = os.path.splitext((filename or "").lower())
+    if whole_document and ext == ".pdf":
+        # A whole reference work: always isolated page batches (memory is
+        # released between batches), under its own size ceiling rather than
+        # the live-upload one, so a long book is read whole, not skipped.
+        text, meta = _extract_pdf_batched(
+            file_path, filename, force_ocr=force_ocr,
+            max_size_mb=admin_knowledge_pdf_max_mb(),
+        )
+        return _strip_nul(text, meta), meta
+
     if not worth_isolating(file_path):
         # Too small to threaten the box. Running in-process also keeps
         # extraction's side effects observable: a forked child returns only
         # (text, meta), so counters, caches and spies mutated during
         # extraction are lost with it.
         text, meta = _extract_with_meta_impl(file_path, filename, force_ocr)
-        if "\x00" in text:
-            text = text.replace("\x00", "")
-        return text, meta
+        return _strip_nul(text, meta), meta
 
-    _, ext = os.path.splitext((filename or "").lower())
     if ext == ".pdf" and _pdf_should_batch(file_path):
         # Large scans (the 20-32 MB priced-BOQ band): isolated page batches
         # so a later-range timeout keeps earlier OCR instead of ZERO_CHUNK.
         text, meta = _extract_pdf_batched(
             file_path, filename, force_ocr=force_ocr
         )
-        if "\x00" in text:
-            text = text.replace("\x00", "")
-        return text, meta
+        return _strip_nul(text, meta), meta
 
     (text, meta), diag = run_isolated(
         _extract_with_meta_impl,
@@ -1208,9 +1311,7 @@ def _extract_with_meta(
         # Carry the reason, so a 0-chunk document says WHY rather than being
         # indistinguishable from a genuinely empty file.
         meta = {**(meta or {}), **diag}
-    if "\x00" in text:
-        text = text.replace("\x00", "")
-    return text, meta
+    return _strip_nul(text, meta), meta
 
 
 def _oxml_local_name(tag: object) -> str:
@@ -1719,6 +1820,76 @@ def chunk_extracted_document(
     if not chunks:
         return _chunk_prose_segment(text, chunker)
     return chunks
+
+
+_PAGE_KEY_DROP = re.compile(r"[\W_]+")
+
+
+def _page_key(text: str) -> str:
+    """Letters and digits only, lower-cased.
+
+    Chunking re-flows whitespace and collapses OCR-spaced item codes, so a
+    chunk is not a byte-substring of the extracted text; its letters and
+    digits are, in order. Matching on those keeps chunk text untouched.
+    """
+    return _PAGE_KEY_DROP.sub("", text).lower()
+
+
+def chunk_start_pages(
+    text: str,
+    page_starts: list[list[int]] | list[tuple[int, int]] | None,
+    chunks: list[str],
+) -> list[int | None]:
+    """The 1-based source page each chunk's text begins on (None if unknown).
+
+    ``page_starts`` is ``[[page, offset], ...]``: where each page's text starts
+    in ``text`` (recorded by PDF extraction). Each chunk's leading letters and
+    digits are located in the same projection of ``text``, searching forward
+    from the previous chunk so a repeated running header resolves to the
+    occurrence in reading order. A chunk that cannot be located (rewritten
+    rows, synthesized summaries) gets None rather than a guess.
+    """
+    if not chunks:
+        return []
+    if not page_starts or not text:
+        return [None] * len(chunks)
+    import bisect
+
+    starts = sorted(
+        ((int(p), int(o)) for p, o in page_starts), key=lambda s: s[1]
+    )
+    keys: list[str] = []
+    key_pos: list[int] = []
+    pages: list[int] = []
+    pos = 0
+    for idx, (page, offset) in enumerate(starts):
+        end = starts[idx + 1][1] if idx + 1 < len(starts) else len(text)
+        seg = _page_key(text[offset:end])
+        key_pos.append(pos)
+        pages.append(page)
+        keys.append(seg)
+        pos += len(seg)
+    skeleton = "".join(keys)
+    probe_len = chunk_page_probe_chars()
+    out: list[int | None] = []
+    cursor = 0
+    for chunk in chunks:
+        key = _page_key(chunk or "")
+        probe = key[:probe_len]
+        if not probe:
+            out.append(None)
+            continue
+        at = skeleton.find(probe, cursor)
+        if at < 0:
+            at = skeleton.find(probe)
+        if at < 0:
+            out.append(None)
+            continue
+        out.append(pages[bisect.bisect_right(key_pos, at) - 1])
+        # The next chunk starts after this one's first half: overlap carries
+        # at most a short tail forward, never half a chunk.
+        cursor = at + len(key) // 2
+    return out
 
 
 # ── index persistence ─────────────────────────────────────────────────────────
@@ -2248,10 +2419,9 @@ def index_project(project_id: str) -> dict[str, Any]:
 
         file_path = doc.get("file_path") or ""
         text, meta = _extract_with_meta(file_path, filename)
-        chunks = chunk_extracted_document(
-            text,
-            chunker=_chunker_for_document(filename),
-            filename=filename,
+        meta = dict(meta or {})
+        chunks, pages = _text_chunks_with_pages(
+            text, meta, _chunker_for_document(filename), filename,
         )
         # BOQ → RAG: mirror index_document so the package total + line items
         # are retrievable regardless of which indexing path ran.
@@ -2264,6 +2434,7 @@ def index_project(project_id: str) -> dict[str, Any]:
         drawing_chunks = _drawing_chunks_for_document(file_path, filename, ext, project_id)
         if drawing_chunks:
             chunks = chunks + drawing_chunks
+        meta["chunk_pages"] = pages + [None] * (len(chunks) - len(pages))
         chunks = _normalize_cesmm_in_chunks(chunks)
 
         if not chunks:
@@ -2296,7 +2467,9 @@ def index_project(project_id: str) -> dict[str, Any]:
         try:
             from app.core.rag import retriever as _rag
             if _rag.available() and chunks:
-                _rag.index_chunks(project_id, doc["id"], chunks)
+                _rag.index_chunks(
+                    project_id, doc["id"], chunks, pages=_pages_for(chunks, meta),
+                )
         except Exception as exc:  # noqa: BLE001 — RAG must never break primary indexing
             import logging as _logging
             _logging.getLogger(__name__).warning(
@@ -2772,7 +2945,8 @@ def _ifc_census(file_path: str, filename: str) -> list[str]:
 
 
 def _mostly_without_text(empty_text_pages: int, pages_read: int) -> bool:
-    """True when at least half the pages read had no usable text layer.
+    """True when the share of pages read with no usable text layer reaches
+    ``PDF_SCANNED_EMPTY_PAGE_SHARE`` (default one half).
 
     A scan is mostly image pages. A text-layer reference book with full-page
     figures or maps has a few empty pages among hundreds of text pages; those
@@ -2783,7 +2957,7 @@ def _mostly_without_text(empty_text_pages: int, pages_read: int) -> bool:
         return False
     if pages_read <= 0:
         return True
-    return empty_text_pages * 2 >= pages_read
+    return empty_text_pages >= pdf_scanned_empty_page_share() * pages_read
 
 
 def _scanned_pdf_missing_ocr(ext: str, meta: dict[str, Any]) -> bool:
@@ -2915,14 +3089,74 @@ def _produce_chunks(
     extraction metadata (quarantine and ledger decisions read it).
     """
     text, meta = _extract_with_meta(file_path, filename, force_ocr=force_ocr)
+    meta = dict(meta or {})
+    chunks, pages = _text_chunks_with_pages(text, meta, chunker, filename)
+    structured = _structured_chunks(file_path, filename, ext, project_id)
+    meta["chunk_pages"] = pages + [None] * len(structured)
+    return _normalize_cesmm_in_chunks(chunks + structured), meta
+
+
+def _text_chunks_with_pages(
+    text: str, meta: dict[str, Any], chunker: str, filename: str,
+) -> tuple[list[str], list[int | None]]:
+    """Chunk extracted text; give each chunk the page its text starts on."""
+    page_starts = meta.pop("page_starts", None)
     chunks = chunk_extracted_document(text, chunker=chunker, filename=filename)
+    return chunks, chunk_start_pages(text, page_starts, chunks)
+
+
+def _structured_chunks(
+    file_path: str, filename: str, ext: str, project_id: str,
+) -> list[str]:
+    """The table stages: computed BOQ totals and drawing schedules."""
     # BOQ → RAG: append the computed total + line items so the package
     # value is answerable from the corpus (the raw text never holds the sum).
-    chunks = chunks + _boq_chunks_for_document(file_path, filename, ext, project_id)
+    chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
     # Drawing → RAG: mirrors index_project above. A drawing's schedules
     # live in its tables, and the raw text layer loses their structure.
-    chunks = chunks + _drawing_chunks_for_document(file_path, filename, ext, project_id)
-    return _normalize_cesmm_in_chunks(chunks), meta
+    return chunks + _drawing_chunks_for_document(file_path, filename, ext, project_id)
+
+
+def _produce_whole_document_chunks(
+    file_path: str,
+    filename: str,
+    ext: str,
+    project_id: str,
+    chunker: str,
+    force_ocr: bool,
+) -> tuple[list[str], dict[str, Any]]:
+    """``_produce_chunks`` for a whole reference work.
+
+    Extraction runs from THIS process so each page batch gets its own
+    memory-capped child (a child cannot fork again, so batching inside the
+    per-file child would share one address space across the whole book).
+    Chunking happens here; the table stages keep their own isolated child.
+    """
+    from app.core.extract_isolated import run_isolated
+
+    text, meta = _extract_with_meta(
+        file_path, filename, force_ocr=force_ocr, whole_document=True,
+    )
+    meta = dict(meta or {})
+    chunks, pages = _text_chunks_with_pages(text, meta, chunker, filename)
+    del text
+    mem_mb, timeout_s = _file_budget()
+    structured, diag = run_isolated(
+        _structured_chunks,
+        (file_path, filename, ext, project_id),
+        fallback=[],
+        label=f"table stages of {filename}",
+        mem_mb=mem_mb,
+        timeout_s=timeout_s,
+    )
+    if diag:
+        logger.warning(
+            "table stages failed for %s (%s); text chunks kept",
+            filename, diag.get("extract_failed_detail"),
+        )
+    structured = list(structured or [])
+    meta["chunk_pages"] = pages + [None] * len(structured)
+    return _normalize_cesmm_in_chunks(chunks + structured), meta
 
 
 def _file_budget() -> tuple[int, float]:
@@ -2955,6 +3189,8 @@ def _produce_chunks_isolated(
     project_id: str,
     chunker: str,
     force_ocr: bool,
+    *,
+    whole_document: bool = False,
 ) -> tuple[list[str], dict[str, Any]]:
     """``_produce_chunks`` in its own memory-capped, time-limited child.
 
@@ -2968,6 +3204,11 @@ def _produce_chunks_isolated(
     """
     from app.core.extract_isolated import run_isolated, worth_isolating
 
+    if whole_document:
+        # Whole reference works isolate per page batch, not per file.
+        return _produce_whole_document_chunks(
+            file_path, filename, ext, project_id, chunker, force_ocr,
+        )
     if not worth_isolating(file_path):
         return _produce_chunks(file_path, filename, ext, project_id, chunker, force_ocr)
     mem_mb, timeout_s = _file_budget()
@@ -2984,7 +3225,73 @@ def _produce_chunks_isolated(
     return chunks, meta
 
 
+def _pages_for(chunks: list[str], meta: dict[str, Any] | None) -> list[int | None] | None:
+    """Per-chunk source pages from ``meta``, or None when they do not line up."""
+    pages = (meta or {}).get("chunk_pages")
+    if not pages or len(pages) != len(chunks) or not any(p for p in pages):
+        return None
+    return list(pages)
+
+
+def indexing_record(result: dict[str, Any]) -> dict[str, Any]:
+    """The ``metadata.indexing`` summary written for one ``index_document`` result."""
+    indexing: dict[str, Any] = {
+        "status": result.get("status") or ("error" if result.get("error") else "ok"),
+        "error": result.get("error"),
+        "chunks": result.get("total_chunks", 0),
+        "detail": result.get("extract_error") or result.get("banner") or result.get("rag_error"),
+    }
+    if "pages_without_text" in result:
+        indexing["pages_without_text"] = int(result.get("pages_without_text") or 0)
+    return indexing
+
+
+def _record_pages_without_text(document_id: str, result: dict[str, Any]) -> None:
+    """Put a PDF's count of pages with no text layer on its document row.
+
+    Image-only pages inside a text document (figures, maps) are not indexed
+    as text; the count on ``metadata.indexing.pages_without_text`` keeps that
+    visible in the listing instead of dropping them silently. Writes only
+    when the stored count differs.
+    """
+    if "pages_without_text" not in result:
+        return
+    count = int(result.get("pages_without_text") or 0)
+    try:
+        doc = _projects.get_document(document_id) or {}
+        meta = _projects.coerce_document_metadata(doc.get("metadata"))
+        indexing = dict(meta.get("indexing") or {})
+        if indexing.get("pages_without_text") == count:
+            return
+        if not count and "pages_without_text" not in indexing:
+            return
+        indexing["pages_without_text"] = count
+        _projects.update_document_metadata(document_id, {"indexing": indexing})
+    except Exception:
+        logger.warning(
+            "could not record pages_without_text for %s", document_id, exc_info=True,
+        )
+
+
 def index_document(
+    project_id: str,
+    document_id: str,
+    chunker: str = "default",
+    *,
+    force_ocr: bool = False,
+    stamp_as_indexed: bool = False,
+) -> dict[str, Any]:
+    """Index one document (see ``_index_document``) and record on its row how
+    many PDF pages had no text layer."""
+    result = _index_document(
+        project_id, document_id, chunker,
+        force_ocr=force_ocr, stamp_as_indexed=stamp_as_indexed,
+    )
+    _record_pages_without_text(document_id, result)
+    return result
+
+
+def _index_document(
     project_id: str,
     document_id: str,
     chunker: str = "default",
@@ -3046,6 +3353,7 @@ def index_document(
         chunks, meta = _produce_chunks_isolated(
             file_path, filename, ext, project_id,
             _chunker_for_document(filename, chunker), force_ocr,
+            whole_document=is_whole_document(doc),
         )
         quarantined = _quarantine_index_result(
             project_id, document_id, filename, meta,
@@ -3087,6 +3395,7 @@ def index_document(
                 "ocr_pages": int(meta.get("ocr_pages") or 0),
                 "ocr_attempts": int(meta.get("ocr_attempts") or 0),
                 "empty_text_pages": int(meta.get("empty_text_pages") or 0),
+                "pages_without_text": int(meta.get("empty_text_pages") or 0),
                 "ocr_skipped_too_large": bool(meta.get("ocr_skipped_too_large")),
             }
         if not chunks:
@@ -3148,7 +3457,10 @@ def index_document(
             if not _rag.available():
                 rag_error = "embedding stack unavailable"
             elif chunks:
-                rag_indexed = _rag.index_chunks(project_id, document_id, chunks) or 0
+                rag_indexed = _rag.index_chunks(
+                    project_id, document_id, chunks,
+                    pages=_pages_for(chunks, meta),
+                ) or 0
                 entry["rag_indexed"] = rag_indexed
                 if rag_indexed < len(chunks):
                     # ANY shortfall — zero or partial — leaves the document less
@@ -3240,6 +3552,8 @@ def index_document(
         "ocr_attempts": int(meta.get("ocr_attempts") or 0),
         "empty_text_pages": int(meta.get("empty_text_pages") or 0),
     }
+    if ext == ".pdf":
+        result["pages_without_text"] = int(meta.get("empty_text_pages") or 0)
     if rag_error:
         # Surfaced to the CALLER, not just the log. The upload path reports
         # indexing status back to the user; without this it reported success
@@ -3572,13 +3886,9 @@ def maybe_eager_index(project_id: str, document_id: str) -> dict[str, Any] | Non
         return None
     result = index_document(project_id, document_id)
     try:
-        indexing = {
-            "status": result.get("status") or ("error" if result.get("error") else "ok"),
-            "error": result.get("error"),
-            "chunks": result.get("total_chunks", 0),
-            "detail": result.get("extract_error") or result.get("banner") or result.get("rag_error"),
-        }
-        _projects.update_document_metadata(document_id, {"indexing": indexing})
+        _projects.update_document_metadata(
+            document_id, {"indexing": indexing_record(result)},
+        )
     except Exception:
         logger.warning(
             "failed to persist indexing status for %s/%s",
