@@ -187,9 +187,11 @@ jobs:
         # body is `return None` / `{}` / `[]` / `''` / `0`. The caller then
         # cannot tell "nothing there" from "the lookup failed". 124 of those
         # existed the day the twin was written, 58 under app/core, so they
-        # are baselined by file:line in RETURN_ALLOWLIST and the gate fails
-        # on the 125th. The baseline may only shrink; a test asserts its
-        # ceiling and refuses stale keys.
+        # are baselined in RETURN_ALLOWLIST by enclosing function
+        # (`path::Class.method` -> how many sites it may hold), not by line,
+        # so an edit above a handler does not redden the gate; a new site
+        # beyond a function's count does. The baseline may only shrink; the
+        # script and a test refuse stale (over-generous) counts.
         #
         # Stdlib only. Exit 1 with a file:line list.
         run: python scripts/scan_exception_pass.py
