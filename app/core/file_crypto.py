@@ -89,6 +89,8 @@ def looks_encrypted(blob: bytes) -> bool:
     """
     if not blob:
         return False
+    if blob.startswith(_STREAM_MAGIC):
+        return True
     try:
         import base64
 
@@ -118,6 +120,12 @@ def decrypt_bytes(token: bytes) -> bytes:
         return token
     if not looks_encrypted(token):
         return token
+    if token.startswith(_STREAM_MAGIC):
+        import io
+
+        stream = io.BytesIO(token)
+        _is_stream_file(stream)
+        return b"".join(_iter_stream_plaintext(stream))
     try:
         return fernet.decrypt(token)
     except InvalidToken as exc:
@@ -129,6 +137,47 @@ def decrypt_bytes(token: bytes) -> bytes:
             "A stored document is encrypted but could not be decrypted — "
             "DATA_ENCRYPTION_KEY does not match the key it was written with."
         ) from exc
+
+
+#: Header of the framed (streamed) encrypted format: after it, repeated
+#: ``[8-byte big-endian length][Fernet token of one plaintext block]``. Plain
+#: ASCII, so it can never be mistaken for a whole-file Fernet token or for a
+#: legacy plaintext document's own first bytes in practice.
+_STREAM_MAGIC = b"FORK-ENC-STREAM-1\n"
+_FRAME_LEN_BYTES = 8
+
+
+def _is_stream_file(fh) -> bool:
+    """True when the open file starts with the framed header (fh is left just
+    past the header when True, at the start otherwise)."""
+    head = fh.read(len(_STREAM_MAGIC))
+    if head == _STREAM_MAGIC:
+        return True
+    fh.seek(0)
+    return False
+
+
+def _iter_stream_plaintext(fh):
+    """Decrypt a framed file frame by frame (fh positioned after the header)."""
+    fernet = _load_fernet()
+    if fernet is None:
+        raise DecryptionError(
+            "A stored document is encrypted but DATA_ENCRYPTION_KEY is not set.")
+    while True:
+        prefix = fh.read(_FRAME_LEN_BYTES)
+        if not prefix:
+            return
+        size = int.from_bytes(prefix, "big")
+        token = fh.read(size)
+        if len(prefix) < _FRAME_LEN_BYTES or len(token) < size:
+            raise DecryptionError("A stored encrypted document is truncated.")
+        try:
+            yield fernet.decrypt(token)
+        except InvalidToken as exc:
+            raise DecryptionError(
+                "A stored document is encrypted but could not be decrypted — "
+                "DATA_ENCRYPTION_KEY does not match the key it was written with."
+            ) from exc
 
 
 def write_document(path: str, data: bytes) -> None:
@@ -145,6 +194,8 @@ def read_document(path: str) -> bytes:
     through untouched.
     """
     with open(path, "rb") as fh:
+        if _is_stream_file(fh):
+            return b"".join(_iter_stream_plaintext(fh))
         raw = fh.read()
     return decrypt_bytes(raw)
 
@@ -169,6 +220,9 @@ def plaintext_size(path: str) -> int:
     Propagates OSError when the file is unreadable — callers decide whether a
     missing file is fatal or merely unknown.
     """
+    with open(path, "rb") as fh:
+        if _is_stream_file(fh):
+            return sum(len(block) for block in _iter_stream_plaintext(fh))
     if not encryption_enabled():
         return os.path.getsize(path)
     with open(path, "rb") as fh:
@@ -197,10 +251,10 @@ def write_document_stream(
     not just the uploader. Copying in ``chunk_size`` blocks keeps peak memory
     flat regardless of file size.
 
-    Fernet has no streaming mode, so when encryption is ON the payload must be
-    buffered whole before it can be encrypted; the block loop still bounds the
-    read and enforces ``max_bytes``, so an oversize file is rejected before it
-    is ever materialised.
+    Fernet has no streaming mode, so when encryption is ON each block is
+    encrypted on its own and written as a length-prefixed frame after the
+    ``_STREAM_MAGIC`` header (the framed format every reader here understands).
+    Memory stays one block whatever the file size.
 
     ``max_bytes`` (when set) aborts with :class:`UploadTooLarge` the moment the
     stream exceeds the limit, removing the partial file first — so a rejected
@@ -211,25 +265,12 @@ def write_document_stream(
     except (AttributeError, OSError):
         pass  # non-seekable stream — read from wherever it is
 
-    if encryption_enabled():
-        buf = bytearray()
-        while True:
-            block = fileobj.read(chunk_size)
-            if not block:
-                break
-            if hasher is not None:
-                hasher.update(block)
-            buf.extend(block)
-            if max_bytes is not None and len(buf) > max_bytes:
-                raise UploadTooLarge(max_bytes)
-        payload = encrypt_bytes(bytes(buf))
-        with open(path, "wb") as out:
-            out.write(payload)
-        return len(buf)
-
+    fernet = _load_fernet()
     written = 0
     try:
         with open(path, "wb") as out:
+            if fernet is not None:
+                out.write(_STREAM_MAGIC)
             while True:
                 block = fileobj.read(chunk_size)
                 if not block:
@@ -239,7 +280,12 @@ def write_document_stream(
                     raise UploadTooLarge(max_bytes)
                 if hasher is not None:
                     hasher.update(block)
-                out.write(block)
+                if fernet is not None:
+                    token = fernet.encrypt(block)
+                    out.write(len(token).to_bytes(_FRAME_LEN_BYTES, "big"))
+                    out.write(token)
+                else:
+                    out.write(block)
     except UploadTooLarge:
         # Never leave a truncated document behind for a rejected upload — a
         # partial file on disk is indistinguishable from a complete one later.
@@ -262,20 +308,26 @@ def open_plaintext(path: str):
     is made.
     """
     with open(path, "rb") as fh:
-        raw = fh.read()
+        streamed = _is_stream_file(fh)
+        raw = b"" if streamed else fh.read()
 
-    if not (encryption_enabled() and looks_encrypted(raw)):
+    if not streamed and not (encryption_enabled() and looks_encrypted(raw)):
         # Plaintext on disk — hand back the original path, nothing to clean up.
         yield path
         return
 
-    plaintext = decrypt_bytes(raw)
     # Preserve the suffix so downstream code that sniffs by extension still works.
     suffix = os.path.splitext(path)[1] or ""
     fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix=DECRYPTED_TEMP_PREFIX)
     try:
         with os.fdopen(fd, "wb") as tmp:
-            tmp.write(plaintext)
+            if streamed:
+                with open(path, "rb") as fh:
+                    _is_stream_file(fh)
+                    for block in _iter_stream_plaintext(fh):
+                        tmp.write(block)
+            else:
+                tmp.write(decrypt_bytes(raw))
         yield tmp_path
     finally:
         try:
