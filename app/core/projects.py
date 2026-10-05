@@ -1761,7 +1761,9 @@ def documents_matching_filename_terms(
         return []
 
     name_l = func.lower(Document.original_name)
-    path_l = func.lower(func.coalesce(Document.file_path, ""))
+    # No COALESCE: a NULL path can never contain a non-empty term, and the
+    # bare expression is the one the trigram index (Alembic 0022) is on.
+    path_l = func.lower(Document.file_path)
     term_clauses = [
         or_(name_l.like(f"%{tok}%"), path_l.like(f"%{tok}%"))
         for tok in cleaned
@@ -1838,7 +1840,9 @@ def documents_matching_title_phrase(
         return []
 
     name_l = func.lower(Document.original_name)
-    path_l = func.lower(func.coalesce(Document.file_path, ""))
+    # No COALESCE: a NULL path can never contain the phrase, and the bare
+    # expression is the one the trigram index (Alembic 0022) is on.
+    path_l = func.lower(Document.file_path)
     needle = f"%{cleaned}%"
     stmt = (
         select(Document.id, Document.original_name, Document.file_path)
@@ -2004,6 +2008,23 @@ def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
     with SessionLocal() as session:
         document = session.get(Document, doc_id)
     return _document_as_dict(document) if document else None
+
+
+def document_names(doc_ids: List[str]) -> Dict[str, str]:
+    """``{id: original_name}`` for the ids that have a documents row.
+
+    One primary-key read for a batch, where ``get_document`` per id costs a
+    round trip each. Absent ids are simply missing from the result.
+    """
+    ids = [d for d in dict.fromkeys(doc_ids or []) if d]
+    if not ids:
+        return {}
+    _ensure_db()
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(Document.id, Document.original_name).where(Document.id.in_(ids))
+        ).all()
+    return {str(r.id): r.original_name or "" for r in rows}
 
 
 def delete_document(doc_id: str) -> Optional[Dict[str, Any]]:
