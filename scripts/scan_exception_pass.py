@@ -132,7 +132,7 @@ RETURN_ALLOWLIST: dict[str, str] = {
     # _ifc_step_census_chunk. Same empty return. No new silent return.
     "app/core/doc_index.py:2704": "baseline 2026-09-10",
     "app/core/rag/embeddings.py:333": "baseline 2026-09-10",
-    "app/core/rag/vector_store.py:1806": "baseline 2026-09-10",
+    "app/core/rag/vector_store.py:1816": "baseline 2026-09-10",
     "app/infra/monitoring.py:324": "baseline 2026-09-10",
     "app/lib/boq_excel.py:188": "baseline 2026-09-10",
     "app/lib/boq_pricing.py:128": "baseline 2026-09-10",
