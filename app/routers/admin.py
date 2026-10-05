@@ -17,7 +17,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -2271,3 +2271,76 @@ def admin_sweep_plaintext(
     from app.core.file_crypto import sweep_stale_plaintext
 
     return {"status": "ok", **sweep_stale_plaintext(max_age_seconds)}
+
+
+@router.post("/v1/admin/knowledge/documents", status_code=201)
+async def admin_add_knowledge_document(
+    background_tasks: BackgroundTasks,
+    response: Response,
+    file: UploadFile = File(...),
+    auth: dict = Depends(require_api_key),
+):
+    """Add a reference work to the general-knowledge layer (admin only).
+
+    Codes, standards and contract-form guides are knowledge every project
+    reads, not one project's record. The file is stored in the configured
+    general-knowledge project with ``provenance: admin_knowledge`` -- never
+    ``user_upload``, which the layered RAG files under the uploader's own
+    session layer -- and indexed by the platform's pipeline and embedder.
+    The same content twice returns the existing document (200), not a copy.
+    """
+    _require_admin(auth)
+    import hashlib
+    import uuid
+
+    from app.core import compressed, doc_index, projects as store, upload_limits
+    from app.core.ingest_status import TEXT_BEARING_EXTS
+    from app.core.system_projects import primary_general_knowledge_project
+    from app.core.users import SYSTEM_USER_ID, ensure_user_exists
+
+    gk = primary_general_knowledge_project()
+    if not gk:
+        raise HTTPException(409, "No general-knowledge project is configured.")
+
+    name = os.path.basename((file.filename or "").replace("\\", "/")).strip()
+    if not name or name in (".", ".."):
+        raise HTTPException(400, "Invalid filename")
+    if compressed.is_compressed(name, compressed.head_of(file.file)):
+        raise HTTPException(415, compressed.COMPRESSED_UPLOAD_DETAIL)
+    if os.path.splitext(name.lower())[1] not in TEXT_BEARING_EXTS:
+        raise HTTPException(415, "Only text-bearing formats go into the knowledge base.")
+
+    if not store.get_project(gk):
+        from sqlalchemy.exc import IntegrityError
+
+        ensure_user_exists(SYSTEM_USER_ID, role="admin")
+        try:
+            store.create_project("General Knowledge", user_id=SYSTEM_USER_ID,
+                                 project_id=gk, origin="admin_drive_approved")
+        except IntegrityError:
+            # The row exists already: the boot seed creates the same project
+            # concurrently, or get_project hides it. Either way it is there.
+            logger.info("general-knowledge project %s already exists", gk)
+
+    max_size = upload_limits.max_document_bytes()
+    data_dir = os.getenv("DATA_DIR", "./data")
+    os.makedirs(data_dir, exist_ok=True)
+    stored_as = f"{str(uuid.uuid4())[:8]}_{name}"
+    filepath = os.path.join(data_dir, stored_as)
+    try:
+        size = file_crypto.write_document_stream(filepath, file.file, max_bytes=max_size)
+    except file_crypto.UploadTooLarge as exc:
+        raise HTTPException(413, f"File too large. Max is {exc.limit} bytes.") from exc
+
+    sha = hashlib.sha256(file_crypto.read_document(filepath)).hexdigest()
+    existing = store.find_document_by_sha(gk, sha)
+    if existing:
+        os.remove(filepath)
+        response.status_code = 200
+        return {"status": "exists", "document": existing}
+
+    doc = store.add_document(gk, name, stored_as, filepath, size, content_sha256=sha,
+                             metadata={"provenance": "admin_knowledge",
+                                       "uploader_id": auth.get("user_id")})
+    background_tasks.add_task(doc_index.maybe_eager_index, gk, doc["id"])
+    return {"status": "indexing", "document": doc}
