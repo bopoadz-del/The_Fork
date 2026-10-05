@@ -123,15 +123,14 @@ _SUBCLAUSE_87_RE = re.compile(r"(?i)\b(?:sub[- ]?clause\s+)?8\.7\b")
 # Live daily-amount ask after #535: CoC 8.7/8.8 windows state 0.015% of the
 # excl-VAT ACA (a much smaller SAR/day product). Contract Data 8.8 is 0.1%
 # of the Contract Price (the figure the ask wants). First-match compose elected
-# 0.015% whenever that window led the excerpts. Kill-switch
-# COMPOSE_REJECT_E1_LOOKALIKE_RATE=0 restores electing 0.015%.
+# 0.015% whenever that window led the excerpts; the lookalike is now
+# always rejected.
 _LOOKALIKE_RATE_PERCENT = 0.015
 _PREFERRED_WHOLE_WORKS_RATE = 0.1
 # Live daily-amount ask on c5c6dfa: Contract Data 8.8 chunks 9–11 carried a
 # FIDIC worked-example ACA of SAR 10,000,000. Compose elected it
 # (0.1% → SAR 10,000/day) instead of the filled excl-VAT row
-# (a billion-scale amount). Kill-switch COMPOSE_REJECT_E1_TOY_ACA=0
-# restores electing the first match (the FAIL).
+# (a billion-scale amount). The worked example is always rejected.
 _TOY_ACA_AMOUNT = 10_000_000.0
 _TOY_DAILY_AMOUNT = 10_000.0
 _CLAUSE_111_RE = re.compile(r"(?i)\b1\.1\.1\b")
@@ -147,20 +146,6 @@ def compose_delay_damages_daily_enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
-def reject_e1_toy_aca_enabled() -> bool:
-    """ON by default. ``COMPOSE_REJECT_E1_TOY_ACA=0`` restores the 10M FAIL."""
-    raw = (os.getenv("COMPOSE_REJECT_E1_TOY_ACA", "1") or "1").strip().lower()
-    return raw not in ("0", "false", "no", "off")
-
-
-def reject_e1_lookalike_rate_enabled() -> bool:
-    """ON by default. ``COMPOSE_REJECT_E1_LOOKALIKE_RATE=0`` keeps 0.015%."""
-    raw = (
-        os.getenv("COMPOSE_REJECT_E1_LOOKALIKE_RATE", "1") or "1"
-    ).strip().lower()
-    return raw not in ("0", "false", "no", "off")
-
-
 def delay_damages_rate_is_coc_lookalike(rate: float, ctx: str = "") -> bool:
     """True for CoC 8.7/8.8 0.015%-of-ACA, not Contract Data 0.1% of Price.
 
@@ -170,8 +155,6 @@ def delay_damages_rate_is_coc_lookalike(rate: float, ctx: str = "") -> bool:
     Contract Data row that itself says 0.015% of the Contract Price is
     not a lookalike.
     """
-    if not reject_e1_lookalike_rate_enabled():
-        return False
     if abs(float(rate) - _LOOKALIKE_RATE_PERCENT) > 1e-9:
         return False
     ctx = ctx or ""
@@ -243,8 +226,6 @@ def aca_amount_is_toy_example(amount: float, ctx: str = "") -> bool:
     (``insert``, ``for example``) must not stain the filled excl-VAT
     ACA (a billion-scale amount, e.g. SAR 1,234,567,890.00).
     """
-    if not reject_e1_toy_aca_enabled():
-        return False
     amt = float(amount)
     is_10m = abs(amt - _TOY_ACA_AMOUNT) <= 0.005
     is_10k = abs(amt - _TOY_DAILY_AMOUNT) <= 0.005
@@ -453,24 +434,12 @@ def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
     buckets: dict[str, list[tuple[float, str]]] = {
         "excl": [], "neutral": [], "incl": [],
     }
-    toys: dict[str, list[tuple[float, str]]] = {
-        "excl": [], "neutral": [], "incl": [],
-    }
     for amount, currency, kind, toy in _iter_aca_candidates(t):
-        item = (amount, currency)
-        (toys if toy else buckets)[kind].append(item)
-
-    any_real = any(buckets[k] for k in ("excl", "neutral", "incl"))
-    if not any_real:
-        # Live daily-amount ask after #529: electing the toy when no real
-        # row is in-window produced SAR 10,000/day. Skip it so the
-        # reservation can still surface the filled excl-VAT ACA.
-        if reject_e1_toy_aca_enabled():
-            return None
-        source = toys
-    else:
-        source = buckets
-    picked = source["excl"] or source["neutral"] or source["incl"]
+        # The worked example is never elected, even when it is the only
+        # candidate: SAR 10,000/day from a toy is a fabricated answer.
+        if not toy:
+            buckets[kind].append((amount, currency))
+    picked = buckets["excl"] or buckets["neutral"] or buckets["incl"]
     if not picked:
         return None
     seen: set[tuple[float, str]] = set()
