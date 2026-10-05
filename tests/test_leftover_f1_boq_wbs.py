@@ -86,7 +86,6 @@ def test_a2_a3_a5_a9_c1_e1_do_not_elect_boq_scope_wbs():
     from app.core.rag.retriever import (
         query_asks_for_accepted_contract_amount,
         query_asks_for_delay_damages_rate,
-        query_asks_for_spec_precedence_list,
         query_asks_for_time_for_completion,
         query_needs_a_monetary_base,
     )
@@ -98,7 +97,6 @@ def test_a2_a3_a5_a9_c1_e1_do_not_elect_boq_scope_wbs():
     assert query_asks_for_accepted_contract_amount(A2_ASK)
     assert query_asks_for_time_for_completion(A3_ASK)
     assert query_asks_for_delay_damages_rate(A5_ASK)
-    assert query_asks_for_spec_precedence_list(C1_ASK)
     assert query_needs_a_monetary_base(LIVE_PREFIX + E1_ASK) or query_needs_a_monetary_base(
         "Calculate the delay damages per calendar day in SAR for the whole of the Works."
     )

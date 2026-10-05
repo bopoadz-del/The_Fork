@@ -739,7 +739,7 @@ def test_mutation_probe_arrival_order_election_brings_the_failure_back(
         ret, "_apply_asked_particular_value_boost", lambda *_a, **_k: None,
     )
     monkeypatch.setattr(
-        ret, "_rescue_asked_particular_value_chunks", lambda *_a, **_k: 0,
+        ret, "recall_labelled_rows", lambda *_a, **_k: {},
     )
     monkeypatch.setattr(
         ret, "elect_answer_bearing_contract", lambda _q, _docs: None,

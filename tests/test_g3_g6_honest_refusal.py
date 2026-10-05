@@ -474,7 +474,9 @@ def test_inject_states_not_required_on_a_g3_ask():
     text = msg["content"]
     assert "PARENT COMPANY GUARANTEE" in text
     assert "not required" in text
-    assert "Schedule 8" in text
+    # The hint cites the clause the excerpt prints and warns off any form.
+    assert "not required (Contract Data 4.3.7)" in text
+    assert "guarantee form" in text
 
 
 def test_inject_does_not_fire_g3_on_the_form_alone():

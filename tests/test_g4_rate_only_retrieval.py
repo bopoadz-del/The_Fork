@@ -375,6 +375,11 @@ def test_mutation_rate_only_predicate_is_what_lifts_the_row(monkeypatch):
     monkeypatch.setattr(
         ret, "chunk_states_rate_only_item", lambda *_a, **_k: False,
     )
+    # Labelled-row recall also recognises the item row as a filled row for
+    # the item code the question names; that recogniser goes off too.
+    monkeypatch.setattr(
+        ret, "chunk_states_labelled_row", lambda *_a, **_k: False,
+    )
     chunks, _ = ret.retrieve_with_filter(G4_ASK, ACTIVE, k=5)
     blob = " ".join(c.text for c in chunks)
     assert chunks
