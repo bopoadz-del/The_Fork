@@ -685,7 +685,14 @@ def _extract_pdf(
                         elif page_cap > 0:
                             truncated = True
                     if plumber is not None and i < len(plumber.pages):
-                        table_md = _pdf_tables_markdown(plumber.pages[i])
+                        plumber_page = plumber.pages[i]
+                        try:
+                            table_md = _pdf_tables_markdown(plumber_page)
+                        finally:
+                            # pdfplumber keeps every page's parsed layout until
+                            # the page is closed: unreleased, a 161-page code
+                            # book held ~1.3 GB and tripped the memory guard.
+                            plumber_page.close()
                         if table_md:
                             parts.append(table_md)
                             chars += len(table_md)
