@@ -7,6 +7,7 @@ SQLAlchemy-backed via app.core.db — unified The Fork schema.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -95,6 +96,7 @@ def _message_as_dict(message: Message) -> Dict[str, Any]:
         "role": message.role,
         "content": message.content,
         "created_at": message.created_at,
+        "provenance": (json.loads(message.provenance) if getattr(message, "provenance", None) else None),
     }
 
 
@@ -271,16 +273,26 @@ def clear_conversation(conversation_id: str) -> Dict[str, int]:
 
 # ── messages ─────────────────────────────────────────────────────────────────
 
-def append_message(conversation_id: str, role: str, content: str) -> Dict[str, Any]:
+def append_message(
+    conversation_id: str, role: str, content: str, provenance: Optional[list] = None,
+) -> Dict[str, Any]:
     """Insert a message and bump the conversation's updated_at.
 
     The FIRST user message also stamps the conversation's title (when still
     NULL) so session lists read like the design's chat history ("pipe
     specs...") instead of raw conversation ids. Never overwritten after.
+
+    An assistant message stores its provenance record (where each figure and
+    fact came from): passed in, else the record of the answer just finished
+    in this task.
     """
     _ensure_db()
     mid = str(uuid.uuid4())
     now = _now()
+    if role == "assistant" and provenance is None:
+        from app.agents.provenance_trail import LAST_PROVENANCE
+
+        provenance = LAST_PROVENANCE.get()
     with _lock:
         with SessionLocal() as session:
             session.add(
@@ -290,6 +302,7 @@ def append_message(conversation_id: str, role: str, content: str) -> Dict[str, A
                     role=role,
                     content=content,
                     created_at=now,
+                    provenance=(json.dumps(provenance, default=str) if provenance else None),
                 )
             )
             session.execute(

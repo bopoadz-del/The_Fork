@@ -443,6 +443,9 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    # Provenance record of an assistant answer (JSON): where each figure and
+    # cited fact came from. Migration 0023.
+    provenance: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DocIndex(Base):
