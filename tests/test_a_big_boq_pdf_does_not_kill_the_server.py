@@ -77,17 +77,30 @@ def test_a_pdf_with_too_many_pages_is_refused_before_any_page_is_parsed(blank_pd
 
 
 def test_a_parse_that_runs_past_its_time_budget_stops_without_partial_totals(blank_pdf, monkeypatch):
+    """The budget is driven by a fake clock, not by real elapsed time: each
+    page "costs" 0.3 s on the parse clock and nothing sleeps. A wall-clock
+    version of this test failed whenever the machine was loaded, because the
+    PDF writes and opens around the parse were timed too.
+
+    With a 0.5 s budget the clock reads 0.0 before page 1, 0.3 before page 2
+    and 0.6 before page 3, so exactly two pages are parsed and page 3 is
+    where the budget stops the parse.
+    """
     monkeypatch.setenv("BOQ_PDF_PARSE_SECONDS", "0.5")
+    now = [0.0]
+    monkeypatch.setattr(bp, "_parse_clock", lambda: now[0])
+    parsed = []
 
     def slow(self, *a, **k):
-        time.sleep(0.3)
+        parsed.append(1)
+        now[0] += 0.3
         return []
 
     monkeypatch.setattr(pdfplumber.page.Page, "extract_tables", slow)
-    started = time.time()
     out = _run(blank_pdf(8))
-    assert time.time() - started < 2.0, "the budget must actually stop the parse"
+    assert len(parsed) == 2, "the budget must actually stop the parse"
     assert out["status"] == "error" and out.get("boq_pdf_parse_timeout") is True
+    assert "stopped at page 3" in out["error"]
     assert "total_cost" not in out and "line_items" not in out, "never ship partial totals"
 
 
