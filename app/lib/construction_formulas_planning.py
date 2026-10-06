@@ -6,6 +6,8 @@ conversions, and material/concrete-mix helpers that refuse invented rates.
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import logging
 import re
 from typing import Any, Dict, Optional, Tuple
@@ -13,6 +15,12 @@ from typing import Any, Dict, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
+@formula(
+    owner='planning',
+    description='Total float of an activity from its early and late dates, and whether it is critical.',
+    inputs={'early_start': '-', 'early_finish': '-', 'late_start': '-', 'late_finish': '-'},
+    outputs={'total_float': '-', 'is_critical': '-', 'consistency_check_lf_minus_ef': '-'},
+)
 def critical_path_float(
     early_start: float,
     early_finish: float,
@@ -53,6 +61,12 @@ def critical_path_float(
 # PE formula sheet — progress / productivity / manpower / duration
 # ---------------------------------------------------------------------------
 
+@formula(
+    owner='planning',
+    description='Planned and actual percent complete, remaining quantity and progress variance.',
+    inputs={'total_qty': '-', 'planned_qty': '-', 'actual_qty': '-'},
+    outputs={'planned_percent': '%', 'actual_percent': '%', 'planned_qty': '-', 'actual_qty': '-', 'remaining_qty': '-', 'progress_variance_percent': '%'},
+)
 def progress_quantity(
     total_qty: float,
     planned_qty: Optional[float] = None,
@@ -160,6 +174,12 @@ def _daily_production_from_rate_alias(
     return None
 
 
+@formula(
+    owner='planning',
+    description='Links quantity, productivity, manpower and duration: any one from the others.',
+    inputs={'quantity_executed': '-', 'man_hours': 'h', 'quantity': '-', 'productivity': '-', 'manpower': '-', 'working_hours': 'h', 'remaining_manhours': '-', 'available_hours': 'h', 'daily_production': '-', 'remaining_qty': '-', 'remaining_days': 'days', 'productivity_rate': '-', 'rate_unit': '-', 'crew_cost_per_day': 'currency', 'day_rate': '-', 'gang_cost_per_day': 'currency'},
+    outputs={'productivity': 'per productivity_units', 'required_manpower': '-', 'manhours_required': 'h', 'daily_required_production': '-', 'duration': 'duration_units', 'total_cost': 'currency'},
+)
 def productivity_manpower_duration(
     *,
     quantity_executed: Optional[float] = None,
@@ -428,6 +448,12 @@ _PRESSURE_TO_KPA = {
 }
 
 
+@formula(
+    owner='base',
+    description='Converts a value between common engineering units (length, area, volume, time, pressure and stress).',
+    inputs={'value': 'currency', 'from_unit': '-', 'to_unit': '-'},
+    outputs={'value_in': '-', 'from_unit': '-', 'to_unit': '-', 'value_out': '-', 'dimension': '-', 'formula_used': '-'},
+)
 def pe_unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
     """Common PE unit conversions (m↔ft, m²↔ft², m³↔ft³, day↔hour, and pressure/stress).
 
@@ -483,6 +509,12 @@ def pe_unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
     }
 
 
+@formula(
+    owner='quantities',
+    description='Material required for a quantity of work from the output per unit and an optional waste factor.',
+    inputs={'quantity_of_work': '-', 'output_per_unit': '-', 'waste_factor': '-', 'waste_percent': '%'},
+    outputs={'material_required': '-', 'base_without_waste': '-', 'waste_factor': '-'},
+)
 def material_consumption(
     quantity_of_work: Optional[float] = None,
     output_per_unit: Optional[float] = None,
@@ -528,6 +560,12 @@ def material_consumption(
     }
 
 
+@formula(
+    owner='quantities',
+    description='Material volumes for a concrete volume from cement, sand and aggregate proportions.',
+    inputs={'wet_volume': '-', 'cement_parts': '-', 'sand_parts': '-', 'aggregate_parts': '-', 'dry_volume_factor': '-', 'waste_factor': '-'},
+    outputs={'wet_volume': '-', 'dry_volume': '-', 'dry_volume_factor': '-', 'proportions': '-', 'cement_volume': '-', 'sand_volume': '-', 'aggregate_volume': '-'},
+)
 def concrete_mix_proportions(
     wet_volume: Optional[float] = None,
     cement_parts: Optional[float] = None,

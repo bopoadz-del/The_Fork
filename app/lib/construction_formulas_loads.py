@@ -10,6 +10,8 @@ EN 1991-1-1 §6.3.1.2 (live-load reduction).
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import math
 
 _ACI = "aci"
@@ -23,6 +25,12 @@ def _norm_code(code: str) -> str:
     return _ACI
 
 
+@formula(
+    owner='design',
+    description="Wind velocity pressure from a wind speed and the selected code's coefficients.",
+    inputs={'wind_speed_m_s': 'm/s', 'code': '-', 'kz': '-', 'kzt': '-', 'kd': '-', 'air_density_kg_m3': 'kg/m3'},
+    outputs={'velocity_pressure_pa': 'Pa', 'velocity_pressure_kn_m2': 'kN/m2'},
+)
 def wind_pressure(
     wind_speed_m_s: float,
     code: str = _ACI,
@@ -61,6 +69,12 @@ def wind_pressure(
     }
 
 
+@formula(
+    owner='design',
+    description='Equivalent lateral-force base shear from the seismic coefficient and the seismic weight.',
+    inputs={'seismic_weight_kn': 'kN', 'code': '-', 'sds': '-', 'r': '-', 'ie': '-', 'ag_g': '-', 'soil_factor_s': '-', 'behaviour_factor_q': '-', 'lambda_factor': '-'},
+    outputs={'base_shear_kn': 'kN', 'seismic_response_coefficient_cs': '-'},
+)
 def seismic_base_shear(
     seismic_weight_kn: float,
     code: str = _ACI,
@@ -99,6 +113,12 @@ def seismic_base_shear(
     }
 
 
+@formula(
+    owner='design',
+    description='Reduced design live load on a member with a large tributary area.',
+    inputs={'base_live_load_kn_m2': 'kN/m2', 'tributary_area_m2': 'm2', 'code': '-', 'kll': '-', 'psi0': '-', 'min_factor': '-'},
+    outputs={'reduced_live_load_kn_m2': 'kN/m2', 'reduction_factor': '-'},
+)
 def live_load_reduction(
     base_live_load_kn_m2: float,
     tributary_area_m2: float,

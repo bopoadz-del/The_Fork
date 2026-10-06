@@ -6,11 +6,19 @@ utilisation from a de-rated chart capacity. Arithmetic shown in ``note``.
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 # Scaffold duty rated loads (OSHA 1926.451): light 25 psf, medium 50, heavy 75.
 _SCAFFOLD_DUTY_KPA = {"light": 1.2, "medium": 2.4, "heavy": 3.6}
 _OSHA_MAF_KN = 8.0  # OSHA 1926.502 maximum arresting force (body harness)
 
 
+@formula(
+    owner='safety',
+    description='Intended scaffold load and the capacity it must be built to support.',
+    inputs={'platform_area_m2': 'm2', 'duty': '-', 'safety_factor': '-'},
+    outputs={'duty': '-', 'duty_load_kpa': 'kPa', 'intended_load_kn': 'kN', 'required_capacity_kn': 'kN', 'safety_factor': '-'},
+)
 def scaffold_load_capacity(
     platform_area_m2: float,
     duty: str = "medium",
@@ -35,6 +43,12 @@ def scaffold_load_capacity(
     }
 
 
+@formula(
+    owner='safety',
+    description='Peak arrest force on a falling worker from mass, free-fall distance and deceleration distance.',
+    inputs={'worker_mass_kg': 'kg', 'free_fall_m': 'm', 'deceleration_distance_m': 'm', 'g': '-'},
+    outputs={'max_arrest_force_kn': 'kN', 'within_osha_limit': '-', 'osha_limit_kn': 'kN'},
+)
 def fall_arrest_force(
     worker_mass_kg: float = 100.0,
     free_fall_m: float = 1.8,
@@ -66,6 +80,12 @@ def fall_arrest_force(
     }
 
 
+@formula(
+    owner='safety',
+    description="Net crane capacity after rigging deductions, and the lift's utilisation.",
+    inputs={'chart_capacity_t': 't', 'deductions_t': 't', 'load_t': 't', 'max_utilization': '-'},
+    outputs={'net_capacity_t': 't', 'utilization_percent': '%', 'passed': '-', 'max_utilization_percent': '%'},
+)
 def crane_lift_capacity(
     chart_capacity_t: float,
     deductions_t: float,

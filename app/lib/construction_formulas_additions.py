@@ -11,7 +11,15 @@ No fabrication -- all values traceable to standards.
 
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
 
+
+@formula(
+    owner='safety',
+    description='Required guardrail top-rail height for fall protection.',
+    inputs={},
+    outputs={'top_rail_height_in': '-', 'top_rail_height_mm': 'mm', 'top_rail_height_m': 'm', 'mid_rail_height_in': '-', 'mid_rail_height_mm': 'mm', 'mid_rail_height_m': 'm', 'tolerance_in': '-', 'tolerance_mm': 'mm', 'scope': '-'},
+)
 def guardrail_top_rail_height() -> dict:
     """
     OSHA guardrail top-rail height for fall protection.
@@ -41,6 +49,12 @@ def guardrail_top_rail_height() -> dict:
     }
 
 
+@formula(
+    owner='commercial',
+    description='Net interim payment from a gross valuation and a retention percentage.',
+    inputs={'gross_valuation': 'currency', 'retention_percent': '%'},
+    outputs={'gross_valuation': 'currency', 'retention_percent': '%', 'retention_amount': 'currency', 'net_payment': 'currency'},
+)
 def calculate_interim_payment(
     gross_valuation: float | int,
     retention_percent: float | int = 10.0,

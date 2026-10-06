@@ -6,9 +6,17 @@ carry the mix/curing constants. Arithmetic shown in ``note``.
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import math
 
 
+@formula(
+    owner='qaqc',
+    description='Compressive strength from a cylinder test load and diameter.',
+    inputs={'failure_load_kn': 'kN', 'cylinder_diameter_mm': 'mm'},
+    outputs={'compressive_strength_mpa': 'MPa', 'cylinder_area_mm2': 'mm2'},
+)
 def concrete_cylinders(failure_load_kn: float, cylinder_diameter_mm: float = 150.0) -> dict:
     """Compressive strength from a cylinder test: f = P / A, A = pi/4 * d^2.
     Standard cylinder is 150 mm dia x 300 mm."""
@@ -28,6 +36,12 @@ def concrete_cylinders(failure_load_kn: float, cylinder_diameter_mm: float = 150
     }
 
 
+@formula(
+    owner='qaqc',
+    description='Drying shrinkage strain of concrete at a given age.',
+    inputs={'time_days': 'days', 'ultimate_shrinkage_microstrain': '-', 'time_constant_days': 'days'},
+    outputs={'shrinkage_microstrain': '-', 'shrinkage_strain': '-', 'fraction_of_ultimate': '-'},
+)
 def concrete_shrinkage(
     time_days: float,
     ultimate_shrinkage_microstrain: float = 780.0,
@@ -53,6 +67,12 @@ def concrete_shrinkage(
     }
 
 
+@formula(
+    owner='qaqc',
+    description='Days of curing for concrete to reach a fraction of its 28-day strength.',
+    inputs={'target_strength_fraction': '-', 'gain_a': '-', 'gain_b': '-'},
+    outputs={'days_to_target': 'days', 'target_fraction': '-'},
+)
 def concrete_curing_time(
     target_strength_fraction: float = 0.70,
     gain_a: float = 4.0,
