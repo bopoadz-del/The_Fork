@@ -189,6 +189,12 @@ def test_one_question_stays_inside_its_database_budget(monkeypatch):
         data_bytes = int(conn.execute(text(f"SELECT pg_total_relation_size('{table}')")).scalar())
     report = budget_report(reads, lambda s, p: _buffers(engine, s, p), table)
     broken = check_budget(report, data_bytes)
+    print(f"question budget: read {report['read_bytes'] / 1e6:.1f} MB, touched "
+          f"{report['touched'] / 1e6:.1f} MB; worst statement {report['worst_bytes'] / 1e6:.1f} MB "
+          f"= {report['worst_bytes'] / data_bytes:.1%} of a {data_bytes / 1e6:.1f} MB chunk table")
+    if report["worst_plan"] is not None:
+        print("  worst:", report["worst_statement"][:300], "||", "; ".join(
+            f"{t} {rel or ''} hit={h} read={r}" for t, rel, h, r in plan_nodes(report["worst_plan"])))
     assert not broken, "\n".join(broken)
 
     # Control: one full read of the table's text and embeddings -- what the
