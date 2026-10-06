@@ -1175,7 +1175,7 @@ def main() -> int:
                 "folder": folder_name, "project_id": project_id_for_folder,
             })
             log(
-                f"SKIP {folder_name}: no folder_id (needs Chadi to set) — "
+                f"SKIP {folder_name}: no folder_id (needs the owner to set) — "
                 "this folder contributes 0 to the tier tally, so run_complete "
                 "does NOT mean the tier is covered"
             )

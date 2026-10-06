@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 
-DEFAULT_ROOT = Path("G:/My Drive")
+DEFAULT_ROOT = Path(os.environ.get("FORK_DRIVE_ROOT", "/data/example"))
 
 
 def _walk_folder(root: Path, folder: str) -> Dict[str, Any]:
@@ -55,7 +55,7 @@ def _walk_folder(root: Path, folder: str) -> Dict[str, Any]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Build focused local folder manifest")
-    ap.add_argument("--folder", required=True, help="Folder name under G:/My Drive")
+    ap.add_argument("--folder", required=True, help="Folder name under the Drive root")
     ap.add_argument("--root", default=str(DEFAULT_ROOT), help="Local Drive root")
     ap.add_argument("--output", help="Output path (default: manifests/p1a_<folder>_manifest.json)")
     args = ap.parse_args()

@@ -17,7 +17,7 @@ _FORBIDDEN = ("construction_3_001", "construction-3-001", "1ee147a4")
 
 # Every other KNOWN_FOLDERS project_id, in builder order.
 _REMAINING = (
-    "client_infra_pack_1",
+    "example_infra_pack",
     "sop_project_controls",
     "sop_delivery_mgmt",
     "sop_construction_mgmt",
@@ -48,7 +48,7 @@ def test_priority_manifest_omits_construction_3_001_and_keeps_other_rows():
     assert _folder_project_ids(manifest) == list(_REMAINING)
     tier1 = manifest["tiers"]["1"]["folders"]
     assert len(tier1) == 1
-    assert tier1[0]["project_id"] == "client_infra_pack_1"
+    assert tier1[0]["project_id"] == "example_infra_pack"
     assert tier1[0]["folder_id"]
 
 

@@ -106,6 +106,16 @@ def _revision_from_number_tail(dn: str | None) -> str | None:
     return tail
 
 
+def _env_terms(name: str) -> tuple[str, ...]:
+    """Upper-cased comma-separated terms from env ``name`` (empty when unset).
+
+    Client-specific title-block vocabulary (project header words, drafting
+    firms, road names) is deployment configuration, not source.
+    """
+    raw = os.environ.get(name, "")
+    return tuple(t.strip().upper() for t in raw.split(",") if t.strip())
+
+
 def _strip_doubled_letter_prefix(dn: str) -> str:
     """Strip stray leading characters that fall outside a clean hyphenated
     drawing-number prefix.
@@ -839,7 +849,7 @@ class DrawingQTOBlock(UniversalBlock):
                 m = _DWG_NUMBER_FULL.search(raw)
                 if m and _is_full_drawing_number(m.group(0)):
                     # Phase 1.7: strip leading doubled-letter artifacts
-                    # (e.g. ``IIP-INF-...`` -> ``IP-INF-...``).
+                    # (e.g. ``XAB-CDE-...`` -> ``AB-CDE-...``).
                     rescued = _strip_doubled_letter_prefix(m.group(0))
                     break
             if rescued:
@@ -1101,7 +1111,7 @@ class DrawingQTOBlock(UniversalBlock):
             m = _DWG_NUMBER_SHORT.search(raw)
         if m:
             # Phase 1.7: strip leading doubled-letter artifacts
-            # (e.g. ``IIP-INF-...`` -> ``IP-INF-...``). Source text runs
+            # (e.g. ``XAB-CDE-...`` -> ``AB-CDE-...``). Source text runs
             # occasionally start one char inside an earlier token and the
             # ``[A-Z]{2,}`` head accepts that as a valid prefix. The
             # strip is pattern-aware so legitimate prefixes survive.
@@ -1145,12 +1155,15 @@ class DrawingQTOBlock(UniversalBlock):
         if shm:
             result["sheet_number"] = shm.group(1).strip()
 
-        # Project name: look for known the client project project header keywords
+        # Project name: generic project-header keywords plus any terms the
+        # deployment names in DRAWING_PROJECT_HEADER_TERMS.
+        project_terms = _env_terms("DRAWING_PROJECT_HEADER_TERMS")
         for L in lines:
             t = L["text"]
+            t_hdr = re.sub(r"\s+", " ", t.upper())
             if (re.search(r"THE CLIENT\s+GATE", t, re.IGNORECASE) or
-                re.search(r"KING\s+KHALID", t, re.IGNORECASE) or
-                re.search(r"INFRASTRUCTURE\s+DESIGN", t, re.IGNORECASE)):
+                re.search(r"INFRASTRUCTURE\s+DESIGN", t, re.IGNORECASE) or
+                any(k in t_hdr for k in project_terms)):
                 # Prefer the largest-font line
                 if (result["project_name"] is None or
                     L["size"] > result.get("_project_size", 0)):
@@ -1158,10 +1171,15 @@ class DrawingQTOBlock(UniversalBlock):
                     result["_project_size"] = L["size"]
         result.pop("_project_size", None)
 
-        # Drafter: known the client project drafter is "Jacobs"
+        # Drafter: a firm the deployment lists in DRAWING_KNOWN_DRAFTERS.
+        # Source carries no client or consultant names.
+        drafters = _env_terms("DRAWING_KNOWN_DRAFTERS")
         for L in lines:
-            if re.search(r"\bJACOBS\b", L["text"], re.IGNORECASE):
-                result["drafter"] = "Jacobs"
+            tu_line = L["text"].upper()
+            hit = next((d for d in drafters
+                        if re.search(r"\b" + re.escape(d) + r"\b", tu_line)), None)
+            if hit:
+                result["drafter"] = hit.title()
                 break
 
         # Drawing title: largest text in the title block that isn't the
@@ -1218,11 +1236,13 @@ class DrawingQTOBlock(UniversalBlock):
             if _has_trailing_lowercase_artifact(t):
                 continue
             if any(k in tu for k in (
-                "THE CLIENT GATE", "KING KHALID", "INFRASTRUCTURE DESIGN",
-                "KINGDOM OF SAUDI", "JACOBS", "WWW.", "P.O. BOX",
-                "PRINCE SATTAM", "AL SHOHDA", "DATUM", "GEODETIC",
+                "THE CLIENT GATE", "INFRASTRUCTURE DESIGN",
+                "KINGDOM OF SAUDI", "WWW.", "P.O. BOX",
+                "DATUM", "GEODETIC",
                 "PROJECT SYSTEM", "ZONE:", "NOTES",
-            )):
+            ) + _env_terms("DRAWING_PROJECT_HEADER_TERMS")
+              + _env_terms("DRAWING_KNOWN_DRAFTERS")
+              + _env_terms("DRAWING_TITLEBLOCK_BOILERPLATE")):
                 continue
             # Phase 1.7: reject CAD Xref filepath strings (the SG sheet
             # leaks the underlying ``Xref ..\..\_Refsecure\....dwg`` debug

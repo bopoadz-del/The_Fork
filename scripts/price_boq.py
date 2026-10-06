@@ -12,7 +12,7 @@ Usage: python scripts/price_boq.py <unpriced.csv|xlsx> <asset_type> <currency> [
 import os, re, sys, statistics as st
 import pandas as pd
 
-SCR = r"C:/Users/shimm/AppData/Local/Temp/claude/C--Users-shimm/436703f7-0a30-48b6-a650-29d75aac4fa5/scratchpad"
+SCR = os.environ.get("FORK_SCRATCH_DIR", "/data/example/scratch")
 CARD = os.path.join(SCR, "rate_card", "rate_card.xlsx")
 
 CATS = [

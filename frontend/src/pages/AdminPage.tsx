@@ -12,7 +12,7 @@
  *      row with origin='admin_drive_approved'.
  *
  *   3. Approved projects — filtered to origin='admin_drive_approved'
- *      (so chadi/bopo-style user-created rows do NOT appear here). Each
+ *      (so personal-account-style user-created rows do NOT appear here). Each
  *      row carries documents + chunks counts plus Re-index and Delete.
  *
  *   4. Header — "Connected as: <email>" up top (not in the LeftPanel).
@@ -639,7 +639,7 @@ function DetectedFromDriveSection({ onApproved }: { onApproved?: () => void }) {
 // ─── Approved projects section ──────────────────────────────────────────
 //
 // Filtered to origin='admin_drive_approved'. Operator requirement:
-// chadi/bopo-style user-created rows MUST NOT appear here — admin owns
+// personal-account-style user-created rows MUST NOT appear here — admin owns
 // the platform-canonical project list. Each row exposes Re-index and
 // Delete actions.
 
@@ -765,7 +765,7 @@ function ApprovedProjectsSection({
     } finally { setDeletingId(null) }
   }
 
-  // The filter that solves the operator's "no chadi no bopo" requirement.
+  // The filter that solves the operator's "no personal accounts" requirement.
   // Only rows the admin explicitly approved via /v1/admin/projects/approve-from-drive
   // make it into this table.
   const approved = projects

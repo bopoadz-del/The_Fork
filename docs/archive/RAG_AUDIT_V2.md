@@ -55,7 +55,7 @@ losses are not random:
   the BM25 leg + identifier-aware boost now match drawing numbers the old
   embedder collapsed.
 * **Lost** — pure-semantic procedure/contract lookups (Rapid Award Process
-  PRC-603A, vendor performance score, HSE Observation Report, commencement
+  PRC-963A, vendor performance score, HSE Observation Report, commencement
   date). These previously surfaced on cosine similarity and now lose rank in
   the fused ordering.
 

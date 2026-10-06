@@ -70,7 +70,7 @@ def _seed():
                 ids[pid].append(did)
                 s.add(Document(id=did, project_id=pid,
                                original_name=f"{pid}/file_{i}.docx",
-                               file_path=f"G:\\\\My Drive\\\\{pid}\\\\file_{i}.docx",
+                               file_path=f"X:\\\\Example Drive\\\\{pid}\\\\file_{i}.docx",
                                doc_type="document", doc_role="other", size=100,
                                uploaded_at="2026-07-15T00:00:00Z"))
             s.flush()

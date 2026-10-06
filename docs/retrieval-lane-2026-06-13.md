@@ -44,9 +44,9 @@ vector-only (`query_text=None`). Output:
 
 | Q | Vector rank | Hybrid rank | Verdict |
 |---|---|---|---|
-| Q1 (JCB format) | None | None | SAME (matcher strict; both legs do surface JCB drawings, matcher under-credits hybrid) |
+| Q1 (EXC format) | None | None | SAME (matcher strict; both legs do surface EXC drawings, matcher under-credits hybrid) |
 | **Q2 SECTIONAL ELEVATION telecom** | **None** | **3** | **HYBRID BETTER — old failure resolved** |
-| Q3 PRC-501 acceptance | 1 | 1 | SAME (perfect on both) |
+| Q3 PRC-951 acceptance | 1 | 1 | SAME (perfect on both) |
 | Q4 trench width | None | None | SAME for strict chunks 1115/1116. Hybrid does surface WS-600 drawing rank 15 — correct discipline |
 | Q5 manhole spacing telecom | None | None | SAME for TL-600 chunk 0. Hybrid surfaces TL-100-1000002-A rank 1 — correct discipline, wrong sheet |
 
@@ -60,7 +60,7 @@ exact target chunk stays buried; strict matcher reports SAME.
 
 Awaiting a non-empty project_id on prod. Bridge will hit `/projects/<id>`
 and capture the SSE `end` event sources to confirm hybrid is firing on
-real audit logs. Last night's blocker was that `shadido.dxb@gmail.com`
+real audit logs. Last night's blocker was that `owner@example.com`
 had zero projects in the post-migration Postgres.
 
 ### 5. 678 MB RAM peak vs 512 MB Render envelope — DEFERRED

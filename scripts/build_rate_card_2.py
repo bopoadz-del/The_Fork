@@ -14,7 +14,7 @@ import os, sys, re
 import numpy as np
 import pandas as pd
 
-SCR = "C:/Users/shimm/AppData/Local/Temp/claude/C--Users-shimm/436703f7-0a30-48b6-a650-29d75aac4fa5/scratchpad"
+SCR = os.environ.get("FORK_SCRATCH_DIR", "/data/example/scratch")
 OUT = SCR + "/rate_card_2"
 os.makedirs(OUT, exist_ok=True)
 
@@ -344,8 +344,8 @@ DC = "Data Center"
 
 ingest_items(SCR + "/waste_water_boq_items.xlsx", INFRA, "SAR", "waste_water")
 ingest_items(SCR + "/infra1_demolition_boq_items.xlsx", INFRA, "SAR", "demolition")
-ingest_items(SCR + "/alostool_demolition_boq_items.xlsx", INFRA, "SAR", "alostool_demolition")
-ingest_items(SCR + "/boq_batch/acacia1_items.csv", BLD, "AED", "acacia1")
+ingest_items(SCR + "/demo_contract_demolition_boq_items.xlsx", INFRA, "SAR", "demo_contract_demolition")
+ingest_items(SCR + "/boq_batch/tower1_items.csv", BLD, "AED", "tower1")
 ingest_items(SCR + "/wetransfer_boq/BOQ_xlsx_items.csv", BLD, "AED", "wt_BOQ_xlsx")
 ingest_items(SCR + "/wetransfer_boq/exel_SectionB_Sitework_items.csv", BLD, "AED", "wt_SectionB_Sitework")
 ingest_items(SCR + "/wetransfer_boq/exel_SectionC_Concrete_items.csv", BLD, "AED", "wt_SectionC_Concrete")

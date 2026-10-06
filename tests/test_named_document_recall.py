@@ -30,9 +30,9 @@ TITLE_ASK = (
     "Which procedure document covers the Snagging Procedure, and what is its "
     "number?"
 )
-TITLED_NAME = "XY-QA-PRC-004410-2.0 Snagging Procedure.pdf"
+TITLED_NAME = "XY-QA-PRC-009410-2.0 Snagging Procedure.pdf"
 TITLED_TEXT = (
-    "Document number: XY-QA-PRC-004410-2.0 Snagging Procedure. This procedure "
+    "Document number: XY-QA-PRC-009410-2.0 Snagging Procedure. This procedure "
     "sets out how snags are recorded, assigned and closed."
 )
 VOLUME_NAME = "Riverside Works Volume 5 Quality Management.pdf"
@@ -41,8 +41,8 @@ VOLUME_TEXT = (
     "snagging of finishes, and the procedure for closing defects."
 )
 REGISTER_TEXT = (
-    "XY-QA-PRC-004410-2.0 Snagging Procedure\n"
-    "XY-QA-PRC-004420-1.0 Handover Procedure"
+    "XY-QA-PRC-009410-2.0 Snagging Procedure\n"
+    "XY-QA-PRC-009420-1.0 Handover Procedure"
 )
 SECTION_TEXT = (
     "004410 - Snagging and Defects\n"
@@ -145,7 +145,7 @@ def test_a_register_line_beats_a_section_heading_on_the_same_topic(monkeypatch):
         names={"vol5": VOLUME_NAME},
     )
     chunks, _ = ret.retrieve_with_filter(TITLE_ASK, PID, k=5)
-    assert chunks and "XY-QA-PRC-004410-2.0" in chunks[0].text, [c.text for c in chunks]
+    assert chunks and "XY-QA-PRC-009410-2.0" in chunks[0].text, [c.text for c in chunks]
 
 
 def test_register_line_needs_a_reference_code_before_the_title():

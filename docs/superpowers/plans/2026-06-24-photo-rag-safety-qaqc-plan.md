@@ -691,7 +691,7 @@ git commit -m "feat(safety): Grounding DINO survey script for Phase 0 class lock
 
 1. Extract the zip to a working folder:
    ```bash
-   .venv/Scripts/python.exe -c "import zipfile; zipfile.ZipFile(r'G:/My Drive/construction-3-001.zip').extractall(r'data/training/raw_photos')"
+   .venv/Scripts/python.exe -c "import zipfile; zipfile.ZipFile(r'X:/Example Drive/construction-3-001.zip').extractall(r'data/training/raw_photos')"
    ```
 
 2. Install Grounding DINO deps in the local venv:

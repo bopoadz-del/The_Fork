@@ -98,7 +98,7 @@ def scrub_identifiers(text: str) -> str:
 def scrub_identifiers_filename(name: str) -> str:
     """Scrub a FILENAME for display (sources panel, citations).
 
-    Filenames bind identifiers with underscores ("DGII_MS-001.pdf"), which
+    Filenames bind identifiers with underscores ("QPII_MS-001.pdf"), which
     are word characters, so the prose rules' ``\\b`` boundaries never fire
     -- the answer text was scrubbed while the sources panel leaked the
     identity verbatim. Normalise underscores to spaces first; the result is

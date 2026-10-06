@@ -54,8 +54,8 @@ def test_a_quoted_sentence_is_not_a_document_reference(sentence):
         {**_MISS, "extracted_identifiers": [sentence]}, None, q)
 
 
-@pytest.mark.parametrize("ref", ["ltr-mn-000372", "d/3/3", "dd-2023-118", "clause 13.5",
-                                 "vol 2 specification 6 of 9"])
+@pytest.mark.parametrize("ref", ["ltr-mn-000372", "d/3/3", "ab-2023-101", "clause 13.5",
+                                 "vol 2 specification 6 of 11"])
 def test_a_quoted_reference_still_short_circuits(ref):
     q = f'What does "{ref}" say?'
     assert _should_short_circuit_rag_miss({**_MISS, "extracted_identifiers": [ref]}, None, q)

@@ -18,7 +18,7 @@ breaking the repo or lying to the reader.
    test after every change; if it is not 93/93, you broke it — revert.
 2. **Do NOT delete any project / corpus.** Deleting a project CASCADE-deletes its RAG chunks
    (`ON DELETE CASCADE`). NEVER delete: `projects_folder`, `training_material`,
-   `master_corpus`, `client_infra_pack_1`, `curated_kb`, `drive_archive`, and eval project
+   `master_corpus`, `example_infra_pack`, `curated_kb`, `drive_archive`, and eval project
    `bc812f36`. To clean a list, HIDE/gate the sidebar row — never delete the row. To prune
    specific docs use the existing `POST /v1/admin/corpus/delete-docs` (export bundle first).
 3. **Flag-gate every behaviour change OFF by default** (mirror `ORCHESTRATOR_PREDEFINED`). Add a
@@ -45,7 +45,7 @@ Every Part-B / Step item gets exactly one status, and status requires proof:
 - **SUPERSEDED** — cite the commit SHA that made the item moot. "The platform feels done" or
   "we don't need it" does NOT qualify. No SHA = not SUPERSEDED.
 - **PARKED (with evidence)** — legitimate and encouraged. State exactly what is missing and the
-  named requirement to unblock it (e.g. "needs the Arabic OCR model" / "needs Chadi's jurisdiction
+  named requirement to unblock it (e.g. "needs the Arabic OCR model" / "needs the owner's jurisdiction
   choice"). Relabeling a parked item as "optional" is NOT allowed — if it was in scope, it stays
   in the ledger as PARKED with its requirement.
 
@@ -76,7 +76,7 @@ For each, the deliverable is a verified status in the ledger; code only where Ru
   noop-when-off test. Do not silently change routing on the pilot.
 - **W6 (reasoning-engine live activation).** Confirm the wired engine is actually reachable on the
   live path and prove it with a `fork_cli` transcript. If activation requires a flag flip on the
-  pilot, PARK it as an open human decision for Chadi — do NOT flip it yourself.
+  pilot, PARK it as an open human decision for the owner — do NOT flip it yourself.
 - **W7 (14-agent liveness).** Prove each of the 14 agents responds on the live path (transcript per
   agent, or PARK the dead ones with the reason). Do not "fix" an agent by weakening a guard.
 - **W8 (KB coverage + broaden the standards scanner).** Report KB coverage against the golden set.
@@ -89,9 +89,9 @@ For each, the deliverable is a verified status in the ledger; code only where Ru
 ## 4. STEP 3 — STEP 5 STATUS
 
 Confirm SOP ingestion (5a) actually ran (evidence: the docs present in the target corpus). Confirm
-`SOURCE_MANIFEST` is built and **held (⛔) for Chadi** with the corrected jurisdiction rule
+`SOURCE_MANIFEST` is built and **held (⛔) for the owner** with the corrected jurisdiction rule
 (infra/authority standards are jurisdiction-specific — KSA MOMRA/NWC/SEC/MOT vs UAE RTA/DEWA/DM;
-the sourcing/jurisdiction choice is Chadi's, not yours). Do not ingest authority standards without
+the sourcing/jurisdiction choice is the owner's, not yours). Do not ingest authority standards without
 his decision.
 
 ## 5. STEP 4 — THE PACKET (the exit condition)

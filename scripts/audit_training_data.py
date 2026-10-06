@@ -5,7 +5,7 @@ This script inspects the JSONL files under data/learning/ and produces a
 markdown report highlighting:
 
 * duplicate instructions
-* contradictory labels/rules (PRC-501 example)
+* contradictory labels/rules (PRC-951 example)
 * versioned/duplicate shard sets
 * rows whose source chunk is missing from the local vector store
 * question categories with weak coverage
@@ -158,7 +158,7 @@ def main() -> int:
 
     report_lines.extend([
         "",
-        "## 4. PRC-501 / APPROVED contradiction scan",
+        "## 4. PRC-951 / APPROVED contradiction scan",
         "",
     ])
 
@@ -168,7 +168,7 @@ def main() -> int:
         if any(p.search(instr) for p in PRC_501_QUESTION_PATTERNS):
             prc_rows.append((fname, row))
 
-    report_lines.append(f"**Rows touching PRC-501 / APPROVED / design status:** {len(prc_rows)}")
+    report_lines.append(f"**Rows touching PRC-951 / APPROVED / design status:** {len(prc_rows)}")
     report_lines.append("")
 
     yes_valid: List[Tuple[str, Dict[str, Any]]] = []
@@ -186,7 +186,7 @@ def main() -> int:
     if yes_valid and no_valid:
         report_lines.append(
             "**⚠ Contradiction detected:** the training set contains both "
-            "'APPROVED is valid' and 'APPROVED is forbidden' labels for PRC-501. "
+            "'APPROVED is valid' and 'APPROVED is forbidden' labels for PRC-951. "
             "Reconcile against the authoritative source (construction_knowledge.py / "
             "procedures_db.json) before using this data for fine-tuning or evaluation."
         )
@@ -267,7 +267,7 @@ def main() -> int:
         "",
         "1. Pick one canonical training file and archive the versioned shards.",
         "2. Deduplicate instructions before using the file for fine-tuning.",
-        "3. Reconcile the PRC-501 / APPROVED contradiction against the procedure DB.",
+        "3. Reconcile the PRC-951 / APPROVED contradiction against the procedure DB.",
         "4. For rows with missing source chunks, either re-index the missing docs or remove the rows.",
         "5. Back-fill low-coverage categories with curated examples.",
         "",

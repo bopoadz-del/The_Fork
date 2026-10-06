@@ -1,5 +1,5 @@
 """
-Geometry-aware extraction of the Al-Ostool the client project Demolition BOQ (scanned, no text layer).
+Geometry-aware extraction of the Al-Example the client project Demolition BOQ (scanned, no text layer).
 
 Strategy (why the prior run failed):
   The priced BOQ is an image scan. The prior attempt OCR'd it and (a) confused the
@@ -15,17 +15,18 @@ Strategy (why the prior run failed):
     * Per-row QA: qty*rate == total within tol.
     * Reconciles per-bill sums to operator-verified anchors and validates page carries.
 """
-import sys, io, re
+import io
+import os
+import re
+import sys
 import fitz
 import numpy as np
 from PIL import Image
 import pytesseract
 import pandas as pd
 
-PDF = ('G:/My Drive/Master Folder/Demo Contract/DD-2022-175 Al Ostool the client project Dem. Works MC/'
-       'DD-2022-175 - Site Demolition and Site Clearance Works Package 1 Volume 4 Schedules - BOQ.pdf')
-OUT = ('C:/Users/shimm/AppData/Local/Temp/claude/C--Users-shimm/'
-       '436703f7-0a30-48b6-a650-29d75aac4fa5/scratchpad')
+PDF = os.environ.get("BOQ_PDF", "/data/example/demolition_boq.pdf")
+OUT = os.environ.get("FORK_SCRATCH_DIR", "/data/example/scratch")
 DPI = 300
 CONTENT_PAGES = list(range(10, 34))  # priced line items live on pages 10..33
 SUMMARY_PAGE = 9                      # grand-summary page (prints grand total ex/inc VAT)
@@ -264,7 +265,7 @@ def write_outputs(items, carries, diag):
         'source_page (0-idx)': df['page'],
         'raw_qty': df['raw_qty'], 'raw_rate': df['raw_rate'], 'raw_total': df['raw_total'],
     })
-    xlsx = f'{OUT}/alostool_demolition_boq_items.xlsx'
+    xlsx = f'{OUT}/demo_contract_demolition_boq_items.xlsx'
     out.to_excel(xlsx, index=False)
 
     # ---- reconciliation numbers ----
@@ -292,9 +293,9 @@ def write_outputs(items, carries, diag):
                                f"{d['carry']:,.2f} | {gap:,.2f} |{flag}")
 
     md = []
-    md.append('# Al-Ostool the client project Demolition BOQ - Extraction & QA Reconciliation\n')
+    md.append('# Al-Example the client project Demolition BOQ - Extraction & QA Reconciliation\n')
     md.append(f'**RECONCILIATION VERDICT: {verdict}**\n')
-    md.append('Source: `DD-2022-175 ... Volume 4 Schedules - BOQ.pdf` (scanned, no text layer). '
+    md.append('Source: `AB-2022-202 ... Volume 4 Schedules - BOQ.pdf` (scanned, no text layer). '
               'Extraction is geometry-aware: pages rendered at 300 dpi, per-token bounding boxes '
               'from `pytesseract image_to_data`, columns fixed by the vertical ruled lines, and '
               '**only the Total (Amount) column** of genuine line items is summed. Carry / '
@@ -358,7 +359,7 @@ def write_outputs(items, carries, diag):
     md.append('- Excluded from line items: rows containing "Carried To", "Collection", "Summary", '
               '"Bill No", "Bill n / Page", "Grand Total", "VAT".')
 
-    with open(f'{OUT}/alostool_demolition_result.md', 'w', encoding='utf-8') as f:
+    with open(f'{OUT}/demo_contract_demolition_result.md', 'w', encoding='utf-8') as f:
         f.write('\n'.join(md))
     return verdict, per_bill, grand, (ok, fail, na), xlsx
 

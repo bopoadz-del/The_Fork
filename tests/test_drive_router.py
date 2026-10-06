@@ -216,9 +216,9 @@ def test_status_not_connected(client):
 
 def test_status_connected_after_token(client):
     drive_auth.save_token("system", {"access_token": "AT", "refresh_token": "RT",
-                           "expiry": time.time() + 9999, "email": "me@x.com"})
+                           "expiry": time.time() + 9999, "email": "me@example.com"})
     body = client.get("/v1/drive/status", headers=H).json()
-    assert body["connected"] is True and body["email"] == "me@x.com"
+    assert body["connected"] is True and body["email"] == "me@example.com"
 
 
 def test_disconnect_clears_token(client, monkeypatch):

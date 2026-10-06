@@ -15,7 +15,7 @@ one cause. Both are quoted here verbatim from that pack:
     could answer better.
 
 The battery questions are quoted from the instrument itself
-(``UI-PHYS_DG2_results.xlsx``, column "Question (ask exactly)"), by way of
+(``UI-PHYS_QP2_results.xlsx``, column "Question (ask exactly)"), by way of
 the sanitized catalog at ``tests/fixtures/ui_phys/questions.json`` which
 carries the same strings. No paraphrase: a PASS obtained on a paraphrase is
 not evidence about the battery question, which is F-PHRASE-1's whole point.
@@ -174,7 +174,7 @@ def test_the_template_class_beats_the_layer():
     """
     assert classify(
         "own",
-        "DD-2023-118 Contract Template Vol 4.pdf",
+        "AB-2023-101 Contract Template Vol 4.pdf",
         "Schedule 10 sets out any applicable Works Guarantees",
     ) == "template"
 
@@ -369,23 +369,23 @@ def _answer_citing(doc_id: str) -> str:
 
 def test_a_template_cannot_lend_its_id_to_a_claim_about_the_contract(monkeypatch):
     """G1, at the attribution surface. The template is a real document and
-    was really read; what it may not do is back "per DD-2023-118"."""
+    was really read; what it may not do is back "per AB-2023-101"."""
     monkeypatch.setenv("CITATION_PROVENANCE_GATE", "1")
     rag = {
         "role": "system",
         "content": (
             "AUTHORITATIVE REFERENCE CONTEXT\n"
             "[doc_id=d1 chunk=1 score=0.700 class=template "
-            "src=DD-2023-118 Contract Template Vol 4.pdf] "
+            "src=AB-2023-101 Contract Template Vol 4.pdf] "
             "Schedule 10 sets out any applicable Works Guarantees\n"
         ),
     }
     out = gate(
-        _answer_citing("DD-2023-118"),
+        _answer_citing("AB-2023-101"),
         rag,
         [{"role": "user", "content": G1_ASK}],
     )
-    assert "DD-2023-118" not in out
+    assert "AB-2023-101" not in out
     assert UNVERIFIED_NOTE.strip() in out
 
 
@@ -398,15 +398,15 @@ def test_the_knowledge_base_cannot_lend_its_id_either(monkeypatch):
             "AUTHORITATIVE REFERENCE CONTEXT\n"
             "[doc_id=d1 chunk=1 score=0.700 class=knowledge_base "
             "src=fidic_2017_administration.md] "
-            "Pre-agreed rate; capped in Contract Data (DD-2019-002)\n"
+            "Pre-agreed rate; capped in Contract Data (AB-2019-002)\n"
         ),
     }
     answer = (
         "Delay damages are a pre-agreed rate capped in the Contract Data.\n\n"
-        "Source: DD-2019-002\n"
+        "Source: AB-2019-002\n"
     )
     out = gate(answer, rag, [{"role": "user", "content": A5_ASK}])
-    assert "DD-2019-002" not in out
+    assert "AB-2019-002" not in out
     assert UNVERIFIED_NOTE.strip() in out
 
 
@@ -444,10 +444,10 @@ def test_the_disclosed_fallback_path_keeps_its_attributions(monkeypatch):
         "content": (
             "AUTHORITATIVE REFERENCE CONTEXT\n"
             "[doc_id=d1 chunk=1 score=0.700 class=master_corpus "
-            "src=DD-2021-044 Vol1.pdf] Delay damages are 0.1% per calendar day\n"
+            "src=AB-2021-044 Vol1.pdf] Delay damages are 0.1% per calendar day\n"
         ),
     }
-    answer = "Delay damages are 0.1% per calendar day.\n\nSource: DD-2021-044\n"
+    answer = "Delay damages are 0.1% per calendar day.\n\nSource: AB-2021-044\n"
     assert gate(answer, rag, [{"role": "user", "content": A5_ASK}]) == answer
 
 
@@ -459,8 +459,8 @@ def test_the_project_s_own_record_is_untouched(monkeypatch):
         "content": (
             "AUTHORITATIVE REFERENCE CONTEXT\n"
             "[doc_id=d1 chunk=1 score=0.700 class=project_corpus "
-            "src=DD-2023-118_Vol1.pdf] Schedule 10: Not Used\n"
+            "src=AB-2023-101_Vol1.pdf] Schedule 10: Not Used\n"
         ),
     }
-    answer = "Schedule 10 is Not Used.\n\nSource: DD-2023-118\n"
+    answer = "Schedule 10 is Not Used.\n\nSource: AB-2023-101\n"
     assert gate(answer, rag, [{"role": "user", "content": G1_ASK}]) == answer

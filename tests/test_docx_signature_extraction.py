@@ -15,13 +15,13 @@ import pytest
 
 from app.core.doc_index import extract_document_text
 
-BODY_PHRASE = "UBCC Concrete Batching Plant at Wadi Safar"
+BODY_PHRASE = "XBCC Concrete Batching Plant at Wadi Example"
 BODY_DATE = "March 2024"
 BODY_WORKS = "in-situ"
 
 SIGNATORY = "Barry Muir"
 ROLE = "Engineer's Representative"
-COMPANY = "CH2M Saudi Limited"
+COMPANY = "EXCON Example Limited"
 
 # VML text-box — the same w:txbxContent Word uses for floating signature
 # frames. python-docx has no high-level API for this; we inject the XML.
@@ -53,7 +53,7 @@ def _write_letter_docx(path: Path) -> Path:
 
     doc = Document()
     doc.add_paragraph(
-        f"Letter to AICC on Completion and transfer of responsibility — {BODY_PHRASE}."
+        f"Letter to ACMC on Completion and transfer of responsibility — {BODY_PHRASE}."
     )
     doc.add_paragraph(f"{BODY_DATE}. Works include {BODY_WORKS} concrete.")
 

@@ -27,7 +27,7 @@ Neither touches retrieval.
 
 **Config:** `ORCHESTRATOR_PREDEFINED=false` (agent path), completed corpus
 (drive_archive 133,461 chunks + HNSW index + fixtures seeded), master corpus
-`master_corpus → client_infra_pack_1`, GK = curated_kb + client_infra_pack_1 +
+`master_corpus → example_infra_pack`, GK = curated_kb + example_infra_pack +
 drive_archive. Golden fixtures resolved **by name** (drift killed).
 
 **This number replaces the earlier 9/28** — that was measuring an unbuilt world
