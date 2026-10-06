@@ -470,7 +470,7 @@ resolve to no block, no route key and no synthetic tool.
 
 So the flag is not an on-switch for five disciplines; flipping it grants agents
 permission to call 32 actions that do not exist. Registered in
-`KNOWN_INCOMPLETE.md` rather than implemented — writing those 32 is building a
+`docs/KNOWN_INCOMPLETE.md` rather than implemented — writing those 32 is building a
 feature, which is outside "fix what fails a bar".
 
 `tests/test_hats_are_dormant.py` holds the conditional invariant: while the flag
@@ -506,7 +506,7 @@ but they are dead vocabulary.
 
 **The archive was not rewritten.** `docs/archive/HANDOFF.md` and
 `PROGRESS.md` still carry the incorrect "need multi-file resolution" reason.
-They are historical records; `KNOWN_INCOMPLETE.md` names and corrects them
+They are historical records; `docs/KNOWN_INCOMPLETE.md` names and corrects them
 rather than editing history.
 
 ---
