@@ -1,4 +1,0 @@
-usage: fork_cli.py [-h] [--base BASE] [--token TOKEN] [--api-key API_KEY]
-                   [--email EMAIL] [--password PASSWORD]
-                   {health,projects,agents,chat} ...
-fork_cli.py: error: argument cmd: invalid choice: 'master_corpus' (choose from 'health', 'projects', 'agents', 'chat')

@@ -90,7 +90,7 @@ class TestOmManualNoFabrication:
     @pytest.mark.asyncio
     async def test_unpopulated_sections_are_named_rather_than_shipped_blank(self, container):
         """An empty Section E that says nothing reads as complete. The
-        generators behind it are registered roadmap in KNOWN_INCOMPLETE.md,
+        generators behind it are registered roadmap in docs/KNOWN_INCOMPLETE.md,
         so the manual has to say which parts are missing and what they need.
         """
         result = await container.om_manual_generator(

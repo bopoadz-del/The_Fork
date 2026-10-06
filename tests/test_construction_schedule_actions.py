@@ -535,7 +535,7 @@ class TestFetchWeatherHonestOrReal:
 #   TASKRSRC: A1010 LAB 200h, A1020 LAB 400h, A1030 CARP 100h  => 700 man-hours
 _RESLOADED_XER = "tests/fixtures/resource_loaded.xer"
 # A real .xer with NO TASKRSRC rows (no resource loading).
-_NORSRC_XER = "uploads/_synthetic/schedules/sample.xer"
+_NORSRC_XER = "tests/fixtures/no_taskrsrc.xer"
 
 
 class TestDailySiteReportLocation:

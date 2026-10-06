@@ -134,7 +134,7 @@ jobs:
       - name: No unregistered hollow functions
         # Exits 1 on any hollow function that is not implemented, not an
         # @abstractmethod, not under tests/, and not registered in
-        # KNOWN_INCOMPLETE.md with a reason. Registration is deliberate and
+        # docs/KNOWN_INCOMPLETE.md with a reason. Registration is deliberate and
         # visible; a hidden stub is not.
         run: python scripts/audit_stubs.py
 
@@ -212,6 +212,18 @@ jobs:
         #
         # Stdlib only. Exit 1 with a list of new forms.
         run: python scripts/scan_hardwiring.py
+
+      - name: Repo hygiene (no documents, data, models or live names in git)
+        # Documents never live in the repo: knowledge and codes go in through
+        # the admin path into the database, model weights are a release asset
+        # pinned in data/models/manifest.json. Fails on any tracked image /
+        # PDF / office / archive / database / model file outside the reviewed
+        # exact-path allow-list in the script, any tracked file over 500 KB,
+        # and any live document name, reference code, document id or project
+        # id -- checked offline against config/live_name_hashes.txt (salted
+        # digests generated owner-side by scripts/gen_live_name_hashes.py;
+        # CI never sees the names). Stdlib only.
+        run: python scripts/scan_repo_hygiene.py
 
   eslint:
     # BLOCKING, unlike ruff above. This gate exists because of a specific
