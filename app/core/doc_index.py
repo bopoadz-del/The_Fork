@@ -2724,7 +2724,7 @@ def _looks_like_drawing(filename: str, ext: str) -> bool:
     PDF would add real cost to a bulk re-index, and re-encode runs on this
     corpus already sit close to a capacity wall. A drawing that is not named
     like one is missed; that is the accepted trade, and it is recorded in
-    KNOWN_INCOMPLETE.md rather than left implicit.
+    docs/KNOWN_INCOMPLETE.md rather than left implicit.
     """
     return ext == ".pdf" and bool(_DRAWING_NAME_RE.search(filename or ""))
 

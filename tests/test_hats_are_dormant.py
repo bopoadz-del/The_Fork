@@ -1,6 +1,6 @@
 """The discipline-hat system may not be switched on while its actions are fiction.
 
-Audit 2026-08-12, agents subsystem. Registered in KNOWN_INCOMPLETE.md under
+Audit 2026-08-12, agents subsystem. Registered in docs/KNOWN_INCOMPLETE.md under
 "Stated limitations"; this file is the part that bites.
 
 There are two agent systems here and only one runs. `runtime.load_agents()`
@@ -85,7 +85,7 @@ def test_the_hats_are_off_by_default():
     assert activation.HATS_ENABLED is False, (
         "FORK_HATS_ENABLED is set in this environment. That is not a test "
         "failure to work around: see test_enabling_the_hats_requires_every_"
-        "declared_action_to_exist below, and KNOWN_INCOMPLETE.md."
+        "declared_action_to_exist below, and docs/KNOWN_INCOMPLETE.md."
     )
 
 
@@ -112,7 +112,7 @@ def test_enabling_the_hats_requires_every_declared_action_to_exist():
         pytest.skip(
             "hats are dormant (FORK_HATS_ENABLED unset). "
             f"{sum(len(v) for v in missing.values())} declared actions are "
-            "currently undispatchable -- see KNOWN_INCOMPLETE.md. This test "
+            "currently undispatchable -- see docs/KNOWN_INCOMPLETE.md. This test "
             "becomes a hard failure the moment the flag is set."
         )
 
@@ -125,7 +125,7 @@ def test_enabling_the_hats_requires_every_declared_action_to_exist():
 
 
 def test_the_register_states_the_current_size_of_the_gap():
-    """KNOWN_INCOMPLETE.md claims a specific number. A register whose figures
+    """docs/KNOWN_INCOMPLETE.md claims a specific number. A register whose figures
     drift is worse than no register -- it reads as measured and is not.
 
     Asserted as a RANGE, not a fixed count: the exact number should be free to
@@ -135,7 +135,7 @@ def test_the_register_states_the_current_size_of_the_gap():
     """
     declared = set().union(*_declared_actions().values())
     gap = declared - _dispatchable()
-    register = Path("KNOWN_INCOMPLETE.md").read_text(encoding="utf-8")
+    register = Path("docs/KNOWN_INCOMPLETE.md").read_text(encoding="utf-8")
 
     assert "FORK_HATS_ENABLED" in register, (
         "the dormant hat system is not in the register at all"
@@ -145,7 +145,7 @@ def test_the_register_states_the_current_size_of_the_gap():
     # routes; unbacked names were removed). The gap must STAY closed.
     assert len(gap) == 0, (
         f"{len(gap)} declared actions are now undispatchable, but the register "
-        f"says 32. The gap grew -- update KNOWN_INCOMPLETE.md:\n{sorted(gap)}"
+        f"says 32. The gap grew -- update docs/KNOWN_INCOMPLETE.md:\n{sorted(gap)}"
     )
 
 

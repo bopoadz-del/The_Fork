@@ -262,13 +262,13 @@ CI gates, all blocking on every PR:
 | `tests` | full suite, two profiles (virgin / production-like) + a Postgres job |
 | `diff-cover` | ≥50 % of newly-changed lines covered |
 | coverage floor | 25 % overall, a regression floor |
-| `audit_stubs` | no hollow function that is not registered in [KNOWN_INCOMPLETE.md](KNOWN_INCOMPLETE.md) |
+| `audit_stubs` | no hollow function that is not registered in [docs/KNOWN_INCOMPLETE.md](docs/KNOWN_INCOMPLETE.md) |
 | `scan_secrets` | no secret material in tracked files |
 | `scan_exception_pass` | zero `except Exception: pass` handlers — S110 twin; empty allowlist |
 | ruff S110 | zero silent `except: pass` handlers — baseline 0, never raise it |
 | eslint | frontend Rules of Hooks and correctness errors |
 
-[KNOWN_INCOMPLETE.md](KNOWN_INCOMPLETE.md) is the honest register of what is
+[docs/KNOWN_INCOMPLETE.md](docs/KNOWN_INCOMPLETE.md) is the honest register of what is
 not built. Nothing in this repository can be quietly hollow: a function is
 either implemented or it is on that page with a reason.
 

@@ -1221,7 +1221,7 @@ class ConstructionContainer(
         Only crane / ladder / scaffolding exist in the detector's vocabulary,
         so that is all this can return. Excavators, telehandlers and dumpers
         have no prompt string and are invisible at any confidence — a
-        vocabulary limit registered in KNOWN_INCOMPLETE.md, not something to
+        vocabulary limit registered in docs/KNOWN_INCOMPLETE.md, not something to
         paper over by guessing from context.
         """
         from app.containers.construction.photo_observations import equipment_from_photos
