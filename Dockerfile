@@ -81,7 +81,11 @@ RUN pip uninstall -y opencv-python opencv-python-headless \
 # wheels above so pip sees torch is already satisfied and does not pull the
 # CUDA variant. BGE-small and other dense sentence-transformers models need
 # this; model2vec alone cannot load them.
-RUN pip install --no-cache-dir "sentence-transformers==5.5.1"
+# transformers is pinned with it: 5.19.0 (2026-10) no longer imports on the
+# torch 2.5.1 CPU wheels above ("Could not import module 'PreTrainedModel'"),
+# so sentence-transformers fails to import and the embedder prefetch stops the
+# build. 5.18.0 is what the last good image resolved.
+RUN pip install --no-cache-dir "sentence-transformers==5.5.1" "transformers==5.18.0"
 
 # ── Bake the RAG embedder weights into the image ────────────────────────────
 #
