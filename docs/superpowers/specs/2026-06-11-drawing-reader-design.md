@@ -181,7 +181,7 @@ If the PDF is logically multiple drawings (different `drawing_number` per page),
 
 2. **Uncomment + install pdfplumber** in `requirements.txt` (already listed as `# pdfplumber>=0.11.0     # PDF table extraction`). Run `pip install pdfplumber` in the venv. Add a `pip freeze` diff to the PR.
 
-3. **Tests at `tests/test_drawing_qto.py`.** Fixture: one real the client project drawing from the pilot batch (e.g., `IP-INF-053-0000-JCB-DWG-TM-200-1000005-A.pdf`). Copy it to `tests/fixtures/drawing_tm_200.pdf`. Assertions:
+3. **Tests at `tests/test_drawing_qto.py`.** Fixture: a synthetic traffic-management sheet generated in the test (`tests/_synthetic_fixtures.build_drawing_detail_pdf`), carrying an invented long-form drawing number such as `QZ-SWK-100-0000-ABC-DWG-TM-200-0000101-A`. No client drawing is committed. Assertions:
    - `drawing_number` extracted (not the filename fallback)
    - `discipline` equals `"TM"`
    - `discipline_full` equals `"Traffic Management"`
@@ -230,6 +230,6 @@ For each drawing, report:
 - Code (modify): `app/blocks/drawing_qto.py`
 - Code (modify): `requirements.txt` (uncomment pdfplumber)
 - Test (new): `tests/test_drawing_qto.py`
-- Test fixture (new): `tests/fixtures/drawing_tm_200.pdf` (copied from G:\My Drive\...)
+- Test fixture (generated): `tests/_synthetic_fixtures.py` (synthetic drawing sheets built per run)
 - Audit log (existing, extend rows): `data/logs/drive_indexer_audit*.jsonl`
 - Validation output (new): `data/logs/drawing_reader_validation_<date>.md`

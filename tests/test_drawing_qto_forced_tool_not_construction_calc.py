@@ -20,7 +20,7 @@ DRAWING_QTO_ASKS = [
     "Use drawing_qto. Synthetic DXF with 3 pipes and 2 manholes. Produce pipe lengths and manhole counts.",
     "drawing_qto on the ground floor plan",
     "extract quantities from this drawing",
-    "quantity takeoff from drawing_tm_1100010.pdf",
+    "quantity takeoff from drawing_qz_0101.pdf",
 ]
 
 

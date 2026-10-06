@@ -23,9 +23,9 @@ from app.core import doc_index
 from app.core.rag import vector_store as vs
 
 
-TITLE_BLOCK = """PROJECT: THE CLIENT RESIDENTIAL TOWER
+TITLE_BLOCK = """PROJECT: SAMPLE WORKS RESIDENTIAL TOWER
 DRAWING TITLE: TYPICAL FLOOR SLAB REINFORCEMENT
-DRAWING NO: S-2101-004
+DRAWING NO: QZ-100-DWG-0001
 REV: C2
 SCALE: 1:50"""
 
@@ -55,34 +55,37 @@ def _drawing_pdf(path, *, with_schedule=True, with_text=True):
     return str(path)
 
 
-# ── the gate, checked against real corpus filenames ───────────────────────
+# ── the gate, checked against corpus-shaped filenames ─────────────────────
+# Invented names that follow the naming conventions seen in real corpora:
+# hyphenated document codes (upper and lower case), a plural "DWGs" in a
+# free-text name, and an underscore-separated "drawing_" stem.
 
-REAL_DRAWINGS = [
-    "IP-INF-053-0000-JCB-DWG-TM-200-1000005-A.pdf",
-    "ip-inf-054-0000-jcb-dwg-sg-200-0001076-04.pdf",
-    "BLVD conditional IFC DWGs - caw.pdf",
-    "drawing_tm_200.pdf",
+CORPUS_SHAPED_DRAWINGS = [
+    "QZ-SWK-100-0000-ABC-DWG-TM-200-0000005-A.pdf",
+    "qz-swk-101-0000-abc-dwg-sg-200-0000076-04.pdf",
+    "Sample Works conditional IFC DWGs - rev b.pdf",
+    "drawing_qz_0100.pdf",
 ]
-REAL_NON_DRAWINGS = [
-    "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
-    "IP-INF-053-0000-JCB-SPC-IF-000013-B_SOPR.pdf",
-    "NF-053-0000-JCB-PLN-DE-000006-A_Post-appointment BIM Execution Plan.pdf",
-    "DD-2022-175 - Volume 1 - Conditions of Contract.pdf",
+CORPUS_SHAPED_NON_DRAWINGS = [
+    "QZ-SWK-100-0000-ABC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+    "QZ-SWK-100-0000-ABC-SPC-IF-000013-B_Specification.pdf",
+    "QZ-100-0000-ABC-PLN-DE-000006-A_Post-appointment BIM Execution Plan.pdf",
+    "SW-2030-001 - Volume 1 - Conditions of Contract.pdf",
     "XYZ-301 Request for Information.pdf",
 ]
 
 
-@pytest.mark.parametrize("name", REAL_DRAWINGS)
-def test_the_gate_matches_real_drawing_filenames(name):
-    """Taken verbatim from filenames indexed in the live corpus. A gate that
-    is correct in principle and inert on the client's actual documents is the
-    same failure as no gate at all."""
+@pytest.mark.parametrize("name", CORPUS_SHAPED_DRAWINGS)
+def test_the_gate_matches_corpus_shaped_drawing_filenames(name):
+    """One name per drawing-naming convention seen in the live corpus. A gate
+    that is correct in principle and inert on the shapes real documents
+    actually use is the same failure as no gate at all."""
     assert doc_index._looks_like_drawing(name, ".pdf"), f"{name} not recognised"
 
 
-@pytest.mark.parametrize("name", REAL_NON_DRAWINGS)
+@pytest.mark.parametrize("name", CORPUS_SHAPED_NON_DRAWINGS)
 def test_the_gate_ignores_the_other_document_types(name):
-    """Also verbatim from the corpus. Table detection on every PDF would add
+    """Same conventions, other document types. Table detection on every PDF would add
     real cost to a bulk re-index, so the gate has to stay narrow."""
     assert not doc_index._looks_like_drawing(name, ".pdf"), f"{name} wrongly matched"
 
@@ -95,10 +98,10 @@ def test_non_pdfs_are_never_opened(tmp_path):
 # ── the chunks themselves ─────────────────────────────────────────────────
 
 def test_the_schedule_becomes_chunks_carrying_its_values(tmp_path):
-    path = _drawing_pdf(tmp_path / "IP-INF-053-JCB-DWG-TM-200-1000005-A.pdf")
+    path = _drawing_pdf(tmp_path / "QZ-SWK-100-ABC-DWG-TM-200-0000005-A.pdf")
 
     chunks = doc_index._drawing_chunks_for_document(
-        path, "IP-INF-053-JCB-DWG-TM-200-1000005-A.pdf", ".pdf", "p1"
+        path, "QZ-SWK-100-ABC-DWG-TM-200-0000005-A.pdf", ".pdf", "p1"
     )
 
     assert chunks, "a drawing with a ruled bar schedule produced no chunks"
@@ -110,13 +113,13 @@ def test_the_schedule_becomes_chunks_carrying_its_values(tmp_path):
 def test_chunks_name_the_sheet_they_came_from(tmp_path):
     """A project holds many sheets; a bar schedule on one is not the bar
     schedule on another."""
-    path = _drawing_pdf(tmp_path / "S-2101-004-DWG.pdf")
+    path = _drawing_pdf(tmp_path / "QZ-100-DWG-0001.pdf")
 
     chunks = doc_index._drawing_chunks_for_document(
-        path, "S-2101-004-DWG.pdf", ".pdf", "p1"
+        path, "QZ-100-DWG-0001.pdf", ".pdf", "p1"
     )
 
-    assert any("S-2101-004" in c for c in chunks), (
+    assert any("QZ-100-DWG-0001" in c for c in chunks), (
         f"no chunk attributes itself to the drawing number:\n{chunks}"
     )
 
@@ -165,7 +168,7 @@ def test_an_unreadable_file_never_breaks_indexing(tmp_path):
 
 @pytest.fixture
 def indexed_drawing(monkeypatch, tmp_path):
-    """Ingest a real drawing through the real `index_document` path."""
+    """Ingest a synthetic drawing through the real `index_document` path."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
@@ -176,13 +179,13 @@ def indexed_drawing(monkeypatch, tmp_path):
     from app.core import projects as projects_store
     from app.core import users as users_store
 
-    filename = "IP-INF-053-0000-JCB-DWG-TM-200-1000005-A.pdf"
+    filename = "QZ-SWK-100-0000-ABC-DWG-TM-200-0000005-A.pdf"
     pdf_path = _drawing_pdf(tmp_path / filename)
 
     # projects.user_id is a real FK — the system user has to exist first.
     users_store.init_db()
     project = projects_store.create_project(
-        name="the client project Infra", user_id=users_store.SYSTEM_USER_ID
+        name="Sample Works Infra", user_id=users_store.SYSTEM_USER_ID
     )
     document = projects_store.add_document(
         project_id=project["id"],
@@ -230,7 +233,7 @@ def test_the_schedule_ROW_is_retrievable_not_just_its_loose_words(indexed_drawin
 
 
 def test_the_sheet_identity_is_retrievable_as_a_title_block(indexed_drawing):
-    """Same discipline as above: `S-2101-004` appears in the raw text layer
+    """Same discipline as above: `QZ-100-DWG-0001` appears in the raw text layer
     too, so asserting on the bare number would pass without the wiring.
 
     This asserts the TITLE BLOCK chunk — the one that states the number is a
@@ -249,6 +252,6 @@ def test_the_sheet_identity_is_retrievable_as_a_title_block(indexed_drawing):
     assert "DRAWING TITLE BLOCK" in blob, (
         f"no title-block chunk reached retrieval:\n{blob[:800]}"
     )
-    assert "drawing number: s-2101-004" in blob.lower(), (
+    assert "drawing number: qz-100-dwg-0001" in blob.lower(), (
         f"the sheet identity is not attributed:\n{blob[:800]}"
     )

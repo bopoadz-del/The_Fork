@@ -2690,7 +2690,7 @@ def _boq_chunks_for_document(
 # keeps its numbers in its SCHEDULES — bar/bending, door, window, finishes —
 # and `_extract_with_meta` only pulls the PDF's raw text layer. Schedule cells
 # come through as a flat run of words with the row/column structure gone, so
-# "how many 16mm bars are on sheet S-2101-004" could not be answered even
+# "how many 16mm bars are on sheet QZ-100-DWG-0001" could not be answered even
 # though the figure was on the page.
 #
 # `ConstructionContainer._extract_tables_advanced` already recovers the real
@@ -2703,14 +2703,15 @@ _DRAWING_NAME_RE = re.compile(
     #   AB-CDE-001-0000-XYZ-BOQ-CA-000001-B_...pdf     <- NOT a drawing
     #   AB-CDE-001-0000-XYZ-SPC-IF-000001-B_Spec.pdf   <- NOT a drawing
     # `\b` is WRONG here: underscore is a word character, so `\bdrawing\b`
-    # does not match `drawing_tm_200.pdf` — a real filename from the corpus.
+    # does not match `drawing_qz_0100.pdf` — an underscore-separated name, a
+    # shape real corpora use.
     # These lookarounds treat `_`, `-`, `.` and space alike as separators.
     #
     # Bare "sheet" is deliberately NOT a token. It is the loosest of the
     # candidates ("Data Sheet", "Method Statement Sheet") and the whole reason
     # this gate is filename-based is to keep table detection off PDFs that do
-    # not need it. All four real drawing filenames in the corpus carry DWG or
-    # "drawing", so "sheet" buys nothing and costs breadth.
+    # not need it. Every drawing-naming convention seen in the corpus carries
+    # DWG or "drawing", so "sheet" buys nothing and costs breadth.
     r"(?<![A-Za-z0-9])(?:dwgs?|drawings?)(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
