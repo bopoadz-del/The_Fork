@@ -65,13 +65,15 @@ claudebot/KEYS.md
 # Claude Code local settings (personal, machine-specific)
 .claude/settings.local.json
 
-# Runtime data directory at repo root (uploads, SQLite DB, audit log).
-# Anchored with leading slash so app/data/ (versioned content like the
-# procedures DB) is NOT swept up by this rule.
-/data/
-# ...except the Safety Observation AI v2 weights -- those ARE shipped.
+# Runtime data directory at repo root (uploads, SQLite DB, audit log,
+# captures). Anchored with leading slash so app/data/ (versioned content like
+# the procedures DB) is NOT swept up by this rule. The only tracked file under
+# it is the model manifest: the weights themselves are a release asset of this
+# repo, fetched and sha256-verified by scripts/fetch_model.py.
+/data/*
 !/data/models/
-!/data/models/safety_world_v2.onnx
+/data/models/*
+!/data/models/manifest.json
 .playwright-mcp/
 
 # wrangler / Cloudflare Workers local state
@@ -84,9 +86,8 @@ claudebot/KEYS.md
 # accidental re-commit of any local chroma scratch files.
 data/chroma_db/
 
-# YOLO base/scratch artifacts (local-only). The BAKED .onnx we ship
-# lives at data/models/safety_world_v2.onnx and IS committed via the
-# /data/models/ exception above.
+# YOLO base/scratch artifacts (local-only). The BAKED .onnx we ship is a
+# release asset (see data/models/manifest.json), never a git object.
 /runs/
 /yolov8n.pt
 /yolov8s-world.pt
@@ -115,16 +116,35 @@ tests/fixtures/photos/
 /blob-report/
 
 
-# Local agent dumps that must not be in git (contract Drive pulls, raw
-# webp, answer JSON). Screenshots for `git pull` live in
-# uploads/_synthetic/screenshots/ and ARE tracked. Docker already
-# excludes the whole /uploads tree (.dockerignore), so Render never
-# copies them into the image.
-/uploads/_synthetic/artifacts/
-/uploads/_synthetic/*_infra_pack_*/
-/uploads/_synthetic/*_pack_*_questions.json
-/uploads/_synthetic/SCREENSHOTS.md
-/uploads/_synthetic/READ_ANSWERS_M3_M11.md
+# Repo hygiene (scripts/scan_repo_hygiene.py enforces the same in CI):
+# documents, captures, eval output, local databases and model weights never
+# live in git. Knowledge and codes go in through the admin path into the
+# database; only text seeds under docs/knowledge/ ship with the code.
+/uploads/
+uploads/
+captures/
+*results*.jsonl
+/review_pack/
+/artifacts/
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.db-journal
+*.db-wal
+*.db-shm
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+*.h5
+*.tflite
+*.pb
+*.engine
+/GOLDEN_SET_REPORT.md
+/FEATURE_MATRIX.md
+/.ci-investigation/
 
 # Ingest run-state sidecar: a per-file heartbeat written by
 # scripts/p1b_ingest_drive_server.py so a SIGKILLed run can still be

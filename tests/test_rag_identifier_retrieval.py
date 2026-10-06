@@ -491,3 +491,32 @@ def test_chat_path_unknown_cesmm_still_identifier_misses(
     assert msg is None
     assert audit.get("identifier_miss") is True or audit.get("threshold_fired") is True
     assert any("d888.9" in i for i in (audit.get("extracted_identifiers") or []))
+
+
+def test_a_class_code_matches_compact_and_ocr_spaced_through_indexable_sql(isolated_store):
+    """``K418.3`` matches both ``K418.3`` and the OCR-spaced ``K 418.3``, and the
+    filter is plain ``LOWER(text) LIKE`` -- the expression the trigram index
+    on ``lower(text)`` serves. A ``REPLACE(text, ...)`` filter has no index and
+    reads every row of the project."""
+    from sqlalchemy import event
+
+    store, e = isolated_store
+    texts = ["K418.3 Kerb laying 140 m", "K 418.3 Kerb laying 60 m", "K419.1 Gully 4 nr"]
+    for i, t in enumerate(texts):
+        store.upsert_chunks("proj_a", f"doc_{i}", [t], e.encode([t]))
+
+    seen = []
+    engine = store._session_factory()().get_bind()
+
+    def _capture(conn, cursor, statement, params, context, executemany):
+        seen.append(statement)
+
+    event.listen(engine, "before_cursor_execute", _capture)
+    try:
+        results = store.identifier_search("proj_a", ["K418.3"], k=5)
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture)
+
+    assert sorted(c.text for c in results) == sorted(texts[:2])
+    reads = [s for s in seen if "LIKE" in s.upper()]
+    assert reads and not any("REPLACE(" in s.upper() for s in reads)

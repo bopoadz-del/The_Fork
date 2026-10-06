@@ -1134,7 +1134,7 @@ async def governance_status(auth: dict = Depends(require_user)):
         "retention_days": retention if retention > 0 else "indefinite",
         "audit_logging": True,
         "delete_on_request": True,
-        "policy_document": "DATA_GOVERNANCE.md",
+        "policy_document": "docs/DATA_GOVERNANCE.md",
     }
 
 
