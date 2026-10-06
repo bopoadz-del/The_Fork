@@ -1,6 +1,6 @@
 """F7 — a drawing's schedule must be RETRIEVABLE, not merely extractable.
 
-This closes the limitation F6 left open and that KNOWN_INCOMPLETE.md recorded:
+This closes the limitation F6 left open and that docs/KNOWN_INCOMPLETE.md recorded:
 `_process_drawing` recovered bar schedules, but the RAG ingest path is a
 different pipeline. `doc_index._extract_with_meta` pulls the PDF's raw text
 layer, so a schedule reached the corpus as a flat run of words with its

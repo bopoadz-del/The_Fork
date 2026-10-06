@@ -189,7 +189,7 @@ def test_every_public_action_is_routable():
         "\nBefore wiring one, check it RUNS — two of the three found in the "
         "2026-08-12 audit called helpers that do not exist, and wiring them "
         "produced a 500 instead of an honest refusal. If it cannot run, leave "
-        "it unwired and register it in KNOWN_INCOMPLETE.md."
+        "it unwired and register it in docs/KNOWN_INCOMPLETE.md."
     )
 
 
@@ -324,7 +324,7 @@ def _unrunnable_methods() -> set[str]:
 # briefly held here while their four missing helpers were unwritten; all four
 # are now implemented and both actions are routed, so both sets are empty and
 # the assertions below are plain emptiness checks again. Re-populate ONLY with
-# a matching KNOWN_INCOMPLETE.md entry — an exemption without a register entry
+# a matching docs/KNOWN_INCOMPLETE.md entry — an exemption without a register entry
 # is how the wrong reason in docs/archive/HANDOFF.md survived for months.
 PARKED_UNRUNNABLE: set[str] = set()
 KNOWN_MISSING_HELPERS: set[str] = set()
@@ -348,7 +348,7 @@ def test_no_new_method_calls_a_helper_that_does_not_exist():
         + f"\n  now defined (remove from KNOWN_MISSING_HELPERS): "
           f"{sorted(KNOWN_MISSING_HELPERS - set(missing))}\n"
         "Define the helper, or leave the caller unrouted and register it in "
-        "KNOWN_INCOMPLETE.md."
+        "docs/KNOWN_INCOMPLETE.md."
     )
 
 
