@@ -2,41 +2,51 @@
 
 Spec: docs/superpowers/specs/2026-06-11-drawing-reader-design.md
 
-Two fixtures:
-- REDACTED.pdf -- a TM Traffic Management *detail* sheet that
-  carries a full JCB title block AND multiple
+Two synthetic sheets, generated per run by ``tests/_synthetic_fixtures.py``
+(invented content -- no client drawing is committed):
+- detail sheet -- a traffic-management *detail* sheet carrying a full
+  long-form title block AND repeated
   "MATCH LINE : FOR REFERENCE REFER TO SHEET NO : N" callouts.
   Primary fixture for title-block + notes + match-line assertions.
-- drawing_tm_200.pdf -- the TM-200 *key plan*. Used for the
-  cad_tags_filtered_count assertion (densest CAD-tag soup in the pilot).
+- key plan -- a CAD-tag-dense *key plan*. Used for the
+  cad_tags_filtered_count assertion.
 """
 
 from __future__ import annotations
 
-import os
 import re
-from pathlib import Path
 
 import pytest
 
 from app.blocks.drawing_qto import DrawingQTOBlock
-
-
-FIXTURES = Path(__file__).parent / "fixtures"
-PRIMARY = FIXTURES / "REDACTED.pdf"
-KEYPLAN = FIXTURES / "drawing_tm_200.pdf"
-
-
-@pytest.fixture(scope="module")
-async def primary_result():
-    block = DrawingQTOBlock()
-    return await block.process({"file_path": str(PRIMARY)}, {})
+from tests._synthetic_fixtures import (
+    build_drawing_detail_pdf,
+    build_drawing_keyplan_pdf,
+)
 
 
 @pytest.fixture(scope="module")
-async def keyplan_result():
+def sheets(tmp_path_factory):
+    root = tmp_path_factory.mktemp("drawing_qto")
+    primary, keyplan = root / "drawing_qz_detail.pdf", root / "drawing_qz_keyplan.pdf"
+    return {
+        "primary": primary,
+        "primary_spec": build_drawing_detail_pdf(primary),
+        "keyplan": keyplan,
+        "keyplan_spec": build_drawing_keyplan_pdf(keyplan),
+    }
+
+
+@pytest.fixture(scope="module")
+async def primary_result(sheets):
     block = DrawingQTOBlock()
-    return await block.process({"file_path": str(KEYPLAN)}, {})
+    return await block.process({"file_path": str(sheets["primary"])}, {})
+
+
+@pytest.fixture(scope="module")
+async def keyplan_result(sheets):
+    block = DrawingQTOBlock()
+    return await block.process({"file_path": str(sheets["keyplan"])}, {})
 
 
 async def test_process_returns_expected_shape(primary_result):
@@ -50,18 +60,20 @@ async def test_process_returns_expected_shape(primary_result):
     assert isinstance(r["errors"], list)
 
 
-async def test_drawing_number_extracted_not_fallback(primary_result):
+async def test_drawing_number_extracted_not_fallback(primary_result, sheets):
     drawing = primary_result["drawing"]
     dn = drawing.get("drawing_number") or ""
     assert dn, "drawing_number not extracted"
     assert "drawing_number_fallback_to_filename" not in (
         primary_result.get("errors") or []
     ), f"fell back to filename: {dn}"
-    # Must include the JCB-style discipline-section-sequence shape
+    # Must include the long-form discipline-section-sequence shape
     assert re.search(r"[A-Z]{2,}-[A-Z]{2,}-\d+", dn), \
-        f"drawing_number does not match JCB-style pattern: {dn!r}"
+        f"drawing_number does not match the long-form pattern: {dn!r}"
     # Must not be the filename stem
-    assert dn != PRIMARY.stem, f"drawing_number equals filename: {dn}"
+    assert dn != sheets["primary"].stem, f"drawing_number equals filename: {dn}"
+    # And it is the number printed in the synthetic title block.
+    assert dn == sheets["primary_spec"]["drawing_number"], dn
 
 
 async def test_discipline_is_tm(primary_result):
@@ -105,12 +117,14 @@ async def test_cross_refs_parsed(primary_result):
         f"no recognized ref_type; got {types!r}"
 
 
-async def test_cad_tags_filtered_count_nonzero(keyplan_result):
-    """The key plan is the densest CAD-tag soup in the pilot."""
+async def test_cad_tags_filtered_count_nonzero(keyplan_result, sheets):
+    """The key plan is a dense CAD-tag soup; every tag must be filtered."""
     drawing = keyplan_result["drawing"]
     filtered = drawing.get("cad_tags_filtered_count") or 0
     assert filtered >= 100, \
         f"cad_tags_filtered_count={filtered}, expected >=100 on key plan"
+    tags_drawn = sheets["keyplan_spec"]["cad_tags"]
+    assert filtered >= tags_drawn,         f"cad_tags_filtered_count={filtered} < {tags_drawn} CAD tags on the sheet"
 
 
 # --- Phase 1.5 fix-list regression guards ----------------------------------
@@ -176,32 +190,32 @@ async def test_revision_fallback_to_filename():
     """Bug 1.5c: when neither the title block nor the drawing-number tail
     yields a revision letter, the filename's trailing -<LETTER>.pdf
     suffix is the source of truth. The TM-200 key plan fixture is
-    'drawing_tm_200.pdf' (no revision suffix) so we cannot use it here.
-    Use the PRIMARY fixture only when the filename ends in -<LETTER>;
+    'drawing_qz_keyplan.pdf' (no revision suffix) so we cannot use it here.
+    Use the primary fixture only when the filename ends in -<LETTER>;
     otherwise this test is a smoke check of the fallback regex shape."""
     # Smoke: regex matches the documented pattern.
-    assert re.search(r"-([A-Z])$", "REDACTED").group(1) == "A"
-    assert re.search(r"-([A-Z])$", "REDACTED").group(1) == "C"
+    assert re.search(r"-([A-Z])$", "QZ-SWK-100-0000-ABC-DWG-TM-200-0000005-A").group(1) == "A"
+    assert re.search(r"-([A-Z])$", "QZ-SWK-100-0000-ABC-DWG-WS-600-0000001-C").group(1) == "C"
     # Numeric tail (sheet-seq) must NOT match.
-    assert re.search(r"-([A-Z])$", "IP-INF-053-0000-JCB-DWG-SW-600-0000035-04") is None
+    assert re.search(r"-([A-Z])$", "QZ-SWK-100-0000-ABC-DWG-SW-600-0000035-04") is None
     # Lowercase tail must NOT match.
     assert re.search(r"-([A-Z])$", "drawing-foo-z") is None
 
 
 async def test_drawing_number_regex_accepts_swapped_jcb_tokens():
-    """Phase 1.6: WS sheets use IP-INF-053-JCB-0000-DWG-WS-... — token
+    """Phase 1.6: WS sheets use QZ-SWK-100-ABC-0000-DWG-WS-... — token
     order 4-5 swapped vs the TM/SG/EL/TL form. Both must parse."""
     from app.blocks.drawing_qto import _DWG_NUMBER_FULL
     # Original TM/SG/EL/TL form
     assert _DWG_NUMBER_FULL.fullmatch(
-        "REDACTED"
-    ), "long-regex failed on 0000-JCB-DWG form"
+        "QZ-SWK-100-0000-ABC-DWG-TM-200-0000005-A"
+    ), "long-regex failed on 0000-ABC-DWG form"
     # WS swapped form
     assert _DWG_NUMBER_FULL.fullmatch(
-        "IP-INF-053-JCB-0000-DWG-WS-600-0000001-C"
-    ), "long-regex failed on JCB-0000-DWG form"
+        "QZ-SWK-100-ABC-0000-DWG-WS-600-0000001-C"
+    ), "long-regex failed on ABC-0000-DWG form"
     # Reject obvious non-matches
-    assert _DWG_NUMBER_FULL.fullmatch("IP-INF-053-JCB") is None
+    assert _DWG_NUMBER_FULL.fullmatch("QZ-SWK-100-ABC") is None
     assert _DWG_NUMBER_FULL.fullmatch("FOO-BAR-BAZ") is None
 
 
@@ -231,6 +245,7 @@ async def test_drawing_title_rejects_client_place_names(monkeypatch):
     the normalisation, not the gazetteer's contents.
     """
     import importlib
+
     from app.blocks import drawing_qto
 
     monkeypatch.setenv(
@@ -254,6 +269,7 @@ async def test_drawing_title_rejects_client_place_names(monkeypatch):
 async def test_place_name_blocklist_is_empty_without_the_env_var(monkeypatch):
     """No client place name may be baked into the code path."""
     import importlib
+
     from app.blocks import drawing_qto
 
     monkeypatch.delenv("DRAWING_QTO_EXCLUDED_PLACE_NAMES", raising=False)
@@ -264,12 +280,12 @@ async def test_place_name_blocklist_is_empty_without_the_env_var(monkeypatch):
         importlib.reload(drawing_qto)
 
 
-async def test_fitz_char_extraction_smoke():
+async def test_fitz_char_extraction_smoke(sheets):
     """Phase 1.7 fitz swap: ``_chars_from_fitz`` must produce a healthy
     span population on the primary fixture. <100 records would indicate
     the page.get_text("dict") loop is mis-iterating blocks/lines/spans."""
     import fitz
-    doc = fitz.open(str(PRIMARY))
+    doc = fitz.open(str(sheets["primary"]))
     try:
         chars = DrawingQTOBlock._chars_from_fitz(doc[0])
     finally:
@@ -285,31 +301,32 @@ async def test_fitz_char_extraction_smoke():
 
 
 async def test_drawing_number_no_doubled_letter_prefix():
-    """Phase 1.7 bug fix: a source text run like ``XIIP-INF-053-...``
-    used to yield a JCB drawing-number of ``IIP-INF-053-...`` (the head
+    """Phase 1.7 bug fix: a source text run like ``XQQZ-SWK-100-...``
+    used to yield a drawing-number of ``QQZ-SWK-100-...`` (the head
     ``[A-Z]{2,}`` happily accepted the doubled letter). The
     ``_strip_doubled_letter_prefix`` helper must peel the stray prefix
     char-by-char while the remainder still parses, leaving the canonical
     2-char ``IP`` head."""
     from app.blocks.drawing_qto import (
-        _strip_doubled_letter_prefix, _DWG_NUMBER_FULL,
+        _DWG_NUMBER_FULL,
+        _strip_doubled_letter_prefix,
     )
-    # The pattern itself matches IIP- because [A-Z]{2,} accepts >=2.
-    bad_run = "XIIP-INF-053-0000-JCB-DWG-ST-200-0010001-A"
+    # The pattern itself matches QQZ- because [A-Z]{2,} accepts >=2.
+    bad_run = "XQQZ-SWK-100-0000-ABC-DWG-ST-200-0010001-A"
     raw_match = _DWG_NUMBER_FULL.search(bad_run)
     assert raw_match is not None
     raw = raw_match.group(0)
     # After strip, no doubled-letter prefix
     cleaned = _strip_doubled_letter_prefix(raw)
-    assert not cleaned.startswith("II"), (
+    assert not cleaned.startswith("QQ"), (
         f"strip_doubled_letter_prefix kept the doubled prefix: {cleaned!r}"
     )
-    # Canonical the client project prefix
-    assert cleaned.startswith("IP-INF-"), (
-        f"strip_doubled_letter_prefix did not preserve canonical IP-INF prefix: {cleaned!r}"
+    # Canonical two-letter project prefix
+    assert cleaned.startswith("QZ-SWK-"), (
+        f"strip_doubled_letter_prefix did not preserve canonical QZ-SWK prefix: {cleaned!r}"
     )
     # The known-clean form is a no-op
-    clean_in = "REDACTED"
+    clean_in = "QZ-SWK-100-0000-ABC-DWG-TM-200-0000005-A"
     assert _strip_doubled_letter_prefix(clean_in) == clean_in
 
 
@@ -428,15 +445,15 @@ async def test_process_page_prefers_bottom_band_dn_over_referenced_dn():
     the wrong one.
 
     Fix: capture the bottom-band raw DN before the fallback widens, and
-    if it parses as a full JCB, prefer it. This test exercises the real
+    if it parses as a full drawing number, prefer it. This test exercises the real
     mechanism via a stubbed page (no PDF fixture required) — feed
-    ``_process_page`` chars where the bottom-15% band yields JCB number
-    X and the right-20% zone contains JCB number Y appearing first;
+    ``_process_page`` chars where the bottom-15% band yields drawing number
+    X and the right-20% zone contains drawing number Y appearing first;
     assert X wins.
 
     A synthetic-rescue-only test (one that just feeds
     ``page_full_raw_texts``) would prove nothing — the rescue never fires
-    here, because the wrong number Y already passes ``_is_full_jcb``.
+    here, because the wrong number Y already passes ``_is_full_drawing_number``.
     """
     from app.blocks.drawing_qto import DrawingQTOBlock
 
@@ -452,13 +469,13 @@ async def test_process_page_prefers_bottom_band_dn_over_referenced_dn():
     page_w, page_h = 1000.0, 700.0
     # Bottom-15% band threshold: y0 > 0.85 * 700 = 595.
     # Right-20% threshold: x0 >= 0.80 * 1000 = 800.
-    # The bottom band gets the CORRECT title-block JCB number — just a
+    # The bottom band gets the CORRECT title-block drawing number — just a
     # few chars (mimicking the LI sheet's sparse title-block band).
-    correct_dn = "IP-INF-053-0000-JCB-DWG-LI-200-1001100"
+    correct_dn = "QZ-SWK-100-0000-ABC-DWG-LI-200-0001100"
     # The right-20% zone gets a REFERENCED drawing first (top of band)
     # then the correct DN somewhere later, plus enough filler "lines"
     # to push the right-zone richness past the >= 5 lines fallback gate.
-    referenced_dn = "IP-INF-053-0000-JCB-DWG-LI-600-0000002"
+    referenced_dn = "QZ-SWK-100-0000-ABC-DWG-LI-600-0000002"
 
     def _line_chars(text: str, x_start: float, y0: float) -> list:
         out = []

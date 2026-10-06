@@ -18,7 +18,7 @@ _IFC = Path(__file__).resolve().parent / "fixtures" / "sample_office.ifc"
 _ACTIONS = [
     ("estimate_costs", {"quantities": {"Concrete Works": {"quantity": 24, "unit": "m3"}}}),
     ("spec_analyze", {"text": "C30 concrete per ACI 318. Cement to ASTM C150 Type I."}),
-    ("process_document", {"text": "Project documents: REDACTED, drawing_tm_200.pdf."}),
+    ("process_document", {"text": "Project documents: REDACTED, drawing_qz_0100.pdf."}),
     ("procurement_list_generator", {"quantities": {"Rebar": {"quantity": 3.2, "unit": "t"}}}),
     ("rfi_management", {"text": "how many RFIs are open and which ones are overdue?"}),
     ("change_order_impact", {"text": "VO-12 adding 300m of storm drain", "cost_impact": 50000}),
