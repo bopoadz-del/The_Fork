@@ -10,7 +10,7 @@ slate + the evidence executable on the available hardware**, honestly labelled.
 > `qwen2.5:7b` only). So: the **8B-class** referee is executed here on
 > `qwen2.5:7b-instruct`; the **14B** and **30B** classes are **prepared, not
 > executed** — the harness, prompts, and pass bars are ready to run on the
-> target box. Numbers below are marked EXECUTED or PREPARED. Chadi blesses the
+> target box. Numbers below are marked EXECUTED or PREPARED. The owner blesses the
 > winner after the target-box run.
 
 ## Candidate slate

@@ -25,7 +25,6 @@ from pathlib import Path
 import pytest
 
 IFC = Path("tests/fixtures/sample_office.ifc")
-DRAWING = Path("tests/fixtures/drawing_tm_200.pdf")
 PHOTOS = sorted(glob.glob("tests/fixtures/photos/*.jpg"))[:2]
 
 
@@ -164,9 +163,18 @@ def test_element_similarity_is_symmetric_and_bounded():
 
 # ── generate_construction_report ─────────────────────────────────────────────
 
+@pytest.fixture
+def drawing(tmp_path):
+    """A synthetic two-sheet key plan (tests/_synthetic_fixtures.py)."""
+    from tests._synthetic_fixtures import build_drawing_keyplan_pdf
+
+    path = tmp_path / "drawing_qz_keyplan.pdf"
+    return path, build_drawing_keyplan_pdf(path)
+
+
 @pytest.mark.asyncio
-@pytest.mark.skipif(not DRAWING.is_file(), reason="drawing fixture missing")
-async def test_report_summarises_the_document_it_read():
+async def test_report_summarises_the_document_it_read(drawing):
+    DRAWING, spec = drawing
     result = await _container().generate_construction_report(
         {"file_path": str(DRAWING)}, {})
 
@@ -174,7 +182,8 @@ async def test_report_summarises_the_document_it_read():
     summary = result["summary"]
     assert summary["document"] == DRAWING.name
     assert summary["type"] == "drawing", summary
-    assert summary["pages"], "a report over a real PDF that found no pages did not read it"
+    assert summary["pages"] == spec["pages"], (
+        "a report over a PDF that did not count its pages did not read it")
     assert summary["measurements_found"] > 0, summary
 
 
@@ -204,8 +213,7 @@ async def test_report_survives_a_non_drawing_document():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not DRAWING.is_file(), reason="drawing fixture missing")
-async def test_recommendations_are_derived_from_the_document():
+async def test_recommendations_are_derived_from_the_document(drawing):
     """Every recommendation must be conditional on something the parse found.
 
     Canned advice under a construction-analysis heading reads as a finding, so
@@ -213,7 +221,7 @@ async def test_recommendations_are_derived_from_the_document():
     extracted.
     """
     result = await _container().generate_construction_report(
-        {"file_path": str(DRAWING)}, {})
+        {"file_path": str(drawing[0])}, {})
 
     recs = result["recommendations"]
     assert recs and all(isinstance(r, str) and r for r in recs), recs

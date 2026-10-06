@@ -3,7 +3,7 @@
 Defect (2026-09-14, deepseek-flash, build 2b48857): "Who is the Engineer?"
 answered "The Engineer is 90 days of the effective date of a Letter of Award…"
 4-5/5 — the appointment-timing clause in the identity slot instead of the firm
-(JACOBS / CH2M Saudi Limited). Fixed by rewording the inject hint to ENGINEER
+(EXAMPLAR / EXCON Example Limited). Fixed by rewording the inject hint to ENGINEER
 IDENTITY (state the firm, not the date/period).
 
 This test hits the LIVE deployed build, so it is SKIPPED unless FORK_API_KEY is
@@ -11,7 +11,7 @@ set (CI has no key). Run it after deploy:
 
     FORK_API_KEY=... python -m pytest tests/test_engineer_identity_live.py -q -s
 
-It requires 5/5: the answer contains JACOBS and never the appointment-timing
+It requires 5/5: the answer contains EXAMPLAR and never the appointment-timing
 tokens ("Letter of Award", "90 days").
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _ask(message: str) -> str:
 
 
 def test_who_is_the_engineer_answers_jacobs_5x():
-    """5/5 required: JACOBS present, never the appointment-timing clause."""
+    """5/5 required: EXAMPLAR present, never the appointment-timing clause."""
     runs = []
     for _ in range(5):
         a = _ask("Who is the Engineer under this contract?")

@@ -41,7 +41,7 @@ try:
     token = gdrive_service._mint_access_token()
     print(f"gdrive token minted: {bool(token)}")
     if token:
-        fid = "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j"
+        fid = os.environ.get("FORK_DIAG_FOLDER_ID", "1ExampleFolderId001xxxxxxxxxxxxxx")
         files, err = gdrive_service.list_folder_files(fid, page_size=2)
         print(f"gdrive list {fid}: {len(files)} files, err={err}")
 except Exception as exc:

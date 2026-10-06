@@ -46,8 +46,8 @@ Gate bar: >= 90% of the golden set must PASS (>= 26/28). **Gate NOT MET.**
 - retrieval_expect: `P-217-pier-mix-design`
 - what failed:
   - answer_expect not matched: '385\\s*kg'
-  - retrieval_expect 'P-217-pier-mix-design' not in cited sources: SMGT-C552-part-1.pdf, SMGT-C552-part-1.pdf, SMGT-C552-part-1.pdf
-- cited sources: SMGT-C552-part-1.pdf; SMGT-C552-part-1.pdf; SMGT-C552-part-1.pdf
+  - retrieval_expect 'P-217-pier-mix-design' not in cited sources: SPEC-C900-part-1.pdf, SPEC-C900-part-1.pdf, SPEC-C900-part-1.pdf
+- cited sources: SPEC-C900-part-1.pdf; SPEC-C900-part-1.pdf; SPEC-C900-part-1.pdf
 
 What came back (verbatim excerpt):
 
@@ -62,8 +62,8 @@ I don't have the specific cement content for the Pier P-217 concrete mix in the 
 - retrieval_expect: `road-R9-street-lighting`
 - what failed:
   - answer_expect not matched: '45\\s*W'
-  - retrieval_expect 'road-R9-street-lighting' not in cited sources: PRC-406_HSE Audit and Inspection Procedure.pdf, TEM-633_Variation settlement Recommendation form.xlsx, TEM-633_Variation settlement Recommendation form.xlsx
-- cited sources: PRC-406_HSE Audit and Inspection Procedure.pdf; TEM-633_Variation settlement Recommendation form.xlsx; TEM-633_Variation settlement Recommendation form.xlsx
+  - retrieval_expect 'road-R9-street-lighting' not in cited sources: PRC-946_HSE Audit and Inspection Procedure.pdf, TEM-963_Variation settlement Recommendation form.xlsx, TEM-963_Variation settlement Recommendation form.xlsx
+- cited sources: PRC-946_HSE Audit and Inspection Procedure.pdf; TEM-963_Variation settlement Recommendation form.xlsx; TEM-963_Variation settlement Recommendation form.xlsx
 
 What came back (verbatim excerpt):
 
@@ -79,8 +79,8 @@ I don't have the specific wattage for the LED fixture specified for the Road R-9
 - retrieval_expect: `contract-eot-notice-period`
 - what failed:
   - answer_expect not matched: '21\\s*days?'
-  - retrieval_expect 'contract-eot-notice-period' not in cited sources: 2014.09.16 MDL Lump Sum Const Contract TEMPLATE v4.docx, 2014.09.16 MDL Lump Sum Const Contract TEMPLATE v4.docx, 2015 06 25 MWC (Show Package).docx
-- cited sources: 2014.09.16 MDL Lump Sum Const Contract TEMPLATE v4.docx; 2014.09.16 MDL Lump Sum Const Contract TEMPLATE v4.docx; 2015 06 25 MWC (Show Package).docx
+  - retrieval_expect 'contract-eot-notice-period' not in cited sources: 2011.01.01 EXM Lump Sum Const Contract TEMPLATE v4.docx, 2011.01.01 EXM Lump Sum Const Contract TEMPLATE v4.docx, 2012 01 10 EXW (Show Package).docx
+- cited sources: 2011.01.01 EXM Lump Sum Const Contract TEMPLATE v4.docx; 2011.01.01 EXM Lump Sum Const Contract TEMPLATE v4.docx; 2012 01 10 EXW (Show Package).docx
 
 What came back (verbatim excerpt):
 
@@ -95,8 +95,8 @@ The Contractor must give a Claim Notice stating that it is a notice pursuant to 
 - retrieval_expect: `sewer-S4-manhole-spacing`
 - what failed:
   - answer_expect not matched: '42\\s*m\\b'
-  - retrieval_expect 'sewer-S4-manhole-spacing' not in cited sources: boq_units_of_measurement.md, 2014.09.16 MDL Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx, 2014.09.16 MDL Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx
-- cited sources: boq_units_of_measurement.md; 2014.09.16 MDL Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx; 2014.09.16 MDL Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx
+  - retrieval_expect 'sewer-S4-manhole-spacing' not in cited sources: boq_units_of_measurement.md, 2011.01.01 EXM Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx, 2011.01.01 EXM Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx
+- cited sources: boq_units_of_measurement.md; 2011.01.01 EXM Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx; 2011.01.01 EXM Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx
 
 What came back (verbatim excerpt):
 
@@ -113,8 +113,8 @@ I don't have the information regarding the maximum manhole spacing on sewer line
   - answer_expect not matched: 'CODE[-\\s]?A'
   - answer_expect not matched: 'CODE[-\\s]?B'
   - answer_expect not matched: 'CODE[-\\s]?C'
-  - retrieval_expect 'design-review-status-codes' not in cited sources: PRC-501_Design Reviews & Acceptance.pdf
-- cited sources: PRC-501_Design Reviews & Acceptance.pdf
+  - retrieval_expect 'design-review-status-codes' not in cited sources: PRC-951_Design Reviews & Acceptance.pdf
+- cited sources: PRC-951_Design Reviews & Acceptance.pdf
 
 What came back (verbatim excerpt):
 
@@ -125,7 +125,7 @@ The design review status codes used on this project include the following defini
 
 These codes guide the project team in determining the appropriate review status at all times. 
 
-*Source: PRC-501_Design Reviews & Acceptance.pdf, chunks 6, 7.*
+*Source: PRC-951_Design Reviews & Acceptance.pdf, chunks 6, 7.*
 ```
 
 ### fresh_excavation_rate (fresh_upload_grounding)
@@ -136,8 +136,8 @@ These codes guide the project team in determining the appropriate review status 
 - what failed:
   - answer_expect not matched: 'SAR'
   - answer_expect not matched: '27\\.50?'
-  - retrieval_expect 'boq-excavation-rate' not in cited sources: TEM-633_Variation settlement Recommendation form.xlsx, TEM-633_Variation settlement Recommendation form.xlsx
-- cited sources: TEM-633_Variation settlement Recommendation form.xlsx; TEM-633_Variation settlement Recommendation form.xlsx
+  - retrieval_expect 'boq-excavation-rate' not in cited sources: TEM-963_Variation settlement Recommendation form.xlsx, TEM-963_Variation settlement Recommendation form.xlsx
+- cited sources: TEM-963_Variation settlement Recommendation form.xlsx; TEM-963_Variation settlement Recommendation form.xlsx
 
 What came back (verbatim excerpt):
 
@@ -149,7 +149,7 @@ The contract rate for excavation in ordinary soil is as follows:
 - For maximum depth between 0.5m and 1.0m: **3.41** per m³
 - For maximum depth between 1.0m and 2.0m: **9.74** per m³
 
-(Source: TEM-633_Variation settlement Recommendation form.xlsx, chunks 56, 57)
+(Source: TEM-963_Variation settlement Recommendation form.xlsx, chunks 56, 57)
 ```
 
 ### fresh_rebar_cover (fresh_upload_grounding)
@@ -159,8 +159,8 @@ The contract rate for excavation in ordinary soil is as follows:
 - retrieval_expect: `rebar-cover-substructure`
 - what failed:
   - answer_expect not matched: '75\\s*mm'
-  - retrieval_expect 'rebar-cover-substructure' not in cited sources: SMGT-C552-part-3.pdf, SMGT-C552-part-1.pdf, SMGT-C552-part-3.pdf
-- cited sources: SMGT-C552-part-3.pdf; SMGT-C552-part-1.pdf; SMGT-C552-part-3.pdf
+  - retrieval_expect 'rebar-cover-substructure' not in cited sources: SPEC-C900-part-3.pdf, SPEC-C900-part-1.pdf, SPEC-C900-part-3.pdf
+- cited sources: SPEC-C900-part-3.pdf; SPEC-C900-part-1.pdf; SPEC-C900-part-3.pdf
 
 What came back (verbatim excerpt):
 
@@ -192,8 +192,8 @@ I don't have specific information regarding the thickness and type of the asphal
 - retrieval_expect: `hse-permit-to-work`
 - what failed:
   - answer_expect not matched: '12\\s*hours?'
-  - retrieval_expect 'hse-permit-to-work' not in cited sources: 2015 06 25 MWC (Show Package).docx, 2015 07 07 MWC (Show Package)_MarkedUp copy.docx, 2015 06 25 MWC (Show Package).docx
-- cited sources: 2015 06 25 MWC (Show Package).docx; 2015 07 07 MWC (Show Package)_MarkedUp copy.docx; 2015 06 25 MWC (Show Package).docx
+  - retrieval_expect 'hse-permit-to-work' not in cited sources: 2012 01 10 EXW (Show Package).docx, 2012 01 17 EXW (Show Package)_MarkedUp copy.docx, 2012 01 10 EXW (Show Package).docx
+- cited sources: 2012 01 10 EXW (Show Package).docx; 2012 01 17 EXW (Show Package)_MarkedUp copy.docx; 2012 01 10 EXW (Show Package).docx
 
 What came back (verbatim excerpt):
 
@@ -208,8 +208,8 @@ I don't have information on how long a permit-to-work is valid on this project.
 - retrieval_expect: `mv-substation-soak-test`
 - what failed:
   - answer_expect not matched: '5[-\\s]?days?'
-  - retrieval_expect 'mv-substation-soak-test' not in cited sources: 2014.09.16 MDL Lump Sum Const Contract TEMPLATE v4.docx, 2014.09.16 MDL CSA (Long) With Adv Pmt TEMPLATE v4.docx, 2014.09.16 MDL Lump Sum Const Contract TEMPLATE v4.docx
-- cited sources: 2014.09.16 MDL Lump Sum Const Contract TEMPLATE v4.docx; 2014.09.16 MDL CSA (Long) With Adv Pmt TEMPLATE v4.docx; 2014.09.16 MDL Lump Sum Const Contract TEMPLATE v4.docx
+  - retrieval_expect 'mv-substation-soak-test' not in cited sources: 2011.01.01 EXM Lump Sum Const Contract TEMPLATE v4.docx, 2011.01.01 EXM CSA (Long) With Adv Pmt TEMPLATE v4.docx, 2011.01.01 EXM Lump Sum Const Contract TEMPLATE v4.docx
+- cited sources: 2011.01.01 EXM Lump Sum Const Contract TEMPLATE v4.docx; 2011.01.01 EXM CSA (Long) With Adv Pmt TEMPLATE v4.docx; 2011.01.01 EXM Lump Sum Const Contract TEMPLATE v4.docx
 
 What came back (verbatim excerpt):
 
@@ -224,8 +224,8 @@ I don't have the specific duration for the soak test required for the MV substat
 - retrieval_expect: `evm-cpi-threshold`
 - what failed:
   - answer_expect not matched: '0\\.92'
-  - retrieval_expect 'evm-cpi-threshold' not in cited sources: PRC-402 _Construction Non- Conformance Reporting.pdf, PRC-402 _Construction Non- Conformance Reporting.pdf, PRC-406_HSE Audit and Inspection Procedure.pdf
-- cited sources: PRC-402 _Construction Non- Conformance Reporting.pdf; PRC-402 _Construction Non- Conformance Reporting.pdf; PRC-406_HSE Audit and Inspection Procedure.pdf
+  - retrieval_expect 'evm-cpi-threshold' not in cited sources: PRC-942 _Construction Non- Conformance Reporting.pdf, PRC-942 _Construction Non- Conformance Reporting.pdf, PRC-946_HSE Audit and Inspection Procedure.pdf
+- cited sources: PRC-942 _Construction Non- Conformance Reporting.pdf; PRC-942 _Construction Non- Conformance Reporting.pdf; PRC-946_HSE Audit and Inspection Procedure.pdf
 
 What came back (verbatim excerpt):
 
@@ -240,13 +240,13 @@ I don't have the specific information regarding the CPI threshold that triggers 
 - retrieval_expect: `mass-concrete-curing`
 - what failed:
   - answer_expect not matched: '14\\s*days?'
-  - retrieval_expect 'mass-concrete-curing' not in cited sources: SMGT-C552-part-1.pdf
-- cited sources: SMGT-C552-part-1.pdf
+  - retrieval_expect 'mass-concrete-curing' not in cited sources: SPEC-C900-part-1.pdf
+- cited sources: SPEC-C900-part-1.pdf
 
 What came back (verbatim excerpt):
 
 ```
-Mass concrete pours must be cured for not less than 7 days using clean water or any other method which has been shown to allow continuous hydration of the cement over the curing period. *(source: SMGT-C552-part-1.pdf, chunk 28)*
+Mass concrete pours must be cured for not less than 7 days using clean water or any other method which has been shown to allow continuous hydration of the cement over the curing period. *(source: SPEC-C900-part-1.pdf, chunk 28)*
 ```
 
 ### pilot_doc_qa_client_pep (process_document)
@@ -271,7 +271,7 @@ For more specific details about the the client project project execution plan, p
 - what failed:
   - answer_expect not matched: '\\b(SAR|USD|AED)\\b'
   - answer_expect not matched: '\\d{1,3}(?:,\\d{3}){2,}(?:\\.\\d+)?|\\d{7,}'
-- cited sources: 2015 06 25 MWC (Show Package).docx; 2015 07 07 MWC (Show Package)_CLEAN.docx; 2015 07 07 MWC (Show Package)_MarkedUp copy.docx
+- cited sources: 2012 01 10 EXW (Show Package).docx; 2012 01 17 EXW (Show Package)_CLEAN.docx; 2012 01 17 EXW (Show Package)_MarkedUp copy.docx
 
 What came back (verbatim excerpt):
 
@@ -285,7 +285,7 @@ I couldn't process the Bill of Quantities (BOQ) because the PDF file is too larg
 - expected (all must match): `\bC\d{2}(?:/\d{2})?\b|grade`; `\b(ASTM|ACI|BS|EN|SASO|SBC|ISO)\b`
 - what failed:
   - answer_expect not matched: '\\bC\\d{2}(?:/\\d{2})?\\b|grade'
-- cited sources: SMGT-C552-part-1.pdf; SMGT-C552-part-1.pdf
+- cited sources: SPEC-C900-part-1.pdf; SPEC-C900-part-1.pdf
 
 What came back (verbatim excerpt):
 
@@ -298,7 +298,7 @@ The concrete specification requirements refer to the following standards:
 Additionally, the aggregates must meet all specification requirements and pass all chemical and physical tests. The cement must be chosen to meet the specific requirements of the job, and additives and admixtures are to be used as appropriate. The blended mix of the ingredients must be within the envelope specified in the mix specification, and the curve of the mix should be as smooth as possible without gaps.
 
 
-Source: SMGT-C552-part-1.pdf, chunk 35, 100.
+Source: SPEC-C900-part-1.pdf, chunk 35, 100.
 ```
 
 ### pilot_document_metadata (document_metadata)
@@ -307,7 +307,7 @@ Source: SMGT-C552-part-1.pdf, chunk 35, 100.
 - expected (all must match): `(?m)^\s*(?:[-*•]|\d{1,3}[.)]|\|)\s*\S`; `\.(pdf|xlsx?|docx?|dwg|dxf|csv)\b|(drawing|report|spec(?:ification)?|boq|bill|schedule|plan|register)`
 - what failed:
   - answer_expect not matched: '(?m)^\\s*(?:[-*•]|\\d{1,3}[.)]|\\|)\\s*\\S'
-- cited sources: 2014.09.16 MDL Measured Price Const. Contract (Schedules) TEMPLATE v5.docx; 2014.09.16 MDL Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx; 2014.09.16 MDL Measured Price Const. Contract (Schedules) TEMPLATE v5.docx
+- cited sources: 2011.01.01 EXM Measured Price Const. Contract (Schedules) TEMPLATE v5.docx; 2011.01.01 EXM Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx; 2011.01.01 EXM Measured Price Const. Contract (Schedules) TEMPLATE v5.docx
 
 What came back (verbatim excerpt):
 
@@ -321,7 +321,7 @@ I don't have the specific list of documents in this project and their types base
 - expected (all must match): `\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b|\b(month|period|week)\s*[-#]?\s*\d{1,2}\b|\bM\d{1,2}\b|\bQ[1-4]\b`; `(manpower|labou?r|worker|crew|headcount|staff)`; `\d{2,}`
 - what failed:
   - answer_expect not matched: '\\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\b|\\b(month|period|week)\\s*[-#]?\\s*\\d{1,2}\\b|\\bM\\d{1,2}\\b|\\bQ[1-4]\\b'
-- cited sources: 2014.09.16 MDL Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx; 2014.09.16 MDL Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx; 2014.09.16 MDL Measured Price Const. Contract (Schedules) TEMPLATE v5.docx
+- cited sources: 2011.01.01 EXM Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx; 2011.01.01 EXM Lump Sum Const Contract SCHEDULES TEMPLATE v4.docx; 2011.01.01 EXM Measured Price Const. Contract (Schedules) TEMPLATE v5.docx
 
 What came back (verbatim excerpt):
 
@@ -353,7 +353,7 @@ What came back (verbatim excerpt):
 - expected (all must match): `(cost|value|SAR|USD)`; `\d{1,3}(?:,\d{3})+|\d{4,}`
 - what failed:
   - answer_expect not matched: '\\d{1,3}(?:,\\d{3})+|\\d{4,}'
-- cited sources: TEM-633_Variation settlement Recommendation form.xlsx; MNL-208_PMWeb Cost Management.pdf; TEM-633_Variation settlement Recommendation form.xlsx
+- cited sources: TEM-963_Variation settlement Recommendation form.xlsx; MNL-908_PMWeb Cost Management.pdf; TEM-963_Variation settlement Recommendation form.xlsx
 
 What came back (verbatim excerpt):
 

@@ -265,7 +265,7 @@ CONC_CLAUSE_TEXT = (
     "Do not place concrete when the shade temperature exceeds 25°C "
     "without the Engineer's consent.\n"
 )
-CONC_SOURCE = "Vol 2 – Specification (4 of 9).pdf"
+CONC_SOURCE = "Vol 2 – Specification (4 of 11).pdf"
 P6B_BARE = (
     "ACI 305 is not in the retrieved excerpts, so this answer cannot "
     "state what ACI 305 requires.\n\n"

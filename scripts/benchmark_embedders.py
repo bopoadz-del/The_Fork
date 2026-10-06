@@ -362,7 +362,7 @@ def _render_markdown(results: List[Dict[str, Any]], recall_k: int, fresh_k: int)
         "",
         "## Recommendation",
         "",
-        "(To be filled by Chadi after reviewing the numbers above.)",
+        "(To be filled by the owner after reviewing the numbers above.)",
         "",
     ])
     return "\n".join(lines)

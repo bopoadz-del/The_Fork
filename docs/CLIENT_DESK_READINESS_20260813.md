@@ -133,7 +133,7 @@ thing it guards is broken, not merely when someone remembers to check.
 | Item | Status | What is needed |
 |---|---|---|
 | Golden-set corpus backfill | OPEN | ~15% of eval docs absent from the Neon corpus (PR #295 finding). Loading is an operator action over HTTPS bulk-insert; ISP blocks 5432. |
-| `tests/fixtures/drawing_tm_200.pdf`, `ohdd_baseline_2013.xer` | OPEN | Client-content binaries. Payload suites assert their presence in the production-like profile, so purging breaks the build loudly instead of silently zeroing coverage. Replacement needs neutral source files. |
+| Client-content fixture binaries (drawing PDFs, P6 baseline `.xer`, ingest-shard sample tree) | CLOSED | Replaced by synthetic files generated inside the tests (`tests/_synthetic_fixtures.py`); the payload suites run on the generated input in every profile, so coverage cannot silently drop to green skips. |
 | Discipline-hat system | OPEN | Product decision: it overlaps the live 14-agent system. 32 actions would need building; fenced against accidental enablement meanwhile. |
 | `RAG_LAYERED` flag | OPEN (unchanged) | Deferred to client deployment by decision; dormant. |
 | `MASTER_CORPUS_PROJECT_ID` live env | **CLOSED 2026-08-12** | Set to `master_corpus` via Render API with operator approval. |

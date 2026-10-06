@@ -361,7 +361,7 @@ def test_drive_token_is_per_user(tmp_path, monkeypatch):
         # The 'system' user (legacy cb_dev_key) connects Drive.
         drive_auth.save_token("system", {
             "access_token": "AT", "refresh_token": "RT",
-            "expiry": time.time() + 9999, "email": "system@x.com",
+            "expiry": time.time() + 9999, "email": "system@example.com",
         })
 
         # System sees it connected; user B must not.

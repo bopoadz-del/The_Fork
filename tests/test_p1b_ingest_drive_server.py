@@ -15,12 +15,12 @@ from scripts.p1b_ingest_drive_server import (
     parse_folder_ids,
 )
 
-CLIENT_PARENT_ID = "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j"
-MISC_FOLDER_ID = "1Z4zjPi0FY1r4nUgtfkA7VHvpRgPgchcg"
+CLIENT_PARENT_ID = "1ExampleFolderId001xxxxxxxxxxxxxx"
+MISC_FOLDER_ID = "1ExampleFolderId004xxxxxxxxxxxxxx"
 
 TIER1_FOLDERS = [
     {
-        "project_id": "client_infra_pack_1",
+        "project_id": "example_infra_pack",
         "folder_name": "the client project",
         "folder_id": CLIENT_PARENT_ID,
     },
@@ -69,7 +69,7 @@ def test_folder_loop_filters_to_parent_folder_id():
     walks = folder_entries_for_run(TIER1_FOLDERS, [CLIENT_PARENT_ID], tier=1)
     assert len(walks) == 1
     assert walks[0]["walk_folder_id"] == CLIENT_PARENT_ID
-    assert walks[0]["project_id"] == "client_infra_pack_1"
+    assert walks[0]["project_id"] == "example_infra_pack"
     assert walks[0]["folder_name"] == "the client project"
 
 
@@ -79,7 +79,7 @@ def test_folder_loop_filters_subfolder_to_parent_project():
     assert len(walks) == 1
     assert walks[0]["walk_folder_id"] == MISC_FOLDER_ID
     assert walks[0]["folder_id"] == CLIENT_PARENT_ID
-    assert walks[0]["project_id"] == "client_infra_pack_1"
+    assert walks[0]["project_id"] == "example_infra_pack"
     assert walks[0]["folder_name"] == "the client project"
 
 
@@ -100,5 +100,5 @@ def test_real_tier1_misc_keeps_client_project_row():
     walks = folder_entries_for_run(folders, [MISC_FOLDER_ID], tier=1)
     assert len(walks) == 1
     assert walks[0]["walk_folder_id"] == MISC_FOLDER_ID
-    assert walks[0]["project_id"] == "client_infra_pack_1"
+    assert walks[0]["project_id"] == "example_infra_pack"
     assert walks[0]["folder_name"] == "the client project"

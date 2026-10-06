@@ -16,53 +16,48 @@ they only ever exercise the honest-error branch. The extraction itself was
 untested, which is the usual reason an action is unreachable in the first
 place: nothing ever ran it.
 
-Measured on the real drawing fixture: 34 measurements, 16 distinct raw
-strings, 3 specifications.
+The drawing is a synthetic key plan generated per run
+(``tests/_synthetic_fixtures.build_drawing_keyplan_pdf``): a two-sheet PDF
+whose legend carries counted items and three material grades, so the expected
+specification grades are known from the generator rather than copied from a
+client document.
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pytest
 
-DRAWING = Path("tests/fixtures/drawing_tm_200.pdf")
-
-pytestmark = pytest.mark.skipif(
-    not DRAWING.is_file(),
-    reason=f"real drawing fixture missing at {DRAWING}",
-)
-
-
-@pytest.mark.skipif(
-    "construction" not in os.getenv("CEREBRUM_DOMAIN_KITS", ""),
-    reason="fixture-presence guard is for the production-like CI profile",
-)
-def test_the_fixture_this_file_depends_on_is_present():
-    """Without this, a deleted fixture returns the action to zero coverage
-    SILENTLY -- every test above becomes a green skip, which reads as passing.
-
-    `drawing_tm_200.pdf` is one of the binaries pending an owner decision on
-    client content. If it is purged, that decision must break this build
-    rather than quietly retire the only payload coverage extract_measurements
-    has. Register the replacement fixture here, do not just delete the file.
-    """
-    assert DRAWING.is_file(), (
-        f"{DRAWING} is gone, so the extract_measurements payload tests are "
-        "skipping and the action has no coverage. Supply a replacement drawing "
-        "fixture and point this file at it."
-    )
+from tests._synthetic_fixtures import build_drawing_keyplan_pdf
 
 
 @pytest.fixture(scope="module")
-def extracted():
-    """Parse the PDF once -- it is a real multi-page drawing."""
+def drawing(tmp_path_factory):
+    path = tmp_path_factory.mktemp("extract_measurements") / "drawing_qz_keyplan.pdf"
+    spec = build_drawing_keyplan_pdf(path)
+    return path, spec
+
+
+def test_the_fixture_this_file_depends_on_is_present(drawing):
+    """Without this, a broken generator would return the action to zero
+    coverage SILENTLY. The drawing is generated, never committed, so it must
+    exist and be a real multi-page PDF on every run, in every profile.
+    """
+    import fitz
+
+    path, spec = drawing
+    assert path.is_file(), f"{path} was not generated"
+    with fitz.open(str(path)) as doc:
+        assert doc.page_count == spec["pages"] >= 2
+
+
+@pytest.fixture(scope="module")
+def extracted(drawing):
+    """Parse the PDF once -- it is a multi-page drawing."""
     import asyncio
 
     from app.containers.construction import ConstructionContainer
 
     return asyncio.run(
-        ConstructionContainer().extract_measurements({"file_path": str(DRAWING)}, {})
+        ConstructionContainer().extract_measurements({"file_path": str(drawing[0])}, {})
     )
 
 
@@ -70,7 +65,7 @@ def test_measurements_come_off_the_drawing(extracted):
     """Non-empty, and varied enough that a constant cannot fake it."""
     assert extracted["status"] == "success", extracted
     measurements = extracted["measurements"]
-    assert measurements, "no measurements extracted from a real construction drawing"
+    assert measurements, "no measurements extracted from a construction drawing"
 
     # A stub returning one repeated item would satisfy "non-empty". Distinct
     # source strings can only come from reading different parts of the file.
@@ -88,6 +83,13 @@ def test_count_reconciles_with_the_items(extracted):
     extracting but kept a count -- or vice versa -- shows up here.
     """
     assert extracted["count"] == len(extracted["measurements"]), extracted["count"]
+
+
+def test_specifications_are_the_grades_on_the_sheet(extracted, drawing):
+    """The legend names three material grades; the specification pass must
+    report exactly those, in sheet order."""
+    grades = [s["value"] for s in extracted["specifications"]]
+    assert grades == list(drawing[1]["grades"]), grades
 
 
 def test_every_measurement_is_structurally_complete(extracted):
@@ -130,13 +132,13 @@ async def test_refuses_honestly_with_nothing_to_read():
 
 
 @pytest.mark.asyncio
-async def test_route_reaches_the_same_extraction():
+async def test_route_reaches_the_same_extraction(drawing):
     """The router path must produce the measurements too. The action was
     unreachable until 2026-08-12, so this direction has never been exercised."""
     from app.containers.construction import ConstructionContainer
 
     result = await ConstructionContainer().route(
-        "extract_measurements", {"file_path": str(DRAWING)},
+        "extract_measurements", {"file_path": str(drawing[0])},
         {"action": "extract_measurements"},
     )
     assert result["status"] == "success", result

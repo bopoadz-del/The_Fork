@@ -77,7 +77,7 @@ MIXED_PAGE = (
 )
 
 BOQ_NAME = (
-    "DD-2023-118_IP-INF-053-0000-JCB-BOQ-CA-000007-B_"
+    "AB-2023-101_QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_"
     "Bill of Quantities (Priced).pdf"
 )
 FENCE_NAME = "Demolition BOQ page d-3-3 fence.pdf"

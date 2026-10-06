@@ -36,7 +36,7 @@ optionally, an ingestion-ready .xlsx via ``--xlsx``.
 Example
 -------
     python scripts/extract_boq_section.py \
-        --pdf "G:/.../IP-INF-...-000008-B_Bill of Quantities (Unpriced).pdf" \
+        --pdf "G:/.../QZ-ENG-...-000008-B_Bill of Quantities (Unpriced).pdf" \
         --section "waste water|foul|sewer" --exclude "storm|surface" \
         --xlsx out.xlsx
 """

@@ -16,7 +16,7 @@
 - `is_critical` ⇔ `total_float <= 0` (in this model float is never negative, so this is exact equality with 0).
 - **Finish-date projection caveat:** a finish offset projects via `nth_working_day(start, EF)`, i.e. the *start of the day after* the last working day. So `early_finish` reads one working day beyond the activity's actual last day. This is fine for a library feeding generated code (the `*_day` ints are authoritative), but **Plan 6 (user-facing Excel/Gantt) must subtract one working day when displaying finish dates.**
 
-**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\shimm\The_Fork`.
+**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\example\The_Fork`.
 
 ---
 

@@ -3,7 +3,7 @@
 **Audited:** 2026-07-06
 **Environment:** LOCAL instance only (uvicorn on 127.0.0.1:8123, branch `feat/gk-contamination-knobs`). Production was not touched; production defaults are unchanged.
 **Baseline docs:** RAG_AUDIT.md (2026-06-23), RAG_AUDIT_V2.md (2026-07-05)
-**Scope:** measure the three GK-contamination knobs shipped default-OFF in `app/core/rag/retriever.py` (`RAG_GK_SCORE_MARGIN`, `RAG_OWN_DOC_BOOST`, `RAG_GK_TOPK_CAP`) across 8 env-var configurations, with three harnesses per configuration. This is a decision table, not a deployment: Chadi picks the config; nothing here changes any default.
+**Scope:** measure the three GK-contamination knobs shipped default-OFF in `app/core/rag/retriever.py` (`RAG_GK_SCORE_MARGIN`, `RAG_OWN_DOC_BOOST`, `RAG_GK_TOPK_CAP`) across 8 env-var configurations, with three harnesses per configuration. This is a decision table, not a deployment: the owner picks the config; nothing here changes any default.
 
 ---
 
@@ -143,7 +143,7 @@ demoting the GK lexical bonus for doc-lookup intents or the orchestrator
 passing real intents into retrieval (the `intent` parameter is plumbed and
 waiting) - both are post-pick follow-ups, not blockers.
 
-**Production default remains UNCHANGED. Chadi picks from this table (G4 gate).**
+**Production default remains UNCHANGED. The owner picks from this table (G4 gate).**
 
 ## 5. Embedder re-assessment
 

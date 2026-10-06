@@ -180,20 +180,20 @@ def test_pdf_ocr_limits_read_at_call_time(monkeypatch):
     assert doc_index.pdf_ocr_max_size_mb() == 32
     assert doc_index.pdf_ocr_page_cap("drawing.pdf") == 80
     assert doc_index.pdf_ocr_page_cap(
-        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+        "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
     ) == 160
     monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "25")
     assert doc_index.pdf_ocr_max_size_mb() == 25
     # A leftover dashboard 25 must not re-skip priced BOQs.
     assert doc_index.pdf_ocr_max_size_mb(
-        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+        "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
     ) == 100
 
 
 def test_extract_pdf_ocrs_priced_boq_sized_scan(tmp_path, monkeypatch):
     """A ~28 MB image-only PDF must still OCR.
 
-    Live priced BOQ 20ac033d is ~28 MB. The old PDF_OCR_MAX_SIZE_MB=25 set
+    Live priced BOQ d0c00001 is ~28 MB. The old PDF_OCR_MAX_SIZE_MB=25 set
     page_cap=0, so item codes never entered the index.
     """
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
@@ -234,7 +234,7 @@ def test_extract_pdf_ocrs_priced_boq_sized_scan(tmp_path, monkeypatch):
 
     text, meta = doc_index._extract_pdf(
         doc_path,
-        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+        "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
     )
     assert "D599.5" in text, "priced-BOQ item codes must be OCR'd at ~28 MB"
     assert meta.get("ocr_skipped_too_large") is not True
@@ -357,7 +357,7 @@ def test_extract_pdf_batched_keeps_prior_pages_on_timeout(tmp_path, monkeypatch)
 
     text, meta = doc_index._extract_pdf_batched(
         str(tmp_path / "priced.pdf"),
-        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+        "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
     )
     assert ranges[0] == (0, 20)
     assert ranges[1] == (20, 40)
@@ -370,7 +370,7 @@ def test_extract_pdf_batched_keeps_prior_pages_on_timeout(tmp_path, monkeypatch)
 def test_chunker_for_boq_filename_is_finer():
     from app.core.doc_index import _chunker_for_document
 
-    priced = "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+    priced = "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
     assert _chunker_for_document(priced) == "finer"
     assert _chunker_for_document("specification_part8.pdf") == "default"
     assert _chunker_for_document(priced, "markdown") == "markdown"
@@ -379,7 +379,7 @@ def test_chunker_for_boq_filename_is_finer():
 def test_ocr_size_gate_uses_plaintext_not_ciphertext(tmp_path, monkeypatch):
     """Fernet on-disk size must not skip OCR of a 28 MB plaintext scan.
 
-    Live 20ac033d is 28,180,707 plaintext bytes. Encrypted at rest that is
+    Live d0c00001 is 28,180,707 plaintext bytes. Encrypted at rest that is
     ~36 MB on disk — above the 32 MB gate — so #448 still skipped OCR and
     a 15s reindex recast the cover layer as 6 chunks.
     """
@@ -422,7 +422,7 @@ def test_ocr_size_gate_uses_plaintext_not_ciphertext(tmp_path, monkeypatch):
 
     text, meta = doc_index._extract_pdf(
         doc_path,
-        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+        "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
     )
     assert "D599.5" in text, "ciphertext size must not skip OCR of a 28 MB scan"
     assert meta.get("ocr_skipped_too_large") is not True
@@ -477,7 +477,7 @@ def test_index_document_scanned_boq_without_ocr_is_not_ok(
     """Regression: a scanned BOQ with empty body pages must not report
     status=ok just because the finer chunker split the cover + guard.
 
-    This is the live 20ac033d failure mode: 6 chunks, 15s, D599.5 absent.
+    This is the live d0c00001 failure mode: 6 chunks, 15s, D599.5 absent.
     """
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
@@ -606,7 +606,7 @@ def test_force_ocr_runs_when_size_gate_would_skip(tmp_path, monkeypatch):
 
     text, meta = doc_index._extract_pdf(
         doc_path,
-        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+        "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
         force_ocr=True,
     )
     assert "D549.2" in text
@@ -629,7 +629,7 @@ def test_finer_chunk_keeps_priced_boq_item_codes():
     # if the BOQ filename failed to select the finer chunker.
     filler = " ".join(f"padding{i}" for i in range(400))
     text = filler + "\n" + "\n".join(rows) + "\n" + filler
-    filename = "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+    filename = "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
     chunks = chunk_extracted_document(
         text, chunker=_chunker_for_document(filename), filename=filename,
     )
@@ -654,7 +654,7 @@ def test_chunk_extracted_collapses_ocr_spaced_cesmm_and_keeps_qty():
         + filler
     )
     filename = (
-        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+        "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
     )
     chunks = chunk_extracted_document(
         text, chunker=_chunker_for_document(filename), filename=filename,
@@ -1087,7 +1087,7 @@ def test_boq_line_item_chunk_carries_five_fields_and_source():
         "status": "success",
         "currency": "SAR",
         "total_cost": 525000,
-        "source_name": "Al-Ostool Demolition BOQ",
+        "source_name": "Al-Example Demolition BOQ",
         "line_items": [
             {
                 "description": "300mm gravity sewer pipe",
@@ -1104,7 +1104,7 @@ def test_boq_line_item_chunk_carries_five_fields_and_source():
     ]
     assert item_chunks, "no per-item chunk emitted"
     c = item_chunks[0].lower()
-    assert "al-ostool demolition boq" in c, f"source BOQ not named: {c}"
+    assert "al-example demolition boq" in c, f"source BOQ not named: {c}"
     assert "300mm gravity sewer pipe" in c
     assert "1250" in c and "m," in c, f"quantity+unit missing: {c}"
     assert "unit price" in c and "420" in c, f"unit price missing: {c}"

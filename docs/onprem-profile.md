@@ -56,7 +56,7 @@ Dockerfile ENV, compose). The assertion guarantees they are present.
 Each gate returns the standard `onprem_unavailable(feature)` payload
 (`status=error`, `onprem_unavailable=True`) or, for the router, HTTP 503.
 
-## Scope decisions (flagged, deferred — for Chadi)
+## Scope decisions (flagged, deferred — for the owner)
 
 Two ledger items are **deliberately not wholesale-gated in STEP 2**, to avoid
 collateral damage; each is handled elsewhere:

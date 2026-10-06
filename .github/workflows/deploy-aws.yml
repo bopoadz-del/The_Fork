@@ -50,6 +50,14 @@ jobs:
       - id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # The detector weights are a release asset, not a git object (see
+      # data/models/manifest.json). Fetch + sha256-verify them into the build
+      # context; a mismatch fails here, and the Dockerfile re-checks it.
+      - name: Fetch and verify model weights
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/fetch_model.py --image
+
       - name: Build and push
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}

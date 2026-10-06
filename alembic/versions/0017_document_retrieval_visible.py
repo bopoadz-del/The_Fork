@@ -8,14 +8,17 @@ stays and retrieval hides it: ``retrieval_visible = false`` and
 This is the first ingest-ledger flag that actually gates hybrid search
 (BM25 and vector). ingest_status never did.
 
-Live seed (no-op when either id is absent): the sparse letter extract
-``b5033ec2`` is superseded by the corrected copy ``93982d45``. Reversible
-by flipping the flag. See ``scripts/seed_d1_supersede.py``.
+Optional seed (no-op when either id is unset or absent): the stale extract
+named by ``D1_SUPERSEDE_STALE_ID`` is superseded by the corrected copy named
+by ``D1_SUPERSEDE_LIVE_ID``. Reversible by flipping the flag. See
+``scripts/seed_d1_supersede.py``.
 
 Revision ID: 0017
 Revises: 0016
 """
 from __future__ import annotations
+
+import os
 
 import sqlalchemy as sa
 
@@ -26,9 +29,9 @@ down_revision = "0016"
 branch_labels = None
 depends_on = None
 
-# Opaque live ids. Do not expand into client names here or in the seed.
-_STALE_ID = "b5033ec2"
-_LIVE_ID = "93982d45"
+# Opaque document ids come from the deploy environment, never from source.
+_STALE_ID = os.environ.get("D1_SUPERSEDE_STALE_ID", "").strip()
+_LIVE_ID = os.environ.get("D1_SUPERSEDE_LIVE_ID", "").strip()
 
 
 def upgrade() -> None:
@@ -65,6 +68,8 @@ def upgrade() -> None:
     ))
 
     # Seed only when both rows exist. Missing ids must not fail deploy.
+    if not (_STALE_ID and _LIVE_ID):
+        return
     op.execute(sa.text(
         "UPDATE documents SET superseded_by = :live, retrieval_visible = FALSE "
         "WHERE id = :stale AND EXISTS ("

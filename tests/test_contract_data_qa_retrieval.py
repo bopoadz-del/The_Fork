@@ -126,7 +126,7 @@ def test_word_chunker_splits_the_table_but_particulars_chunker_does_not():
     cd_chunks = chunk_extracted_document(
         NORTH_SPUR_CONTRACT,
         chunker="default",
-        filename="S1_North_Spur_Conditions_of_Contract.pdf",
+        filename="S1_North_Spur_Conditions-of-Contract.pdf",
     )
     assert cd_chunks
     assert any("CONTRACT DATA particulars" in c for c in cd_chunks)
@@ -229,20 +229,20 @@ def test_retrieval_returns_particulars_row_not_only_defined_term(isolated_store,
     glossary = GLOSSARY_ONLY
     particulars = (
         "CONTRACT DATA particulars — filled-in amount / duration / percentage "
-        "[S1_North_Spur_Conditions_of_Contract.pdf].\n"
+        "[S1_North_Spur_Conditions-of-Contract.pdf].\n"
         "Contract Data\n"
         f"1.1.1 Accepted Contract Amount excluding VAT: {NORTH_SPUR_EXCL_VAT}\n"
         f"({NORTH_SPUR_EXCL_VAT_WORDS})"
     )
     delay = (
         "CONTRACT DATA particulars — filled-in amount / duration / percentage "
-        "[S1_North_Spur_Conditions_of_Contract.pdf].\n"
+        "[S1_North_Spur_Conditions-of-Contract.pdf].\n"
         "Contract Data\n"
         f"8.8 Delay Damages: {NORTH_SPUR_DELAY}"
     )
     tfc = (
         "CONTRACT DATA particulars — filled-in amount / duration / percentage "
-        "[S1_North_Spur_Conditions_of_Contract.pdf].\n"
+        "[S1_North_Spur_Conditions-of-Contract.pdf].\n"
         "Contract Data\n"
         f"1.1.75 Time for Completion for the whole of the Works: {NORTH_SPUR_TFC}"
     )
@@ -251,7 +251,7 @@ def test_retrieval_returns_particulars_row_not_only_defined_term(isolated_store,
     store.upsert_chunks("north_spur", "s1_delay", [delay], e.encode([delay]))
     store.upsert_chunks("north_spur", "s1_tfc", [tfc], e.encode([tfc]))
 
-    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "S1_North_Spur_Conditions_of_Contract.pdf")
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "S1_North_Spur_Conditions-of-Contract.pdf")
 
     chunks, _ = ret.retrieve_with_filter(
         "Accepted Contract Amount excluding VAT", "north_spur", k=5,
@@ -293,7 +293,7 @@ def test_definition_question_is_not_forced_onto_particulars(isolated_store, monk
     )
     store.upsert_chunks("north_spur", "s1_glossary", [glossary], e.encode([glossary]))
     store.upsert_chunks("north_spur", "s1_aca", [particulars], e.encode([particulars]))
-    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "S1_North_Spur_Conditions_of_Contract.pdf")
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "S1_North_Spur_Conditions-of-Contract.pdf")
 
     chunks, _ = ret.retrieve_with_filter(
         "What does Accepted Contract Amount mean?", "north_spur", k=5,
@@ -328,11 +328,11 @@ def test_index_document_wires_contract_data_rows_into_rag(fresh_db, tmp_path, mo
     proj = projects_mod.create_project("North Spur Package")
     pid = proj["id"]
     raw = NORTH_SPUR_CONTRACT.encode("utf-8")
-    path = str(tmp_path / "S1_North_Spur_Conditions_of_Contract.txt")
+    path = str(tmp_path / "S1_North_Spur_Conditions-of-Contract.txt")
     file_crypto.write_document(path, raw)
     doc = projects_mod.add_document(
         pid,
-        "S1_North_Spur_Conditions_of_Contract.txt",
+        "S1_North_Spur_Conditions-of-Contract.txt",
         file_path=path,
         size=len(raw),
     )

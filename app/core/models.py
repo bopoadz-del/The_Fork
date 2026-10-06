@@ -289,7 +289,7 @@ class Project(Base):
     )
     # PR B — discriminates how the project came into being. Admin page
     # filters on origin='admin_drive_approved' so user-created rows
-    # (chadi, bopo, etc.) don't show in the admin's approved list.
+    # (personal accounts) don't show in the admin's approved list.
     # Values: 'user_create' | 'admin_drive_approved' | 'user_drive_import'.
     origin: Mapped[str] = mapped_column(
         String(32), nullable=False, default="user_create",

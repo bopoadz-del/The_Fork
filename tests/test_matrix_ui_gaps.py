@@ -69,7 +69,7 @@ def test_infer_waterproofing_commissioning_systems():
 
 def test_infer_reservoir_wet_test_not_waterproofing():
     assert _infer_commissioning_systems(
-        "Generate a commissioning checklist for the PWPS-02 reservoir "
+        "Generate a commissioning checklist for the PWPS-09 reservoir "
         "at 1e-North Center before the first wet test. C21-OPC reservoir "
         "blinding, planned 350 m3, poured 310 m3."
     ) == ["reservoir"]

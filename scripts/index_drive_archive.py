@@ -1,6 +1,6 @@
 """Drive-archive indexer for The_Fork.
 
-Walks a Google-Drive mirror (G:\\My Drive\\ by default), filters to construction
+Walks a Google-Drive mirror ($FORK_DRIVE_ROOT, /data/example by default), filters to construction
 documents by extension + path-keyword, extracts text, chunks via
 ``app.core.doc_index.chunk_text_with_overlap``, and upserts into the project's
 vector store via ``app.core.rag.retriever.index_chunks``.
@@ -649,7 +649,7 @@ def now_iso() -> str:
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Drive-archive indexer")
-    ap.add_argument("--root", default=r"G:\My Drive")
+    ap.add_argument("--root", default=os.environ.get("FORK_DRIVE_ROOT", "/data/example"))
     ap.add_argument("--project-id", default="drive_archive")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--inventory-out", default=None)

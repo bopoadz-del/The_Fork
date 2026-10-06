@@ -194,7 +194,7 @@ def test_user_y_cannot_list_or_import_through_user_xs_connection(monkeypatch):
         x, x_id = _user(c)
         y, _ = _user(c)
         drive_auth.save_token(x_id, {"access_token": "AX", "refresh_token": "RX",
-                                     "expiry": time.time() + 999, "email": "x@x.com"})
+                                     "expiry": time.time() + 999, "email": "x@example.com"})
         assert c.get("/v1/drive/status", headers=x).json()["connected"] is True
         assert c.get("/v1/drive/status", headers=y).json()["connected"] is False
         assert c.get("/v1/drive/files", headers=y).status_code == 409

@@ -325,15 +325,15 @@ async def test_named_dxf_is_predispatched_to_drawing_qto(monkeypatch):
 @pytest.mark.asyncio
 async def test_named_pdf_qto_is_predispatched(monkeypatch):
     fake = _wire_docs(
-        monkeypatch, [{"original_name": "drawing_tm_1100010.pdf"}],
+        monkeypatch, [{"original_name": "drawing_qz_0101.pdf"}],
         {"status": "success", "areas_m2": 88},
     )
     agent = _make_agent("quantity-surveyor", ["drawing_qto"])
     msgs = [{"role": "user",
-             "content": "quantity takeoff from drawing_tm_1100010.pdf"}]
+             "content": "quantity takeoff from drawing_qz_0101.pdf"}]
     rec = await runtime_module._predispatch_file_tool(agent, msgs, "p1")
     assert rec and rec["name"] == "drawing_qto"
-    assert fake.calls == [{"file_path": "/app/data/drawing_tm_1100010.pdf"}]
+    assert fake.calls == [{"file_path": "/app/data/drawing_qz_0101.pdf"}]
 
 
 @pytest.mark.asyncio

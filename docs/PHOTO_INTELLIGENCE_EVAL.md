@@ -77,7 +77,7 @@ exercised here because it is untestable by construction: **excavators,
 telehandlers, dumpers, piling rigs and concrete pumps have no prompt string**,
 so they cannot be detected at any confidence. That is why equipment coverage is
 measured over 5 photos and 3 classes rather than a realistic plant list, and it
-is registered in `KNOWN_INCOMPLETE.md` as a vocabulary limit requiring a
+is registered in `docs/KNOWN_INCOMPLETE.md` as a vocabulary limit requiring a
 re-bake. Out of scope here — the model is open-vocabulary, so widening it means
 adding prompt strings and re-exporting the ONNX.
 
