@@ -198,18 +198,21 @@ async def guarantee_terminal(
                           "tools": []}))
         return out
 
+    def _timed_out() -> list[str]:
+        _LOG.warning(
+            "sse watchdog: turn exceeded %.0fs after %r (request_id=%s)",
+            limit, last_type, request_id,
+        )
+        return _close(
+            "Response timeout — the turn produced no answer within "
+            "%.0fs; the last event was %r." % (limit, last_type)
+        )
+
     try:
         while True:
             remaining = deadline - clock()
             if remaining <= 0:
-                _LOG.warning(
-                    "sse watchdog: turn exceeded %.0fs after %r (request_id=%s)",
-                    limit, last_type, request_id,
-                )
-                for out in _close(
-                    "Response timeout — the turn produced no answer within "
-                    "%.0fs; the last event was %r." % (limit, last_type)
-                ):
+                for out in _timed_out():
                     yield out
                 saw_terminal = True
                 return
@@ -218,7 +221,18 @@ async def guarantee_terminal(
             except StopAsyncIteration:
                 break
             except asyncio.TimeoutError:
-                continue  # loop top decides, so the deadline stays absolute
+                # The wait was bounded by what was left of the ABSOLUTE
+                # deadline, so its expiry IS the deadline. It is not retried:
+                # wait_for cancelled the pending ``__anext__``, which finalises
+                # an async-generator producer, so a second read would only see
+                # StopAsyncIteration and misreport the turn as "ended with no
+                # answer". The event loop's timer may also fire up to one clock
+                # tick before ``clock()`` agrees (Windows' tick is ~15 ms), so
+                # re-checking ``remaining`` here is what made it misreport.
+                for out in _timed_out():
+                    yield out
+                saw_terminal = True
+                return
             kind = event_type(raw)
             if kind:
                 last_type = kind

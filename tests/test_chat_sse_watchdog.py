@@ -196,6 +196,29 @@ async def test_the_deadline_is_absolute_and_not_reset_by_traffic():
 
 
 @pytest.mark.asyncio
+async def test_a_wait_that_times_out_is_reported_as_a_timeout_whatever_the_clock_says():
+    """The event loop's timer and ``clock()`` are different readings of time:
+    asyncio fires a timer up to one clock tick early, and on Windows that
+    tick is ~15 ms, so a wait bounded by the deadline can expire while
+    ``deadline - clock()`` is still positive. A frozen clock makes that gap
+    permanent and the outcome independent of the OS and of machine load.
+
+    Mutation killed: retrying the read after the wait timed out. The timed-out
+    ``wait_for`` already cancelled the producer, so the retry sees
+    StopAsyncIteration and the turn is misreported as "ended with no answer
+    and no error" instead of a timeout naming its last event.
+    """
+    frozen = lambda: 1000.0  # noqa: E731 - remaining never reaches zero
+    out = await _drain(guarantee_terminal(
+        _gen(list(B6_FRAMES), hang=True), timeout_s=0.05, clock=frozen,
+    ))
+    assert _types(out)[-3:] == ["token", "error", "end"]
+    body = json.loads(out[-2].split("data:", 1)[1].strip())
+    assert "timeout" in body["message"].lower()
+    assert "'start'" in body["message"]
+
+
+@pytest.mark.asyncio
 async def test_the_boundary_watchdog_sits_above_the_agent_s_own():
     """The relationship IS the design: on the agent path the agent's
     structured timeout must be what the user sees, and this net only fires
