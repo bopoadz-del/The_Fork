@@ -3,7 +3,7 @@
 V1.2 swaps the text-extraction path from pdfplumber to PyMuPDF (fitz).
 pdfplumber was a 80-180s/drawing bottleneck on dense CAD PDFs; fitz
 returns the same span-level data in a fraction of the time. The
-font-size buckets, candidate filters, drawing-number regex, place-name blocklist,
+font-size buckets, candidate filters, drawing-number regex,
 cross-ref extraction, multi-page combine, fallback chains, and the
 chunk-builder are unchanged.
 
@@ -106,14 +106,79 @@ def _revision_from_number_tail(dn: str | None) -> str | None:
     return tail
 
 
-def _env_terms(name: str) -> tuple[str, ...]:
-    """Upper-cased comma-separated terms from env ``name`` (empty when unset).
+# Title-block field labels. Generic drawing vocabulary only -- never a firm,
+# person or place name. A value is found by STRUCTURE: inline after the label
+# and a separator, in the cell to the label's right, or in the cell directly
+# below it. Order matters: earlier alternatives win at the same position.
+_TB_LABEL_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("drawing_number",
+     r"(?:DRAWING|DRG|DWG)\.?\s*(?:NO|NUMBER|NUM)\.?"),
+    ("project_name", r"PROJECT(?:\s+(?:NAME|TITLE))?"),
+    ("drawing_title", r"(?:DRAWING\s+|SHEET\s+)?TITLE"),
+    ("drafter", r"DRAWN(?:\s+BY)?|DRAFTED(?:\s+BY)?|DRAFTER|DRAFTSMAN"),
+    ("checked_by", r"CHECKED(?:\s+BY)?"),
+    ("approved_by", r"APPROVED(?:\s+BY)?"),
+    ("designed_by", r"DESIGNED(?:\s+BY)?"),
+    ("scale", r"SCALE"),
+    ("revision", r"REV(?:ISION)?\.?"),
+    ("date", r"DATE"),
+    ("sheet_number", r"SHEET(?:\s+(?:NO|NUMBER))?\.?"),
+    ("consultant", r"CONSULTANT|CLIENT|CONTRACTOR|EMPLOYER|ENGINEER"),
+)
+_TB_LABEL_RE = re.compile(
+    r"(?<![A-Z0-9])(?:"
+    + "|".join(f"(?P<{f}>{p})" for f, p in _TB_LABEL_PATTERNS)
+    + r")(?![A-Z0-9])"
+)
+_TB_SEP_RE = re.compile(r"\s*[:\-=]\s*")
+_SCALE_RE = re.compile(r"(1\s*:\s*\d{1,5}|N\.?T\.?S\.?|NOT\s*TO\s*SCALE)", re.IGNORECASE)
+_DATE_RE = re.compile(r"\b(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4})\b")
+_SHEET_VALUE_RE = re.compile(r"^(\d+(?:\s*(?:OF|/)\s*\d+)?)\b", re.IGNORECASE)
+_CODE_VALUE_RE = re.compile(r"[A-Z0-9]+(?:[-_./][A-Z0-9]+)+|[A-Z]*\d[A-Z0-9]*")
+# Fields whose value has a checkable shape may follow the label inline with
+# no separator ("SHEET 3 OF 7"); free-text fields need a separator or a cell
+# of their own, so "PROJECT SYSTEM ..." is never read as a project name.
+_TB_SHAPED_FIELDS = frozenset({"drawing_number", "scale", "revision", "date", "sheet_number"})
+# Fields whose value may wrap onto following lines of the same cell.
+_TB_WRAPPING_FIELDS = frozenset({"drawing_title", "project_name"})
 
-    Client-specific title-block vocabulary (project header words, drafting
-    firms, road names) is deployment configuration, not source.
-    """
-    raw = os.environ.get(name, "")
-    return tuple(t.strip().upper() for t in raw.split(",") if t.strip())
+
+def _norm_tb_text(t: str) -> str:
+    return re.sub(r"\s+", " ", (t or "").upper()).strip()
+
+
+def _tb_label_at_start(text: str):
+    """The field label a title-block cell opens with, or None."""
+    m = _TB_LABEL_RE.match(text.strip().upper())
+    if not m:
+        return None
+    return m
+
+
+def _validate_tb_value(field: str, value: str) -> str | None:
+    """The value cut to its field's shape, or None when it has no such shape."""
+    v = (value or "").strip().strip(":-=").strip()
+    if not v:
+        return None
+    vu = v.upper()
+    if field == "drawing_number":
+        m = _CODE_VALUE_RE.search(vu.split(" ")[0]) if vu else None
+        return m.group(0) if m and any(ch.isdigit() for ch in m.group(0)) else None
+    if field == "scale":
+        m = _SCALE_RE.search(v)
+        return m.group(1).strip() if m else None
+    if field == "date":
+        m = _DATE_RE.search(v)
+        return m.group(1) if m else None
+    if field == "revision":
+        tok = vu.split(" ")[0]
+        return tok if re.fullmatch(r"[A-Z0-9]{1,3}", tok) else None
+    if field == "sheet_number":
+        m = _SHEET_VALUE_RE.match(v)
+        return m.group(1).strip() if m else None
+    if _TB_LABEL_RE.match(vu) or len(v) > 160:
+        return None
+    return v
 
 
 def _strip_doubled_letter_prefix(dn: str) -> str:
@@ -231,19 +296,6 @@ def _note_near_duplicate(
         if _lev_distance(candidate, existing) < max_distance:
             return True
     return False
-
-
-# Area / district names that show up at large font sizes inside the main
-# drawing region of regional / key-plan sheets and win the "largest cluster"
-# title selection. They are sheet content, not drawing-title text. The names
-# identify the client's site, so they are supplied by the environment
-# (DRAWING_QTO_EXCLUDED_PLACE_NAMES, comma-separated), never kept in git.
-# Matched as whole-token uppercase.
-_EXCLUDED_PLACE_NAMES = frozenset(
-    re.sub(r"\s+", " ", n).strip().upper()
-    for n in os.getenv("DRAWING_QTO_EXCLUDED_PLACE_NAMES", "").split(",")
-    if n.strip()
-)
 
 
 def _to_metres_factor(doc_units: int) -> float:
@@ -835,6 +887,22 @@ class DrawingQTOBlock(UniversalBlock):
             )[:100]
 
         tb = dict(primary["title_block"])
+        # Boilerplate by repetition: when the PDF holds different drawings,
+        # title-block text present on every sheet (consultant, project
+        # header) is not any one sheet's title.
+        page_dns = {pr["title_block"].get("drawing_number") for pr in page_results}
+        if len(page_results) > 1 and len(page_dns) > 1 and None not in page_dns:
+            repeated = set.intersection(*(pr["_tb_texts"] for pr in page_results))
+            if tb.get("_title_candidates") and tb.get("drawing_title") and (
+                _norm_tb_text(tb["drawing_title"]) in repeated
+            ):
+                tb["drawing_title"] = next(
+                    (t for t in tb["_title_candidates"]
+                     if _norm_tb_text(t) not in repeated),
+                    tb["drawing_title"],
+                )
+        dn_labelled = bool(tb.pop("_dn_labelled", False))
+        tb.pop("_title_candidates", None)
         # Bug 2: reject drawing-number matches that aren't a complete long
         # drawing number. The short fallback regex sometimes grabs a
         # half-match ("AB-CDE-001-KLM") from a random title-block fragment.
@@ -843,7 +911,9 @@ class DrawingQTOBlock(UniversalBlock):
         # value is incomplete, re-scan the full page raw text.
         current_dn = tb.get("drawing_number")
 
-        if current_dn and not _is_full_drawing_number(current_dn):
+        # A number read from its DRAWING NO label is taken as written: the
+        # label, not the shape, says it is the drawing number.
+        if current_dn and not dn_labelled and not _is_full_drawing_number(current_dn):
             rescued = None
             for raw in page_full_raw_texts:
                 m = _DWG_NUMBER_FULL.search(raw)
@@ -969,6 +1039,12 @@ class DrawingQTOBlock(UniversalBlock):
             if len(right_lines) >= 5:
                 title_block_chars = right_chars
                 tb_lines = right_lines
+                # The right-hand column IS the title block: its text is
+                # metadata, never a note or a dimension.
+                drawing_zone_chars = [
+                    c for c in drawing_zone_chars
+                    if c["x0"] < page.rect.width * 0.80
+                ]
             else:
                 # full-page scan fallback
                 title_block_chars = chars
@@ -1009,6 +1085,9 @@ class DrawingQTOBlock(UniversalBlock):
 
         return {
             "title_block": title_block,
+            "_tb_texts": {
+                _norm_tb_text(L["text"]) for L in tb_lines if L["text"].strip()
+            },
             "notes": notes,
             "dimensions": dimensions,
             "cross_refs": cross_refs,
@@ -1081,13 +1160,125 @@ class DrawingQTOBlock(UniversalBlock):
         return lines
 
     # --- Step 2: title-block structured extraction -------------------------
-    def _extract_title_block(self, tb_chars: list[dict], page) -> dict:
+    def _title_block_fields(
+        self, tb_chars: list[dict]
+    ) -> tuple[dict[str, str], set[str]]:
+        """Read labelled title-block fields by structure.
+
+        Cells are the title-block text runs. A cell that opens with a field
+        label (``_TB_LABEL_PATTERNS``) is a label; its value is the text after
+        the label and a separator, else the nearest non-label cell to its
+        right on the same row, else the nearest non-label cell directly below
+        it (wrapping onto further lines for titles). No name is consulted.
+
+        Returns ``(fields, meta_texts)``: the values found, and the
+        normalised text of every label and value cell, which is title-block
+        metadata and never a drawing-title candidate.
+        """
+        cells = [
+            c for c in self._lines_from_chars(tb_chars, y_tol=2.0, x_gap=8.0)
+            if c["text"].strip()
+        ]
+        is_label = [bool(_tb_label_at_start(c["text"])) for c in cells]
+        fields: dict[str, str] = {}
+        meta: set[str] = set()
+
+        def _below(prev: dict, lx0: float, lx1: float, wrap: bool) -> int | None:
+            best, best_dy = None, None
+            for j, d in enumerate(cells):
+                if is_label[j]:
+                    continue
+                dy = d["y"] - prev["y"]
+                if dy <= 0.5:
+                    continue
+                size = max(prev["size"], d["size"])
+                if dy > (2.0 if wrap else 2.5) * size + 4.0:
+                    continue
+                if wrap:
+                    if abs(d["x0"] - lx0) > 10.0:
+                        continue
+                    if not 0.75 <= (d["size"] or 1.0) / (prev["size"] or 1.0) <= 1.33:
+                        continue
+                elif d["x0"] > lx1 + 10.0 or d["x1"] < lx0 - 10.0:
+                    continue
+                if best_dy is None or dy < best_dy:
+                    best, best_dy = j, dy
+            return best
+
+        def _right(c: dict, lx1: float) -> int | None:
+            best, best_dx = None, None
+            for j, d in enumerate(cells):
+                if is_label[j] or abs(d["y"] - c["y"]) > 2.0:
+                    continue
+                dx = d["x0"] - lx1
+                if dx < 0 or dx > max(60.0, 6.0 * c["size"]):
+                    continue
+                if best_dx is None or dx < best_dx:
+                    best, best_dx = j, dx
+            return best
+
+        for i, c in enumerate(cells):
+            if not is_label[i]:
+                continue
+            text = c["text"].strip()
+            meta.add(_norm_tb_text(text))
+            ms = list(_TB_LABEL_RE.finditer(text.upper()))
+            width = max(c["x1"] - c["x0"], 1.0)
+            for k, m in enumerate(ms):
+                field = m.lastgroup
+                end = ms[k + 1].start() if k + 1 < len(ms) else len(text)
+                rest = text[m.end():end]
+                sep = _TB_SEP_RE.match(rest)
+                if sep:
+                    inline = rest[sep.end():]
+                elif field in _TB_SHAPED_FIELDS or not rest.strip():
+                    inline = rest
+                else:
+                    # A free-text label word followed by more words with no
+                    # separator ("PROJECT SYSTEM ...") is not a field.
+                    continue
+                if field in fields:
+                    continue
+                value = _validate_tb_value(field, inline) if inline.strip() else None
+                if value is None and not inline.strip() and k == len(ms) - 1:
+                    lx0 = c["x0"] + width * m.start() / max(len(text), 1)
+                    lx1 = c["x1"]
+                    j = _right(c, lx1)
+                    if j is None:
+                        j = _below(c, lx0, lx1, wrap=False)
+                    if j is not None:
+                        value = _validate_tb_value(field, cells[j]["text"])
+                        if value is not None:
+                            meta.add(_norm_tb_text(cells[j]["text"]))
+                            if field in _TB_WRAPPING_FIELDS:
+                                parts, prev = [value], cells[j]
+                                while True:
+                                    n = _below(prev, prev["x0"], prev["x1"], wrap=True)
+                                    if n is None:
+                                        break
+                                    parts.append(cells[n]["text"].strip())
+                                    meta.add(_norm_tb_text(cells[n]["text"]))
+                                    prev = cells[n]
+                                value = " ".join(parts)
+                if value is not None:
+                    fields[field] = value
+        return fields, meta
+
+    def _extract_title_block(
+        self, tb_chars: list[dict], page, boilerplate: frozenset = frozenset()
+    ) -> dict:
         """Extract drawing_number, title, discipline, revision, scale,
-        date, drafter, checked_by, project_name, sheet_number from the
-        title-block char set. Uses raw char order for the drawing
-        number (a single rotated Tj operator can land contiguously in
-        the content stream even when its bounding boxes scatter) and
-        spatial clustering for everything else."""
+        date, drafter, checked_by, approved_by, project_name, sheet_number
+        from the title-block char set.
+
+        Fields are found by structure (``_title_block_fields``): generic
+        field labels and the position of each value relative to its label.
+        The drawing number may also come from its shape in raw char order (a
+        single rotated Tj operator can land contiguously in the content
+        stream even when its bounding boxes scatter). When no TITLE label is
+        present the title is the largest remaining title-block text that is
+        not metadata, preferring text inside the title-block region of the
+        page and skipping ``boilerplate`` (text repeated on every sheet)."""
         result: dict[str, Any] = {
             "drawing_number": None,
             "drawing_title": None,
@@ -1098,97 +1289,104 @@ class DrawingQTOBlock(UniversalBlock):
             "date": None,
             "drafter": None,
             "checked_by": None,
+            "approved_by": None,
             "project_name": None,
             "sheet_number": None,
         }
         if not tb_chars:
             return result
 
-        # --- Drawing number from raw char order ---------------------------
+        fields, meta_texts = self._title_block_fields(tb_chars)
+
+        # --- Drawing number: full shape, else its label, else short shape --
         raw = "".join(c["text"] for c in tb_chars)
-        m = _DWG_NUMBER_FULL.search(raw)
-        if not m:
-            m = _DWG_NUMBER_SHORT.search(raw)
-        if m:
-            # Phase 1.7: strip leading doubled-letter artifacts
-            # (e.g. ``XAB-CDE-...`` -> ``AB-CDE-...``). Source text runs
-            # occasionally start one char inside an earlier token and the
-            # ``[A-Z]{2,}`` head accepts that as a valid prefix. The
-            # strip is pattern-aware so legitimate prefixes survive.
-            dn = _strip_doubled_letter_prefix(m.group(0))
+        m_full = _DWG_NUMBER_FULL.search(raw)
+        labelled_dn = fields.get("drawing_number")
+        dn = None
+        if labelled_dn and (not m_full or _is_full_drawing_number(labelled_dn)):
+            dn = labelled_dn
+            result["_dn_labelled"] = True
+        else:
+            m = m_full or _DWG_NUMBER_SHORT.search(raw)
+            if m:
+                # Phase 1.7: strip leading doubled-letter artifacts
+                # (e.g. ``XAB-CDE-...`` -> ``AB-CDE-...``). Source text runs
+                # occasionally start one char inside an earlier token and the
+                # ``[A-Z]{2,}`` head accepts that as a valid prefix. The
+                # strip is pattern-aware so legitimate prefixes survive.
+                dn = _strip_doubled_letter_prefix(m.group(0))
+                # Last hyphenated token of the long pattern is the revision
+                tail = dn.rsplit("-", 1)[-1]
+                if 1 <= len(tail) <= 3 and re.fullmatch(r"[A-Z0-9]+", tail):
+                    result["revision"] = tail
+        if dn:
             result["drawing_number"] = dn
             disc, disc_full = self._discipline_from_number(dn)
             result["discipline"] = disc
             result["discipline_full"] = disc_full
-            # Last hyphenated token of the long pattern is the revision
-            tail = dn.rsplit("-", 1)[-1]
-            if 1 <= len(tail) <= 3 and re.fullmatch(r"[A-Z0-9]+", tail):
-                result["revision"] = tail
+        if not result["revision"] and fields.get("revision"):
+            result["revision"] = fields["revision"]
 
-        # --- Cluster title-block into lines for label-based fields --------
+        # People and project: only ever the value of their label.
+        for f in ("drafter", "checked_by", "approved_by", "project_name"):
+            if fields.get(f):
+                result[f] = fields[f]
+
+        # --- Cluster title-block into lines for unlabelled fallbacks -------
         lines = self._lines_from_chars(tb_chars, y_tol=2.0, x_gap=50.0)
         line_texts = [L["text"] for L in lines if L["text"].strip()]
         all_text = " \n".join(line_texts)
 
-        # Scale: 1:NNN, NTS, N.T.S., NOT TO SCALE
-        sm = re.search(
-            r"(1\s*:\s*\d{1,5}|N\.?T\.?S\.?|NOT\s*TO\s*SCALE)",
-            all_text,
-            re.IGNORECASE,
-        )
-        if sm:
-            result["scale"] = sm.group(1).strip()
+        # Scale: labelled, else 1:NNN, NTS, N.T.S., NOT TO SCALE anywhere
+        if fields.get("scale"):
+            result["scale"] = fields["scale"]
+        else:
+            sm = _SCALE_RE.search(all_text)
+            if sm:
+                result["scale"] = sm.group(1).strip()
 
-        # Date: DD/MM/YY etc.
-        dm = re.search(
-            r"\b(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4})\b", all_text
-        )
-        if dm:
-            result["date"] = dm.group(1)
+        # Date: labelled, else DD/MM/YY etc. anywhere
+        if fields.get("date"):
+            result["date"] = fields["date"]
+        else:
+            dm = _DATE_RE.search(all_text)
+            if dm:
+                result["date"] = dm.group(1)
 
-        # Sheet number: Sheet N of M, or N/M near "SHEET"
-        shm = re.search(
-            r"(?:SHEET|SH\.?)\s*[:\-]?\s*(\d+(?:\s*(?:OF|/)\s*\d+)?)",
-            all_text,
-            re.IGNORECASE,
-        )
-        if shm:
-            result["sheet_number"] = shm.group(1).strip()
+        # Sheet number: labelled, else Sheet N of M, or N/M near "SHEET"
+        if fields.get("sheet_number"):
+            result["sheet_number"] = fields["sheet_number"]
+        else:
+            shm = re.search(
+                r"(?:SHEET|SH\.?)\s*[:\-]?\s*(\d+(?:\s*(?:OF|/)\s*\d+)?)",
+                all_text,
+                re.IGNORECASE,
+            )
+            if shm:
+                result["sheet_number"] = shm.group(1).strip()
 
-        # Project name: generic project-header keywords plus any terms the
-        # deployment names in DRAWING_PROJECT_HEADER_TERMS.
-        project_terms = _env_terms("DRAWING_PROJECT_HEADER_TERMS")
-        for L in lines:
-            t = L["text"]
-            t_hdr = re.sub(r"\s+", " ", t.upper())
-            if (re.search(r"THE CLIENT\s+GATE", t, re.IGNORECASE) or
-                re.search(r"INFRASTRUCTURE\s+DESIGN", t, re.IGNORECASE) or
-                any(k in t_hdr for k in project_terms)):
-                # Prefer the largest-font line
-                if (result["project_name"] is None or
-                    L["size"] > result.get("_project_size", 0)):
-                    result["project_name"] = t.strip()
-                    result["_project_size"] = L["size"]
-        result.pop("_project_size", None)
+        if fields.get("drawing_title"):
+            result["drawing_title"] = fields["drawing_title"][:200]
+            return result
 
-        # Drafter: a firm the deployment lists in DRAWING_KNOWN_DRAFTERS.
-        # Source carries no client or consultant names.
-        drafters = _env_terms("DRAWING_KNOWN_DRAFTERS")
-        for L in lines:
-            tu_line = L["text"].upper()
-            hit = next((d for d in drafters
-                        if re.search(r"\b" + re.escape(d) + r"\b", tu_line)), None)
-            if hit:
-                result["drafter"] = hit.title()
-                break
+        # Drawing title by position: the title-block region of the page is
+        # the bottom band and the right-hand column. When the reader had to
+        # widen to the whole page, text inside that region is preferred over
+        # text out in the drawing area (place labels on a key plan).
+        rect = getattr(page, "rect", None)
 
-        # Drawing title: largest text in the title block that isn't the
-        # project name, dwg number, a cross-ref callout, or a known
-        # boilerplate line.
+        def _in_region(L: dict) -> bool:
+            if rect is None:
+                return True
+            return (L["y"] > rect.height * 0.85
+                    or L.get("x0", 0.0) >= rect.width * 0.80)
+
+        value_texts = [t for t in meta_texts if len(t) >= 4]
         candidates = sorted(
             (L for L in lines if L["text"].strip()),
-            key=lambda L: -L["size"],
+            key=lambda L: (not _in_region(L), -L["size"]),
         )
+        titles: list[str] = []
         for L in candidates:
             t = L["text"].strip()
             if not t or len(t) < 4:
@@ -1196,7 +1394,9 @@ class DrawingQTOBlock(UniversalBlock):
             tu = t.upper()
             if result["drawing_number"] and result["drawing_number"] in tu:
                 continue
-            if result["project_name"] and t == result["project_name"]:
+            # Title-block metadata: a label cell, or a labelled field's value.
+            tn = _norm_tb_text(t)
+            if _tb_label_at_start(t) or any(v in tn for v in value_texts):
                 continue
             # Bug 1.5b: reject cross-ref callouts as title candidates.
             # On TM detail sheets the longest cluster was the MATCH LINE
@@ -1222,12 +1422,6 @@ class DrawingQTOBlock(UniversalBlock):
             # numeric check above due to embedded spaces.
             if re.fullmatch(r"1\s*:\s*\d+", t):
                 continue
-            # Phase 1.6: reject the site's area / district names that win at
-            # large font on regional key-plan sheets but are not
-            # drawing-title text. Names come from the environment only.
-            tu_compact = re.sub(r"\s+", " ", tu).strip()
-            if tu_compact in _EXCLUDED_PLACE_NAMES:
-                continue
             # Phase 1.7: reject candidates with trailing lowercase
             # artifacts (e.g. ``KEY PLANg`` — a subscript glyph that bled
             # into the span text). Catches ``[A-Z]{2,}[a-z]`` at the end
@@ -1235,14 +1429,12 @@ class DrawingQTOBlock(UniversalBlock):
             # ``CONCRETE ENCASEMENT`` alone.
             if _has_trailing_lowercase_artifact(t):
                 continue
+            # Generic drawing furniture (web/postal address, survey datum,
+            # notes heading): drawing vocabulary, not names.
             if any(k in tu for k in (
-                "THE CLIENT GATE", "INFRASTRUCTURE DESIGN",
-                "KINGDOM OF SAUDI", "WWW.", "P.O. BOX",
-                "DATUM", "GEODETIC",
+                "WWW.", "P.O. BOX", "DATUM", "GEODETIC",
                 "PROJECT SYSTEM", "ZONE:", "NOTES",
-            ) + _env_terms("DRAWING_PROJECT_HEADER_TERMS")
-              + _env_terms("DRAWING_KNOWN_DRAFTERS")
-              + _env_terms("DRAWING_TITLEBLOCK_BOILERPLATE")):
+            )):
                 continue
             # Phase 1.7: reject CAD Xref filepath strings (the SG sheet
             # leaks the underlying ``Xref ..\..\_Refsecure\....dwg`` debug
@@ -1250,9 +1442,14 @@ class DrawingQTOBlock(UniversalBlock):
             # surfaced it). Match "XREF " prefix or a backslash anywhere.
             if tu.startswith("XREF ") or "\\" in t:
                 continue
-            result["drawing_title"] = t[:200]
-            break
-
+            titles.append(t[:200])
+        # Text repeated on every sheet of a set is boilerplate (consultant,
+        # project header); the caller re-picks once all pages are read.
+        result["_title_candidates"] = titles
+        result["drawing_title"] = next(
+            (t for t in titles if _norm_tb_text(t) not in boilerplate),
+            titles[0] if titles else None,
+        )
         return result
 
     @staticmethod
@@ -1926,7 +2123,7 @@ def _line_from_run(y: float, run: list[dict]) -> dict:
     whitespace or starts in whitespace is left alone.
     """
     if not run:
-        return {"y": y, "size": 0.0, "text": ""}
+        return {"y": y, "size": 0.0, "text": "", "x0": 0.0, "x1": 0.0}
     parts: list[str] = []
     for i, c in enumerate(run):
         if i == 0:
@@ -1952,7 +2149,8 @@ def _line_from_run(y: float, run: list[dict]) -> dict:
     text = "".join(parts)
     sizes = [c["size"] for c in run if c.get("size")]
     avg_size = sum(sizes) / len(sizes) if sizes else 0.0
-    return {"y": y, "size": avg_size, "text": text}
+    return {"y": y, "size": avg_size, "text": text,
+            "x0": float(run[0]["x0"]), "x1": float(max(c["x1"] for c in run))}
 
 
 # Pure CAD-tag patterns (all-caps + digits + hyphens, 4-15 chars, no spaces)
