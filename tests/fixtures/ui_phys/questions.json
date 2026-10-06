@@ -349,8 +349,8 @@
         "pavement"
       ],
       "must_not": [
-        "DD-2022",
-        "DD2022",
+        "AB-2022",
+        "AB2022",
         "template scaffold"
       ],
       "source": "S2"
@@ -446,7 +446,7 @@
     }
   },
   "forbidden_substrings_note": "Loaded from env UI_PHYS_FORBIDDEN (newline-separated CI secret). Never commit client strings here — the canary list is itself a secret.",
-  "question_source": "UI-PHYS_DG2_results.xlsx :: column 'Question (ask exactly)'",
+  "question_source": "UI-PHYS_QP2_results.xlsx :: column 'Question (ask exactly)'",
   "expectation_source": "FLEET_OPS/artifacts/GROUND_TRUTH_REVISIONS_2026-09-01.md",
   "wording_policy": "Question strings are frozen. A reworded question is a different measurement; a new question gets a new id. Expectations change only by appending a dated entry to expectation_source, old wording preserved. See README.md in this directory."
 }

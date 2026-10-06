@@ -35,7 +35,7 @@ def _build_sources_from_excerpts(excerpts: list) -> list:
     (``doc_name``/``doc_id``/``score``).
 
     The raw ``snippet`` is deliberately NOT carried through: chunk text can
-    embed raw Drive/Windows paths (``G:\\My Drive\\…``), and the chat path's
+    embed raw Drive/Windows paths (``X:\\Example Drive\\…``), and the chat path's
     structured sources don't expose snippets either."""
     out = []
     for e in excerpts or []:

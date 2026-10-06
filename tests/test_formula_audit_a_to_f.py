@@ -425,7 +425,7 @@ def test_audit_compaction_control():
 # ── 16 composite_column_design ─────────────────────────────────────────────
 
 def test_audit_composite_column_design():
-    """Documented heuristic (SMGT-C552), NOT EC4/AISC composite design:
+    """Documented heuristic (SPEC-C900), NOT EC4/AISC composite design:
     Ag = π(D/2)²; cap_A = Ag × fck / 1000  (×1.10 only if I-beam mass > 0);
     cap_B = Ag × min(fck×1.33, 80) / 1000 × 0.95.
     Hand: D=800 mm, fck=60, no I-beam mass
@@ -569,7 +569,7 @@ def test_audit_concrete_mix_slip_form():
     Hand: denom = 0.42 + 0.31746 + 0.74906 + 1.02362 = 2.51014
           C = 0.3984 t → 398 kg; W = 167 L; FA = 796; CA = 1034.8 → 1035.
     Documented extras (retarder 3.8/2.9 L, slump 150±30, 32 °C) are
-    unsourced SMGT-C552 constants — locked, not re-derived.
+    unsourced SPEC-C900 constants — locked, not re-derived.
     """
     r = _ok("concrete_mix_slip_form", {})
     assert r["cement_kg_m3"] == pytest.approx(398.0, abs=0.5)

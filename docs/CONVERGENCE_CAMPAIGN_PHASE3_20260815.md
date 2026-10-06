@@ -19,7 +19,7 @@ nothing local exists.
 |---|---|---|---|---|
 | T1 | BOQ parse -> price -> workbook | digital BOQ xlsx | a 2017 tendered 534M AED bill (done ph2) + new finds | RE-RUN on fixed categorize |
 | T2 | Drawing QTO (rooms, geometry) | floor plans pdf/dxf | 8 real apartment floor plans | RE-RUN on fixed _extract_rooms |
-| T3 | Primavera XER import -> CPM | .xer file | repo fixture ohdd_baseline_2013.xer + drive search | PENDING |
+| T3 | Primavera XER import -> CPM | .xer file | synthetic P6 baseline (`tests/_synthetic_fixtures.py`) + drive search | PENDING |
 | T4 | Contract Q&A (clauses, DNP, EOT) | real contract/LOA pdf | drive search | PENDING |
 | T5 | QA/QC docs (ITP, method statement) | MRH_QAQC folder | Downloads | PENDING |
 | T6 | Schedule generate + cost-load + EVM | brief + rates | synthetic brief + real rates | PENDING |

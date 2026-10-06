@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Prints every reachable hollow function file:line name. Exit 1 if any remain
-(not in KNOWN_INCOMPLETE.md, not a decorated abstractmethod, not under tests/)."""
+(not in docs/KNOWN_INCOMPLETE.md, not a decorated abstractmethod, not under tests/)."""
 import ast, os, sys
 
 def load_known():
-    p = "KNOWN_INCOMPLETE.md"
+    p = "docs/KNOWN_INCOMPLETE.md"
     if not os.path.exists(p): return set()
     out = set()
     for line in open(p, encoding="utf-8", errors="ignore"):
@@ -50,7 +50,7 @@ def main():
         # `scripts/` is deliberately NOT excluded. Dev tooling can hide a
         # hollow function just as well as shipped code can, and excluding it
         # would drop 16 real hits from the count. They are registered in
-        # KNOWN_INCOMPLETE.md with their reasons instead, so they stay visible.
+        # docs/KNOWN_INCOMPLETE.md with their reasons instead, so they stay visible.
         #
         # Everything else is the spec's logic, untouched.
         dirs[:] = [d for d in dirs if d not in

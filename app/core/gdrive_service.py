@@ -439,7 +439,7 @@ def find_file_id_by_exact_name(filename: str) -> Tuple[Optional[str], Optional[s
     """Look up a Drive file id by exact ``name`` (not trash).
 
     Master Corpus rag-backfill rows are RAG-citable stubs: size=0, a stale
-    ``G:\\My Drive\\...`` path, ``drive_file_id`` null.
+    ``X:\\Example Drive\\...`` path, ``drive_file_id`` null.
     Preview cannot follow a pointer that was never written. The live file
     still lives on Drive under the same filename — this query is the
     durable link. Returns ``(file_id, None)`` or ``(None, reason)``.

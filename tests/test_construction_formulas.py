@@ -1,5 +1,5 @@
 """Verification of the construction_formulas library (integrated from the
-operator's SMGT-C552 formula upgrade). Every expected value below is hand-
+operator's SPEC-C900 formula upgrade). Every expected value below is hand-
 computed from the formula definition, so this proves the maths — not just that
 the functions run. Also pins the rates-as-parameters contract that keeps cost
 build-ups grounded (real rates flow in from RAG; hardcoded defaults are

@@ -53,8 +53,11 @@ RUN pip uninstall -y \
     || true
 
 # Safety Observation AI v2 detector dependencies -- CPU wheels only.
-# SAFETY_WORLD_WEIGHTS env var on Render points at the committed
-# data/models/safety_world_v2.onnx -- a YOLO-Worldv2-s checkpoint with
+# The weights are NOT in git: they are a release asset of this repo, pinned by
+# sha256 in data/models/manifest.json. Run `python scripts/fetch_model.py`
+# before `docker build` (CI does) so data/models/safety_world_v2.onnx is in the
+# build context; the build re-verifies the checksum below and fails on a
+# mismatch. data/models/safety_world_v2.onnx is -- a YOLO-Worldv2-s checkpoint with
 # its prompt vocabulary reparameterized into the classifier head at
 # bake time, then exported to ONNX (see scripts/bake_world_model.py +
 # scripts/export_to_onnx steps). CLIP is NOT a runtime dep: the text
@@ -289,7 +292,11 @@ COPY --from=frontend /frontend/dist /app/frontend/dist
 # Copy detector weights OUT of /app/data (which is a volume mount at
 # runtime -- the volume overlay hides the image's content) to a stable,
 # non-volume location. SAFETY_WORLD_WEIGHTS on Render points here.
-RUN mkdir -p /app/models \
+# The checksum gate: a missing, truncated or swapped weights file fails the
+# build here instead of shipping (scripts/fetch_model.py --check reads the pin
+# from data/models/manifest.json).
+RUN python scripts/fetch_model.py --check --image \
+    && mkdir -p /app/models \
     && cp /app/data/models/safety_world_v2.onnx /app/models/safety_world_v2.onnx
 
 # Run as an unprivileged user. /app/data (the persistent volume) and the app

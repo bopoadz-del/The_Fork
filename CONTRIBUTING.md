@@ -112,7 +112,7 @@ Pilot test fixtures are **disposable and rebuildable as code**. Do not treat fix
   - `FIXTURE — Programme+Drawings`
 - Seeder: `python scripts/seed_fixtures.py`
   - Self-contained for `FIXTURE — Fresh Upload Eval` (uses the 12 CASES texts).
-  - Dir-based fixtures (`FIXTURE — BOQ`, `FIXTURE — Programme+Drawings`) require `FIXTURES_DIR` to point at the files Chadi provides.
+  - Dir-based fixtures (`FIXTURE — BOQ`, `FIXTURE — Programme+Drawings`) require `FIXTURES_DIR` to point at the files the owner provides.
 - Harnesses resolve fixtures by name via the projects API. Hardcoded fixture ids in `tests/feature_matrix_manifest.yaml` or `scripts/rag_fresh_upload_eval.py` are a defect.
 - Deleting a fixture project from the UI is safe: re-run `seed_fixtures.py` to recreate it.
 

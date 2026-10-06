@@ -152,7 +152,7 @@ class UpdateDocumentRequest(BaseModel):
     Master Corpus rag_backfill stubs have ``drive_file_id: null``. The
     service-account name-search cannot see anyone-with-link files, so an
     owner/admin PATCH is how we attach the live id (e.g. <doc-id> →
-    ``11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI``). Preview then hydrates via
+    ``1ExampleDriveFileId001xxxxxxxxxxx``). Preview then hydrates via
     ``files.get`` / public download.
     """
     drive_file_id: str
@@ -1134,7 +1134,7 @@ async def governance_status(auth: dict = Depends(require_user)):
         "retention_days": retention if retention > 0 else "indefinite",
         "audit_logging": True,
         "delete_on_request": True,
-        "policy_document": "DATA_GOVERNANCE.md",
+        "policy_document": "docs/DATA_GOVERNANCE.md",
     }
 
 

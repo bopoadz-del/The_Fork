@@ -46,8 +46,8 @@ def test_extract_identifiers_detects_common_reference_patterns():
     ids = extract_query_identifiers('Is APPROVED valid per XYZ-501?')
     assert any("xyz-501" in i for i in ids)
 
-    ids = extract_query_identifiers('Show drawing IP-INF-054-0000-JCB-DWG-LI-200-0001056-04')
-    assert any("ip-inf-054" in i for i in ids)
+    ids = extract_query_identifiers('Show drawing QZ-ENG-320-0000-EXC-DWG-LI-200-0001056-04')
+    assert any("qz-eng-320" in i for i in ids)
 
     ids = extract_query_identifiers('What about BOQ item D999.46?')
     assert any("d999.46" in i for i in ids)
@@ -128,12 +128,12 @@ def test_extract_identifiers_excludes_measurement_units():
     ) == []
 
     # ...but real document reference codes are UNTOUCHED (identifier lane intact).
-    for code in ("xyz-501", "ip-inf-054", "d999.46", "ncr-007", "12-a", "13.1"):
+    for code in ("xyz-501", "qz-eng-320", "d999.46", "ncr-007", "12-a", "13.1"):
         assert not _looks_like_unit(code), code
     assert any("xyz-501" in i for i in extract_query_identifiers("valid per XYZ-501?"))
     assert any("d999.46" in i for i in extract_query_identifiers("BOQ item D999.46"))
-    assert any("ip-inf-054" in i for i in
-               extract_query_identifiers("Show drawing IP-INF-054-0000-JCB-DWG"))
+    assert any("qz-eng-320" in i for i in
+               extract_query_identifiers("Show drawing QZ-ENG-320-0000-EXC-DWG"))
 
 
 def test_identifier_chunk_outranks_semantic_boilerplate(isolated_store, monkeypatch):
@@ -276,10 +276,10 @@ def test_normalize_cesmm_item_codes_collapses_ocr_space():
     assert normalize_cesmm_item_codes("d 599.5") == "d599.5"
     assert normalize_cesmm_item_codes("I  112.3") == "I112.3"
     # Drawing / contract ids must not be rewritten.
-    assert "IP-INF-054" in normalize_cesmm_item_codes(
-        "drawing IP-INF-054-0000-JCB-DWG"
+    assert "QZ-ENG-320" in normalize_cesmm_item_codes(
+        "drawing QZ-ENG-320-0000-EXC-DWG"
     )
-    assert "DD-2023-118" in normalize_cesmm_item_codes("see DD-2023-118 Vol 1")
+    assert "AB-2023-101" in normalize_cesmm_item_codes("see AB-2023-101 Vol 1")
 
 
 def test_extract_identifiers_collapses_ocr_spaced_cesmm():
@@ -352,7 +352,7 @@ def test_d5995_carriageway_outranks_excluded_culvert(isolated_store, monkeypatch
         ret,
         "_doc_name_for_id",
         lambda _id: (
-            "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+            "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
         ),
     )
 
@@ -432,7 +432,7 @@ def test_chat_path_retrieves_ocr_spaced_d5492_without_reindex(
     )
     assert "D549.2" not in spaced
     store.upsert_chunks(
-        "drive_archive", "20ac033d", [spaced], e.encode([spaced]),
+        "drive_archive", "d0c00001", [spaced], e.encode([spaced]),
     )
     monkeypatch.setattr(
         ret,
@@ -491,3 +491,32 @@ def test_chat_path_unknown_cesmm_still_identifier_misses(
     assert msg is None
     assert audit.get("identifier_miss") is True or audit.get("threshold_fired") is True
     assert any("d888.9" in i for i in (audit.get("extracted_identifiers") or []))
+
+
+def test_a_class_code_matches_compact_and_ocr_spaced_through_indexable_sql(isolated_store):
+    """``K418.3`` matches both ``K418.3`` and the OCR-spaced ``K 418.3``, and the
+    filter is plain ``LOWER(text) LIKE`` -- the expression the trigram index
+    on ``lower(text)`` serves. A ``REPLACE(text, ...)`` filter has no index and
+    reads every row of the project."""
+    from sqlalchemy import event
+
+    store, e = isolated_store
+    texts = ["K418.3 Kerb laying 140 m", "K 418.3 Kerb laying 60 m", "K419.1 Gully 4 nr"]
+    for i, t in enumerate(texts):
+        store.upsert_chunks("proj_a", f"doc_{i}", [t], e.encode([t]))
+
+    seen = []
+    engine = store._session_factory()().get_bind()
+
+    def _capture(conn, cursor, statement, params, context, executemany):
+        seen.append(statement)
+
+    event.listen(engine, "before_cursor_execute", _capture)
+    try:
+        results = store.identifier_search("proj_a", ["K418.3"], k=5)
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture)
+
+    assert sorted(c.text for c in results) == sorted(texts[:2])
+    reads = [s for s in seen if "LIKE" in s.upper()]
+    assert reads and not any("REPLACE(" in s.upper() for s in reads)

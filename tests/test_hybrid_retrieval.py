@@ -78,7 +78,7 @@ CORPUS = [
     # 3: Q5 answer chunk — manhole spacing, precise tokens
     (
         "tl_600_0000002",
-        "IP-INF-053-0000-JCB-DWG-TL-600-0000002 -- SECTIONAL ELEVATION "
+        "QZ-ENG-310-0000-EXC-DWG-TL-600-0000002 -- SECTIONAL ELEVATION "
         "(Telecom, Rev D) Notes: GENERAL NOTES 1. MANHOLE TYPE-A SHALL "
         "BE PROVIDED AT EVERY 1000M INTERVALS AND AT THE JUNCTIONS OR "
         "CHANGE IN DIRECTIONS.",

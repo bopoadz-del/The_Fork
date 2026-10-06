@@ -47,10 +47,10 @@ class Candidate:
 
 # All anchors below were hand-picked from chunk inspection of:
 #   - a3eda25f  the client - Infra-1 - Demolition BOQ.pdf  (BOQ rates)
-#   - aa8128ce  the client Demolition Vol 3 Drawings.pdf  (drawing sheet titles)
-#   - 586e909b  the client project Infra-1 Vol 3 Drawings (6 of 7)  (electrical drawings)
-#   - 9c116493  the client project Infra-1 Vol 2 Specification (4 of 9)  (spec clauses)
-#   - 70557d5c  the client project Infra-1 Vol 1 Conditions of Contract  (clauses)
+#   - d0c00008  the client Demolition Vol 3 Drawings.pdf  (drawing sheet titles)
+#   - d0c00006  the client project Infra-1 Vol 3 Drawings (6 of 7)  (electrical drawings)
+#   - 9c116493  the client project Infra-1 Vol 2 Specification (4 of 11)  (spec clauses)
+#   - d0c00007  the client project Infra-1 Vol 1 Conditions of Contract  (clauses)
 CANDIDATES: List[Candidate] = [
     # ---------------- BOQ (the client Demolition BOQ, doc a3eda25f) -----------------
     Candidate(
@@ -108,41 +108,41 @@ CANDIDATES: List[Candidate] = [
         source_chunk_index=30,
     ),
 
-    # ---------------- Drawings (JCB drawings index) ---------------------------
+    # ---------------- Drawings (EXC drawings index) ---------------------------
     Candidate(
         id="DA07",
         category="drawing",
-        query="In the JCB Volume 3 drawings for the the client KKR detour, drawing IP-INF-053-0000-JCB-DWG-TM-200-0014151 — what is the drawing title and what is its revision?",
-        expected=["KING KHALID ROAD DETOUR ROAD LAYOUT", "B"],
+        query="In the EXC Volume 3 drawings for the the client QRR detour, drawing QZ-ENG-310-0000-EXC-DWG-TM-200-0014151 — what is the drawing title and what is its revision?",
+        expected=["EXAMPLE RING ROAD DETOUR ROAD LAYOUT", "B"],
         forbidden=[],
-        source_doc_id="aa8128ce",
+        source_doc_id="d0c00008",
         source_chunk_index=23,
     ),
     Candidate(
         id="DA08",
         category="drawing",
-        query="On the JCB the client project Infrastructure Package 1 electrical drawings, what is the title of drawing IP-INF-053-0000-JCB-DWG-EL-600-3101501?",
+        query="On the EXC the client project Infrastructure Package 1 electrical drawings, what is the title of drawing QZ-ENG-310-0000-EXC-DWG-EL-600-3101501?",
         expected=["STANDARD INSTALLATION DETAILS"],
         forbidden=[],
-        source_doc_id="586e909b",
+        source_doc_id="d0c00006",
         source_chunk_index=850,
     ),
     Candidate(
         id="DA09",
         category="drawing",
-        query="In the JCB the client project Infrastructure Package 1 Volume 3 electrical drawings (6 of 7), what does revision letter 'B' correspond to in the revision history block — 'DETAILED DESIGN ISSUE' or 'TENDER ADDENDUM'?",
+        query="In the EXC the client project Infrastructure Package 1 Volume 3 electrical drawings (6 of 7), what does revision letter 'B' correspond to in the revision history block — 'DETAILED DESIGN ISSUE' or 'TENDER ADDENDUM'?",
         expected=["TENDER ADDENDUM"],
         forbidden=[],
-        source_doc_id="586e909b",
+        source_doc_id="d0c00006",
         source_chunk_index=891,
     ),
     Candidate(
         id="DA10",
         category="drawing",
-        query="What discipline does the JCB drawing prefix 'WS-' refer to in the the client Volume 3 Drawings schedule (e.g. drawing IP-INF-053-0000-JCB-DWG-WS-200-0005001)?",
+        query="What discipline does the EXC drawing prefix 'WS-' refer to in the the client Volume 3 Drawings schedule (e.g. drawing QZ-ENG-310-0000-EXC-DWG-WS-200-0005001)?",
         expected=["Water Supply"],
         forbidden=[],
-        source_doc_id="aa8128ce",
+        source_doc_id="d0c00008",
         source_chunk_index=98,
     ),
 
@@ -150,25 +150,25 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA11",
         category="contract",
-        query="Per clause 1.4.1 of the DD-2023-118 Vol 1 Conditions of Contract for the client project Infrastructure Package 1, what law governs the Contract?",
+        query="Per clause 1.4.1 of the AB-2023-101 Vol 1 Conditions of Contract for the client project Infrastructure Package 1, what law governs the Contract?",
         expected=["Kingdom"],
         forbidden=[],
-        source_doc_id="70557d5c",
+        source_doc_id="d0c00007",
         source_chunk_index=135,
     ),
     Candidate(
         id="DA12",
         category="contract",
-        query="In DD-2023-118 Vol 1 Conditions of Contract clause 1.6 (Contract Agreement), within how many days of the effective date of a Letter of Award must the Parties enter into a Contract Agreement?",
+        query="In AB-2023-101 Vol 1 Conditions of Contract clause 1.6 (Contract Agreement), within how many days of the effective date of a Letter of Award must the Parties enter into a Contract Agreement?",
         expected=["90 days"],
         forbidden=[],
-        source_doc_id="70557d5c",
+        source_doc_id="d0c00007",
         source_chunk_index=138,
     ),
     Candidate(
         id="DA13",
         category="contract",
-        query="In DD-2023-118 Vol 2 Specification (4 of 9), what ambient temperature range must all field instruments be designed to operate over (section 3.4 environmental conditions)?",
+        query="In AB-2023-101 Vol 2 Specification (4 of 11), what ambient temperature range must all field instruments be designed to operate over (section 3.4 environmental conditions)?",
         expected=["0 to 60"],
         forbidden=[],
         source_doc_id="9c116493",
@@ -177,7 +177,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA14",
         category="contract",
-        query="In DD-2023-118 Vol 2 Specification section 3, what ingress protection (IP) rating is required for control panels installed in controlled control-room environments?",
+        query="In AB-2023-101 Vol 2 Specification section 3, what ingress protection (IP) rating is required for control panels installed in controlled control-room environments?",
         expected=["IP 42"],
         forbidden=[],
         source_doc_id="9c116493",

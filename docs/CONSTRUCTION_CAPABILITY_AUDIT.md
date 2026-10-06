@@ -470,7 +470,7 @@ resolve to no block, no route key and no synthetic tool.
 
 So the flag is not an on-switch for five disciplines; flipping it grants agents
 permission to call 32 actions that do not exist. Registered in
-`KNOWN_INCOMPLETE.md` rather than implemented — writing those 32 is building a
+`docs/KNOWN_INCOMPLETE.md` rather than implemented — writing those 32 is building a
 feature, which is outside "fix what fails a bar".
 
 `tests/test_hats_are_dormant.py` holds the conditional invariant: while the flag
@@ -506,7 +506,7 @@ but they are dead vocabulary.
 
 **The archive was not rewritten.** `docs/archive/HANDOFF.md` and
 `PROGRESS.md` still carry the incorrect "need multi-file resolution" reason.
-They are historical records; `KNOWN_INCOMPLETE.md` names and corrects them
+They are historical records; `docs/KNOWN_INCOMPLETE.md` names and corrects them
 rather than editing history.
 
 ---
@@ -520,14 +520,14 @@ rather than editing history.
 - Real-file validation for BOQ and QTO, matching the standard
   `parse_primavera_schedule` already meets. BOQ and QTO are currently proven
   on synthetic fixtures; drawings and schedules are proven on real ones.
-- `extract_measurements` recovers counts but no dimensions from a real
-  drawing (all 34 hits are `type: "count"`, `unit: "ea"`). That is a
+- `extract_measurements` recovers counts but no dimensions from the
+  drawings it was measured on (every hit was `type: "count"`, `unit: "ea"`). That is a
   drawing-reader limitation, registered, not a wiring one.
-- Two committed binaries used as fixtures (`drawing_tm_200.pdf`,
-  `ohdd_baseline_2013.xer`) are pending an owner decision on client content.
-  Both payload test files now assert their presence in the production-like CI
-  profile, so purging one breaks the build instead of silently returning the
-  capability to zero coverage as green skips.
+- The committed client binaries formerly used as drawing and schedule
+  fixtures were replaced by synthetic files generated inside the tests
+  (`tests/_synthetic_fixtures.py`). Both payload test files generate their
+  input on every run, so the capability can no longer fall back to zero
+  coverage as green skips.
 - The discipline-hat system needs a product decision, not code. It overlaps
   heavily with the live 14-agent system and the agent-picker, and closing it
   means writing 32 actions. Registered and fenced; nothing here is blocked on

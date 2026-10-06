@@ -20,7 +20,7 @@ High semantic similarity scores (avg top score ≈ 0.69) are therefore misleadin
 * occasional hallucinated/contradictory answers on critical rules (e.g. whether `APPROVED` is allowed on design documents);
 * degenerate outputs such as raw tool-call JSON or empty assistant bubbles.
 
-The training/evaluation corpus is large, mostly well-mapped to the indexed chunks, and covers the right construction disciplines, but it is noisy: duplicated instructions, version sprawl, and contradictory labels for the same procedure (PRC-501 design-review statuses).
+The training/evaluation corpus is large, mostly well-mapped to the indexed chunks, and covers the right construction disciplines, but it is noisy: duplicated instructions, version sprawl, and contradictory labels for the same procedure (PRC-951 design-review statuses).
 
 **Recommendation:** do not rely on RAG for fine-grained document lookup until retrieval is upgraded. The highest-impact fixes are (1) move from the current 256-dim `model2vec` embedder to a stronger sentence-transformer or domain embedding model, (2) verify hybrid BM25 is actually active and tuned, (3) deduplicate and reconcile training labels, and (4) add a continuous recall@K evaluation gate.
 
@@ -34,13 +34,13 @@ The training/evaluation corpus is large, mostly well-mapped to the indexed chunk
 |---|---|---|---|
 | `projects_folder` | 2 713 | 110 379 | backing corpus for the `master_corpus` master-corpus alias |
 | `training_material` | 241 | 10 907 | cross-project general-knowledge corpus (procedures, scanned references) |
-| `ha_long_xanh` | 62 | 383 | user project; own corpus exists |
+| `example_estate` | 62 | 383 | user project; own corpus exists |
 | `fb776aa2` | 15 | 57 | small user project |
 | `c0ac2b2d` | 23 | 33 | small user project |
 | `77dd3f5d` | 8 | 23 | small user project |
 | `3f6f28b2` | 3 | 8 | small user project |
 | `8f73170f` | 2 | 6 | small user project |
-| `client_infra_pack_1_2` | 1 | 3 | small user project |
+| `example_infra_pack_2` | 1 | 3 | small user project |
 | `bb00878f` | 8 | 0 | **documents present, no indexed chunks** |
 | `df28d3c0` | 8 | 0 | **documents present, no indexed chunks** |
 | `e483b574` | 2 | 0 | **documents present, no indexed chunks** |
@@ -52,7 +52,7 @@ The training/evaluation corpus is large, mostly well-mapped to the indexed chunk
 
 A 100 000-chunk sample of the `drive_archive` / `projects_folder` corpus shows the content is overwhelmingly the the client project project:
 
-* **99 650 / 100 000 chunks** are under `G:\My Drive\Master Folder\the client project\...`.
+* **99 650 / 100 000 chunks** are under `X:\Example Drive\Master Folder\the client project\...`.
 * The remaining ~350 chunks are scattered personal files, CVs, certificates and unrelated spreadsheets.
 * Average chunk length ≈ 650 characters (max 994, min 101). Chunking exceeds the nominal 512-char window in places, likely because the `[source: ...]` prefix is included in the stored text.
 
@@ -127,11 +127,11 @@ Source-chunk presence is also very high:
 
 * **Duplicate instructions:** `training_scenarios.jsonl` has **1 556 duplicate instructions** out of 26 245 rows (~6 %). `drive_archive_v2` has 80 duplicates out of 1 430 (~6 %).
 * **Version sprawl:** multiple versions of the drive_archive training set (`v2`, `v3` shards, `v4`-`v8` shards, `clean`, `merged`, `rag_grounded`) make it unclear which is the canonical eval set.
-* **Contradictory labels for PRC-501:**
+* **Contradictory labels for PRC-951:**
   * `app/prompts/construction_expert.txt` and `app/core/construction_knowledge.py` say valid design statuses are `FOR_COMMENT`, `ACCEPTANCE`, `BUY_OFF` (and `APPROVED` is forbidden).
   * `data/learning/high_density_facts.jsonl` says valid statuses are `REVIEWED`, `COMMENTS INCORPORATED`, `REJECTED`.
   * `data/learning/expert_scenarios.jsonl` says valid statuses are `FOR COMMENT`, `ACCEPTANCE`, `BUY-OFF`.
-  * This inconsistency makes it impossible to train or evaluate a reliable PRC-501 classifier without first reconciling the source of truth.
+  * This inconsistency makes it impossible to train or evaluate a reliable PRC-951 classifier without first reconciling the source of truth.
 
 ---
 
@@ -158,7 +158,7 @@ Observations:
 
 | query | project | result | issue |
 |---|---|---|---|
-| `concrete` | `ha_long_xanh` | returned generic `training_material` chunks about prestressed/reinforced concrete | active project corpus ignored for a generic term; GK corpus dominates |
+| `concrete` | `example_estate` | returned generic `training_material` chunks about prestressed/reinforced concrete | active project corpus ignored for a generic term; GK corpus dominates |
 | `rebar` | `master_corpus` (alias) | only 1 chunk, score 0.06, garbled OCR | very poor retrieval |
 | `the client project project execution plan` | `master_corpus` | **0 chunks** | high-value document not retrieved |
 | `bill of quantities` | `master_corpus` | 3 relevant contract-template chunks, scores ~0.57-0.58 | good |
@@ -183,12 +183,12 @@ Method: call `POST /v1/agents/project-assistant/chat` with `project_id=master_co
 | "What modifications were made to the intersection design in the MV Culvert Diversion?" | success, cited | **Good** | Matches ground-truth answer; cites the correct drawing |
 | "What was the status of VO Ref: 31 and when was it closed?" | success, **wrong** | **Fail** | Ground truth exists in corpus (closed 2024-02-12), but chat says it cannot locate it |
 | "What type of lighting fixture is specified for the 4.5M pole...?" | success, no citation | **Mixed** | Correct generic fact (28W LED) but no source cited; cannot verify which drawing |
-| "Is APPROVED a valid status on design documents per PRC-501?" | success, **wrong** | **Fail** | Answers "Yes — APPROVED is valid", contradicting `construction_expert.txt`, `construction_knowledge.py`, and `high_density_facts.jsonl` |
-| "What are the valid statuses for a design package under PRC-501?" | success, malformed | **Fail** | Returned raw `search_project_documents` tool-call JSON instead of an answer |
+| "Is APPROVED a valid status on design documents per PRC-951?" | success, **wrong** | **Fail** | Answers "Yes — APPROVED is valid", contradicting `construction_expert.txt`, `construction_knowledge.py`, and `high_density_facts.jsonl` |
+| "What are the valid statuses for a design package under PRC-951?" | success, malformed | **Fail** | Returned raw `search_project_documents` tool-call JSON instead of an answer |
 | "What is the contract rule about 'no approved on design'?" | success, long | **Mixed** | Grounded in contract templates but tangential; misses the simple critical rule |
 | "What is the required commencement date for the maintenance works under the the client project PEP?" | success, empty | **Fail** | Answer string is empty after 12 iterations |
 
-**Overall:** 2 good answers, 3 mixed, 3 clear failures in a small sample. Failures correlate with the retrieval failures above (VO Ref 31, PRC-501, empty PEP detail).
+**Overall:** 2 good answers, 3 mixed, 3 clear failures in a small sample. Failures correlate with the retrieval failures above (VO Ref 31, PRC-951, empty PEP detail).
 
 ---
 
@@ -200,7 +200,7 @@ Method: call `POST /v1/agents/project-assistant/chat` with `project_id=master_co
 | **Corpus grounding** | Strong — ~98-100 % of source doc_ids/chunks exist in the indexed corpus |
 | **Construction usefulness** | Good — questions are realistic document lookups, BOQ extractions, drawing Q&A, and procedure checks |
 | **Cleanliness** | Weak — 6 % duplicate instructions, multiple overlapping versions, no clear canonical eval set |
-| **Consistency** | **Critical** — PRC-501 design-status labels are contradictory across files, which poisons both training and evaluation |
+| **Consistency** | **Critical** — PRC-951 design-status labels are contradictory across files, which poisons both training and evaluation |
 
 ---
 
@@ -227,7 +227,7 @@ It is acceptable for exploratory, high-level questions ("What is the PEP about?"
 2. **Verify and tune hybrid retrieval** — add runtime logging of the BM25 leg (hits, fusion scores) and A/B test `RAG_HYBRID_SEARCH` on/off against the in-distribution eval set.
 3. **Add a recall@K gate** — promote `training_scenarios_drive_archive_v2.jsonl` (or similar) to a canonical eval set and fail CI when recall@5 drops below a threshold.
 4. **Deduplicate and version the training corpus** — pick one canonical `training_scenarios.jsonl`, archive the shard/version sprawl, and remove duplicate instructions.
-5. **Reconcile PRC-501 labels** — decide the authoritative source of truth (procedure DB + `construction_knowledge.py` is recommended) and rewrite the contradictory `high_density_facts.jsonl` entries.
+5. **Reconcile PRC-951 labels** — decide the authoritative source of truth (procedure DB + `construction_knowledge.py` is recommended) and rewrite the contradictory `high_density_facts.jsonl` entries.
 6. **Improve chunking and OCR quality** — chunks >512 chars and mangled Unicode/OCR text reduce retrieval signal; review the indexer chunker and the OCR pipeline for construction drawings.
 7. **Address empty/malformed chat outputs** — the raw tool-call JSON and empty-string answers need guardrails in the agent loop.
 8. **Re-index the 0-chunk projects** — `bb00878f`, `df28d3c0`, `e483b574` have documents but no chunks; users querying those projects will get only general-knowledge results.
@@ -242,6 +242,6 @@ The following read-only artifacts were produced by this audit and are left in th
 * `data/learning/rag_audit/sample_retrieval_recall_projects_folder.json` — 30-question recall sample vs `projects_folder`
 * `data/learning/rag_audit/retrieval_recall_100.json` — 100-question recall summary
 * `data/learning/rag_audit/chat_quality_sample_1.json` — chat answer sample (drawing + VO questions)
-* `data/learning/rag_audit/chat_quality_sample_2.json` — chat answer sample (PRC-501 + PEP questions)
+* `data/learning/rag_audit/chat_quality_sample_2.json` — chat answer sample (PRC-951 + PEP questions)
 
 No source files were modified and no production data was mutated.

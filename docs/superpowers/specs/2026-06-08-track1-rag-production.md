@@ -148,9 +148,9 @@ turn, schema:
   "budget_remaining": 487253,
   "budget_degraded": false,
   "chunks": [
-    {"doc_id": "anthropic-bod-pdf-1", "chunk_index": 42, "score": 0.71},
-    {"doc_id": "anthropic-rfp-docx-1", "chunk_index": 17, "score": 0.62},
-    {"doc_id": "anthropic-bod-pdf-1", "chunk_index": 43, "score": 0.58}
+    {"doc_id": "client-bod-pdf-1", "chunk_index": 42, "score": 0.71},
+    {"doc_id": "client-rfp-docx-1", "chunk_index": 17, "score": 0.62},
+    {"doc_id": "client-bod-pdf-1", "chunk_index": 43, "score": 0.58}
   ]
 }
 ```
@@ -309,11 +309,11 @@ The queries reference two doc sets, both now uploaded (commit-time setup
 completed 2026-06-08):
 
 - **Anthropic project (`fb776aa2`):**
-  - Anthropic Request for Proposals 041726.docx
-  - Anthropic Performance Basis of Design.pdf (`ca6292f9`, 762 KB)
-  - Anthropic RFP Appendix B 041726.xlsx (`0f9ffc6b`, 14.5 KB)
-  - PRC-201 Time Management.pdf
-  - PRC-301 Request for Information.pdf
+  - Example Client Request for Proposals 010101.docx
+  - Example Client Performance Basis of Design.pdf (`d0c0001a`, 762 KB)
+  - Example Client RFP Appendix B 010101.xlsx (`d0c0001b`, 14.5 KB)
+  - PRC-921 Time Management.pdf
+  - PRC-931 Request for Information.pdf
   - Plus two unrelated docs (nambae-menu pptx, SandsChina docx) and a
     `~$C-201` Office lockfile artifact — these will appear in the index but
     are noise for the regression queries.

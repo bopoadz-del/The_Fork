@@ -615,6 +615,38 @@ def _ensure_hnsw_index(eng, table_name: str) -> None:
         )
 
 
+def _ensure_embedding_inline(eng, table_name: str) -> None:
+    """Keep ``embedding`` in the heap row (``STORAGE MAIN``), not in TOAST.
+
+    pgvector declares ``vector`` with EXTERNAL storage, so once a row passes
+    the ~2 KB TOAST threshold the embedding is the column moved out of line.
+    Every distance computed outside the HNSW index -- the exact
+    ``ORDER BY embedding <=> q`` over one project's rows the planner picks
+    for a small project -- then fetches each row's embedding through the
+    TOAST index: about six buffers per row instead of a share of one heap
+    page. MAIN makes the toaster move ``text`` / ``text_search`` out first
+    and keep the vector inline. Rows written before the change keep their
+    old layout until they are rewritten. Metadata-only; never raises.
+    """
+    try:
+        with eng.begin() as conn:
+            storage = conn.execute(text(
+                "SELECT a.attstorage FROM pg_attribute a "
+                "WHERE a.attrelid = CAST(:t AS regclass) AND a.attname = 'embedding'"
+            ), {"t": table_name}).scalar()
+            if storage is None or storage == "m":
+                return
+            conn.execute(text("SET LOCAL lock_timeout = '2s'"))
+            conn.execute(text(
+                f"ALTER TABLE {table_name} ALTER COLUMN embedding SET STORAGE MAIN"
+            ))
+    except Exception:  # noqa: BLE001 — a storage hint must not block startup
+        logger.warning(
+            "could not set inline storage for %s.embedding (exact vector "
+            "scans read TOAST until it is set)", table_name, exc_info=True,
+        )
+
+
 def _ensure_trigram_index(eng, table_name: str) -> None:
     """Ensure the ``pg_trgm`` GIN index on ``lower(text)`` exists.
 
@@ -761,6 +793,7 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
                     "could not ensure text_search column on %s", table_name,
                     exc_info=True,
                 )
+            _ensure_embedding_inline(eng, table_name)
             _ensure_hnsw_index(eng, table_name)
             _ensure_trigram_index(eng, table_name)
         _INITIALIZED_NAMESPACES.add(init_key)
@@ -1633,8 +1666,11 @@ class VectorStore:
         # wildcard escaping is required.
         #
         # Letter+digits tokens (``d549``) also match the OCR-spaced form
-        # by stripping spaces before LIKE — otherwise ``D 549.2`` in the
-        # stored chunk fails ``ILIKE '%d549%'`` (live Neon: 0 rows).
+        # ``d 549`` — otherwise ``D 549.2`` in the stored chunk fails
+        # ``ILIKE '%d549%'`` (live Neon: 0 rows). Both forms are plain
+        # ``LOWER(text) LIKE`` so the trigram index on ``lower(text)`` serves
+        # them; ``LOWER(REPLACE(text, ' ', ''))`` had no index and read every
+        # row of the project.
         ident_clauses: List[str] = []
         params: Dict[str, Any] = {"project_id": project_id, "k": k}
         param_idx = 0
@@ -1643,8 +1679,10 @@ class VectorStore:
             for tok in tokens:
                 if _CESMM_COMPACT_TOKEN_RE.fullmatch(tok):
                     token_clauses.append(
-                        f"LOWER(REPLACE(text, ' ', '')) LIKE :p{param_idx}"
+                        f"(LOWER(text) LIKE :p{param_idx} "
+                        f"OR LOWER(text) LIKE :p{param_idx}s)"
                     )
+                    params[f"p{param_idx}s"] = f"%{tok[0]} {tok[1:]}%"
                 else:
                     token_clauses.append(f"LOWER(text) LIKE :p{param_idx}")
                 params[f"p{param_idx}"] = f"%{tok}%"

@@ -60,14 +60,14 @@ NET_ACA_TXT = f"SAR {NET_ACA:,.2f}"
 GROSS_ACA_TXT = f"SAR {GROSS_ACA:,.2f}"
 
 DD23_NAME = (
-    "DD-2023-118_the client project II Infrastructure Package 1_"
+    "AB-2023-101_the client project II Infrastructure Package 1_"
     "Vol 1 - Conditions of Contract.pdf"
 )
 CD_SCANNED_NAME = (
-    "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract "
+    "AB-2023-101_QP2 Infra P1_Vol 1.0_Cond of Contract "
     "(complete)_Contract Data.pdf"
 )
-SPEC_NAME = "DD-2023-118_Vol 2 Specifications — Table of Contents.pdf"
+SPEC_NAME = "AB-2023-101_Vol 2 Specifications — Table of Contents.pdf"
 DAYWORK_NAME = "Daywork Schedule — Labour per calendar day.pdf"
 INSURANCE_NAME = "Works All Risks Insurance Policy.pdf"
 
@@ -1779,7 +1779,7 @@ def _ignore_all_rows_store(all_chunks, owner_pid=None):
 
 def _live_refuse_sys(*chunks):
     """Inject markers the live Sources panel uses (class=project_corpus)."""
-    src = "DD-2023-118_DG2 Infra P1_Vol 1.0_Con..."
+    src = "AB-2023-101_QP2 Infra P1_Vol 1.0_Con..."
     body = "\n\n".join(
         f"[doc_id={c.doc_id} chunk={c.chunk_index} "
         f"score={c.score:.3f} class=project_corpus src={src}] {c.text}"
@@ -1879,7 +1879,7 @@ def test_e1_retrieve_ignore_all_rows_refuse_window_still_composes(monkeypatch):
     from app.core.rag import retriever as ret
 
     all_chunks, windows, _rate, _aca = _refuse_prone_volume_chunks()
-    names = {GC_DOC: "DD-2023-118_DG2 Infra P1_Vol 1.0_Con..."}
+    names = {GC_DOC: "AB-2023-101_QP2 Infra P1_Vol 1.0_Con..."}
     seeded = [
         {"id": GC_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
     ]

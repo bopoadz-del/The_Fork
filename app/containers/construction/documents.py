@@ -1219,7 +1219,7 @@ class ConstructionDocumentsMixin:
         sections.append({"section": "H. Warranties & Spare Parts", "content": {"warranty_register": [{"equipment": e.get("description") or e.get("name", "TBD"), "expiry": e.get("warranty_expiry"), "contact": e.get("supplier_contact")} for e in equipment_list], "recommended_spare_parts": self._generate_spare_parts_list(equipment_list), "supplier_contacts": list(set([e.get("supplier_contact") for e in equipment_list if e.get("supplier_contact")]))}})
     
         # Sections E, F and H and the training list are filled by helpers that
-        # are registered as roadmap in KNOWN_INCOMPLETE.md: they return nothing
+        # are registered as roadmap in docs/KNOWN_INCOMPLETE.md: they return nothing
         # until real manufacturer maintenance data is wired in. Say so ON THE
         # MANUAL rather than shipping an empty section that reads as complete,
         # and count only what was actually produced.

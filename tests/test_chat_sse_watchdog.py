@@ -111,7 +111,7 @@ async def test_the_bubble_is_never_left_empty():
 async def test_a_turn_that_already_said_something_gets_no_fallback_token():
     """Mutation killed: always prepending the fallback, which would append
     "did not produce an answer" to a turn that produced most of one."""
-    src = B6_FRAMES + [frame({"type": "token", "content": "IP-INF-053"})]
+    src = B6_FRAMES + [frame({"type": "token", "content": "QZ-ENG-310"})]
     out = await _drain(guarantee_terminal(_gen(src)))
     assert _types(out) == ["start", "route", "start", "token", "error", "end"]
     assert SILENT_TURN_FALLBACK not in "".join(out)

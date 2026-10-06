@@ -1,4 +1,4 @@
-"""Extract the scanned Nakheel Jumeirah Islands "Heights" RW Bill of Quantities.
+"""Extract the scanned example developer "Heights" RW Bill of Quantities.
 
 Target: BOQ-RW.pdf (28 pages, image-only / no text layer). Fronds Apartments
 A & B (Main Works), Package 2 [N004-060-01].
@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import sys
 
@@ -47,7 +48,7 @@ import numpy as np
 import pytesseract
 from PIL import Image
 
-PDF = "C:/Users/shimm/Downloads/wetransfer_docs_2026-05-20_1430/BOQ-RW.pdf"
+PDF = os.environ.get("BOQ_PDF", "/data/example/boq_rw.pdf")
 
 # Bill (line-item) pages are 1-based 7..28; preambles are 1..6.
 FIRST_BILL_PAGE = 7
@@ -377,9 +378,8 @@ def main():
     result = {"pdf": PDF, "currency": "AED", "qa": qa,
               "pages": bills, "items": all_rows}
 
-    out_dir = ("C:/Users/shimm/AppData/Local/Temp/claude/C--Users-shimm/"
-               "436703f7-0a30-48b6-a650-29d75aac4fa5/scratchpad/wetransfer_boq")
-    with open(out_dir + "/boq_rw_nakheel_result.json", "w", encoding="utf-8") as f:
+    out_dir = os.path.join(os.environ.get("FORK_SCRATCH_DIR", "/data/example/scratch"), "wetransfer_boq")
+    with open(out_dir + "/boq_rw_result.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=True)
 
     # xlsx
@@ -396,7 +396,7 @@ def main():
         "qa_row_ok": r["qa_row_ok"],
         "qa_note": r["qa_note"],
     } for r in all_rows])
-    df.to_excel(out_dir + "/boq_rw_nakheel_items.xlsx", index=False)
+    df.to_excel(out_dir + "/boq_rw_exampledev_items.xlsx", index=False)
 
     sys.stderr.write(json.dumps(qa, indent=2).encode("ascii", "replace").decode() + "\n")
     # Echo priced rows for verification.

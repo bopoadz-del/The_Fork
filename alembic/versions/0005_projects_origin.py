@@ -10,7 +10,7 @@ its own — the operator's spec assigns is_approved=true to both buckets
 (user-created defaults to true; admin-approve-from-drive sets true).
 
 The admin page needs to list only projects the admin actively approved
-from a Drive folder cascade (not chadi/bopo-style user-created rows).
+from a Drive folder cascade (not personal-account-style user-created rows).
 A discriminator column makes that filter unambiguous.
 
 Values:

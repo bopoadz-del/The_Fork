@@ -147,7 +147,7 @@ async def test_chat_source_labels_do_not_expose_raw_paths(monkeypatch):
             "status": "success",
             "choice": {
                 "message": {
-                    "content": "See [source: G:\\My Drive\\SomeDoc.pdf, chunk 1].",
+                    "content": "See [source: X:\\Example Drive\\SomeDoc.pdf, chunk 1].",
                     "tool_calls": [],
                 },
                 "finish_reason": "stop",
@@ -169,7 +169,7 @@ async def test_chat_source_labels_do_not_expose_raw_paths(monkeypatch):
 
     result = await agent.chat("What does the spec say?", project_id="proj_a")
 
-    assert "G:\\My Drive" not in result["answer"]
+    assert "X:\\Example Drive" not in result["answer"]
     assert "[source: SomeDoc.pdf, chunk 1]" in result["answer"]
     assert result["sources"][0]["doc_name"] == "SomeDoc.pdf"
 
@@ -218,9 +218,9 @@ def test_answer_is_caveat_detects_refusal_phrases():
 
 
 def test_sanitize_inline_paths_cleans_markdown_table_source_cell():
-    raw = "| Source |\n| G:\\My Drive\\XYZ-501.pdf |"
+    raw = "| Source |\n| X:\\Example Drive\\XYZ-501.pdf |"
     cleaned = _sanitize_inline_paths(raw)
-    assert "G:\\My Drive" not in cleaned
+    assert "X:\\Example Drive" not in cleaned
     assert "XYZ-501.pdf" in cleaned
 
 

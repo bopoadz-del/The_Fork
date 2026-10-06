@@ -665,7 +665,12 @@ def _resolve_rag_project_id(project_id: str) -> str:
         return project_id
 
 
-_DD2022_CITE_RE = re.compile(r"(?i)\bdd[-\s]?2022\b")
+# A contract number (PREFIX-YEAR[-SEQ]: AB-2031-007, AB2031) in a BOQ-derived
+# WBS answer. The WBS is built from bill rows; a contract-number cite means
+# the answer leaned on a Conditions of Contract volume instead.
+_CONTRACT_CITE_RE = re.compile(
+    r"(?<![A-Za-z0-9])[A-Za-z]{2,}-?(?:19|20)\d{2}(?:-\d+)?(?![A-Za-z0-9])"
+)
 _WBS_REFUSE_RE = re.compile(
     r"(?i)\b(?:cannot|can\s*'?\s*t|could\s+not|unable\s+to|do\s+not\s+have|"
     r"don\s*'?\s*t\s+have|does\s+not\s+contain|do\s+not\s+contain|"
@@ -743,17 +748,17 @@ def _prefer_newer_contract_year_items(
 
 
 def boq_wbs_answer_fails_wrong_contract(answer: str) -> bool:
-    """True for the live leftover F1 FAIL: refuse and/or DD-2022 cite.
+    """True for the live leftover F1 FAIL: refuse and/or a contract-number cite.
 
     Soft battery ``must_any: clearance|trees|pavement`` marks PASS when
     the refuse merely mentions demolition. That is a FAIL.
     """
     blob = answer or ""
-    cites_dd2022 = bool(_DD2022_CITE_RE.search(blob))
+    cites_contract = bool(_CONTRACT_CITE_RE.search(blob))
     refuses = bool(_WBS_REFUSE_RE.search(blob))
-    if cites_dd2022 and refuses:
+    if cites_contract and refuses:
         return True
-    if cites_dd2022:
+    if cites_contract:
         return True
     if refuses and not boq_wbs_answer_is_grounded(blob):
         return True
@@ -765,12 +770,12 @@ def boq_wbs_answer_is_grounded(answer: str) -> bool:
 
     Requires the demolition/site-clearance scope AND either a numbered
     hierarchy or CESMM D-codes. A mere mention of demolition is not enough.
-    Template scaffold and DD-2022 cites fail.
+    Template scaffold and contract-number cites fail.
     """
     blob = answer or ""
     if not blob.strip():
         return False
-    if _DD2022_CITE_RE.search(blob):
+    if _CONTRACT_CITE_RE.search(blob):
         return False
     if _WBS_TEMPLATE_RE.search(blob):
         return False

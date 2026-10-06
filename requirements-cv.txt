@@ -22,7 +22,7 @@ filelock==3.29.3
     # via torch
 fonttools==4.63.0
     # via matplotlib
-fsspec==2026.4.0
+fsspec==2026.6.0
     # via torch
 idna==3.18
     # via requests

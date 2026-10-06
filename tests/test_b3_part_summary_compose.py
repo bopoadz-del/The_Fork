@@ -435,15 +435,15 @@ def test_named_part_summary_scope_keeps_summary_drops_foreign_year():
 
     ask = LIVE_PREFIX + B3_ASK
     named = (
-        "DD-2023-118 - Demolition and Site Clearance BOQ.pdf",
+        "AB-2023-101 - Demolition and Site Clearance BOQ.pdf",
         LIVE_OCR,
     )
     other = (
-        "DD-2022-175 - Demolition and Site Clearance BOQ.pdf",
+        "AB-2022-202 - Demolition and Site Clearance BOQ.pdf",
         "Page d/3/1\nPart Summary total d/3/1 | | | | 9,999.00 |\n",
     )
     items = (
-        "DD-2023-118 - Demolition and Site Clearance BOQ.pdf",
+        "AB-2023-101 - Demolition and Site Clearance BOQ.pdf",
         LINE_ITEMS_ONLY,
     )
     scope = _ContractScope(ask, [items, named, other])

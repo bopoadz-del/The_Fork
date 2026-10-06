@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 
-DEFAULT_ROOT = Path("G:/My Drive")
+DEFAULT_ROOT = Path(os.environ.get("FORK_DRIVE_ROOT", "/data/example"))
 
 
 def _walk_local(root: Path) -> Dict[str, Any]:

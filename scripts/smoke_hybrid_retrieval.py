@@ -3,7 +3,7 @@
 Reads the SQLite at ``data/rag/vectors.db`` (139k+ chunks under
 project_id ``drive_archive``). Runs the canonical Q2 + Q5 probes both
 semantic-only and hybrid, prints the top-5 for each, and tags the TL
-SECTIONAL ELEVATION chunk (``IP-INF-053-0000-JCB-DWG-TL-600-0000002``)
+SECTIONAL ELEVATION chunk (``QZ-ENG-310-0000-EXC-DWG-TL-600-0000002``)
 where it lands.
 
 Usage:

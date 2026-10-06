@@ -28,6 +28,6 @@ def test_dotted_cesmm_codes_still_collapse():
 
 
 def test_reference_codes_unchanged():
-      assert n("drawing IP-INF-054-0000-JCB-DWG") == "drawing IP-INF-054-0000-JCB-DWG"
-      assert n("see DD-2023-118 Vol 1") == "see DD-2023-118 Vol 1"
+      assert n("drawing QZ-ENG-320-0000-EXC-DWG") == "drawing QZ-ENG-320-0000-EXC-DWG"
+      assert n("see AB-2023-101 Vol 1") == "see AB-2023-101 Vol 1"
   

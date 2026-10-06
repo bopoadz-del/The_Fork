@@ -146,13 +146,13 @@ def test_build_sources_empty_audit_returns_empty():
 # top-3-by-score instead of the chunks the answer actually cited (2026-06-30).
 
 def test_extract_inline_bracketed_source_single_chunk():
-    txt = "Trees must be protected (Source: [DD-2022-175 - Site Demolition Part 3], chunk 941)."
+    txt = "Trees must be protected (Source: [AB-2022-202 - Site Demolition Part 3], chunk 941)."
     out = _extract_cited_chunk_indexes(txt)
     assert any(idx == 941 for _, idx in out), out
 
 
 def test_extract_inline_bracketed_source_chunk_range():
-    txt = "See the schedule (Source: [DD-2022-175 - Site Demolition Part 2], chunks 1988-1990)."
+    txt = "See the schedule (Source: [AB-2022-202 - Site Demolition Part 2], chunks 1988-1990)."
     out = _extract_cited_chunk_indexes(txt)
     nums = {idx for _, idx in out}
     assert 1988 in nums, out  # at least the range start is captured
@@ -169,9 +169,9 @@ def test_build_sources_matches_inline_bracket_cite_by_chunk_index(monkeypatch):
     ])
     _stub_get_document(
         monkeypatch,
-        "DD-2022-175 - Site Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 3.pdf",
+        "AB-2022-202 - Site Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 3.pdf",
     )
-    text = "Trees must be protected (Source: [DD-2022-175 - Site Demolition … Part 3], chunk 941)."
+    text = "Trees must be protected (Source: [AB-2022-202 - Site Demolition … Part 3], chunk 941)."
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1, out
     assert out[0]["page_or_section"] == "chunk #941"
@@ -220,10 +220,10 @@ def test_build_sources_uses_bracketless_citation(monkeypatch):
 # ── PR #112 — [doc_id=X chunk=N] form (gpt-oss technical-precision style) ──
 
 def test_extract_doc_id_form_with_separators():
-    """gpt-oss sometimes emits [doc_id=3496d239, chunk 65, score 0.697]."""
-    txt = "see [doc_id=3496d239, chunk 65, score 0.697] for detail"
+    """gpt-oss sometimes emits [doc_id=d0c0000e, chunk 65, score 0.697]."""
+    txt = "see [doc_id=d0c0000e, chunk 65, score 0.697] for detail"
     out = _extract_cited_chunk_indexes(txt)
-    assert ("3496d239", 65) in out
+    assert ("d0c0000e", 65) in out
 
 
 def test_extract_doc_id_form_kv_separators():
@@ -238,17 +238,17 @@ def test_build_sources_uses_doc_id_citation(monkeypatch):
     THAT chunk by direct doc_id match — bypasses the filename match
     entirely (avoids name-mismatch fall-through)."""
     audit = _make_audit([
-        {"doc_id": "3496d239", "chunk_index": 0,  "score": 0.78},
-        {"doc_id": "3496d239", "chunk_index": 4,  "score": 0.74},
-        {"doc_id": "3496d239", "chunk_index": 65, "score": 0.69},
+        {"doc_id": "d0c0000e", "chunk_index": 0,  "score": 0.78},
+        {"doc_id": "d0c0000e", "chunk_index": 4,  "score": 0.74},
+        {"doc_id": "d0c0000e", "chunk_index": 65, "score": 0.69},
     ])
     _stub_get_document(monkeypatch, "XYZ-406_HSE.pdf")
 
-    text = "Per the procedure [doc_id=3496d239, chunk 65, score 0.697]."
+    text = "Per the procedure [doc_id=d0c0000e, chunk 65, score 0.697]."
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
     assert out[0]["page_or_section"] == "chunk #65"
-    assert out[0]["doc_id"] == "3496d239"
+    assert out[0]["doc_id"] == "d0c0000e"
 
 
 def test_build_sources_doc_id_mismatch_falls_back(monkeypatch):
@@ -268,9 +268,9 @@ def test_build_sources_doc_id_mismatch_falls_back(monkeypatch):
 
 def test_extract_smart_quote_source_inline():
     """Model emits Source: “File Name.xlsx”, which says..."""
-    txt = 'Source: "Diff BOQ Qty Vs Modified Qty.xlsx", which lists PVC pipe sizes.'
+    txt = 'Source: "Diff BOQ Qty Vs Revised Qty.xlsx", which lists PVC pipe sizes.'
     out = _extract_cited_chunk_indexes(txt)
-    assert any("Diff BOQ Qty Vs Modified Qty.xlsx" in fname for fname, _ in out)
+    assert any("Diff BOQ Qty Vs Revised Qty.xlsx" in fname for fname, _ in out)
 
 
 def test_extract_smart_quote_source_with_chunk():
@@ -285,12 +285,12 @@ def test_extract_filename_with_spaces_and_punctuation(monkeypatch):
     audit = _make_audit([
         {"doc_id": "d1", "chunk_index": 0, "score": 0.8},
     ])
-    _stub_get_document(monkeypatch, "Diff BOQ Qty Vs Modified Qty.xlsx")
+    _stub_get_document(monkeypatch, "Diff BOQ Qty Vs Revised Qty.xlsx")
 
-    text = 'Source: “Diff BOQ Qty Vs Modified Qty.xlsx”, which lists PVC sizes.'
+    text = 'Source: “Diff BOQ Qty Vs Revised Qty.xlsx”, which lists PVC sizes.'
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
-    assert out[0]["doc_name"] == "Diff BOQ Qty Vs Modified Qty.xlsx"
+    assert out[0]["doc_name"] == "Diff BOQ Qty Vs Revised Qty.xlsx"
 
 
 def test_build_sources_emits_fallback_when_citation_unparseable(monkeypatch):
@@ -320,14 +320,14 @@ def test_build_sources_uses_filename_mention_fallback(monkeypatch):
     ])
 
     def doc_lookup(did):
-        return {"original_name": "Diff BOQ Qty Vs Modified Qty.xlsx"} if did == "d1" else {"original_name": "Other.pdf"}
+        return {"original_name": "Diff BOQ Qty Vs Revised Qty.xlsx"} if did == "d1" else {"original_name": "Other.pdf"}
 
     monkeypatch.setattr("app.core.projects.get_document", doc_lookup)
 
-    text = "The storm-water pipe sizes come from Diff BOQ Qty Vs Modified Qty.xlsx."
+    text = "The storm-water pipe sizes come from Diff BOQ Qty Vs Revised Qty.xlsx."
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
-    assert out[0]["doc_name"] == "Diff BOQ Qty Vs Modified Qty.xlsx"
+    assert out[0]["doc_name"] == "Diff BOQ Qty Vs Revised Qty.xlsx"
     assert out[0]["page_or_section"] == "chunk #0"
 
 
@@ -337,7 +337,7 @@ from app.agents.runtime import _clean_path_label, _sanitize_citation_labels
 
 
 def test_clean_path_label_strips_windows_drive():
-    assert _clean_path_label(r"G:\My Drive\500-Design Management\XYZ-501.pdf") == "XYZ-501.pdf"
+    assert _clean_path_label(r"X:\Example Drive\500-Design Management\XYZ-501.pdf") == "XYZ-501.pdf"
 
 
 def test_clean_path_label_strips_unix_path():
@@ -353,16 +353,16 @@ def test_clean_path_label_leaves_basename_alone():
 
 
 def test_sanitize_citation_labels_cleans_bracketed_windows_path():
-    raw = "See [source: G:\\My Drive\\XYZ-501.pdf, chunk 3] for details."
+    raw = "See [source: X:\\Example Drive\\XYZ-501.pdf, chunk 3] for details."
     cleaned = _sanitize_citation_labels(raw)
-    assert "G:\\My Drive" not in cleaned
+    assert "X:\\Example Drive" not in cleaned
     assert "[source: XYZ-501.pdf, chunk 3]" in cleaned
 
 
 def test_sanitize_citation_labels_cleans_chinese_bracket_path():
-    raw = "See 【source: G:\\My Drive\\XYZ-501.pdf, chunk 3】 for details."
+    raw = "See 【source: X:\\Example Drive\\XYZ-501.pdf, chunk 3】 for details."
     cleaned = _sanitize_citation_labels(raw)
-    assert "G:\\My Drive" not in cleaned
+    assert "X:\\Example Drive" not in cleaned
     assert "【source: XYZ-501.pdf, chunk 3】" in cleaned
 
 
@@ -388,7 +388,7 @@ def test_build_sources_cleans_raw_doc_name(monkeypatch):
     }
     monkeypatch.setattr(
         "app.core.projects.get_document",
-        lambda did: {"original_name": r"G:\My Drive\XYZ-406_HSE.pdf"},
+        lambda did: {"original_name": r"X:\Example Drive\XYZ-406_HSE.pdf"},
     )
     out = _build_sources_from_audit(audit, "citation text")
     assert len(out) == 1
@@ -401,10 +401,10 @@ def test_build_sources_cleans_raw_doc_name(monkeypatch):
 # ── R4: Sources must match the answer; preview needs the owning project ──
 
 DD23 = (
-    "DD-2023-118_the client project II Infrastructure Package 1_"
+    "AB-2023-101_the client project II Infrastructure Package 1_"
     "Vol 1 - Conditions of Contract.pdf"
 )
-DD22 = "DD-2022-175 - Volume 1 - Conditions of Contract.pdf"
+DD22 = "AB-2022-202 - Volume 1 - Conditions of Contract.pdf"
 
 
 def _patch_doc_names(monkeypatch, mapping: dict[str, str]) -> None:
@@ -419,10 +419,10 @@ def _patch_doc_names(monkeypatch, mapping: dict[str, str]) -> None:
 def test_extract_src_equals_citation():
     txt = (
         "Delay Damages are 0.1% per day "
-        "[doc_id=ab12cd34 chunk=12 score=0.88 src=DD-2023-118_Vol 1.pdf]."
+        "[doc_id=ab12cd34 chunk=12 score=0.88 src=AB-2023-101_Vol 1.pdf]."
     )
     out = _extract_cited_chunk_indexes(txt)
-    assert any("DD-2023-118" in fname for fname, _ in out), out
+    assert any("AB-2023-101" in fname for fname, _ in out), out
 
 
 def test_build_sources_stamps_chunk_owner_project_id(monkeypatch):
@@ -446,7 +446,7 @@ def test_build_sources_stamps_chunk_owner_project_id(monkeypatch):
 
 
 def test_sources_follow_contract_named_in_answer(monkeypatch):
-    """Answer cites DD-2023-118 in prose; panel must not list DD-2022."""
+    """Answer cites AB-2023-101 in prose; panel must not list AB-2022."""
     _patch_doc_names(monkeypatch, {"d23": DD23, "d22": DD22})
     audit = {
         "project_id": "proj_a",
@@ -460,12 +460,12 @@ def test_sources_follow_contract_named_in_answer(monkeypatch):
              "project_id": "proj_a", "score": 0.80, "layer": "own"},
         ],
     }
-    text = "Per DD-2023-118, Time for Completion is 365 calendar days."
+    text = "Per AB-2023-101, Time for Completion is 365 calendar days."
     out = _build_sources_from_audit(audit, text)
     names = [s["doc_name"] for s in out]
-    assert names, "prose named DD-2023-118 — Sources must not be empty"
-    assert all("DD-2023-118" in n for n in names), names
-    assert not any("DD-2022" in n for n in names), names
+    assert names, "prose named AB-2023-101 — Sources must not be empty"
+    assert all("AB-2023-101" in n for n in names), names
+    assert not any("AB-2022" in n for n in names), names
 
 
 # ── Hardening: equal-score ties must resolve deterministically ───────────
@@ -521,7 +521,7 @@ def test_sources_match_src_marker_to_injected_chunk(monkeypatch):
     }
     text = (
         "Time for Completion is 365 days "
-        "(src=DD-2023-118_the client project II Infrastructure Package 1_"
+        "(src=AB-2023-101_the client project II Infrastructure Package 1_"
         "Vol 1 - Conditions of Contract.pdf)."
     )
     out = _build_sources_from_audit(audit, text)
