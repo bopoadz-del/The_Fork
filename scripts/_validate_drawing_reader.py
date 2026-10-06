@@ -16,7 +16,7 @@ from app.blocks.drawing_qto import DrawingQTOBlock
 
 ROOT = os.environ.get("FORK_DRIVE_ROOT", "/data/example")
 DRAWINGS = [
-    ("TM", os.path.join(ROOT, r"Contract Docs\Contractor\ITT\02-Drawings\TM-Traffic Management\QZ-ENG-310-0000-EXC-DWG-TM-200-1000005-A.pdf")),
+    ("TM", os.path.join(ROOT, r"Contract Docs\Contractor\ITT\02-Drawings\TM-Traffic Management\QZ-ENG-310-0000-EXC-DWG-TM-200-0000001-A.pdf")),
     ("SG", os.path.join(ROOT, r"Contract Docs\Contractor\ITT\02-Drawings\SG-Sewage\QZ-ENG-310-0000-EXC-DWG-SG-200-1001000-A.pdf")),
     ("WS", os.path.join(ROOT, r"Contract Docs\Contractor\ITT\02-Drawings\WS-Water Supply\QZ-ENG-310-0000-EXC-DWG-WS-600-0000001-C.pdf")),
     ("EL", os.path.join(ROOT, r"Contract Docs\Contractor\ITT\02-Drawings\EL-Electrical LV\QZ-ENG-310-0000-EXC-DWG-EL-600-0200068-B.pdf")),

@@ -116,7 +116,7 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   another.
 - Leftover L1 named-file fetch: `_predispatch_file_tool` runs `fetch_document`
   for `.txt`/`.md`/`.docx`/`.doc` when the user names the file (full name or a
-  ≥12-char stem, so `khor_waterproofing_spec` matches a timestamped upload).
+  ≥12-char stem, so `fenwick_waterproofing_spec` matches a timestamped upload).
   Empty RAG chunks fall through to disk `extract_document_text`. Do **not**
   re-ingest/reindex that docx; another agent owns RAG. Predispatch runs
   **before** the identifier RAG-miss short-circuit — a timestamped `.docx`

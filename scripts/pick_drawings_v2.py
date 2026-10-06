@@ -14,7 +14,7 @@ RE = re.compile(r"QZ-ENG-\d+-\d+-EXC-DWG-([A-Z]{2,4})-(\d{3})-", re.IGNORECASE)
 # revision variety (-A, -B, -C, -04, -05).
 TARGETS = [
     # discipline, series, preferred filename substring (revision/suffix anchor)
-    ("TM", "200", "TM-200-1000005-A"),
+    ("TM", "200", "TM-200-0000001-A"),
     ("SW", "600", "SW-600-0000035-04"),
     ("SG", "200", "SG-200-1001000-A"),
     ("EL", "600", "EL-600-0200068-B"),

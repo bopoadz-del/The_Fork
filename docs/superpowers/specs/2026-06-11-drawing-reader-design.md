@@ -99,7 +99,7 @@ The collection of cross-refs across all drawings forms a **sheet connectivity gr
 
 ```json
 {
-  "drawing_number": "IP-INF-053-0000-JCB-DWG-TM-200-1000005-A",
+  "drawing_number": "AB-CDE-001-0000-XYZ-DWG-TM-200-0000001-A",
   "drawing_title": "Traffic Management Layout — Package C",
   "discipline": "TM",
   "discipline_full": "Traffic Management",

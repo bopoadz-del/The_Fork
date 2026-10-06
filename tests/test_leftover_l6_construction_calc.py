@@ -158,7 +158,7 @@ async def test_l6_self_contained_volume_skips_drawing_qto_predispatch(monkeypatc
     monkeypatch.setattr(
         projects_mod,
         "list_documents",
-        lambda pid: [{"original_name": "khor_drawing_TM1100010_20260819-081916.pdf"}],
+        lambda pid: [{"original_name": "fenwick_drawing_TM9900001_20260819-081916.pdf"}],
         raising=False,
     )
     monkeypatch.setattr(runtime, "block_instances", {"drawing_qto": fake}, raising=False)
