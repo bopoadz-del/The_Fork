@@ -1633,8 +1633,11 @@ class VectorStore:
         # wildcard escaping is required.
         #
         # Letter+digits tokens (``d549``) also match the OCR-spaced form
-        # by stripping spaces before LIKE — otherwise ``D 549.2`` in the
-        # stored chunk fails ``ILIKE '%d549%'`` (live Neon: 0 rows).
+        # ``d 549`` — otherwise ``D 549.2`` in the stored chunk fails
+        # ``ILIKE '%d549%'`` (live Neon: 0 rows). Both forms are plain
+        # ``LOWER(text) LIKE`` so the trigram index on ``lower(text)`` serves
+        # them; ``LOWER(REPLACE(text, ' ', ''))`` had no index and read every
+        # row of the project.
         ident_clauses: List[str] = []
         params: Dict[str, Any] = {"project_id": project_id, "k": k}
         param_idx = 0
@@ -1643,8 +1646,10 @@ class VectorStore:
             for tok in tokens:
                 if _CESMM_COMPACT_TOKEN_RE.fullmatch(tok):
                     token_clauses.append(
-                        f"LOWER(REPLACE(text, ' ', '')) LIKE :p{param_idx}"
+                        f"(LOWER(text) LIKE :p{param_idx} "
+                        f"OR LOWER(text) LIKE :p{param_idx}s)"
                     )
+                    params[f"p{param_idx}s"] = f"%{tok[0]} {tok[1:]}%"
                 else:
                     token_clauses.append(f"LOWER(text) LIKE :p{param_idx}")
                 params[f"p{param_idx}"] = f"%{tok}%"
