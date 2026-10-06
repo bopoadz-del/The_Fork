@@ -47,8 +47,8 @@ def test_real_reference_codes_still_extract():
     # letter-bearing dotted code
     assert "d999.46" in extract_query_identifiers("check drawing D999.46 please")
     # hyphenated code
-    ids = extract_query_identifiers("see document IP-INF-054-0009 for details")
-    assert any("054-0009" in i or "ip-inf" in i for i in ids)
+    ids = extract_query_identifiers("see document QZ-ENG-320-0009 for details")
+    assert any("054-0009" in i or "qz-eng" in i for i in ids)
     # labeled reference with digits
     ids = extract_query_identifiers("what is the status of VO Ref 31?")
     assert any("31" in i for i in ids)

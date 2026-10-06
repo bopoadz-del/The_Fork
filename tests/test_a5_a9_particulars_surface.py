@@ -2,13 +2,13 @@
 
 Live Wave-1 retest on tip ``3a5fce5`` (#501 merged):
 
-* **A3 PASS** — 852 days, DD-2023-118. Year-lock is doing its job.
+* **A3 PASS** — 852 days, AB-2023-101. Year-lock is doing its job.
 * **A5 FAIL** — not FAIL_WRONG_CONTRACT. The excerpts never stated
   ``0.1% of the Contract Price per calendar day``. The rate lives in a
   different chunk than Time for Completion; a same-year cap / Sub-Clause
   8.8 row satisfied the asked-label check and reservation was a no-op.
 * **A9 FAIL** — Client/Consultant parties only (Long Form PSA). Expected
-  JACOBS / CH2M Saudi Limited. The appointment is a filled Engineer row;
+  EXAMPLAR / EXCON Example Limited. The appointment is a filled Engineer row;
   without the index-time particulars prefix the year-lock fence dropped
   the 118 file and no-id PSA chunks filled the pool.
 
@@ -42,14 +42,14 @@ A3_DAYS = "852 days"
 A6_DAYS = "365 days"
 
 DD23_NAME = (
-    "DD-2023-118_the client project II Infrastructure Package 1_"
+    "AB-2023-101_the client project II Infrastructure Package 1_"
     "Vol 1 - Conditions of Contract.pdf"
 )
 CD_SCANNED_NAME = (
-    "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract "
+    "AB-2023-101_QP2 Infra P1_Vol 1.0_Cond of Contract "
     "(complete)_Contract Data.pdf"
 )
-PSA_NAME = "Long Form PSA 26_05_22 Rev 5 with Legal Amendments.docx"
+PSA_NAME = "Long Form PSA 01_02_21 Rev 2 with Legal Amendments.docx"
 GC_NAME = DD23_NAME
 
 PREFIXED_RATE = (
@@ -201,8 +201,8 @@ def test_election_prefers_the_rate_over_the_same_year_cap():
         (DD23_NAME, GC_8_8),
         (CD_SCANNED_NAME, SCANNED_RATE),
     ]
-    assert elect_answer_bearing_contract(A5_ASK, ranked) == "dd-2023-118"
-    assert elect_answer_bearing_contract(LIVE_A5, ranked) == "dd-2023-118"
+    assert elect_answer_bearing_contract(A5_ASK, ranked) == "ab-2023-101"
+    assert elect_answer_bearing_contract(LIVE_A5, ranked) == "ab-2023-101"
 
 
 def test_election_picks_scanned_engineer_over_psa_parties():
@@ -213,8 +213,8 @@ def test_election_picks_scanned_engineer_over_psa_parties():
         (DD23_NAME, GC_ENGINEER),
         (CD_SCANNED_NAME, SCANNED_ENGINEER),
     ]
-    assert elect_answer_bearing_contract(A9_ASK, ranked) == "dd-2023-118"
-    assert elect_answer_bearing_contract(LIVE_A9, ranked) == "dd-2023-118"
+    assert elect_answer_bearing_contract(A9_ASK, ranked) == "ab-2023-101"
+    assert elect_answer_bearing_contract(LIVE_A9, ranked) == "ab-2023-101"
 
 
 def test_reservation_swaps_a_cap_row_for_the_rate():

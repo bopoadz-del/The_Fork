@@ -65,7 +65,7 @@ def _baseline(count: int = 1, reason: str = _BASELINE) -> Allowance:
 
 # Keys are "relative/path.py::qualified_function". Value is how many
 # Exception+pass sites that function may keep, and the named reason. Same
-# shape as KNOWN_INCOMPLETE.md entries (path + reason, visible, greppable).
+# shape as docs/KNOWN_INCOMPLETE.md entries (path + reason, visible, greppable).
 # Empty is the goal.
 #
 # The SSE watchdog (app/routers/chat_watchdog.py) catches Exception so
@@ -154,7 +154,7 @@ RETURN_ALLOWLIST: dict[str, Allowance] = {
     "app/routers/mcp.py::mcp_router_available": _baseline(),
     "app/worker/ingest_queue.py::enqueue_ingest": _baseline(),
     "scripts/build_rate_card.py::num": _baseline(),
-    "scripts/extract_alostool.py::crop_qty": _baseline(),
+    "scripts/extract_demolition_boq.py::crop_qty": _baseline(),
     "scripts/extract_boq_rw.py::_num": _baseline(),
     "scripts/extract_boq_section.py::_num": _baseline(),
     "scripts/extract_wetransfer_boqs.py::num": _baseline(),

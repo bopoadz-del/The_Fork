@@ -8,7 +8,7 @@ embeddings — just chunks.
 Usage:
     .venv/Scripts/python scripts/rag_backfill_local_chunker.py \
         --batch rag_backfill_batch_5.json \
-        --project-id client_infra_pack_1
+        --project-id example_infra_pack
 """
 from __future__ import annotations
 

@@ -32,7 +32,7 @@ What the local run taught us (from the first ~20 files):
 - Batched, resumable, per-file logs, `ZERO_CHUNK` watched, provenance stamped — same rules as before.
 - Instance can be temporarily scaled up for the ingestion window if the 2 GB worker cannot hold `bge-small` + OCR concurrently.
 
-**Open question for Chadi:** Can the Render web service instance (2 GB) hold the embedder + OCR in memory, or should it be scaled up for the ingestion window?
+**Open question for the owner:** Can the Render web service instance (2 GB) hold the embedder + OCR in memory, or should it be scaled up for the ingestion window?
 
 ---
 
@@ -46,7 +46,7 @@ Do NOT ingest the Master Folder as one undifferentiated 7,221-file blob.
 | **Tier 2** | Pilot-relevant | Other active project folders (commercial, design, QA, safety, procurement, RFP-related) | Phase 2 battery may include spot checks |
 | **Tier 3** | Background | Everything else — reference material, old revisions, archives | Drains in background; not pilot-blocking |
 
-**Next action:** publish the concrete priority manifest (folder → tier → expected file count) and get Chadi's approval before starting the server-side run.
+**Next action:** publish the concrete priority manifest (folder → tier → expected file count) and get the owner's approval before starting the server-side run.
 
 ---
 
@@ -58,7 +58,7 @@ Running tally must be kept per folder:
 |--------|-----------|------------|-------------|-------|-------------------|-------|
 | `Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED` | 4 | 1 | 0 | 1 | 0 | Font/OCR issues observed |
 | `Master Folder/.archivetemp...` | 0 | 0 | 1 | 0 | 0 | `.gdoc` placeholder |
-| `Master Folder/Chadi_CV PM.gdoc` | 0 | 0 | 1 | 0 | 0 | `.gdoc` placeholder |
+| `Master Folder/Owner_CV PM.gdoc` | 0 | 0 | 1 | 0 | 0 | `.gdoc` placeholder |
 | `Master Folder/Copy of CAD.rar` | 0 | 0 | 1 | 0 | 0 | `.rar` unsupported on Windows mount |
 
 This tally will be expanded as the server-side run progresses.
@@ -74,7 +74,7 @@ This tally will be expanded as the server-side run progresses.
 | `.zip` | ✅ Working (small/medium) | `OneDrive_1_6-23-2022.zip` → 84,011 chars |
 | `.rar` | ⚠️ Unsupported without `unrar` binary | Skip or add server-side unrar |
 | `.msg` | ✅ Working | `240829 email from JM...` → 1,167 chars |
-| `.doc` | ✅ Working | `Chadi_CV.doc` → 11,445 chars |
+| `.doc` | ✅ Working | `Owner_CV.doc` → 11,445 chars |
 
 Unsupported formats (`.dwg`, `.plt`, `.nwd`, etc.) must be itemized in the reconciliation report, never silently skipped.
 
@@ -132,7 +132,7 @@ leaves a sidecar heartbeat whose post-mortem says whether the cgroup
 | Asset | Path | Purpose |
 |-------|------|---------|
 | Priority manifest builder | `scripts/build_priority_manifest.py` | Generates `manifests/p1b_priority_manifest.json` from existing Drive manifest + known folder list. |
-| Priority manifest | `manifests/p1b_priority_manifest.json` | Tier-1/2/3 folder assignment; the client project subfolder counts populated; tier 2/3 folder IDs need Chadi. |
+| Priority manifest | `manifests/p1b_priority_manifest.json` | Tier-1/2/3 folder assignment; the client project subfolder counts populated; tier 2/3 folder IDs need the owner. |
 | Server ingestion job | `scripts/p1b_ingest_drive_server.py` | Runs on Render; walks Drive via `app.core.gdrive_service`, downloads, indexes, keeps per-folder tally. |
 
 ## Render Instance Assessment
@@ -147,7 +147,7 @@ leaves a sidecar heartbeat whose post-mortem says whether the cgroup
 
 **Recommendation:** Scale the Render instance to **4 GB** for the ingestion window. This is the correct spend: it avoids laptop-days and keeps the job stable. Scale back to 2 GB after tier 1 + tier 2 are done.
 
-## Open Blockers for Chadi
+## Open Blockers for the owner
 
 1. **GDRIVE_SERVICE_ACCOUNT_JSON** on Render is broken / missing. The server-side job cannot mint Drive tokens until this is replaced.
 2. **Tier 2/3 folder IDs** are missing from `manifests/p1b_priority_manifest.json`. Provide the Drive folder IDs for `construction-3-001`, `200-Project Controls Procedures`, `300-Delivery Management Procedures`, `400-Construction Management Procedures`, `500-Design Management Procedures`, `600-Procurement & Contracts`, and the scanned-files folders.
@@ -155,7 +155,7 @@ leaves a sidecar heartbeat whose post-mortem says whether the cgroup
 
 ## Next Steps
 
-1. Chadi replaces `GDRIVE_SERVICE_ACCOUNT_JSON` and supplies tier 2/3 folder IDs.
+1. The owner replaces `GDRIVE_SERVICE_ACCOUNT_JSON` and supplies tier 2/3 folder IDs.
 2. Scale Render instance to 4 GB.
 3. Run tier 1 on Render: `.venv/Scripts/python scripts/p1b_ingest_drive_server.py --tier 1 --resume`.
 4. Monitor `manifests/p1b_server_ingestion_report.json`; itemize every gap.

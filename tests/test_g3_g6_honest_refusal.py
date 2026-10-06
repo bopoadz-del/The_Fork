@@ -10,7 +10,7 @@ Live F-BAT-D on BASELINE 0d9fd23:
     G6 — "What is the Commencement Date of the contract?"
     Ground truth: tied to LOA/NOA; field not populated in tender
     Contract Data. Observed: invented 10th January 2024 from a
-    Construction Commencement Pack Report.
+    Site Commencement Pack Report.
 
 Same shape as G1 (register row over Vol 4 prose) and G4 (Rate Only
 over priced lookalikes). Do not invent a value or date; elect the
@@ -48,7 +48,7 @@ A3_ASK = CATALOG["cases"]["A3"]["ask"]
 A5_ASK = CATALOG["cases"]["A5"]["ask"]
 G1_ASK = CATALOG["cases"]["G1"]["ask"]
 PACK_ASK = (
-    "What date does the Construction Commencement Pack Report give "
+    "What date does the Site Commencement Pack Report give "
     "for site commencement?"
 )
 DEFINITION_PCG = "What does Parent Company Guarantee mean?"
@@ -83,7 +83,7 @@ COMMENCEMENT_FILLED = (
     "Commencement Date: 1 March 2025"
 )
 COMMENCEMENT_PACK = (
-    "Construction Commencement Pack Report. Site commencement on "
+    "Site Commencement Pack Report. Site commencement on "
     "10th January 2024. Briefing held with the Engineer."
 )
 COMMENCEMENT_TBA = (
@@ -96,11 +96,11 @@ COMMENCEMENT_BLANK = (
 )
 
 CD_NAME = (
-    "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract "
+    "AB-2023-101_QP2 Infra P1_Vol 1.0_Cond of Contract "
     "(complete)_Contract Data.pdf"
 )
 FORM_NAME = "Schedule 8 form of Parent Company Guarantee.pdf"
-PACK_NAME = "Construction Commencement Pack Report.pdf"
+PACK_NAME = "Site Commencement Pack Report.pdf"
 
 ACTIVE = "p_master"
 CD_DOC = "cd118g"

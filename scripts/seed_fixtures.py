@@ -80,8 +80,8 @@ FIXTURES: Dict[str, Dict[str, Any]] = {
             "synthetic_boq.xlsx",
         ],
         "optional_files": [
-            "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
-            "IP-INF-053 Priced BOQ - General Summary (verified total).txt",
+            "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+            "QZ-ENG-310 Priced BOQ - General Summary (verified total).txt",
         ],
     },
     "programme_drawings": {

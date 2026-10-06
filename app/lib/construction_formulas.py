@@ -3,7 +3,7 @@ Construction Calculations — deterministic engineering formula library.
 
 Single source of truth for construction calculations (deep foundations,
 concrete technology, structural, crane planning, cost build-up, MEP, QC).
-Sourced from SMGT-C552 course material. No project/company names.
+Sourced from SPEC-C900 course material. No project/company names.
 
 DETERMINISTIC TOOLS, not a rate oracle: every cost build-up takes its unit
 rates as PARAMETERS. The hardcoded defaults are indicative GCC fallbacks only —

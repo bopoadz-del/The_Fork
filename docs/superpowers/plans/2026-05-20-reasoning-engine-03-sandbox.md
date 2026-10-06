@@ -9,7 +9,7 @@
 
 **Tech Stack:** Python 3.11, Pydantic v2, `RestrictedPython` 8.x. RestrictedPython rewrites the AST at compile time (banning `eval`/`exec`/`__import__`/attribute tricks) and supplies `safe_builtins`; this plan layers a whitelisted `__import__` and session-state injection on top. This file is `app/core/sandbox.py` — **not** the unrelated legacy `app/blocks/sandbox.py` block.
 
-**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\shimm\The_Fork`.
+**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\example\The_Fork`.
 
 ---
 

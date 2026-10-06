@@ -45,6 +45,14 @@ jobs:
       # arm64 belongs on a native arm64 runner (when the Orin arrives);
       # QEMU emulation here was paying CI time for an artefact nobody
       # uses yet.
+      # The detector weights are a release asset, not a git object (see
+      # data/models/manifest.json). Fetch + sha256-verify them into the build
+      # context; a mismatch fails here, and the Dockerfile re-checks it.
+      - name: Fetch and verify model weights
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/fetch_model.py --image
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -122,6 +130,24 @@ jobs:
         run: |
           test ! -f .env || { echo "::error::.env exists in a clean checkout"; exit 1; }
           echo "no .env present — this is the stranger's starting state"
+
+      # The detector weights are a release asset, not a git object (see
+      # data/models/manifest.json). Fetch + sha256-verify them into the build
+      # context; a mismatch fails here, and the Dockerfile re-checks it.
+      - name: Fetch and verify model weights
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/fetch_model.py --image
+
+      # The image (~2.5 GB, loaded into the local daemon) no longer fits next
+      # to the runner's preinstalled SDKs: the load failed with "no space left
+      # on device". Drop toolchains this job never uses before building.
+      - name: Free runner disk
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h / | tail -1
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

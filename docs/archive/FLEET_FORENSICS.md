@@ -21,7 +21,7 @@
 - **The TEXT is fully recoverable.** ~140k already-chunked `drive_archive` rows (chunk_id, doc_id, text) survive in local SQLite. **Re-ingestion = re-embed that existing text with BGE-384 → chunks_v2.** No re-parsing/re-download needed (text is done) — same shape as the batch-14 re-embed: local BGE encode → stream to Postgres, resumable.
 - **Cost:** ~140k chunks to re-embed locally (~minutes on 12-thread CPU) + streamed INSERTs. Cheap. But it triples the corpus (10k → ~150k) and mixes the broad Drive archive into retrieval — which will interact with the T5 GK/precision work.
 
-## Recommendation (Chadi's scope call — do NOT auto-start)
+## Recommendation (the owner's scope call — do NOT auto-start)
 1. **If the pilot is the client project-scoped:** leave drive_archive out; the 53-doc the client project corpus is the pilot.
 2. **If the pilot needs the full Drive corpus:** re-embed the local `drive_archive` text (BGE-384) into a **dedicated project** (not merged into client), and settle T5 precision first (150k mixed chunks will worsen GK/ranking contamination).
 **Report-before-re-ingestion honored: paused here for the scope decision.**

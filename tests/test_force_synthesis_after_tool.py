@@ -161,7 +161,7 @@ def test_remaining_commissioning_locks_synthesis_immediately(monkeypatch):
     with patch.object(Agent, "_call_llm", fake):
         events = _drain(agent.chat_stream(
             user_message=(
-                "Generate a commissioning checklist for the PWPS-02 "
+                "Generate a commissioning checklist for the PWPS-09 "
                 "reservoir before the first wet test."
             ),
             history=[], project_id=None, conversation_id=None, user_id=None,

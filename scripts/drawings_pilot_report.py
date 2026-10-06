@@ -20,8 +20,8 @@ if _REPO_ROOT not in sys.path:
 AUDIT = os.path.join(_REPO_ROOT, r"data\logs\drive_indexer_audit_drawings_pilot.jsonl")
 PROJECT_ID = "drive_archive_drawings_test"
 
-RE = re.compile(r"IP-INF-\d+-\d+-JCB-DWG-([A-Z]{2,4})-(\d{3})-", re.IGNORECASE)
-JCB_RE = re.compile(r"IP-INF-\d+-\d+-JCB-DWG-[A-Z]{2,4}-\d{3}-\d+", re.IGNORECASE)
+RE = re.compile(r"QZ-ENG-\d+-\d+-EXC-DWG-([A-Z]{2,4})-(\d{3})-", re.IGNORECASE)
+EXC_RE = re.compile(r"QZ-ENG-\d+-\d+-EXC-DWG-[A-Z]{2,4}-\d{3}-\d+", re.IGNORECASE)
 
 
 def disc_of(name: str):
@@ -49,12 +49,12 @@ def fetch_first_chunk_and_titleblock(project_id: str, doc_id: str, doc_path: str
     first_chunk = rows[0]["text"]
 
     fname = os.path.basename(doc_path)
-    jcb_match = JCB_RE.search(fname)
+    exc_match = EXC_RE.search(fname)
     titleblock = None
-    if jcb_match:
-        jcb = jcb_match.group(0).lower()
+    if exc_match:
+        exc = exc_match.group(0).lower()
         for r in rows:
-            if jcb in (r["text"] or "").lower():
+            if exc in (r["text"] or "").lower():
                 titleblock = r["text"]
                 break
 
@@ -103,7 +103,7 @@ def main() -> int:
             snip = tb[:400].replace("\n", " | ")
             print(f"   TITLE-BLOCK CHUNK[:400]: {snip}")
         else:
-            print(f"   TITLE-BLOCK CHUNK[:400]: <no chunk contained JCB code from filename>")
+            print(f"   TITLE-BLOCK CHUNK[:400]: <no chunk contained EXC code from filename>")
         print()
 
     # Aggregates

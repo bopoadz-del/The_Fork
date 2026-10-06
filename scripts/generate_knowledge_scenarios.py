@@ -144,15 +144,15 @@ def gen_design_statuses() -> Iterator[Dict[str, str]]:
     for status in sorted(ck.VALID_DESIGN_STATUSES):
         ok, msg = ck.validate_design_status(status)
         yield _row(
-            f"Is '{status}' a valid design review status under PRC-501?",
+            f"Is '{status}' a valid design review status under PRC-951?",
             f"Yes — '{status}' is a valid status. {msg}",
             "validate_design_status(valid)",
         )
     for status in sorted(ck.FORBIDDEN_DESIGN_STATUSES):
         ok, msg = ck.validate_design_status(status)
         yield _row(
-            f"Is '{status}' acceptable on a design document under PRC-501?",
-            f"No — '{status}' is forbidden on design documents per PRC-501. {msg}",
+            f"Is '{status}' acceptable on a design document under PRC-951?",
+            f"No — '{status}' is forbidden on design documents per PRC-951. {msg}",
             "validate_design_status(forbidden)",
         )
     # Case-insensitivity and dash/underscore tolerance.
@@ -179,13 +179,13 @@ def gen_design_statuses() -> Iterator[Dict[str, str]]:
 def gen_review_timeline() -> Iterator[Dict[str, str]]:
     cases = [
         ("2026-01-01", "2026-01-02", "1-day window (well under minimum)"),
-        ("2026-01-01", "2026-01-06", "5-day window (under PRC-501 minimum)"),
+        ("2026-01-01", "2026-01-06", "5-day window (under PRC-951 minimum)"),
         ("2026-01-01", "2026-01-07", "exactly 6 days (still under, boundary)"),
-        ("2026-01-01", "2026-01-08", "7-day window (PRC-501 minimum compliant)"),
+        ("2026-01-01", "2026-01-08", "7-day window (PRC-951 minimum compliant)"),
         ("2026-01-01", "2026-01-09", "8-day window (just over the minimum)"),
-        ("2026-01-01", "2026-01-15", "14-day window (PRC-501 maximum recommended)"),
+        ("2026-01-01", "2026-01-15", "14-day window (PRC-951 maximum recommended)"),
         ("2026-01-01", "2026-01-16", "15-day window (one day over the maximum)"),
-        ("2026-01-01", "2026-01-21", "20-day window (over PRC-501 maximum)"),
+        ("2026-01-01", "2026-01-21", "20-day window (over PRC-951 maximum)"),
         ("2026-06-15", "2026-06-20", "5 days during a real project window"),
         ("2026-09-01", "2026-09-08", "7 days in a real project window"),
     ]
@@ -194,7 +194,7 @@ def gen_review_timeline() -> Iterator[Dict[str, str]]:
         verdict = "compliant" if ok else "non-compliant"
         yield _row(
             f"A design package was distributed on {dist} and the review workshop is scheduled for {ws}. "
-            f"Is the timeline compliant with PRC-501?",
+            f"Is the timeline compliant with PRC-951?",
             f"It is {verdict}. {msg}",
             "check_review_timeline",
         )
@@ -213,16 +213,16 @@ def gen_ncr_workflow() -> Iterator[Dict[str, str]]:
         else:
             response = (
                 f"The next status after '{status}' in the NCR workflow is '{nxt}' "
-                f"(per PRC-402 NCR_WORKFLOW_SEQUENCE)."
+                f"(per PRC-942 NCR_WORKFLOW_SEQUENCE)."
             )
         yield _row(
-            f"In the PRC-402 NCR workflow, what status follows '{status}'?",
+            f"In the PRC-942 NCR workflow, what status follows '{status}'?",
             response,
             "NCR_WORKFLOW_SEQUENCE",
         )
     # Invalid status.
     yield _row(
-        "If a user reports an NCR status that does not exist in PRC-402 (e.g. 'PENDING_REVIEW'), "
+        "If a user reports an NCR status that does not exist in PRC-942 (e.g. 'PENDING_REVIEW'), "
         "what does next_ncr_status return?",
         "It returns None — the input is not part of NCR_WORKFLOW_SEQUENCE and has no successor.",
         "next_ncr_status(unknown)",
@@ -231,14 +231,14 @@ def gen_ncr_workflow() -> Iterator[Dict[str, str]]:
     for disp in sorted(ck.VALID_NCR_DISPOSITIONS):
         ok, msg = ck.validate_ncr_disposition(disp)
         yield _row(
-            f"Is '{disp}' a valid NCR disposition under PRC-402?",
+            f"Is '{disp}' a valid NCR disposition under PRC-942?",
             f"Yes. {msg}",
             "validate_ncr_disposition(valid)",
         )
     for disp in ("CONCEDE", "ACCEPT", "REWORK"):
         ok, msg = ck.validate_ncr_disposition(disp)
         yield _row(
-            f"Is '{disp}' a valid NCR disposition under PRC-402?",
+            f"Is '{disp}' a valid NCR disposition under PRC-942?",
             f"No. {msg}",
             "validate_ncr_disposition(invalid)",
         )
@@ -255,9 +255,9 @@ def gen_score_risk() -> Iterator[Dict[str, str]]:
     ]
     for p, i in grid_samples:
         result = ck.score_risk(p, i)
-        action = "requires escalation per PRC-302" if result["requires_action"] else "no escalation required"
+        action = "requires escalation per PRC-932" if result["requires_action"] else "no escalation required"
         yield _row(
-            f"What is the PRC-302 risk score for probability={p} and impact={i}?",
+            f"What is the PRC-932 risk score for probability={p} and impact={i}?",
             f"Score is {result['score']}/25 — band {result['band']}, {action}.",
             "score_risk",
         )
@@ -270,7 +270,7 @@ def gen_score_risk() -> Iterator[Dict[str, str]]:
     )
 
 
-# ── calculate_payment — typical PRC-605 scenarios ────────────────────────
+# ── calculate_payment — typical PRC-965 scenarios ────────────────────────
 
 def gen_payment() -> Iterator[Dict[str, str]]:
     cases = [
@@ -367,7 +367,7 @@ def gen_tender() -> Iterator[Dict[str, str]]:
             for t in result["ranked_tenderers"]
         )
         yield _row(
-            f"Per PRC-603, evaluate the following {label}: "
+            f"Per PRC-963, evaluate the following {label}: "
             + "; ".join(
                 f"{t['name']} — technical {t['technical_score']}, commercial {t['commercial_score']}, "
                 f"HSE {t['hse_score']}, local content {t.get('local_content_score', 0)}"
@@ -375,7 +375,7 @@ def gen_tender() -> Iterator[Dict[str, str]]:
             )
             + ". Which bidder is recommended and what is the ranking?",
             f"Recommended bidder: {winner['name']} (weighted total {winner['weighted_total']}). "
-            f"Full ranking: {ranking}. Weights applied per PRC-603 default: "
+            f"Full ranking: {ranking}. Weights applied per PRC-963 default: "
             f"technical 45%, commercial 45%, HSE 7%, local content 3%.",
             "evaluate_tender",
         )
@@ -384,9 +384,9 @@ def gen_tender() -> Iterator[Dict[str, str]]:
 # ── get_procedure / get_system_prompt — knowledge-base lookups ────────────
 
 _KNOWN_PROCEDURES = [
-    "PRC-201", "PRC-301", "PRC-302", "PRC-402", "PRC-405", "PRC-406",
-    "PRC-501", "PRC-502", "PRC-601", "PRC-602", "PRC-603", "PRC-604",
-    "PRC-605", "PRC-606",
+    "PRC-921", "PRC-931", "PRC-932", "PRC-942", "PRC-945", "PRC-946",
+    "PRC-951", "PRC-952", "PRC-961", "PRC-962", "PRC-963", "PRC-964",
+    "PRC-965", "PRC-966",
 ]
 
 

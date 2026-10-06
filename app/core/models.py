@@ -289,7 +289,7 @@ class Project(Base):
     )
     # PR B — discriminates how the project came into being. Admin page
     # filters on origin='admin_drive_approved' so user-created rows
-    # (chadi, bopo, etc.) don't show in the admin's approved list.
+    # (personal accounts) don't show in the admin's approved list.
     # Values: 'user_create' | 'admin_drive_approved' | 'user_drive_import'.
     origin: Mapped[str] = mapped_column(
         String(32), nullable=False, default="user_create",
@@ -443,6 +443,9 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    # Provenance record of an assistant answer (JSON): where each figure and
+    # cited fact came from. Migration 0023.
+    provenance: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DocIndex(Base):

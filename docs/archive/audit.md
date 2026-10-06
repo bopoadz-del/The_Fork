@@ -75,16 +75,16 @@ The Fork is the battle-tested runtime: real construction data, Masterise pitch, 
 
 - `CRITICAL_RULES`, `enforce_critical_rules()`
 - `generate_doc_number()` — RFI/NCR/VO/DD numbering
-- PRC-501 design review: `validate_design_status()`, `check_review_timeline()`
-- PRC-402 NCR: `validate_ncr_disposition()`, `next_ncr_status()`
+- PRC-951 design review: `validate_design_status()`, `check_review_timeline()`
+- PRC-942 NCR: `validate_ncr_disposition()`, `next_ncr_status()`
 - `get_procedure()`, `ConstructionKnowledge` facade
 
 **Methodology-shaped (could extract later, not urgent):**
 
-- `score_risk()` — 1–5 matrix (PRC-302)
-- `calculate_payment()` — retention math (PRC-605)
+- `score_risk()` — 1–5 matrix (PRC-932)
+- `calculate_payment()` — retention math (PRC-965)
 - `calculate_evm()` — PV/EV/AC metrics
-- `evaluate_tender()` — weighted scoring (PRC-603)
+- `evaluate_tender()` — weighted scoring (PRC-963)
 
 **Consumers:** `app/blocks/construction_v2.py`, `scripts/generate_knowledge_scenarios.py`, `tests/test_knowledge_scenarios.py`
 

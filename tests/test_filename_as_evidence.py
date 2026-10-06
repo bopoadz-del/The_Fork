@@ -61,25 +61,25 @@ def test_long_names_keep_the_TAIL_not_the_head():
     """Revision letters and parenthesised dates sit at the END of engineering
     filenames. Truncating from the right would throw away the fact this
     feature exists to surface."""
-    long_name = ("IP-INF-053-0000-JCB-SPC-IF-000013-B_Scope_of_Package_"
+    long_name = ("QZ-ENG-310-0000-EXC-SPC-IF-000013-B_Scope_of_Package_"
                  "Requirements_Infrastructure (exp. 17Jul25).pdf")
     assert len(long_name) > _MAX_SOURCE_NAME_CHARS
     msg = format_chunks_as_system_message([_chunk(long_name)], 12)
     assert "17Jul25" in msg["content"], "the tail carries the fact"
-    assert "IP-INF-053-0000-JCB" not in msg["content"], "head is what gets dropped"
+    assert "QZ-ENG-310-0000-EXC" not in msg["content"], "head is what gets dropped"
 
 
 def test_long_contract_filename_keeps_the_PREFIX_YEAR_SEQ():
-    """A3: tail-only truncation dropped DD-2023-118 from long Package 1
+    """A3: tail-only truncation dropped AB-2023-101 from long Package 1
     Conditions of Contract names, so the model could not name the cited
     contract. The id stays in src=; the tail is still kept."""
     long_name = (
-        "DD-2023-118_the client project II Infrastructure Package 1_"
+        "AB-2023-101_the client project II Infrastructure Package 1_"
         "Vol 1 - Conditions of Contract.pdf"
     )
     assert len(long_name) > _MAX_SOURCE_NAME_CHARS
     msg = format_chunks_as_system_message([_chunk(long_name)], 12)
-    assert "DD-2023-118" in msg["content"]
+    assert "AB-2023-101" in msg["content"]
     assert "CONTRACT ATTRIBUTION" in msg["content"]
     assert "Conditions of Contract.pdf" in msg["content"]
 

@@ -224,6 +224,8 @@ async def _stream_from_heavy_reasoning(
         "iterations": result.get("iterations", 0),
         "tools": tools_ordered,
         "tools_used": tools_used,
+        "sources": result.get("sources") or [],
+        "provenance": result.get("provenance") or [],
         "request_id": get_request_id(),
     }
     yield f"data: {json.dumps(end_event)}\n\n"

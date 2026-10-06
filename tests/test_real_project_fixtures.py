@@ -1,26 +1,26 @@
-"""Real-project fixtures (2026-07-24, operator-supplied from the Drive mirror).
+"""Project-shaped schedule and BIM-format fixtures.
 
-- ``ohdd_baseline_2013.xer``: a genuine P6 baseline programme (1,280
-  activities). Exercises the schedule family on real data instead of the
-  synthetic resource_loaded fixtures. Repo is private; the operator (data
-  owner) supplied it for this purpose.
-- Navisworks / DWG: the operator's BIM models are .nwd (no native IFC
-  exists in the corpus — the "IFCs" folders on Drive are Issued-For-
-  Construction drawings, not BIM). The honest paths those files hit are
-  pinned here deterministically: .nwd -> convert-to-IFC guidance;
-  .dwg without the ODA converter -> structured install guidance.
+- A P6 baseline programme generated per run by
+  ``tests/_synthetic_fixtures.build_baseline_xer`` (invented "Sample Works"
+  programme: a 12-activity zero-float chain bracketed by two milestones plus
+  four floated branches, 50 activities). Exercises the schedule family on a
+  full P6-shaped export (PROJECT data date, CALENDAR, PROJWBS, RSRC, TASK,
+  TASKPRED, TASKRSRC) instead of the minimal resource_loaded fixtures. The
+  expected summary is computed by the generator from the same rows it writes.
+- Navisworks / DWG: BIM models in the corpus are .nwd (no native IFC
+  exists; "IFC" folders hold Issued-For-Construction drawings, not BIM).
+  The honest paths those files hit are pinned here deterministically:
+  .nwd -> convert-to-IFC guidance; .dwg without the ODA converter ->
+  structured install guidance.
 """
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from app.containers.construction import ConstructionContainer
+from tests._synthetic_fixtures import build_baseline_xer
 from tests.conftest import requires_construction_kit
-
-XER = os.path.join(os.path.dirname(__file__), "fixtures", "ohdd_baseline_2013.xer")
 
 
 @pytest.fixture
@@ -28,22 +28,29 @@ def container():
     return ConstructionContainer()
 
 
+@pytest.fixture
+def baseline(tmp_path):
+    path = tmp_path / "sample_works_baseline.xer"
+    return str(path), build_baseline_xer(path)
+
+
 @requires_construction_kit
-class TestRealBaselineXer:
+class TestBaselineXer:
     @pytest.mark.asyncio
-    async def test_parse_real_baseline_programme(self, container):
-        result = await container.parse_primavera_schedule({"file_path": XER}, {})
+    async def test_parse_baseline_programme(self, container, baseline):
+        xer, expected = baseline
+        result = await container.parse_primavera_schedule({"file_path": xer}, {})
         assert result["status"] == "success"
         s = result["summary"]
-        assert s["total_activities"] == 1280
-        assert s["critical_activities"] == 19
-        assert s["project_duration"] == 459
-        assert s["data_date"] == "2013-11-27"
-        assert len(result["critical_path"]["activities"]) == 19
+        assert s["total_activities"] == expected["total_activities"] == 50
+        assert s["critical_activities"] == expected["critical_activities"] == 14
+        assert s["project_duration"] == expected["project_duration"] == 160
+        assert s["data_date"] == expected["data_date"] == "2025-02-24"
+        assert len(result["critical_path"]["activities"]) == 14
 
     @pytest.mark.asyncio
-    async def test_real_programme_feeds_delay_analysis_shape(self, container):
-        result = await container.parse_primavera_schedule({"file_path": XER}, {})
+    async def test_programme_feeds_delay_analysis_shape(self, container, baseline):
+        result = await container.parse_primavera_schedule({"file_path": baseline[0]}, {})
         # The parse deliverable carries the delay/risk sections downstream
         # actions consume — assert they exist and are list/dict shaped.
         assert isinstance(result["schedule_risks"], list)

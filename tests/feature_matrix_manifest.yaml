@@ -16,7 +16,7 @@
 #   structure: per-feature checks listed under `structure` (regex/pattern
 #              names implemented in the sweep runner). Construction
 #              correctness is NOT certified here — outputs go verbatim to
-#              review_pack/ for Chadi.
+#              review_pack/ for the owner.
 #
 # `class: must` = MUST-COVER feature (2 phrasings: canonical + colloquial).
 # `class: coverage` = single-prompt coverage of the remaining registry.

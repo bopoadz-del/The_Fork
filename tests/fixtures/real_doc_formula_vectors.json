@@ -1661,7 +1661,7 @@
   }
  ],
  "payment": {
-  "source": "conditions_of_contract retention 10%",
+  "source": "conditions-of-contract retention 10%",
   "gross_valuation": 15184347.9,
   "retention_percent": 10.0
  }

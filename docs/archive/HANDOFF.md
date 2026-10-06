@@ -28,7 +28,7 @@ F1/F2/F3 (#206), F4 (#207 + #216) all live-verified on prod.
   multi-file/photo param resolution — the 2-file class deferred in 2b).
 - W2: `digital_twin_sync` — honest `sync_status: prepared_not_pushed`.
 - `historical_benchmark`: PARKED — the run prompt's ruling `[REWORD/RETIRE]` was
-  left unfilled; needs Chadi's actual decision.
+  left unfilled; needs the owner's actual decision.
 
 **STEP 4 (Part B W1–W10): W1 + W2 done; W3–W10 PARKED-with-evidence.**
 - W1 (financial): money/rate grounding gate (#219) + financial arithmetic already
@@ -70,9 +70,9 @@ Each is real, non-trivial, and NOT claimed done. Ledger is the master.
   what's wired" pass; largely captured in the ledger already, needs a final sweep.
 
 ## STEP 5 (RAG enrichment) — NOT STARTED
-- 5a: ingest Chadi's tier-2 SOP folders (200–600 series) from Drive → GK layer.
+- 5a: ingest the owner's tier-2 SOP folders (200–600 series) from Drive → GK layer.
   No approval needed, but needs Drive access configured in this session.
-- 5b: ⛔ GATE — build SOURCE_MANIFEST.md for public datasets, HOLD for Chadi's
+- 5b: ⛔ GATE — build SOURCE_MANIFEST.md for public datasets, HOLD for the owner's
   approval before any public ingestion.
 - 5c: post-ingestion referee (calc-intact + EOT + fresh-upload + golden), zero
   project-precision regression.

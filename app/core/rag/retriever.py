@@ -84,7 +84,7 @@ def _is_prose_compound(token: str) -> bool:
 
 
 # A separator-free token is only a reference code when its letters are a SHORT
-# abbreviation prefix: M145, A615, D999, PRC501, IP054. A long alphabetic run
+# abbreviation prefix: M145, A615, D999, PRC951, IP054. A long alphabetic run
 # with a digit buried inside it is a TYPO, not a code.
 #
 # Live incident 2026-08-02: the operator typed "You should find it in the
@@ -99,7 +99,7 @@ def _is_prose_compound(token: str) -> bool:
 # for all-alpha segments, but a separator-free token yields ONE segment which
 # isn't .isalpha() precisely BECAUSE of the stray digit.
 # The discriminator is the ALPHABETIC RUN. Reference codes are built from
-# short abbreviations (M145, A615, D999, PRC501, IP054 — runs of 1-3 letters).
+# short abbreviations (M145, A615, D999, PRC951, IP054 — runs of 1-3 letters).
 # An English word carries runs of 5+ letters, and a typo'd digit does not
 # change that: "specif8cation" still contains "specif" and "cation".
 #
@@ -228,13 +228,13 @@ def extract_query_identifiers(query: str) -> List[str]:
         if len(token) >= 4:
             found.add(token.lower())
 
-    # 3. Labeled references: "VO Ref 31", "PRC-501", "RFI 12-A", etc.
+    # 3. Labeled references: "VO Ref 31", "PRC-951", "RFI 12-A", etc.
     for m in _LABELED_REF_FULL_RE.finditer(query):
         label = m.group("label")
         # The captured code may have trailing punctuation; strip it.
         code = m.group("code").strip("-.:,;")
         # A genuine reference code carries a digit (VO 99, Clause 13.1,
-        # PRC-501). Several labels ("Contract", "Spec", "Package", ...) are
+        # PRC-951). Several labels ("Contract", "Spec", "Package", ...) are
         # also ordinary English words, so a label followed by a digit-less
         # word ("contract cover", "specification") is prose — NOT a reference.
         # Without this guard those false identifiers earned the +2.0 retrieval
@@ -355,7 +355,7 @@ def extract_contract_doc_ids(text: str) -> List[str]:
     """Return lowercase PREFIX-YEAR-SEQ contract/doc ids in ``text``.
 
     Used to scope a named-contract question to that contract's files so a
-    DD-2023 question cannot surface DD-2022 chunks. Empty when the text
+    AB-2023 question cannot surface AB-2022 chunks. Empty when the text
     names no such id.
     """
     if not text:
@@ -381,7 +381,7 @@ def filename_matches_named_contracts(
     The upload filename is the authority — live corpus contract numbers
     live there. An unresolved filename falls back to a *contiguous* id in
     chunk text. Token-soup matching ('dd' + '2023' + '118' scattered) is
-    rejected: a DD-2022 Conditions of Contract chunk can contain those
+    rejected: a AB-2022 Conditions of Contract chunk can contain those
     tokens as a prefix, a date, and a clause number.
     """
     if not named_ids:
@@ -10210,7 +10210,7 @@ def retrieve_with_filter(
             noise_dropped += 1
             continue
         # Named-contract questions stay on that contract/doc id. Wrong
-        # year (DD-2023 query / DD-2022 chunk) is dropped here, not ranked
+        # year (AB-2023 query / AB-2022 chunk) is dropped here, not ranked
         # through. Empty kept after this loop is fail-closed.
         if not scope.allow(name, c.text or ""):
             continue

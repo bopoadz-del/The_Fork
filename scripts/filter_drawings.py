@@ -5,8 +5,8 @@ Drawings are matched by:
   - path contains "/Drawings/" or "\\Drawings\\" (case-insensitive), OR
   - filename matches "*-DWG-*" (case-insensitive)
 
-Discipline code parsed from JCB pattern:
-  IP-INF-053-0000-JCB-DWG-<DISCIPLINE>-...
+Discipline code parsed from EXC pattern:
+  QZ-ENG-310-0000-EXC-DWG-<DISCIPLINE>-...
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ SRC_ABS = os.path.join(_REPO_ROOT, SRC)
 DST_ABS = os.path.join(_REPO_ROOT, DST)
 
 DWG_NUM_RE = re.compile(
-    r"IP-INF-\d+-\d+-JCB-DWG-([A-Z]{2,4})-",
+    r"QZ-ENG-\d+-\d+-EXC-DWG-([A-Z]{2,4})-",
     re.IGNORECASE,
 )
 
@@ -55,7 +55,7 @@ def discipline_of(path: str) -> str:
 def sheet_series_of(path: str) -> str:
     """Return -NNN- 3-digit token after the discipline code, or empty."""
     name = os.path.basename(path)
-    m = re.search(r"IP-INF-\d+-\d+-JCB-DWG-[A-Z]{2,4}-(\d{3})-", name, re.IGNORECASE)
+    m = re.search(r"QZ-ENG-\d+-\d+-EXC-DWG-[A-Z]{2,4}-(\d{3})-", name, re.IGNORECASE)
     if m:
         return m.group(1)
     return ""

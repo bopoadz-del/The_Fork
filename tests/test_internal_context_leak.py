@@ -11,8 +11,8 @@ and streamed the pre-dispatch payload to the user AS THE ANSWER. It opened:
 and closed with the instruction the platform had written for the model
 ("Report the new durations ... Do not re-call generate_wbs"). In between: the
 entire retrieval brief, per-excerpt ``[doc_id= chunk= score=]`` telemetry, and
-the customer's absolute local paths -- ``G:\\My Drive\\Master Folder\\the
-project\\Contract Docs\\Contractor\\Contract docs NOT SIGNED\\...``.
+the customer's absolute local paths -- ``X:\\Example Drive\\Master Folder\\the
+project\\Contract Docs\\Contractor\\Contract docs UNSIGNED\\...``.
 
 Nothing caught it. Every branch of ``_is_tool_call_obj`` recognises a tool
 CALL; a tool RESULT matches none of them. These tests pin the result shape,
@@ -46,9 +46,9 @@ LEAKED_ANSWER = (
     "SCOPE OF ABSENCE \u2014 you are seeing a small sample of the corpus "
     'selected by search, NOT the whole of it.\\n'
     "(top 5 of 5 matches; cosine in [1.834, 3.434])\\n\\n"
-    "[doc_id=cbca195d chunk=11 score=2.199 src=DD-2023-118_Contract_Data.pdf] "
-    "[source: G:\\\\My Drive\\\\Master Folder\\\\the project\\\\Contract Docs\\\\"
-    'Contractor\\\\Contract docs NOT SIGNED\\\\DD-2023-118_Vol 1.0.pdf]"}'
+    "[doc_id=d0c00002 chunk=11 score=2.199 src=AB-2023-101_Contract_Data.pdf] "
+    "[source: X:\\\\Example Drive\\\\Master Folder\\\\the project\\\\Contract Docs\\\\"
+    'Contractor\\\\Contract docs UNSIGNED\\\\AB-2023-101_Vol 1.0.pdf]"}'
     "\nReport the new durations and recomputed total/critical path from this "
     "result. Do not reuse a prior WBS table."
 )
@@ -91,7 +91,7 @@ def test_every_brief_marker_is_refused_even_in_plain_prose(marker):
 def test_excerpt_telemetry_alone_is_enough():
     """A cosine score is never something a user asked for."""
     assert _looks_like_internal_context_leak(
-        "The rate is 0.1%. [doc_id=cbca195d chunk=11 score=2.199 src=x.pdf]"
+        "The rate is 0.1%. [doc_id=d0c00002 chunk=11 score=2.199 src=x.pdf]"
     ) is True
 
 
@@ -99,10 +99,10 @@ def test_a_normal_grounded_answer_is_not_flagged():
     """The C1 answer from the same battery, on the same build. A false
     positive here costs the user a real answer, so this is the guard rail."""
     good = (
-        "Based on the retrieved excerpts for contract DD-2023-118, Delay "
+        "Based on the retrieved excerpts for contract AB-2023-101, Delay "
         "Damages for the whole of the Works are 0.1% of the Contract Price "
         "per calendar day, capped at 10% of the Contract Price (Contract "
-        "Data 8.8.1, src = DD-2023-118_Contract_Data.pdf)."
+        "Data 8.8.1, src = AB-2023-101_Contract_Data.pdf)."
     )
     assert _looks_like_internal_context_leak(good) is False
 
@@ -231,8 +231,8 @@ def test_a_streamed_leak_never_reaches_the_client(deepseek_streaming):
     deltas = [
         '{"status": "success", "wbs_id": "wbs-ccc4ee6c", "brief": "AUTHORI',
         'TATIVE REFERENCE CONTEXT \u2014 the material below was retrieved\n',
-        "[doc_id=cbca195d chunk=11 score=2.199 src=x.pdf]\n",
-        "G:\\\\My Drive\\\\Master Folder\\\\the project\\\\Contract Docs\n",
+        "[doc_id=d0c00002 chunk=11 score=2.199 src=x.pdf]\n",
+        "X:\\\\Example Drive\\\\Master Folder\\\\the project\\\\Contract Docs\n",
     ]
     call_llm = _tool_then_final()
     with patch.object(Agent, "_call_llm", call_llm), \
@@ -250,7 +250,7 @@ def test_a_streamed_leak_never_reaches_the_client(deepseek_streaming):
     assert "doc_id=" not in text
     assert "wbs_id" not in text
     # The customer's private path is the part that must never ship.
-    assert "My Drive" not in text and "Contract Docs" not in text
+    assert "Example Drive" not in text and "Contract Docs" not in text
     assert events[-1]["type"] == "end"
     # The retry's answer is what the user gets -- a real one, not the
     # "retry or narrow the question" dead end an XML tool leak earns.
@@ -346,7 +346,7 @@ def test_a_retry_that_leaks_again_is_refused_too(deepseek_streaming):
         return {"status": "success", "choice": {"message": {
             "role": "assistant",
             "content": (
-                "[doc_id=cbca195d chunk=11 score=2.199 src=x.pdf] the rate "
+                "[doc_id=d0c00002 chunk=11 score=2.199 src=x.pdf] the rate "
                 "is stated in the Contract Data."
             )}}}
 

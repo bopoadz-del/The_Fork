@@ -11,12 +11,11 @@ import csv
 from numbers import Number
 import openpyxl
 
-# acacia bill/section header code, e.g. "A6 EMPLOYER'S FACILITIES", "B9 EXCAVATION"
-ACACIA_SECTION_RE = re.compile(r"^[A-Z]\d+\s+[A-Z]")
+# tower bill/section header code, e.g. "A6 EMPLOYER'S FACILITIES", "B9 EXCAVATION"
+TOWER_SECTION_RE = re.compile(r"^[A-Z]\d+\s+[A-Z]")
 
-BATCH = (
-    r"C:\Users\shimm\AppData\Local\Temp\claude\C--Users-shimm"
-    r"\436703f7-0a30-48b6-a650-29d75aac4fa5\scratchpad\boq_batch"
+BATCH = os.path.join(
+    os.environ.get("FORK_SCRATCH_DIR", "/data/example/scratch"), "boq_batch"
 )
 
 CSV_COLS = [
@@ -109,14 +108,14 @@ def parse_roshn():
 
 
 # --------------------------------------------------------------------------- #
-# 2) ACACIA 1  (MBR - DH-Acacia 1)  -- currency AED, PRICED
+# 2) TOWER 1  (example tower bill)  -- currency AED, PRICED
 # --------------------------------------------------------------------------- #
-ACACIA_AGG = ("collection", "summary", "total", "carried", "brought",
+TOWER_AGG = ("collection", "summary", "total", "carried", "brought",
               "page", "grand", "carry forward")
 
 
-def parse_acacia():
-    rows = load("acacia1.xlsx", "BOQ Bill")
+def parse_tower():
+    rows = load("tower1.xlsx", "BOQ Bill")
     # desc=3, unit=11, qty=12, rate=13, amount(Cost AED)=14
     recs = []
     section = ""
@@ -129,9 +128,9 @@ def parse_acacia():
         rate = num(cell(r, 13))
         amt = num(cell(r, 14))
         row_txt = " ".join(str(c) for c in r if isinstance(c, str)).lower()
-        is_agg = any(k in row_txt for k in ACACIA_AGG)
+        is_agg = any(k in row_txt for k in TOWER_AGG)
         # Section header: clause/bill title matching the code pattern.
-        if isinstance(desc, str) and ACACIA_SECTION_RE.match(desc.strip()) and amt is None:
+        if isinstance(desc, str) and TOWER_SECTION_RE.match(desc.strip()) and amt is None:
             section = desc.strip()
             continue
         if is_agg:
@@ -255,9 +254,9 @@ def main():
     r_priced = sum(1 for x in roshn if x["priced"])
     out.append(("roshn", p1, len(roshn), r_priced, len(roshn) - r_priced, 0, 0))
 
-    acacia, meas, meas_pass = parse_acacia()
-    p2 = write_csv("acacia1", acacia)
-    out.append(("acacia1", p2, len(acacia), len(acacia), 0, meas, meas_pass))
+    tower, meas, meas_pass = parse_tower()
+    p2 = write_csv("tower1", tower)
+    out.append(("tower1", p2, len(tower), len(tower), 0, meas, meas_pass))
 
     jebel = parse_jebel("hlx_diff.xlsx", "jebel_sifah", "Modified Qty")
     p3 = write_csv("jebel_sifah", jebel, extra_cols=["Item No", "Original Qty", "Modified Qty"])
