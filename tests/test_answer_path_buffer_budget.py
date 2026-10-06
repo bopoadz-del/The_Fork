@@ -12,11 +12,12 @@ and each read is re-run under EXPLAIN (ANALYZE, BUFFERS). Budgets:
 * buffers read from storage per question <= 50 MB;
 * buffers touched per question <= 600 MB;
 * and, scale-free, no single statement on the chunk table touches more than
-  half of that table's data (heap + TOAST) -- the synthetic corpus is smaller
-  than live, so the absolute numbers alone could pass while a full-table read
-  crept back. (A turn's TOTAL counts the same index pages once per statement,
-  so the bound is per statement.) The control proves it bites: one full read
-  of the table's text and embeddings exceeds it.
+  a quarter of that table (its total size, indexes included) -- the synthetic
+  corpus is smaller than live, so the absolute numbers alone could pass while
+  a full-table read crept back. (A turn's TOTAL counts the same index pages
+  once per statement, so the bound is per statement.) The control proves it
+  bites: one full read of the table's text and embeddings exceeds it. A
+  failure prints the statement and its plan's per-node buffers.
 
 The arithmetic is a pure function, tested without a database; the turn itself
 needs PostgreSQL buffer counts and runs in the ``test-postgres`` CI job.
@@ -33,7 +34,7 @@ import pytest
 PAGE = 8192
 READ_BUDGET = 50 * 1024 * 1024
 TOUCH_BUDGET = 600 * 1024 * 1024
-TABLE_SHARE = 0.5
+TABLE_SHARE = 0.25
 
 #: An item-code lookup on the project (the shape of the live measurement).
 QUESTION = "What is the quantity and rate for bill item Q731.4?"
@@ -48,19 +49,30 @@ def plain_reads(statements: Iterable) -> list:
             and "FOR UPDATE" not in s.upper()]
 
 
+def plan_nodes(plan: dict) -> list:
+    """(node type, relation/index, shared hit, shared read) for every plan node."""
+    out, stack = [], [plan or {}]
+    while stack:
+        node = stack.pop()
+        out.append((node.get("Node Type"), node.get("Index Name") or node.get("Relation Name"),
+                    int(node.get("Shared Hit Blocks", 0)), int(node.get("Shared Read Blocks", 0))))
+        stack.extend(node.get("Plans") or [])
+    return out
+
+
 def budget_report(reads: list, measure: Callable, table: str) -> dict:
     """Sum (read, hit) blocks over the turn's reads; find the worst single
-    statement on the chunk table."""
+    statement on the chunk table. ``measure`` returns (read, hit, plan)."""
     read_blocks = hit_blocks = 0
-    worst_bytes, worst_stmt = 0, ""
+    worst_bytes, worst_stmt, worst_plan = 0, "", None
     for statement, params in reads:
-        r, h = measure(statement, params)
+        r, h, plan = measure(statement, params)
         read_blocks += r
         hit_blocks += h
         if table in statement and (r + h) * PAGE > worst_bytes:
-            worst_bytes, worst_stmt = (r + h) * PAGE, " ".join(statement.split())[:300]
+            worst_bytes, worst_stmt, worst_plan = (r + h) * PAGE, " ".join(statement.split())[:400], plan
     return {"read_bytes": read_blocks * PAGE, "touched": (read_blocks + hit_blocks) * PAGE,
-            "worst_bytes": worst_bytes, "worst_statement": worst_stmt}
+            "worst_bytes": worst_bytes, "worst_statement": worst_stmt, "worst_plan": worst_plan}
 
 
 def check_budget(report: dict, table_data_bytes: int) -> list:
@@ -71,9 +83,10 @@ def check_budget(report: dict, table_data_bytes: int) -> list:
     if report["touched"] > TOUCH_BUDGET:
         out.append(f"touched {report['touched'] / 1e6:.1f} MB of buffers for one question")
     if report["worst_bytes"] > TABLE_SHARE * table_data_bytes:
-        out.append(f"one statement touched {report['worst_bytes'] / 1e6:.1f} MB of "
-                   f"{table_data_bytes / 1e6:.1f} MB chunk-table data (> {TABLE_SHARE:.0%}): "
-                   f"{report['worst_statement']}")
+        nodes = "; ".join(f"{t} {rel or ''} hit={h} read={r}" for t, rel, h, r in plan_nodes(report.get("worst_plan")))
+        out.append(f"one statement touched {report['worst_bytes'] / 1e6:.1f} MB of a "
+                   f"{table_data_bytes / 1e6:.1f} MB chunk table (> {TABLE_SHARE:.0%}): "
+                   f"{report['worst_statement']} || plan: {nodes}")
     return out
 
 
@@ -88,7 +101,7 @@ def test_plain_reads_keep_selects_and_drop_writes_and_locks():
 def test_budget_report_sums_and_names_the_worst_chunk_statement():
     blocks = {"SELECT a FROM chunks_t": (10, 90), "SELECT b FROM documents": (1, 9),
               "SELECT c FROM chunks_t WHERE x": (0, 500)}
-    rep = budget_report([(s, None) for s in blocks], lambda s, p: blocks[s], "chunks_t")
+    rep = budget_report([(s, None) for s in blocks], lambda s, p: (*blocks[s], {"Node Type": "Seq Scan"}), "chunks_t")
     assert rep["read_bytes"] == 11 * PAGE and rep["touched"] == 610 * PAGE
     assert rep["worst_bytes"] == 500 * PAGE and rep["worst_statement"] == "SELECT c FROM chunks_t WHERE x"
 
@@ -102,10 +115,16 @@ def test_check_budget_flags_each_broken_limit():
     assert len(msgs) == 3 and "SELECT * FROM chunks_t" in msgs[2]
 
 
+def test_plan_nodes_lists_every_node_with_its_buffers():
+    plan = {"Node Type": "Limit", "Shared Hit Blocks": 3, "Plans": [
+        {"Node Type": "Index Scan", "Index Name": "chunks_t_hnsw", "Shared Hit Blocks": 40, "Shared Read Blocks": 2}]}
+    assert sorted(plan_nodes(plan)) == [("Index Scan", "chunks_t_hnsw", 40, 2), ("Limit", None, 3, 0)]
+
+
 # ── the turn, on PostgreSQL ───────────────────────────────────────────────
 
-def _buffers(engine, statement: str, params) -> tuple[int, int]:
-    """(shared read, shared hit) blocks of one statement, re-run read-only."""
+def _buffers(engine, statement: str, params) -> tuple[int, int, dict]:
+    """(shared read, shared hit, plan) of one statement, re-run read-only."""
     raw = engine.raw_connection()
     try:
         cur = raw.cursor()
@@ -115,7 +134,7 @@ def _buffers(engine, statement: str, params) -> tuple[int, int]:
         if isinstance(plan, str):
             plan = json.loads(plan)
         top = plan[0]["Plan"]
-        return int(top.get("Shared Read Blocks", 0)), int(top.get("Shared Hit Blocks", 0))
+        return int(top.get("Shared Read Blocks", 0)), int(top.get("Shared Hit Blocks", 0)), top
     finally:
         raw.rollback()
         raw.close()
@@ -167,12 +186,12 @@ def test_one_question_stays_inside_its_database_budget(monkeypatch):
     reads = plain_reads(statements)
     assert any(table in s for s, _ in reads), "the turn never read the chunk table"
     with engine.connect() as conn:
-        data_bytes = int(conn.execute(text(f"SELECT pg_table_size('{table}')")).scalar())
+        data_bytes = int(conn.execute(text(f"SELECT pg_total_relation_size('{table}')")).scalar())
     report = budget_report(reads, lambda s, p: _buffers(engine, s, p), table)
     broken = check_budget(report, data_bytes)
     assert not broken, "\n".join(broken)
 
     # Control: one full read of the table's text and embeddings -- what the
     # unbounded path effectively did -- breaks the per-statement bound.
-    r, h = _buffers(engine, f"SELECT sum(length(text)), sum(vector_dims(embedding)) FROM {table}", None)
+    r, h, _plan = _buffers(engine, f"SELECT sum(length(text)), sum(vector_dims(embedding)) FROM {table}", None)
     assert (r + h) * PAGE > TABLE_SHARE * data_bytes, "control did not exceed the bound"
