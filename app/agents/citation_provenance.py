@@ -131,6 +131,8 @@ _MARKER_RE = re.compile(
 )
 _MARKER_SRC_RE = re.compile(r"\bsrc=([^\]]+?)(?=\s+\w+=|$)")
 _MARKER_CLASS_RE = re.compile(r"\bclass=([A-Za-z_]+)")
+_MARKER_PAGE_RE = re.compile(r"\bpage=(\d+)")
+_MARKER_LAYER_RE = re.compile(r"\blayer=([A-Za-z_]+)")
 
 # Chunks that actually carry priced-bill material. A "BOQ context" claim is
 # backed only by one of these, never by a chunk that merely says "bill".
@@ -193,6 +195,9 @@ class EvidenceRecord:
     source_name: str = ""
     source_class: str = "project_corpus"
     chunk_index: int | None = None
+    doc_id: str | None = None
+    page: int | None = None
+    layer: str | None = None
 
     @property
     def reads_corpus(self) -> bool:
@@ -319,12 +324,17 @@ def _retrieval_records(rag_sys_msg: dict[str, Any] | None) -> list[EvidenceRecor
         attrs = m.group("attrs") or ""
         src_m = _MARKER_SRC_RE.search(attrs)
         cls_m = _MARKER_CLASS_RE.search(attrs)
+        page_m = _MARKER_PAGE_RE.search(attrs)
+        layer_m = _MARKER_LAYER_RE.search(attrs)
         records.append(EvidenceRecord(
             kind="retrieval",
             text=content[start:end].strip(),
             source_name=(src_m.group(1).strip() if src_m else m.group("doc")),
             source_class=(cls_m.group(1).lower() if cls_m else "project_corpus"),
             chunk_index=int(m.group("chunk")),
+            doc_id=m.group("doc"),
+            page=(int(page_m.group(1)) if page_m else None),
+            layer=(layer_m.group(1).lower() if layer_m else None),
         ))
     return records
 
@@ -882,3 +892,164 @@ def gate(
     except Exception:  # noqa: BLE001 -- a gate must never break an answer
         _LOG.exception("citation_provenance failed; passing answer through")
         return text
+
+
+# ── Figure provenance ────────────────────────────────────────────────────────
+#
+# The same evidence objects, asked one more question: where did each FIGURE in
+# the answer come from? Every figure (a number carrying a unit, a currency or a
+# percent) gets an entry -- user input, calculator (formula and inputs),
+# project document or general knowledge (document and page). A figure with no
+# entry is not stated (when enforced): its clause is removed. One mechanism:
+# the calculator credit, retrieval records and user words above are what back
+# a figure here.
+
+_PROV_FIGURE_RE = re.compile(
+    r"(?<![\w.])(?P<pre>(?:SAR|AED|USD|EUR|GBP|QAR|KWD|OMR|BHD|\$|£|€)\s?)?"
+    r"(?P<num>\d[\d,]*(?:\.\d+)?)"
+    r"(?P<post>\s?(?:%|(?:mm|cm|km|m|m2|m²|m3|m³|kg|t|kN|kN/m|kN/m2|kN/m²|MPa|kPa|Pa|"
+    r"N/mm2|N/mm²|psi|ksi|days?|weeks?|months?|years?|hours?|hrs?|mins?|kW|kWh|lux|lx|"
+    r"°C|L|litres?|liters?|tonnes?|tons?|nos?|sqm|cum)\b))?",
+    re.IGNORECASE,
+)
+
+
+def _figure_mentions(text: str) -> list[tuple[re.Match, float]]:
+    out: list[tuple[re.Match, float]] = []
+    for m in _PROV_FIGURE_RE.finditer(text or ""):
+        if not (m.group("pre") or m.group("post")):
+            continue  # a bare number (clause 4.2, page 12, a year) is not a figure
+        try:
+            out.append((m, float(m.group("num").replace(",", ""))))
+        except ValueError:
+            continue
+    return out
+
+
+def _nums(text: str) -> list[float]:
+    out = []
+    for tok in re.findall(r"\d[\d,]*(?:\.\d+)?", text or ""):
+        try:
+            out.append(float(tok.replace(",", "")))
+        except ValueError:
+            continue
+    return out
+
+
+def _match(value: float, pool: Iterable[float]) -> bool:
+    return any(_close(value, p) for p in pool)
+
+
+def _rescaled(values: Iterable[float]) -> set[float]:
+    vals = set(values)
+    return vals | {v * 1000 for v in vals} | {v / 1000 for v in vals}
+
+
+def _working(values: set[float]) -> set[float]:
+    """Pairwise working on grounded numbers: a substitution line explains the
+    calculator's arithmetic; it does not invent a figure."""
+    out: set[float] = set()
+    vals = sorted(values)[:40]
+    for a in vals:
+        for b in vals:
+            out.add(a * b)
+            out.add(a + b)
+            out.add(abs(a - b))
+            if b:
+                out.add(a / b)
+    return out
+
+
+def _entry_for_record(rec: EvidenceRecord, figure: str) -> dict[str, Any]:
+    from app.agents.provenance_trail import SOURCE_GENERAL, SOURCE_PROJECT
+
+    gk = (rec.layer or "") == "general_knowledge"
+    return {
+        "figure": figure, "source": SOURCE_GENERAL if gk else SOURCE_PROJECT,
+        "doc_id": rec.doc_id, "doc_name": rec.source_name or None, "page": rec.page,
+        "chunk_index": rec.chunk_index,
+    }
+
+
+def figure_provenance(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+    *,
+    enforce: bool = True,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Return ``(answer, provenance)``: every figure credited to its source --
+    the user's own words, a calculator run (formula and inputs), or a
+    retrieved chunk (layer, document, page). With ``enforce`` a figure that
+    matches none of them is removed (its clause); without, the answer is
+    returned unchanged and only the record is built. Never raises -- on
+    failure the answer passes through with an empty record."""
+    from app.agents import provenance_trail as pt
+
+    try:
+        if not text or not text.strip():
+            return text, []
+        ev = build_evidence(rag_sys_msg, messages)
+        user_vals: set[float] = set()
+        for rec in ev.records:
+            if rec.kind == "user":
+                user_vals = set(_nums(rec.text))  # the latest operator turn wins
+        calc_entries: list[tuple[set[float], dict[str, Any]]] = []
+        for credit in _calculator_credits(ev):
+            nums = set(credit.result_numbers) | set(_nums(json.dumps(credit.inputs, default=str)))
+            calc_entries.append((nums, {"source": pt.SOURCE_CALCULATOR,
+                                        "formula": credit.calculation, "inputs": credit.inputs}))
+        calc_pool: set[float] = set()
+        for nums, _meta in calc_entries:
+            calc_pool |= nums
+        working = _working(_rescaled(calc_pool | user_vals)) if calc_entries else set()
+        retrievals = [r for r in ev.records if r.kind == "retrieval" and r.text]
+
+        entries: list[dict[str, Any]] = []
+        bad: list[re.Match] = []
+        for m, value in _figure_mentions(text):
+            fig = m.group(0).strip()
+            entry: dict[str, Any] | None = None
+            if _match(value, _rescaled(user_vals)):
+                entry = {"figure": fig, "source": pt.SOURCE_USER}
+            if entry is None:
+                for nums, meta in calc_entries:
+                    if _match(value, _rescaled(nums)):
+                        entry = {"figure": fig, **meta}
+                        break
+            if entry is None:
+                for rec in retrievals:
+                    if _match(value, _nums(rec.text)):
+                        entry = _entry_for_record(rec, fig)
+                        break
+            if entry is None and working and _match(value, working):
+                entry = {"figure": fig, "source": pt.SOURCE_CALCULATOR, "working": True}
+            if entry is None:
+                bad.append(m)
+                entries.append({"figure": fig, "source": None})
+            else:
+                entries.append(entry)
+        if not enforce:
+            return text, entries
+        out = text
+        for m in reversed(bad):
+            start, end = _clause_span(out, m.start(), m.end())
+            out = out[:start].rstrip(" ,;") + out[end:]
+        if bad:
+            _LOG.info("figure_provenance: removed %d figure(s) with no source", len(bad))
+        return out, [e for e in entries if e.get("source")]
+    except Exception:  # noqa: BLE001 -- a gate must never break an answer
+        _LOG.exception("figure_provenance failed; passing answer through")
+        return text, []
+
+
+def _clause_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """The parenthetical around [start, end), else the sentence around it."""
+    open_ = text.rfind("(", 0, start)
+    close = text.find(")", end)
+    if open_ != -1 and close != -1 and ")" not in text[open_:start] and "\n" not in text[open_:close]:
+        return open_, close + 1
+    left = max(text.rfind(". ", 0, start), text.rfind("\n", 0, start))
+    rights = [i for i in (text.find(". ", end), text.find("\n", end)) if i != -1]
+    right = min(rights) + 1 if rights else len(text)
+    return (left + 1 if left != -1 else 0), right

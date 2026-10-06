@@ -8116,6 +8116,24 @@ def _graft_stated_total_follow_up(
     return line
 
 
+def _record_figure_provenance(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]],
+    audit_rec: dict[str, Any] | None,
+) -> str:
+    """Record where each figure came from (stream + message store). On this
+    path the record is kept, not enforced: the answer text is unchanged."""
+    from app.agents.citation_provenance import figure_provenance
+    from app.agents.provenance_trail import LAST_PROVENANCE
+
+    _out, entries = figure_provenance(text, rag_sys_msg, messages, enforce=False)
+    LAST_PROVENANCE.set(entries)
+    if isinstance(audit_rec, dict):
+        audit_rec["provenance"] = entries
+    return text
+
+
 def _rss_mb() -> int:
     """Resident memory of this process in MB (Linux /proc; psutil elsewhere;
     -1 when neither is readable)."""
@@ -8244,6 +8262,10 @@ def _postprocess_answer(
     # template scheduler that has no BOQ input at all).
     from app.agents.citation_provenance import gate as _citation_provenance_gate
     text = _citation_provenance_gate(text, rag_sys_msg, messages)
+    # Figure provenance (same evidence objects): every figure credited to user
+    # input, calculator, project document or general knowledge; a figure with
+    # no source is not stated. Enforced on turns that ran a need plan.
+    text = _record_figure_provenance(text, rag_sys_msg, messages, audit_rec)
     text = _standards_advisory(text, question=_latest_operator_ask(messages))
     text = _ensure_ingestion_handoff(text, messages, agent_name)
     # P4b: project 30 minutes must not be stated as NFPA's (same shape for
@@ -11193,6 +11215,7 @@ class Agent:
                 "iterations": 0,
                 "messages": messages + [{"role": "assistant", "content": answer}],
                 "sources": _build_sources_from_audit(_rag_audit, answer),
+                "provenance": (_rag_audit or {}).get("provenance") or [],
             }
         # WAVE 2 B4: priced D599.5 is already in the excerpts. Skip the
         # provider hop so a transient OpenRouter / unavailable banner
@@ -11220,6 +11243,7 @@ class Agent:
                 "iterations": 0,
                 "messages": messages + [{"role": "assistant", "content": answer}],
                 "sources": _build_sources_from_audit(_rag_audit, answer),
+                "provenance": (_rag_audit or {}).get("provenance") or [],
             }
         # BOQ page Part Summary total already in the excerpts.
         _part_fast = _should_short_circuit_part_summary(
@@ -11245,6 +11269,7 @@ class Agent:
                 "iterations": 0,
                 "messages": messages + [{"role": "assistant", "content": answer}],
                 "sources": _build_sources_from_audit(_rag_audit, answer),
+                "provenance": (_rag_audit or {}).get("provenance") or [],
             }
         # Root fix for the tool-loop (mirrors chat_stream): cap explicit
         # search_project_documents calls, then stop offering the tool so the
@@ -11320,6 +11345,7 @@ class Agent:
                         "messages": messages,
                         "recovered_from_llm_error": True,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "provenance": (_rag_audit or {}).get("provenance") or [],
                         "exports": _build_exports_from_audit(
                             _rag_audit, final_text, tool_calls_made,
                             conversation_id=conversation_id,
@@ -11425,6 +11451,7 @@ class Agent:
                         "iterations": iteration + 1,
                         "messages": messages,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "provenance": (_rag_audit or {}).get("provenance") or [],
                         "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made, conversation_id=conversation_id),
                     }
 
@@ -11557,6 +11584,7 @@ class Agent:
             "messages": messages,
             "forced_final": True,
             "sources": _build_sources_from_audit(_rag_audit, final_text),
+            "provenance": (_rag_audit or {}).get("provenance") or [],
             "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made, conversation_id=conversation_id),
         }
 
@@ -12322,6 +12350,7 @@ class Agent:
                 "content": answer,
                 "iterations": 0,
                 "sources": _build_sources_from_audit(_rag_audit, answer),
+                "provenance": (_rag_audit or {}).get("provenance") or [],
                 "tools": list(tools_invoked),
             }
             return
@@ -12349,6 +12378,7 @@ class Agent:
                 "content": answer,
                 "iterations": 0,
                 "sources": _build_sources_from_audit(_rag_audit, answer),
+                "provenance": (_rag_audit or {}).get("provenance") or [],
                 "tools": list(tools_invoked),
             }
             return
@@ -12375,6 +12405,7 @@ class Agent:
                 "content": answer,
                 "iterations": 0,
                 "sources": _build_sources_from_audit(_rag_audit, answer),
+                "provenance": (_rag_audit or {}).get("provenance") or [],
                 "tools": list(tools_invoked),
             }
             return
@@ -12762,6 +12793,7 @@ class Agent:
                         "model": served_model,
                         "tools": list(tools_invoked),
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "provenance": (_rag_audit or {}).get("provenance") or [],
                         "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results, conversation_id=conversation_id),
                     }
                     return
@@ -12811,6 +12843,7 @@ class Agent:
                         "tools": list(tools_invoked),
                         "recovered_from_llm_error": True,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "provenance": (_rag_audit or {}).get("provenance") or [],
                         "exports": _build_exports_from_audit(
                             _rag_audit, final_text, stream_tool_results,
                             conversation_id=conversation_id,
@@ -12985,6 +13018,7 @@ class Agent:
                         "model": served_model,
                         "tools": list(tools_invoked),
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "provenance": (_rag_audit or {}).get("provenance") or [],
                         "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results, conversation_id=conversation_id),
                     }
                     return
@@ -13123,6 +13157,7 @@ class Agent:
             "model": served_model,
             "tools": list(tools_invoked),
             "sources": _build_sources_from_audit(_rag_audit, final_text),
+            "provenance": (_rag_audit or {}).get("provenance") or [],
             "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results, conversation_id=conversation_id),
         }
 

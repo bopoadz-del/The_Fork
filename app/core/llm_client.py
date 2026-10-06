@@ -7,6 +7,7 @@ a provider — which one is active is a config choice, not a code change.
 """
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import os
 from typing import Any, Dict, List, Optional
@@ -72,7 +73,11 @@ async def complete(
         if a_key:
             headers["Authorization"] = f"Bearer {a_key}"
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            # Building an AsyncClient loads the SSL context synchronously
+            # (~0.3 s measured); per attempt that froze the single worker's
+            # event loop for every other user. Build it in a worker thread.
+            client_obj = await asyncio.to_thread(httpx.AsyncClient, timeout=timeout)
+            async with client_obj as client:
                 r = await client.post(a_cfg["url"], json=payload, headers=headers)
                 if r.status_code >= 400:
                     exc = httpx.HTTPStatusError(
