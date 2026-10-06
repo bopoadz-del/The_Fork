@@ -8325,7 +8325,16 @@ def _postprocess_answer(
     # after every graft, so a grafted figure is checked too.
     text = _annotate_derivation_mismatches(text)
     # 0-token force_synthesis must never persist an empty bubble.
-    return _nonblank_after_empty_synthesis(text, messages)
+    text = _nonblank_after_empty_synthesis(text, messages)
+    # Posture path is flag-gated. off returns this text and does not sample.
+    from app.agents.posture_final import apply_posture_at_final_answer
+    return apply_posture_at_final_answer(
+        text,
+        rag_sys_msg=rag_sys_msg,
+        messages=messages,
+        project_id=project_id,
+        audit_rec=audit_rec,
+    )
 
 
 _INGEST_NEXT_RE = re.compile(r"(?im)^Next:\s*\S+")
