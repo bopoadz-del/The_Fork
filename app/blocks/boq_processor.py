@@ -67,6 +67,16 @@ def _boq_pdf_parse_seconds() -> float:
     return _env_number("BOQ_PDF_PARSE_SECONDS", _DEFAULT_BOQ_PDF_PARSE_SECONDS)
 
 
+def _parse_clock() -> float:
+    """The clock the PDF parse budget is measured on.
+
+    One named seam, so a test can drive the budget with a fake clock instead
+    of real elapsed time (patching ``time.monotonic`` itself would also move
+    asyncio's own timers).
+    """
+    return time.monotonic()
+
+
 class _ParseBudgetExceeded(Exception):
     pass
 
@@ -351,7 +361,7 @@ class BOQProcessorBlock(UniversalBlock):
 
         max_pages = _boq_pdf_max_pages()
         budget_s = _boq_pdf_parse_seconds()
-        deadline = time.monotonic() + budget_s
+        deadline = _parse_clock() + budget_s
         with pdfplumber.open(file_path) as pdf:
             page_count = len(pdf.pages)
         if page_count > max_pages:
@@ -390,7 +400,7 @@ class BOQProcessorBlock(UniversalBlock):
         import pandas as pd
 
         def check_budget(page_index: int) -> None:
-            if time.monotonic() > deadline:
+            if _parse_clock() > deadline:
                 raise _ParseBudgetExceeded(f"stopped at page {page_index}")
 
         # Group tables by a canonical "shape" key built from normalized headers
