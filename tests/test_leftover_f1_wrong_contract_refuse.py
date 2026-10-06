@@ -1,4 +1,4 @@
-"""Leftover F1: refuse + DD-2022 CoC cite is FAIL, not a soft PASS.
+"""Leftover F1: refuse + AB-2022 CoC cite is FAIL, not a soft PASS.
 
 Live Master Corpus (theshovel.ai c922f78), signed-in pack ask::
 
@@ -6,8 +6,8 @@ Live Master Corpus (theshovel.ai c922f78), signed-in pack ask::
     WBS for the demolition and site clearance scope in this project's BOQ.
 
 Observed FAIL: the assistant refuses to produce the WBS and cites
-REDACTED Conditions of Contract narrative (hard flag
-``dd2022_wrong_contract``). Soft ``must_any: clearance|trees|pavement``
+AB-2022-202 Conditions of Contract narrative (hard flag
+``ab2022_wrong_contract``). Soft ``must_any: clearance|trees|pavement``
 marks PASS when the refuse merely mentions demolition.
 
 These tests pin the election, the glass, and the judge (no live LLM).
@@ -52,7 +52,7 @@ from tests.test_leftover_f1_boq_wbs import (
 
 REFUSE_DD22 = (
     "I cannot produce a demolition and site clearance WBS from the "
-    "retrieved excerpts. Volume 1 of REDACTED (Conditions of Contract) "
+    "retrieved excerpts. Volume 1 of AB-2022-202 (Conditions of Contract) "
     "describes the Contractor's obligation to execute the demolition and "
     "site clearance scope in the Bill of Quantities, but those excerpts "
     "do not contain a work breakdown structure."
@@ -81,9 +81,9 @@ def test_soft_mention_of_demolition_is_not_a_pass():
     assert "clearance" in MENTION_ONLY.lower()
 
 
-def test_dd2022_cite_without_refuse_is_still_wrong_contract():
+def test_ab2022_cite_without_refuse_is_still_wrong_contract():
     cite = (
-        "Per REDACTED the Contractor shall execute the demolition "
+        "Per AB-2022-202 the Contractor shall execute the demolition "
         "and site clearance scope described in the Bill of Quantities."
     )
     assert boq_wbs_answer_fails_wrong_contract(cite)
@@ -93,7 +93,7 @@ def test_dd2022_cite_without_refuse_is_still_wrong_contract():
 def test_grounded_boq_wbs_is_pass_and_not_wrong_contract():
     assert boq_wbs_answer_is_grounded(GROUNDED)
     assert not boq_wbs_answer_fails_wrong_contract(GROUNDED)
-    assert "DD-2022" not in GROUNDED
+    assert "AB-2022" not in GROUNDED
     assert "template scaffold" not in GROUNDED.lower()
 
 
@@ -130,7 +130,7 @@ def test_b4_b5_e1_g4_do_not_elect_f1_force():
         ) != "generate_wbs"
 
 
-def test_f1_rag_directive_forbids_refuse_and_dd2022():
+def test_f1_rag_directive_forbids_refuse_and_ab2022():
     msgs = [{"role": "user", "content": F1_ASK}]
     rag = {
         "content": (
@@ -141,12 +141,12 @@ def test_f1_rag_directive_forbids_refuse_and_dd2022():
     assert _apply_rag_context(msgs, rag) is True
     folded = msgs[-1]["content"]
     assert "Do NOT refuse" in folded
-    assert "DD-2022" in folded
+    assert "another contract year's Conditions of Contract" in folded
     assert "using ONLY the reference context" not in folded
     assert F1_ASK in folded
 
 
-def test_graft_replaces_refuse_dd2022_with_predispatched_wbs():
+def test_graft_replaces_refuse_ab2022_with_predispatched_wbs():
     from app.agents.runtime import _format_wbs_result
 
     rendered = _format_wbs_result({
@@ -176,11 +176,11 @@ def test_graft_replaces_refuse_dd2022_with_predispatched_wbs():
     out = _graft_boq_scope_wbs_if_wrong_contract(REFUSE_DD22, msgs)
     assert boq_wbs_answer_is_grounded(out)
     assert not boq_wbs_answer_fails_wrong_contract(out)
-    assert "DD-2022" not in out
+    assert "AB-2022" not in out
     assert "D110" in out
     post = _postprocess_answer(REFUSE_DD22, {"content": _CONTRACT_PROSE}, msgs)
     assert boq_wbs_answer_is_grounded(post)
-    assert "DD-2022" not in post
+    assert "AB-2022" not in post
 
 
 def test_compose_short_circuit_requires_boq_derived_predispatch():
@@ -302,7 +302,7 @@ async def test_predispatch_does_not_inject_building_template_for_f1(monkeypatch)
     assert len(msgs) == 1
 
 
-def test_newer_year_boq_wins_over_dd2022_bill(monkeypatch):
+def test_newer_year_boq_wins_over_ab2022_bill(monkeypatch):
     """Both years' demolition bills in the pool — unnamed F1 takes the later one."""
     from app.core.rag.vector_store import Chunk
     from app.lib import boq_schedule as bs
@@ -316,8 +316,8 @@ def test_newer_year_boq_wins_over_dd2022_bill(monkeypatch):
     docs = [
         {
             "id": "boq22",
-            "original_name": "REDACTED - Demolition and Site Clearance BOQ.pdf",
-            "file_path": "/docs/REDACTED - Demolition and Site Clearance BOQ.pdf",
+            "original_name": "AB-2022-202 - Demolition and Site Clearance BOQ.pdf",
+            "file_path": "/docs/AB-2022-202 - Demolition and Site Clearance BOQ.pdf",
         },
         {
             "id": "boq23",
@@ -372,7 +372,7 @@ def test_newer_year_boq_wins_over_dd2022_bill(monkeypatch):
         "app.core.rag.retriever._doc_name_for_id",
         lambda did: {
             "boq23": DD23_BOQ_NAME,
-            "boq22": "REDACTED - Demolition and Site Clearance BOQ.pdf",
+            "boq22": "AB-2022-202 - Demolition and Site Clearance BOQ.pdf",
         }.get(did, DD22_COC_NAME),
     )
     items = retrieve_boq_scope_items(F1_ASK, "master_corpus")
@@ -381,12 +381,12 @@ def test_newer_year_boq_wins_over_dd2022_bill(monkeypatch):
     assert "D110" in codes
     assert "D290.1" in codes
     assert "D199" not in codes
-    assert "DD-2022" not in sources
-    assert "REDACTED" in sources
+    assert "AB-2022" not in sources
+    assert "AB-2023-101" in sources
 
 
 @pytest.mark.asyncio
-async def test_generate_wbs_f1_answer_has_no_dd2022_cite(monkeypatch):
+async def test_generate_wbs_f1_answer_has_no_ab2022_cite(monkeypatch):
     _install_boq_pool(monkeypatch)
     r = await ConstructionContainer().generate_wbs(
         {"brief": F1_ASK},
@@ -397,8 +397,8 @@ async def test_generate_wbs_f1_answer_has_no_dd2022_cite(monkeypatch):
     assert r["scaffold"]["derived_from_boq"] is True
     assert boq_wbs_answer_is_grounded(out)
     assert not boq_wbs_answer_fails_wrong_contract(out)
-    assert "DD-2022" not in out
-    assert "DD2022" not in out
+    assert "AB-2022" not in out
+    assert "AB2022" not in out
     assert "Template scaffold" not in out
     catalog = json.loads(
         (Path(__file__).parent / "fixtures" / "ui_phys" / "questions.json")

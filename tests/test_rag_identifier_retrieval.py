@@ -46,8 +46,8 @@ def test_extract_identifiers_detects_common_reference_patterns():
     ids = extract_query_identifiers('Is APPROVED valid per XYZ-501?')
     assert any("xyz-501" in i for i in ids)
 
-    ids = extract_query_identifiers('Show drawing REDACTED')
-    assert any("ip-inf-054" in i for i in ids)
+    ids = extract_query_identifiers('Show drawing QZ-ENG-320-0000-EXC-DWG-LI-200-0001056-04')
+    assert any("qz-eng-320" in i for i in ids)
 
     ids = extract_query_identifiers('What about BOQ item D999.46?')
     assert any("d999.46" in i for i in ids)
@@ -128,12 +128,12 @@ def test_extract_identifiers_excludes_measurement_units():
     ) == []
 
     # ...but real document reference codes are UNTOUCHED (identifier lane intact).
-    for code in ("xyz-501", "ip-inf-054", "d999.46", "ncr-007", "12-a", "13.1"):
+    for code in ("xyz-501", "qz-eng-320", "d999.46", "ncr-007", "12-a", "13.1"):
         assert not _looks_like_unit(code), code
     assert any("xyz-501" in i for i in extract_query_identifiers("valid per XYZ-501?"))
     assert any("d999.46" in i for i in extract_query_identifiers("BOQ item D999.46"))
-    assert any("ip-inf-054" in i for i in
-               extract_query_identifiers("Show drawing IP-INF-054-0000-JCB-DWG"))
+    assert any("qz-eng-320" in i for i in
+               extract_query_identifiers("Show drawing QZ-ENG-320-0000-EXC-DWG"))
 
 
 def test_identifier_chunk_outranks_semantic_boilerplate(isolated_store, monkeypatch):
@@ -276,10 +276,10 @@ def test_normalize_cesmm_item_codes_collapses_ocr_space():
     assert normalize_cesmm_item_codes("d 599.5") == "d599.5"
     assert normalize_cesmm_item_codes("I  112.3") == "I112.3"
     # Drawing / contract ids must not be rewritten.
-    assert "IP-INF-054" in normalize_cesmm_item_codes(
-        "drawing IP-INF-054-0000-JCB-DWG"
+    assert "QZ-ENG-320" in normalize_cesmm_item_codes(
+        "drawing QZ-ENG-320-0000-EXC-DWG"
     )
-    assert "REDACTED" in normalize_cesmm_item_codes("see REDACTED Vol 1")
+    assert "AB-2023-101" in normalize_cesmm_item_codes("see AB-2023-101 Vol 1")
 
 
 def test_extract_identifiers_collapses_ocr_spaced_cesmm():
@@ -352,7 +352,7 @@ def test_d5995_carriageway_outranks_excluded_culvert(isolated_store, monkeypatch
         ret,
         "_doc_name_for_id",
         lambda _id: (
-            "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+            "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
         ),
     )
 
@@ -432,7 +432,7 @@ def test_chat_path_retrieves_ocr_spaced_d5492_without_reindex(
     )
     assert "D549.2" not in spaced
     store.upsert_chunks(
-        "drive_archive", "REDACTED", [spaced], e.encode([spaced]),
+        "drive_archive", "d0c00001", [spaced], e.encode([spaced]),
     )
     monkeypatch.setattr(
         ret,

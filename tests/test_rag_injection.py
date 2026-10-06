@@ -104,7 +104,7 @@ def test_noise_filter_default_regex_matches_known_garbage():
     assert _is_noise_filename("nambae-menu(4).pptx") is True
     assert _is_noise_filename("SandsChina_Application_ChaD.docx") is True
     # And NOT a real doc.
-    assert _is_noise_filename("REDACTED.pdf") is False
+    assert _is_noise_filename("Example Client - Performance Basis of Design.pdf") is False
     assert _is_noise_filename("RFP_Appendix_B.xlsx") is False
 
 
@@ -138,7 +138,7 @@ def test_retrieve_drops_noise_before_top_k(monkeypatch):
     def fake_doc_name(doc_id):
         return {
             "d-noise": "~$lockfile.docx",
-            "d-real":  "Anthropic - BOD.pdf",
+            "d-real":  "Example Client - BOD.pdf",
         }[doc_id]
 
     monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)

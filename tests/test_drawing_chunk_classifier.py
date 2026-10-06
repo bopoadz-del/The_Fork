@@ -37,7 +37,7 @@ No. Description Quantity Unit
 """
 
 DRAWING_SCHEDULE = """
-Drawing No: REDACTED
+Drawing No: AB-2023-101
 Item | Mark | Description | Size | Qty
 A    | SF-1 | Slab formwork | 1200x2400 mm | 45 nos
 B    | RB-1 | Rebar mat     | 12mm @ 150   | 1200 kg

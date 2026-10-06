@@ -580,7 +580,7 @@ async def test_chat_short_circuits_b5_without_calling_llm(monkeypatch):
 
 
 # Live WAVE 2 B5 on be93dee: Rate Only (PART NR. 3) vs Excluded
-# (priced BOQ …53-0000-JCB-BOQ-CA-000007-B) suppressed 280,320.
+# (priced BOQ …53-0000-EXC-BOQ-CA-000007-B) suppressed 280,320.
 PART_NR_3_PRICED = (
     "PART NR. 3 DEMOLITION\n"
     "D529.3 Removal of storm water culverts — m 1,370.00 Rate Only\n"
@@ -592,7 +592,7 @@ RATE_ONLY_D549_SIBLING = (
     "D549.2 Removal of existing chain link fence — m Rate Only\n"
 )
 EXCLUDED_D549_SIBLING = (
-    "IP-INF-053-0000-JCB-BOQ-CA-000007-B Bill of Quantities (Priced)\n"
+    "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B Bill of Quantities (Priced)\n"
     "D549.2 Removal of existing chain link fence | sum 1 Excluded\n"
 )
 STAINED_PART_NR_3 = (
@@ -602,7 +602,7 @@ STAINED_PART_NR_3 = (
 )
 CONFLICT_REFUSE = (
     "The retrieved documents conflict: PART NR. 3 states Rate Only "
-    "while the priced BOQ IP-INF-053-0000-JCB-BOQ-CA-000007-B states "
+    "while the priced BOQ QZ-ENG-310-0000-EXC-BOQ-CA-000007-B states "
     "Excluded. I cannot confirm the amount."
 )
 B5_SIBLING_RAG = _sys(

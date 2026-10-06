@@ -6,7 +6,7 @@
 # move on. A second script (fork-tunnel-update.ps1) reads the log a few seconds
 # later to grab the URL and push it to Render.
 
-$CloudflaredExe = 'C:\Users\shimm\Downloads\ollama-setup\cloudflared.exe'
+$CloudflaredExe = (Join-Path $env:USERPROFILE 'Downloads\ollama-setup\cloudflared.exe')
 $OllamaUrl      = 'http://localhost:11434'
 $LogDir         = "$env:LOCALAPPDATA\fork-tunnel"
 $TunnelLogFile  = "$LogDir\cloudflared.log"

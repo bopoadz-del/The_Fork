@@ -51,7 +51,7 @@ def test_synthetic_look_ahead_does_not_ask_which_of_many_xers(monkeypatch):
 
     params, err = _resolve_predefined_file_params(
         "look_ahead",
-        "REDACTED",
+        "0f1e2d3c",
         {},
         user_message=SYNTHETIC_LOOK_AHEAD,
     )
@@ -70,7 +70,7 @@ def test_named_xer_still_resolves_when_user_names_file(monkeypatch):
     monkeypatch.setattr(projects_store, "list_documents", lambda _p: docs)
     params, err = _resolve_predefined_file_params(
         "look_ahead",
-        "REDACTED",
+        "0f1e2d3c",
         {},
         user_message="Run look_ahead on alpha.xer for the next 14 days",
     )

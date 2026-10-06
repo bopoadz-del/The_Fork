@@ -7,9 +7,9 @@
       "gate_dependency": "Phase 2 battery gates on this tier",
       "folders": [
         {
-          "project_id": "REDACTED",
+          "project_id": "example_infra_pack",
           "folder_name": "the client project",
-          "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j",
+          "folder_id": "1ExampleFolderId001xxxxxxxxxxxxxx",
           "subfolders": [
             {
               "subfolder": "Design",

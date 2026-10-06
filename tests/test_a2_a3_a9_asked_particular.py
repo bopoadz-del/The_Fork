@@ -8,10 +8,10 @@ Live tip 34d64e1 / theshovel.ai Master Corpus (LLM_PROVIDER=deepseek):
 * **A3 PARTIAL** — Time for Completion retrieved permit-tracker /
   community schedules / PSA recitals. Expect ``852 days``.
 * **A9 PARTIAL** — Engineer retrieved CoC 1.3–1.8 + drawing notes.
-  Expect JACOBS / CH2M Saudi Limited.
+  Expect EXAMPLAR / EXCON Example Limited.
 
 A5 / A6 / B2 and D2 / D4 / D5 stay on their own pins. Fixture figures
-for money; 852 days and JACOBS/CH2M are the live expected strings
+for money; 852 days and EXAMPLAR/EXCON are the live expected strings
 already used elsewhere in this repo.
 """
 from __future__ import annotations
@@ -63,20 +63,20 @@ LIVE_A9 = LIVE_PREFIX + A9_ASK
 ACA_INCL = "SAR 2,017,680,124.69"
 ACA_EXCL = "SAR 1,754,504,456.25"
 A3_DAYS = "852 days"
-A9_FIRM = "JACOBS (CH2M Saudi Limited)"
+A9_FIRM = "EXAMPLAR (EXCON Example Limited)"
 A5_RATE = "0.1% of the Contract Price per calendar day"
 A6_DAYS = "365 days"
 
 DD23_NAME = (
-    "REDACTED_the client project II Infrastructure Package 1_"
+    "AB-2023-101_the client project II Infrastructure Package 1_"
     "Vol 1 - Conditions of Contract.pdf"
 )
 CD_NAME = (
-    "REDACTED_DG2 Infra P1_Vol 1.0_Cond of Contract "
+    "AB-2023-101_QP2 Infra P1_Vol 1.0_Cond of Contract "
     "(complete)_Contract Data.pdf"
 )
-DRAWING_NAME = "REDACTED_DG2 Infra P1_Vol 3 – Drawings.pdf"
-PSA_NAME = "REDACTED.docx"
+DRAWING_NAME = "AB-2023-101_QP2 Infra P1_Vol 3 – Drawings.pdf"
+PSA_NAME = "Long Form PSA 01_02_21 Rev 2 with Legal Amendments.docx"
 PERMIT_NAME = "CPM 16-01-2024.pdf"
 
 DELAY_DAMAGES_COMPOSE = (
@@ -133,7 +133,7 @@ DRAWING_NOTES = (
     "of dimensions. No appointment is stated on this sheet."
 )
 # Live A3 PARTIAL on cb24f2b: graft led with 90 days, then the model
-# stated 852 from REDACTED Contract Data. Sectional / Vol-2 notice
+# stated 852 from AB-2023-101 Contract Data. Sectional / Vol-2 notice
 # / wrong-year lookalikes must lose the election.
 SECTIONAL_TFC_90 = (
     "CONTRACT DATA particulars — filled-in amount / duration / "
@@ -148,7 +148,7 @@ SPEC_NOTICE_90 = (
 )
 DD22_WHOLE_WORKS_90 = (
     "CONTRACT DATA particulars — filled-in amount / duration / "
-    "percentage [REDACTED_Vol 1 - Conditions of Contract.pdf].\n"
+    "percentage [AB-2022-202_Vol 1 - Conditions of Contract.pdf].\n"
     "Particular Conditions Part A - Contract Data\n"
     "1.1.75 Time for Completion for the whole of the Works: 90 days"
 )
@@ -159,12 +159,12 @@ A3_HEDGE_90_THEN_852 = (
     f"the Works) is stated as: {A3_DAYS} from the Commencement Date."
 )
 # Live A2 FAIL on 153ec86 / #517: opening sentence labeled the excl-VAT
-# neighbor as including VAT, then restated REDACTED's including-VAT
+# neighbor as including VAT, then restated AB-2023-101's including-VAT
 # figure. Delay-damages / excl-VAT first-in-blob must lose the election.
 A2_HEDGE_EXCL_THEN_INCL = (
     f"The Accepted Contract Amount including VAT is {ACA_EXCL}.\n\n"
     "The Accepted Contract Amount including VAT under contract "
-    f"REDACTED is {ACA_INCL} (Two Billion Seventeen Million Six "
+    f"AB-2023-101 is {ACA_INCL} (Two Billion Seventeen Million Six "
     "Hundred Eighty Thousand One Hundred Twenty Four Saudi Riyals "
     "and Sixty Nine Halalas)."
 )
@@ -429,15 +429,15 @@ def test_a9_surfaces_jacobs_ch2m_not_coc_or_drawings(monkeypatch):
     chunks, _ = ret.retrieve_with_filter(LIVE_A9, ACTIVE, k=5)
     blob = " ".join(c.text for c in chunks)
     assert chunks
-    assert "JACOBS" in blob
-    assert "CH2M" in blob
-    assert "JACOBS" in chunks[0].text
+    assert "EXAMPLAR" in blob
+    assert "EXCON" in blob
+    assert "EXAMPLAR" in chunks[0].text
     assert "1.3–1.8" not in blob
     assert "Drawing general notes" not in blob
 
 
 def test_a9_pairs_split_engineer_label_and_firm(monkeypatch):
-    """Live scanned table: Engineer on one chunk, JACOBS/CH2M on the next."""
+    """Live scanned table: Engineer on one chunk, EXAMPLAR/EXCON on the next."""
     coc = _chunk("coc", COC_DOC, 0.90, COC_1_3)
     label = _chunk("lbl", ENG_LABEL_DOC, 0.18, ENGINEER_LABEL_ONLY, chunk_index=4)
     value = _chunk("val", ENG_LABEL_DOC, 0.17, ENGINEER_VALUE_ONLY, chunk_index=5)
@@ -451,8 +451,8 @@ def test_a9_pairs_split_engineer_label_and_firm(monkeypatch):
     )
     chunks, _ = ret.retrieve_with_filter(A9_ASK, ACTIVE, k=5)
     blob = " ".join(c.text for c in chunks)
-    assert "JACOBS" in blob
-    assert "CH2M" in blob
+    assert "EXAMPLAR" in blob
+    assert "EXCON" in blob
 
 
 def test_a5_and_a6_are_not_stolen_onto_a2_a3_a9_rescue(monkeypatch):
@@ -523,8 +523,8 @@ def test_graft_a9_states_jacobs_ch2m_when_model_could_not_confirm():
         "exact document name."
     )
     out = _graft_asked_contract_particular(missing, rag, msgs)
-    assert "JACOBS" in out
-    assert "CH2M" in out
+    assert "EXAMPLAR" in out
+    assert "EXCON" in out
 
 
 def test_graft_does_not_invent_when_excerpt_lacks_the_particular():
@@ -623,12 +623,12 @@ def test_extract_from_real_inject_elects_jacobs_not_the_appointment_heading():
 
 
 def test_graft_a9_on_real_inject_does_not_leak_routing_preamble():
-    """THE live regression: graft prepended the inject heading to JACOBS."""
+    """THE live regression: graft prepended the inject heading to EXAMPLAR."""
     rag = _real_a9_inject()
     msgs = [{"role": "user", "content": LIVE_A9}]
     out = _graft_asked_contract_particular(A9_FIRM, rag, msgs)
-    assert "JACOBS" in out
-    assert "CH2M" in out
+    assert "EXAMPLAR" in out
+    assert "EXCON" in out
     assert not answer_contains_routing_preamble(out)
     assert "That IS the answer" not in out
     assert "INTERNAL GUIDANCE" not in out
@@ -640,8 +640,8 @@ def test_graft_a9_on_real_inject_does_not_leak_routing_preamble():
         "retrieved excerpts."
     )
     recovered = _graft_asked_contract_particular(missing, rag, msgs)
-    assert "JACOBS" in recovered
-    assert "CH2M" in recovered
+    assert "EXAMPLAR" in recovered
+    assert "EXCON" in recovered
     assert not answer_contains_routing_preamble(recovered)
 
 
@@ -663,8 +663,8 @@ def test_answer_must_not_contain_guard_preamble():
     rag = _real_a9_inject()
     msgs = [{"role": "user", "content": LIVE_A9}]
     out = _postprocess_answer(leaked, rag, msgs)
-    assert "JACOBS" in out
-    assert "CH2M" in out
+    assert "EXAMPLAR" in out
+    assert "EXCON" in out
     assert not answer_contains_routing_preamble(out)
     assert "That IS the answer" not in out
     assert "INTERNAL GUIDANCE" not in out
@@ -687,7 +687,7 @@ def test_new_engineer_identity_hint_wording_is_leak_guarded():
     leaked = f"{NEW_ENGINEER_HINT_LEAK}\n\n{A9_FIRM}"
     assert answer_contains_routing_preamble(leaked)
     cleaned = _strip_answer_routing_preamble(leaked)
-    assert A9_FIRM in cleaned  # JACOBS survives the strip
+    assert A9_FIRM in cleaned  # EXAMPLAR survives the strip
     assert not answer_contains_routing_preamble(cleaned)
     assert "State ONLY that firm" not in cleaned
     assert "ENGINEER IDENTITY" not in cleaned
@@ -702,7 +702,7 @@ def test_extract_elects_852_over_sectional_and_spec_90():
     assert extract_time_for_completion_days(rag["content"]) == A3_DAYS
 
 
-def test_extract_elects_dd2023_852_over_dd2022_90():
+def test_extract_elects_ab2023_852_over_ab2022_90():
     from app.core.rag.retriever import extract_time_for_completion_days
 
     rag = _sys(DD22_WHOLE_WORKS_90, SCANNED_TFC)
@@ -740,7 +740,7 @@ def test_a3_retrieval_fences_sectional_90_when_852_is_in_the_pool(monkeypatch):
     sectional = _chunk("sec", TFC_DOC, 0.93, SECTIONAL_TFC_90)
     spec = _chunk("sp", "vol2", 0.90, SPEC_NOTICE_90)
     tfc = _chunk("tfc", TFC_DOC, 0.21, SCANNED_TFC)
-    names = {TFC_DOC: DD23_NAME, "vol2": "REDACTED_DG2 Infra P1_Vol 2 - Specifications.pdf"}
+    names = {TFC_DOC: DD23_NAME, "vol2": "AB-2023-101_QP2 Infra P1_Vol 2 - Specifications.pdf"}
     ret = _install(
         monkeypatch,
         semantic=[sectional, spec],
@@ -779,7 +779,7 @@ def test_extract_elects_incl_vat_over_excl_and_delay_neighbor():
 
 
 def test_graft_a2_leads_with_incl_vat_not_the_excl_hedge():
-    """Live A2 FAIL: opening 'including VAT is' excl-VAT, then DD-2023 incl."""
+    """Live A2 FAIL: opening 'including VAT is' excl-VAT, then AB-2023 incl."""
     rag = _sys(COC_DELAY_CHUNK, SCANNED_ACA_EXCL, SCANNED_ACA_INCL)
     msgs = [{"role": "user", "content": LIVE_A2}]
     out = _graft_asked_contract_particular(A2_HEDGE_EXCL_THEN_INCL, rag, msgs)

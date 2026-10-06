@@ -315,7 +315,7 @@ def _apply_rag_context(
                 "because Conditions of Contract prose does not contain a "
                 "WBS — the bill's measured rows are the evidence. Do NOT "
                 "cite another contract year's Conditions of Contract "
-                "(including DD-2022 / DD2022) as the governing contract. "
+                "as the governing contract. "
                 "Do not print the generic building template as the answer. "
                 "Treat the reference context as background only."
                 "\n\nREQUEST: "
@@ -1908,7 +1908,7 @@ async def _predispatch_remaining_deliverables(
             "Present this WBS in full. When it is BOQ-derived, keep the "
             "numbered demolition / site-clearance packages. Do not refuse. "
             "Do not cite another contract year's Conditions of Contract "
-            "(including DD-2022) as the governing contract. Do not invent "
+            "as the governing contract. Do not invent "
             "man-hours.",
         ),
         (
@@ -2702,8 +2702,8 @@ def _is_tool_call_obj(obj: Any) -> bool:
 # ("Report the new durations ... Do not re-call generate_wbs"). In between:
 # the whole retrieval brief, per-excerpt [doc_id= chunk= score=] telemetry,
 # and the customer's absolute local paths --
-# "G:\My Drive\Master Folder\the project\Contract Docs\Contractor\..." --
-# for documents whose folder is named "Contract docs NOT SIGNED".
+# "X:\Example Drive\Master Folder\the project\Contract Docs\Contractor\..." --
+# for documents whose folder is named "Contract docs UNSIGNED".
 #
 # _looks_like_internal_tool_json did not catch it and could not: every branch
 # of _is_tool_call_obj recognises a tool CALL ({"name","arguments"},
@@ -2727,7 +2727,7 @@ _INTERNAL_CONTEXT_MARKERS = (
 
 # Answer-routing notes the model (or the Engineer graft) must never show the
 # user. Distinct from ``_INTERNAL_CONTEXT_MARKERS``: those trip a nuclear
-# fallback that would drop JACOBS if the hint was prepended to a good
+# fallback that would drop EXAMPLAR if the hint was prepended to a good
 # answer. These are STRIPPED so the appointed firm survives.
 _ROUTING_PREAMBLE_PHRASES = (
     "That IS the answer",
@@ -2769,7 +2769,7 @@ def _strip_answer_routing_preamble(text: str) -> str:
 
     Live e24aee4: graft prepended ``The Engineer is APPOINTMENT — an
     excerpt below names the Engineer. That IS the answer. State the
-    appointed firm…`` then JACOBS. Nuclear leak replacement would drop
+    appointed firm…`` then EXAMPLAR. Nuclear leak replacement would drop
     the firm. Strip the steering; leave the answer.
     """
     if not text:
@@ -2870,7 +2870,7 @@ class _EmitLeakGuard:
             else:
                 probe = content
             # Nuclear first: a full inject dump still falls back. Routing
-            # notes are stripped afterwards so JACOBS survives a prepended
+            # notes are stripped afterwards so EXAMPLAR survives a prepended
             # ENGINEER APPOINTMENT hint (live e24aee4).
             if _looks_like_internal_context_leak(probe):
                 self.tripped = True
@@ -3995,7 +3995,7 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
             return None
     # Duration override + re-run must force generate_wbs, not a calculator.
     # Leftover F1: a demolition / site-clearance BOQ WBS ask must also
-    # force generate_wbs so RAG-folded DD-2022 CoC cannot steal the turn.
+    # force generate_wbs so RAG-folded AB-2022 CoC cannot steal the turn.
     if "generate_wbs" in available:
         try:
             from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
@@ -4173,7 +4173,7 @@ def _clean_path_label(label: str) -> str:
     r"""Return a user-facing source label stripped of Windows/Unix path gunk.
 
     Preserves the basename (or last non-empty path segment) so sources are
-    still grounded to a real document, but never leaks ``G:\My Drive\...``
+    still grounded to a real document, but never leaks ``X:\Example Drive\...``
     or ``/home/user/...`` machine paths in the UI.
     """
     if not label:
@@ -4433,7 +4433,7 @@ def _infer_commissioning_systems(text: str | None) -> list[str] | None:
     """Map the user's wording onto commissioning system keys.
 
     Leftover torch-SBS / membrane / before-backfill → waterproofing
-    (holiday/spark belongs there). A PWPS-02 reservoir /
+    (holiday/spark belongs there). A PWPS-09 reservoir /
     first wet test / C21-OPC blinding must NEVER take that path.
     """
     low = (text or "").lower()
@@ -7418,7 +7418,7 @@ def _graft_boq_scope_wbs_if_wrong_contract(
     text: str,
     messages: list[dict[str, Any]] | None,
 ) -> str:
-    """Replace a leftover-F1 refuse / DD-2022 cite with the predispatched WBS."""
+    """Replace a leftover-F1 refuse / AB-2022 cite with the predispatched WBS."""
     if not _boq_scope_wbs_compose_enabled():
         return text
     user = _latest_operator_ask(messages)
@@ -8168,7 +8168,7 @@ def _postprocess_answer(
     # Empty / incomplete construction_calc: a formula-name note or a
     # 1 m rebar demo is not a complete answer. Graft the computed ask.
     text = _graft_complete_calc_answer(text, messages)
-    # Leftover F1: refuse + DD-2022 CoC cite is FAIL. If generate_wbs
+    # Leftover F1: refuse + AB-2022 CoC cite is FAIL. If generate_wbs
     # already produced a BOQ-derived tree, that draft is the answer.
     text = _graft_boq_scope_wbs_if_wrong_contract(text, messages)
     text = _graft_operator_claim_facts(text, _operator_user_text(messages))
@@ -8291,7 +8291,7 @@ def _postprocess_answer(
     )
     # After graft: #587's INTERNAL GUIDANCE did not stop extract from
     # electing the ENGINEER APPOINTMENT heading. Strip leftover steering
-    # so JACOBS (or any other particular) is what the user sees.
+    # so EXAMPLAR (or any other particular) is what the user sees.
     text = _strip_answer_routing_preamble(text)
     # First-line figure + document asks: the Hard rule already asked for figure + document in
     # the first line. Live answers still opened on a narrative, a bare
@@ -8522,7 +8522,7 @@ def _build_sources_from_audit(
         )
     # Question-named ids stay authoritative (#443). When the question
     # did not name a contract but the answer did, scope Sources to that id
-    # so the panel cannot list DD-2022 next to prose that cites DD-2023.
+    # so the panel cannot list AB-2022 next to prose that cites AB-2023.
     if not named_contracts:
         named_contracts = extract_contract_doc_ids(final_text or "")
     if named_contracts:
@@ -11141,7 +11141,7 @@ class Agent:
             _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre or _calc_pre
         )
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
-        # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
+        # Skip the provider hop so AB-2022 CoC excerpts cannot refuse
         # the turn. Other deliverables still keep the LLM.
         _boq_wbs_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
         if _boq_wbs_fast:
@@ -12272,7 +12272,7 @@ class Agent:
             _pre or _wbs_pre or _hist_pre or _wir_pre or _more_pre or _calc_pre
         )
         # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
-        # Skip the provider hop so DD-2022 CoC excerpts cannot refuse
+        # Skip the provider hop so AB-2022 CoC excerpts cannot refuse
         # the turn. Other deliverables still keep the LLM.
         _boq_wbs_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
         if _boq_wbs_fast:

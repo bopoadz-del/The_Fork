@@ -22,7 +22,7 @@ the target hardware**, so nothing here implies evidence that wasn't produced.
 The hardware honesty: this session ran on a Windows dev PC — local Ollama
 (CPU/iGPU) with `qwen2.5:3b`/`7b`, no Docker, no 24 GB GPU, no separate
 air-gapped box. Everything runnable here was run; the rest is a ready-to-run
-harness + methodology for Chadi's target box.
+harness + methodology for the owner's target box.
 
 ## STEP 0 — Retrieval isolation (SHIPPED + VERIFIED LIVE)
 
@@ -30,7 +30,7 @@ Full write-up: `docs/step0-retrieval-isolation.md`.
 
 Root cause was not what the directive assumed: `store.search(project_id)` was
 **already** a hard SQL `WHERE project_id = X`. The leak was the GK merge — the
-live env declared the the client project client corpus (`drive_archive` + `REDACTED`)
+live env declared the the client project client corpus (`drive_archive` + `example_infra_pack`)
 as "general knowledge," silently blended into every project via ranking knobs.
 
 Fix: two layers — general knowledge (`curated_kb`) always-eligible-but-disclosed;
@@ -131,7 +131,7 @@ Procedure for the target box:
 4. Ingest a fixture project (upload path), run the full golden set + feature matrix (`scripts/golden_set_gate.py`, `scripts/feature_matrix_sweep.py`) against the local instance.
 5. PASS = all green **and** zero external connection attempts in an egress log (e.g. `tcpdump`/host firewall deny-log) for the duration.
 
-## Residual items / for Chadi
+## Residual items / for the owner
 
 - **STEP 0 reconciliation (vetoable):** GK stays disclosed-eligible, not fallback-only. To make it fallback-only: `RAG_GENERAL_KNOWLEDGE_PROJECTS=""`.
 - **Data hygiene:** `curated_kb` contains project-specific EW-2 files — prune (same leak class, minor).

@@ -79,7 +79,7 @@ After the streaming + DB-index fixes:
 
 | Check | Result |
 |-------|--------|
-| Grounded chat in the **browser** (deployed build) | **PASS — real cited answer in ~15s**, clean settle, no infinite spinner: *"...I could not confirm the contract completion period... (source: REDACTED.docx, chunks 29,55,345,309)"* |
+| Grounded chat in the **browser** (deployed build) | **PASS — real cited answer in ~15s**, clean settle, no infinite spinner: *"...I could not confirm the contract completion period... (source: 2011.01.01 EXM Lump Sum Const Contract TEMPLATE v4.docx, chunks 29,55,345,309)"* |
 | Streaming stall recovery (FIX A) | Heartbeats no longer reset the 95s deadline → a stall now surfaces a banner + unlocks the composer instead of spinning forever |
 | Export descriptor on the stream | `exports: []` present (empty for a `.docx`-cited answer — correct; only BOQ-cited xlsx answers get a "Cost BOQ (Excel)" offer) |
 | Workspace load latency | Was ~11s warm (every call). Root cause: missing `idx_chunks_project` btree on the `chunks` table (checkfirst skipped it on the pre-existing prod table) → COUNT-by-project seq-scanned 139k rows. Fix deployed (`9e2c51c`); re-measurement pending. |

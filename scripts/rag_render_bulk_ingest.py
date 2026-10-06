@@ -50,11 +50,11 @@ from app.core.ingest_lifecycle import (  # noqa: E402 - after sys.path bootstrap
 
 PG_ID = "dpg-d8m22mcm0tmc73b04elg-a"
 # The project + expected totals were hardcoded to the first backfill
-# (REDACTED, 27 docs / 7538 chunks). They are env-overridable so the
+# (example_infra_pack, 27 docs / 7538 chunks). They are env-overridable so the
 # same hardened writer can load another corpus -- e.g. the 2,924-doc
 # drive_archive text recovered from the laptop vector store -- without forking
 # the script. Defaults are unchanged, so existing invocations behave identically.
-PROJECT_ID = os.getenv("INGEST_PROJECT_ID", "REDACTED")
+PROJECT_ID = os.getenv("INGEST_PROJECT_ID", "example_infra_pack")
 DEFAULT_JSONL = Path(
     os.getenv("INGEST_JSONL", str(REPO / "rag_backfill_client_clean_all.jsonl"))
 )

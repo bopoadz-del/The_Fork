@@ -45,10 +45,11 @@ except (AttributeError, ValueError):
 OLLAMA_URL = "http://127.0.0.1:11434"
 PRIMARY_MODEL = "qwen3-coder:480b-cloud"
 FALLBACK_MODEL = "qwen2.5:7b-instruct"
-VECTORS_DB = r"C:\Users\shimm\The_Fork\data\rag\vectors.db"
-OUT_PATH = r"C:\Users\shimm\The_Fork\data\learning\training_scenarios_drive_archive_v2.jsonl"
-STATE_PATH = r"C:\Users\shimm\The_Fork\data\logs\scenario_gen_state_drive_archive_v2.json"
-PILOT_OUT = r"C:\Users\shimm\The_Fork\data\learning\training_scenarios_drive_archive.jsonl"
+_REPO = os.environ.get("FORK_REPO_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+VECTORS_DB = os.path.join(_REPO, "data", "rag", "vectors.db")
+OUT_PATH = os.path.join(_REPO, "data", "learning", "training_scenarios_drive_archive_v2.jsonl")
+STATE_PATH = os.path.join(_REPO, "data", "logs", "scenario_gen_state_drive_archive_v2.json")
+PILOT_OUT = os.path.join(_REPO, "data", "learning", "training_scenarios_drive_archive.jsonl")
 
 PER_DISCIPLINE_CAP = 900
 PER_DOC_CAP = 4

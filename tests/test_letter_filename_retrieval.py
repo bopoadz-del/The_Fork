@@ -1,7 +1,7 @@
 """D1: a named-site letter already in the corpus must be retrieved.
 
-Live Master Corpus pack D1 (SHA 567147a / #480): the UBCC Concrete
-Batching Plant at Wadi Safar letter was in Neon (ids 8199b14b,
+Live Master Corpus pack D1 (SHA 567147a / #480): the XBCC Concrete
+Batching Plant at Wadi Example letter was in Neon (ids 8199b14b,
 5a1e0001) and the handover certificate was too (5a1e0003). Retrieval
 returned only Volume 5 Other Documents (geotech, plot agreement, weekly
 reports) and the model refused — letter not in the excerpts.
@@ -25,30 +25,30 @@ from app.core.rag.vector_store import Chunk
 
 LETTER_NAME = (
     "Letter toAICC on Completion and transfer of responsibility "
-    "-UBCC Concrete Batching Plant at wadi Safar - caw.docx"
+    "-XBCC Concrete Batching Plant at wadi Example - caw.docx"
 )
 HANDOVER_NAME = (
-    "REDACTED.pdf"
+    "20230101 XBCC Batch Plant - Temporary Plot Handover Certificate.pdf"
 )
-VOL5_NAME = "REDACTED Vol 5 Other Documents.pdf"
-PLOT_NAME = "REDACTED.pdf"
+VOL5_NAME = "AB-2023-101 Vol 5 Other Documents.pdf"
+PLOT_NAME = "Wadi Example - Plot Agreement Proposal.pdf"
 
 LETTER_TEXT = (
-    "Letter to AICC on Completion and transfer of responsibility — "
-    "UBCC Concrete Batching Plant at Wadi Safar.\n"
+    "Letter to ACMC on Completion and transfer of responsibility — "
+    "XBCC Concrete Batching Plant at Wadi Example.\n"
     "Signed: Barry Muir\n"
     "Engineer's Representative\n"
-    "CH2M Saudi Limited\n"
+    "EXCON Example Limited\n"
 )
 VOL5_TEXT = (
-    "Volume 5 Other Documents. Geotechnical investigation at Wadi Safar. "
+    "Volume 5 Other Documents. Geotechnical investigation at Wadi Example. "
     "Plot agreement for the batching plant area. Weekly progress reports "
     "covering soils, access, and the temporary plot."
 )
 
 D1_QUERY = (
-    "Who signed the letter about the UBCC Concrete Batching Plant at "
-    "Wadi Safar, and in what capacity?"
+    "Who signed the letter about the XBCC Concrete Batching Plant at "
+    "Wadi Example, and in what capacity?"
 )
 D1_CATALOG_QUERY = (
     "Who signed the letter about the batching plant at Creek Bend, "
@@ -206,7 +206,7 @@ def test_d1_retrieves_letter_when_only_vol5_is_in_the_semantic_pool(monkeypatch)
     assert any("letter" in (n or "").lower() for n in names), names
     assert "Barry Muir" in texts
     assert "Engineer's Representative" in texts
-    assert "CH2M Saudi Limited" in texts
+    assert "EXCON Example Limited" in texts
     assert chunks[0].doc_id == LETTER_DOC
 
 
@@ -288,8 +288,8 @@ def test_filename_sql_finds_the_s5_letter_among_vol5_decoys(project_store):
         pid, terms, min_terms=2, require_letter=True,
     )
     assert [d["id"] for d in found] == [letter["id"]]
-    assert "UBCC" in found[0]["original_name"]
-    assert "wadi Safar" in found[0]["original_name"]
+    assert "XBCC" in found[0]["original_name"]
+    assert "wadi Example" in found[0]["original_name"]
 
 
 def test_filename_sql_require_letter_excludes_the_plot_agreement(project_store):

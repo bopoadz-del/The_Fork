@@ -27,7 +27,7 @@ properly when we deploy the pilot.
 Real-contractor document control:
 
 - **Global layer, inherited by every project:** Standards & Codes (OSHA / FIDIC /
-  local authority / DGCL / international) + General Specifications.
+  local authority / QPCL / international) + General Specifications.
 - **Per-project departments:** Contracts, Design, Development, Delivery.
   - Under **Delivery:** Cost Control, QS, Planning, Procurement, Engineering,
     Site / Construction.
@@ -49,10 +49,10 @@ Real-contractor document control:
 
 ## Separate bug track (surfaced from the 2026-07-16 admin/agent review)
 
-1. Empty-project leakage: `ha_long_xanh` (0 docs) answered from the client project content —
+1. Empty-project leakage: `example_estate` (0 docs) answered from the client project content —
    an empty project must say "no documents", not borrow another corpus.
 2. Intent bug: "what tools do you have" RAG-retrieved literal power tools instead
    of listing the agent's software tools.
-3. Duplicate / mislabeled projects: `master_corpus` and `REDACTED`
+3. Duplicate / mislabeled projects: `master_corpus` and `example_infra_pack`
    both 39/9,861 (same corpus, two names); `drive_archive` mislabeled
    "the client project".

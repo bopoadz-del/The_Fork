@@ -37,15 +37,15 @@ PROGRAMME_DRAWINGS_FIXTURE_NAME = "FIXTURE — Programme+Drawings"
 # Search candidates in priority order.
 BOQ_CANDIDATES = [
     "the client project_Sewer_WasteWater_Network_BOQ_verified.xlsx",
-    "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
-    "IP-INF-053 Priced BOQ - General Summary (verified total).txt",
+    "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+    "QZ-ENG-310 Priced BOQ - General Summary (verified total).txt",
 ]
 PROGRAMME_CANDIDATES = [
     "Annexure 2 - Baseline Program XER.xer",
     "project_programme.xer",
 ]
 DRAWING_CANDIDATES = [
-    "REDACTED.pdf",
+    "AVE conditional IFC DWGs - xyz.pdf",
     "ground_floor_plan.dxf",
 ]
 

@@ -14,13 +14,13 @@ DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork-jn3t.onrender.com")
 FIXTURES = {
     "FIXTURE — BOQ": {
         "files": [
-            {"file_id": "1tK66P6pMwtPB4CxGxHd8JqT9p5Vx2XeS", "name": "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"},
+            {"file_id": "1ExampleDriveFileId001xxxxxxxxxxx", "name": "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"},
         ]
     },
     "FIXTURE — Programme+Drawings": {
         "files": [
-            {"file_id": "1PSUPpsgdhIsj6grwhJfJJfbCTtlPHRvl", "name": "Annexure 2 - Baseline Program XER.xer"},
-            {"file_id": "1M7MC4xcWjQh_OrZg0YDimmUA3oTBIWiT", "name": "REDACTED.pdf"},
+            {"file_id": "1ExampleFolderId003xxxxxxxxxxxxxx", "name": "Annexure 2 - Baseline Program XER.xer"},
+            {"file_id": "1ExampleDriveFileId002xxxxxxxxxxx", "name": "AVE conditional IFC DWGs - xyz.pdf"},
         ]
     },
 }

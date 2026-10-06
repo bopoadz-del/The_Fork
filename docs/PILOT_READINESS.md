@@ -4,7 +4,7 @@
 
 **Date:** 2026-07-16
 **Session:** Closing run (packet production) — discipline-agent layer completed
-**Pilot go/no-go:** Chadi's call (G4) — this page is the input to it.
+**Pilot go/no-go:** the owner's call (G4) — this page is the input to it.
 
 ---
 
@@ -20,10 +20,10 @@ The **foundation is sound and the construction platform is loaded** — 40 block
 |------|----------|
 | **Blocks / construction platform** | Prod `/v1/health` = **40 blocks, 0 failures**. Construction container, boq_processor, drawing_qto, bim_extractor, primavera_parser, spec_analyzer, cpm_engine, schedule_generator, smart_orchestrator, project_reasoner, discipline-agent layer all loaded. |
 | **Chat backend** | `AGENT_TIMING_LOG` shows real completions: 2-4s, RAG tool calls, streamed answers. Not hanging. |
-| **Grounded RAG answers** | Live UI answers cite real docs+chunks. Payments → REDACTED Vol 4; commissioning → Aecom electrical comments. |
+| **Grounded RAG answers** | Live UI answers cite real docs+chunks. Payments → AB-2022-202 Vol 4; commissioning → Aecom electrical comments. |
 | **Corpus** | `chunks_v2` = **53 docs / 10,502 chunks**, avg 198 chunks/doc, 0 duplicate chunk_ids. |
 | **DB integrity** | `DATABASE_URL` set + fail-loud guard (#190). Old `chunks` table empty; `chunks_v2` canonical. |
-| **Master corpus** | `MASTER_CORPUS_SOURCE_PROJECT_ID=REDACTED` → "Master Corpus" retrieves real corpus. |
+| **Master corpus** | `MASTER_CORPUS_SOURCE_PROJECT_ID=example_infra_pack` → "Master Corpus" retrieves real corpus. |
 | **Auth** | 401s enforced; both domains serving; logged-in session working. |
 | **Fabrication kill** | F1/F2/F3 (#206) + F4 (#207 + #216) all live-verified. **Zero FAKE remaining.** |
 | **Grounding gate** | Increment 1 stamps (#215) + increment 2 money/rate (#219). Zero-FP on 147 real figures. `COST_GROUNDING_GATE` default-on. |
@@ -61,8 +61,8 @@ The **foundation is sound and the construction platform is loaded** — 40 block
 | W7 | **10 dormant agents** | 3 reachable, 10 dormant, 1 parked. 7 configs have unexecutable "hand off to X" prose. | Decision: wire (add `can_delegate`) or ledger-PARK each. |
 | W9 | **Export endpoint round-trip** | Libs value-proven; files not verified to OPEN end-to-end. | Smoke `/export/evm`, `/export/schedule`, `/export/boq`. |
 | W10 | **10 stale docs** | README "RRF fused", photo_chunks removed, self-hosted-llm, reasoning-consolidation, ROADMAP_ML. | Final sweep + update. |
-| 5a | **SOP ingestion** | `GDRIVE_SERVICE_ACCOUNT_JSON` not set on Render. | Chadi to provide service-account key + folder mapping. |
-| 5b | **SOURCE_MANIFEST** | Template prepared. **HELD for Chadi** — jurisdiction choice is his. | Chadi to confirm KSA/UAE/both + authority standards to ingest. |
+| 5a | **SOP ingestion** | `GDRIVE_SERVICE_ACCOUNT_JSON` not set on Render. | The owner to provide service-account key + folder mapping. |
+| 5b | **SOURCE_MANIFEST** | Template prepared. **HELD for the owner** — jurisdiction choice is his. | The owner to confirm KSA/UAE/both + authority standards to ingest. |
 
 ---
 
@@ -75,7 +75,7 @@ The **foundation is sound and the construction platform is loaded** — 40 block
 | `RAG_GK_SCORE_MARGIN` | `0.10` | GK score margin gate |
 | `GROUNDING_GATE` | default-on | Post-synthesis cost/rate grounding |
 | `CEREBRUM_DOMAIN_KITS` | `construction` | Construction kit loaded |
-| `MASTER_CORPUS_SOURCE_PROJECT_ID` | `REDACTED` | Master corpus alias |
+| `MASTER_CORPUS_SOURCE_PROJECT_ID` | `example_infra_pack` | Master corpus alias |
 | `LLM_PROVIDER` | `openai` | Primary: gpt-4o-mini |
 | `LLM_FALLBACK_PROVIDER` | `ollama` | Fallback: glm-5.2:cloud |
 | `FORK_HATS_ENABLED` | default-off | Discipline-agent layer (NEW) |
@@ -84,7 +84,7 @@ The **foundation is sound and the construction platform is loaded** — 40 block
 
 ---
 
-## Open Human Decisions (for Chadi)
+## Open Human Decisions (for the owner)
 
 1. **`FORK_HATS_ENABLED`** — Activate discipline-agent routing? OFF = zero impact.
 2. **`SOURCE_MANIFEST` jurisdiction** — KSA vs UAE vs both? Which authority standards?

@@ -19,7 +19,7 @@ Two rules had to be tightened, because the typo arrived through BOTH:
     "if8cation" — which carries a digit and so passed that rule's guard
 
 The discriminator is the ALPHABETIC RUN. Real codes are built from short
-abbreviations (M145, D999, PRC501, IP054); English words carry runs of 5+
+abbreviations (M145, D999, PRC951, IP054); English words carry runs of 5+
 letters, and a typo'd digit does not change that.
 """
 from __future__ import annotations
@@ -67,8 +67,8 @@ def test_other_digit_typos_are_ignored(query):
 @pytest.mark.parametrize(
     "query,expected_member",
     [
-        ("what is in REDACTED",
-         "REDACTED"),
+        ("what is in QZ-ENG-320-0000-EXC-DWG-ST-100-0000951-05",
+         "qz-eng-320-0000-exc-dwg-st-100-0000951-05"),
         ("show me drawing D999.46", "d999.46"),
         ("what does XYZ-501 say", "xyz-501"),
         ("give me RFI 42", "rfi 42"),
@@ -105,7 +105,7 @@ def test_previously_guarded_cases_remain_guarded(query):
         ("M145", False),         # short alpha prefix -> real code
         ("A615", False),
         ("D999", False),
-        ("PRC501", False),
+        ("PRC951", False),
         ("IP054", False),
         ("0000951", False),      # digits only
         ("D999.46", False),      # separator token -> handled elsewhere

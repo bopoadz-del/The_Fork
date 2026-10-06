@@ -41,7 +41,7 @@ class _Chunk:
         self.chunk_index = i
         self.score = 2.5 - i * 0.1          # descending, as the retriever orders
         self.text = text
-        self.source_name = "REDACTED_Contract_Data.pdf"
+        self.source_name = "AB-2023-101_Contract_Data.pdf"
         self.revision = ""
         self.superseded = False
         self.layer = "own"

@@ -163,8 +163,8 @@ def ret(monkeypatch):
         _chunk("dwg", DRAWING_DOC, 0.71, DRAWING_TITLE),
         _chunk("spec", "spec", 0.70, SPEC_CONCRETE),
     ]
-    names = {CD_DOC: CD_NAME, TOC_DOC: "REDACTED).pdf",
-             GC_DOC: "REDACTED", DRAWING_DOC: "GA-001.pdf",
+    names = {CD_DOC: CD_NAME, TOC_DOC: "Vol 4 - Schedule (2 of 3).pdf",
+             GC_DOC: "general_conditions.pdf", DRAWING_DOC: "GA-001.pdf",
              "spec": "033000 Concrete.pdf"}
 
     def fake_search(self, project_id, qvec, k, query_text=None):

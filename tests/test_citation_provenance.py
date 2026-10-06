@@ -6,7 +6,7 @@ evidence pack ``FLEET_OPS/artifacts/gate_battery_13b2bf7_2026-08-31.md``
 records the load-bearing strings verbatim:
 
     F2 | PASS on the override, carries a Sev-1 | ... the answer cites
-    ``BOQ context: Bill 03 - Demolition and Site Clearance (REDACTED)``
+    ``BOQ context: Bill 03 - Demolition and Site Clearance (AB-2022-202)``
     -- the WRONG contract.
 
     G1 | FAIL -- asserted Schedule 10 "sets out any applicable Works
@@ -48,7 +48,7 @@ from app.agents.citation_provenance import (
 # --------------------------------------------------------------------------
 
 # The recorded F2 citation, byte for byte from the evidence pack.
-F2_CITATION = "BOQ context: Bill 03 - Demolition and Site Clearance (REDACTED)"
+F2_CITATION = "BOQ context: Bill 03 - Demolition and Site Clearance (AB-2022-202)"
 
 F2_ANSWER = f"""Tree-removal override applied and the schedule recomputed.
 
@@ -103,15 +103,15 @@ G1_RAG = {
     "role": "system",
     "content": (
         "AUTHORITATIVE REFERENCE CONTEXT - the material below was retrieved.\n"
-        "[doc_id=abc123 chunk=0 score=0.712 src=REDACTED_Conditions.pdf] "
+        "[doc_id=abc123 chunk=0 score=0.712 src=AB-2023-101_Conditions.pdf] "
         "Schedule 10 sets out any applicable Works Guarantees.\n\n"
-        "[doc_id=abc123 chunk=1 score=0.664 src=REDACTED_Conditions.pdf] "
+        "[doc_id=abc123 chunk=1 score=0.664 src=AB-2023-101_Conditions.pdf] "
         "The Guarantor shall provide the guarantee in the form annexed."
     ),
 }
 
 
-def _rag(*chunks: str, src: str = "REDACTED_Vol1.pdf", cls: str = "") -> dict:
+def _rag(*chunks: str, src: str = "AB-2023-101_Vol1.pdf", cls: str = "") -> dict:
     cls_s = f" class={cls}" if cls else ""
     body = "\n\n".join(
         f"[doc_id=d{i} chunk={i} score=0.700{cls_s} src={src}] {c}"
@@ -127,7 +127,7 @@ def _rag(*chunks: str, src: str = "REDACTED_Vol1.pdf", cls: str = "") -> dict:
 def test_f2_fabricated_boq_citation_is_removed():
     out = gate(F2_ANSWER, None, F2_MESSAGES)
     assert "BOQ context" not in out
-    assert "REDACTED" not in out
+    assert "AB-2022-202" not in out
     assert UNVERIFIED_NOTE.strip() in out
 
 
@@ -165,7 +165,7 @@ def test_generate_wbs_run_is_not_a_corpus_read():
 def test_f2_citation_alone_fires_the_guard():
     """The recorded string on its own, with nothing else in the turn."""
     out = gate(F2_CITATION, None, F2_MESSAGES)
-    assert "REDACTED" not in out
+    assert "AB-2022-202" not in out
     assert UNVERIFIED_NOTE.strip() in out
 
 
@@ -187,16 +187,16 @@ def test_class_tagged_template_chunk_cannot_back_a_contract_attribution():
     enforcement is here already so item 2 only has to emit the tag."""
     rag = _rag("Schedule 10 sets out any applicable Works Guarantees.",
                src="fidic_template.md", cls="template")
-    answer = "Schedule 10 covers Works Guarantees.\nSource: REDACTED\n"
+    answer = "Schedule 10 covers Works Guarantees.\nSource: AB-2023-101\n"
     out = gate(answer, rag, [])
-    assert "Source: REDACTED" not in out
+    assert "Source: AB-2023-101" not in out
     assert UNVERIFIED_NOTE.strip() in out
 
 
 def test_project_corpus_chunk_does_back_the_same_attribution():
     rag = _rag("Schedule 10 sets out any applicable Works Guarantees.",
-               src="REDACTED_Conditions.pdf")
-    answer = "Schedule 10 covers Works Guarantees.\nSource: REDACTED\n"
+               src="AB-2023-101_Conditions.pdf")
+    answer = "Schedule 10 covers Works Guarantees.\nSource: AB-2023-101\n"
     assert gate(answer, rag, []) == answer
 
 
@@ -205,20 +205,20 @@ def test_project_corpus_chunk_does_back_the_same_attribution():
 # --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("planted", [
-    "Source: DD-2019-004 Particular Conditions",
-    "**Source:** DD-2021-990",
-    "- Source: DD-2020-117, clause 14.3",
-    "Sources: DD-2018-001 and DD-2018-002",
-    "BOQ context: Bill 07 - Roads (DD-2024-311)",
-    "Bill of Quantities context: Bill 12 (DD-2015-002)",
+    "Source: AB-2019-004 Particular Conditions",
+    "**Source:** AB-2021-990",
+    "- Source: AB-2020-117, clause 14.3",
+    "Sources: AB-2018-001 and AB-2018-002",
+    "BOQ context: Bill 07 - Roads (AB-2024-311)",
+    "Bill of Quantities context: Bill 12 (AB-2015-002)",
 ])
 def test_planted_fake_attributions_all_fire_the_guard(planted):
     answer = f"The retention is 10% of the Accepted Contract Amount.\n\n{planted}\n"
     out = gate(answer, None, F2_MESSAGES)
     assert "The retention is 10%" in out
     assert UNVERIFIED_NOTE.strip() in out
-    for tok in ("DD-2019-004", "DD-2021-990", "DD-2020-117", "DD-2018-001",
-                "DD-2024-311", "DD-2015-002", "BOQ context"):
+    for tok in ("AB-2019-004", "AB-2021-990", "AB-2020-117", "AB-2018-001",
+                "AB-2024-311", "AB-2015-002", "BOQ context"):
         assert tok not in out, tok
 
 
@@ -226,9 +226,9 @@ def test_planted_fake_attributions_all_fire_the_guard(planted):
     "per", "from", "see", "under", "according to", "as set out in", "taken from",
 ])
 def test_planted_prose_attribution_fires_when_nothing_read_the_corpus(cue):
-    answer = f"The retention is 10%, {cue} REDACTED.\n"
+    answer = f"The retention is 10%, {cue} AB-2022-202.\n"
     out = gate(answer, None, F2_MESSAGES)
-    assert "REDACTED" not in out
+    assert "AB-2022-202" not in out
     assert "The retention is 10%" in out
 
 
@@ -238,15 +238,15 @@ def test_planted_prose_attribution_fires_when_nothing_read_the_corpus(cue):
 
 def test_backed_attribution_survives():
     rag = _rag("The Accepted Contract Amount is SAR 1,754,504,456.25.",
-               src="REDACTED_ContractData.pdf")
-    answer = "The Accepted Contract Amount is SAR 1,754,504,456.25.\nSource: REDACTED Contract Data 1.1.1\n"
+               src="AB-2023-101_ContractData.pdf")
+    answer = "The Accepted Contract Amount is SAR 1,754,504,456.25.\nSource: AB-2023-101 Contract Data 1.1.1\n"
     assert gate(answer, rag, []) == answer
 
 
 def test_id_the_user_named_is_never_stripped():
     """The operator's own words are evidence. An id they typed is theirs."""
-    msgs = [{"role": "user", "content": "What is the retention under REDACTED?"}]
-    answer = "Retention under REDACTED is 10%.\nSource: REDACTED\n"
+    msgs = [{"role": "user", "content": "What is the retention under AB-2022-202?"}]
+    answer = "Retention under AB-2022-202 is 10%.\nSource: AB-2022-202\n"
     assert gate(answer, None, msgs) == answer
 
 
@@ -315,9 +315,9 @@ def test_retrieval_records_are_built_per_chunk():
 
 
 def test_marker_src_and_class_are_parsed():
-    rag = _rag("text", src="REDACTED_Vol1.pdf", cls="knowledge_base")
+    rag = _rag("text", src="AB-2023-101_Vol1.pdf", cls="knowledge_base")
     rec = build_evidence(rag, []).records[0]
-    assert rec.source_name == "REDACTED_Vol1.pdf"
+    assert rec.source_name == "AB-2023-101_Vol1.pdf"
     assert rec.source_class == "knowledge_base"
     assert rec.citable is False
 
@@ -329,14 +329,14 @@ def test_flat_rag_context_without_markers_still_counts_as_a_corpus_read():
 
 def test_corpus_reading_tool_ids_are_citable():
     msgs = [{"role": "tool", "name": "search_project_documents",
-             "content": "found REDACTED_Vol1.pdf"}]
+             "content": "found AB-2023-101_Vol1.pdf"}]
     ev = build_evidence(None, msgs)
-    assert "REDACTED" in ev.citable_ids()
+    assert "ab-2023-101" in ev.citable_ids()
 
 
 def test_template_scheduler_ids_are_not_citable():
     msgs = [{"role": "tool", "name": "generate_wbs",
-             "content": '{"brief": "works under REDACTED"}'}]
+             "content": '{"brief": "works under AB-2022-202"}'}]
     ev = build_evidence(None, msgs)
     assert ev.citable_ids() == set()
 
@@ -375,34 +375,34 @@ def test_gate_is_wired_into_postprocess_answer():
 # --------------------------------------------------------------------------
 
 def test_standalone_parenthesised_id_is_stripped_when_unbacked():
-    """"Bill 03 - Demolition and Site Clearance (REDACTED)" is an
+    """"Bill 03 - Demolition and Site Clearance (AB-2022-202)" is an
     attribution even with no "Source:" and no "BOQ context:" in front of it."""
     rag = _rag("Bill 03 covers demolition and site clearance.",
-               src="REDACTED_BOQ.pdf")
-    answer = "The demolition scope sits in Bill 03 (REDACTED).\n"
+               src="AB-2023-101_BOQ.pdf")
+    answer = "The demolition scope sits in Bill 03 (AB-2022-202).\n"
     out = gate(answer, rag, [])
-    assert "REDACTED" not in out
+    assert "AB-2022-202" not in out
     assert "The demolition scope sits in Bill 03" in out
     assert UNVERIFIED_NOTE.strip() in out
 
 
 def test_standalone_parenthesised_id_survives_when_evidence_names_it():
     rag = _rag("Bill 03 covers demolition and site clearance.",
-               src="REDACTED_BOQ.pdf")
-    answer = "The demolition scope sits in Bill 03 (REDACTED).\n"
+               src="AB-2023-101_BOQ.pdf")
+    answer = "The demolition scope sits in Bill 03 (AB-2023-101).\n"
     assert gate(answer, rag, []) == answer
 
 
 def test_parenthesised_id_is_stripped_when_nothing_read_the_corpus():
-    answer = "Tree removal is item 3.2 (REDACTED).\n"
+    answer = "Tree removal is item 3.2 (AB-2022-202).\n"
     out = gate(answer, None, F2_MESSAGES)
-    assert "REDACTED" not in out
+    assert "AB-2022-202" not in out
     assert "Tree removal is item 3.2" in out
 
 
 def test_parenthesised_id_the_user_named_survives_with_no_corpus_read():
-    msgs = F2_MESSAGES + [{"role": "user", "content": "check REDACTED please"}]
-    answer = "Tree removal is item 3.2 (REDACTED).\n"
+    msgs = F2_MESSAGES + [{"role": "user", "content": "check AB-2022-202 please"}]
+    answer = "Tree removal is item 3.2 (AB-2022-202).\n"
     assert gate(answer, None, msgs) == answer
 
 
@@ -412,12 +412,12 @@ def test_attribution_inside_a_table_row_does_not_destroy_the_row():
     answer = (
         "| phase | days | note |\n"
         "|---|---|---|\n"
-        "| Demolition | 42 | BOQ context: Bill 03 (REDACTED) |\n"
+        "| Demolition | 42 | BOQ context: Bill 03 (AB-2022-202) |\n"
         "| Earthworks | 60 | template default |\n"
     )
     out = gate(answer, None, F2_MESSAGES)
     body = out.replace(UNVERIFIED_NOTE, "")
-    assert "REDACTED" not in body
+    assert "AB-2022-202" not in body
     assert "BOQ context" not in body
     assert "| phase | days | note |" in body
     assert "|---|---|---|" in body
@@ -432,9 +432,9 @@ def test_inline_separators_on_a_non_table_line_survive_the_strip():
     between the metrics before it are the line's own formatting. Only the
     orphan goes."""
     answer = ("Activities: 204 | Working days: 721 | "
-              "BOQ context: Bill 03 (REDACTED)\n")
+              "BOQ context: Bill 03 (AB-2022-202)\n")
     out = gate(answer, None, F2_MESSAGES)
     body = out.replace(UNVERIFIED_NOTE, "").rstrip()
     assert "BOQ context" not in body
-    assert "REDACTED" not in body
+    assert "AB-2022-202" not in body
     assert body == "Activities: 204 | Working days: 721"

@@ -26,7 +26,7 @@ def test_the_live_failure_inspection_is_not_a_spec():
 
 
 def test_a_real_spec_still_classifies_as_spec():
-    out = classify("REDACTED_REDACTED).pdf")
+    out = classify("AB-2023-101_Vol 2 - Specification (3 of 11).pdf")
     assert out["name"] == "specification", out
 
 

@@ -23,7 +23,7 @@ user-facing, so it **subtracts one working day** when showing finish dates
 
 **Tech Stack:** Python 3.11, FastAPI, Pydantic v2, `openpyxl` (installed), vanilla JS. No new dependencies.
 
-**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\shimm\The_Fork`. **Plan 5 must be complete first.**
+**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\example\The_Fork`. **Plan 5 must be complete first.**
 
 ---
 

@@ -58,7 +58,7 @@ def test_small_pdf_not_blocked_by_size_guard(monkeypatch):
 
 
 def test_priced_boq_pdf_at_27mb_is_not_skipped_at_20mb(tmp_path, monkeypatch):
-    """Live priced BOQ (doc REDACTED) is ~26.9 MB plaintext / ~28 MB recorded.
+    """Live priced BOQ (doc d0c00001) is ~26.9 MB plaintext / ~28 MB recorded.
 
     The old hardcoded 20 MB parse cap refused it and asked for xlsx/csv, even
     after the same file OCR'd under the 32 MB gate. A leftover dashboard
@@ -68,7 +68,7 @@ def test_priced_boq_pdf_at_27mb_is_not_skipped_at_20mb(tmp_path, monkeypatch):
     monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "25")
     path = str(
         tmp_path
-        / "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+        / "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
     )
     with open(path, "wb") as fh:
         fh.write(b"%PDF-1.4\n")
@@ -82,7 +82,7 @@ def test_priced_boq_pdf_at_27mb_is_not_skipped_at_20mb(tmp_path, monkeypatch):
 def test_boq_pdf_size_gate_uses_plaintext_not_ciphertext(tmp_path, monkeypatch):
     """Fernet on-disk size must not refuse a 27 MB plaintext BOQ (#449 class).
 
-    Live REDACTED is ~26.9 MB plaintext; encrypted at rest that is ~36 MB on
+    Live d0c00001 is ~26.9 MB plaintext; encrypted at rest that is ~36 MB on
     disk — above the 32 MB OCR gate — so measuring getsize would 413 a file
     the OCR path already accepted.
     """
@@ -95,7 +95,7 @@ def test_boq_pdf_size_gate_uses_plaintext_not_ciphertext(tmp_path, monkeypatch):
 
     path = str(
         tmp_path
-        / "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+        / "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
     )
     file_crypto.write_document(path, b"%PDF-1.4 dummy")
 
@@ -119,7 +119,7 @@ def test_boq_pdf_max_mb_floors_at_ocr_gate(monkeypatch):
     monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "25")
     assert _boq_pdf_max_mb("notes.pdf") >= 32
     assert _boq_pdf_max_mb(
-        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+        "QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
     ) >= 32
 
 

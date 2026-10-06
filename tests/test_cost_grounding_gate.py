@@ -137,7 +137,7 @@ _A5_ANSWER_WITH_SAR = (
 
 
 def test_delay_damages_particular_is_not_wiped_as_a_boq_rate():
-    """A5 live: Sources cited REDACTED Conditions of Contract; the
+    """A5 live: Sources cited AB-2023-101 Conditions of Contract; the
     answer was the BOQ-rate refusal. A Contract Data fact lookup must
     keep the particular even when a SAR expansion is ungrounded."""
     msgs = [{"role": "user", "content": _A5_ASK}]

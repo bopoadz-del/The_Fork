@@ -62,9 +62,9 @@ M1 = (
     "South-West, 487 days) as separate branches with durations in calendar days."
 )
 M3 = (
-    "Generate a commissioning checklist for the PWPS-02 reservoir at "
+    "Generate a commissioning checklist for the PWPS-09 reservoir at "
     "1e-North Center before the first wet test. Ground it in Cast In-Situ "
-    "Concretes works for PWPS-02.pdf and the Week 52 pour record: C21-OPC "
+    "Concretes works for PWPS-09.pdf and the Week 52 pour record: C21-OPC "
     "reservoir blinding, planned 350 m3, poured 310 m3 on 7 and 9 January 2025."
 )
 M6 = (
@@ -89,7 +89,7 @@ M9 = (
     "the approved communication method."
 )
 M12 = (
-    "Prepare an as-built deviation note for PWPS-02 reservoir blinding: "
+    "Prepare an as-built deviation note for PWPS-09 reservoir blinding: "
     "planned 350 m3 versus poured 310 m3 on 7 and 9 January 2025. State the "
     "40 m3 shortfall and percent."
 )
@@ -107,7 +107,7 @@ M2 = (
     "State monthly drawdown, cumulative, and net after advance recovery."
 )
 M13 = (
-    "Generate an operations and maintenance manual outline for PWPS-02 "
+    "Generate an operations and maintenance manual outline for PWPS-09 "
     "(potable water pump station and reservoir). Cover existing-services "
     "interfaces from Specification Vol 2 Existing Services."
 )
@@ -123,7 +123,7 @@ M10 = (
     "collar pours of 11 manholes totalling 28 m3 of C-35 SRC."
 )
 M4 = (
-    "Issue a design directive answering REDACTED Conflict. "
+    "Issue a design directive answering RFI901 Underpass Length Conflict. "
     "The road profile is 42 m and the underpass is 36 m."
 )
 M8 = (
@@ -236,7 +236,7 @@ def test_infer_commissioning_mixed_wet_test_stays_reservoir():
         "torch-applied SBS membrane holiday test before backfill"
     ) == ["waterproofing"]
     assert _infer_commissioning_systems(
-        "PWPS-02 reservoir first wet test after membrane protection"
+        "PWPS-09 reservoir first wet test after membrane protection"
     ) == ["reservoir"]
     assert _infer_commissioning_systems(
         "reservoir membrane protection board only"
@@ -247,7 +247,7 @@ def test_infer_commissioning_mixed_wet_test_stays_reservoir():
 def test_formatters_and_recovery_cover_each_deliverable():
     ipc = {
         "action": "payment_certificate",
-        "certificate": {"period": "IPC 4", "contractor": "Al-Ayuni"},
+        "certificate": {"period": "IPC 4", "contractor": "Al-Example"},
         "valuation": {
             "contract_value": 1_754_504_456.25,
             "gross_valuation": 42_800_000,
@@ -273,7 +273,7 @@ def test_formatters_and_recovery_cover_each_deliverable():
         "poured_m3": 310,
         "shortfall_m3": 40,
         "shortfall_percent": 11.43,
-        "location": "PWPS-02",
+        "location": "PWPS-09",
     }
     assert "40" in _format_as_built_note(note)
     assert "11.43" in _format_as_built_note(note)
@@ -355,7 +355,7 @@ def test_formatters_and_recovery_cover_each_deliverable():
         "mix": "C-35",
         "volume_m3": 28,
         "manhole_range": "W-1–W-7",
-        "supplier": "UBCC",
+        "supplier": "XBCC",
         "template": "ITP",
         "checklist": [{"item": "formwork"}, "cubes"],
         "hold_points": ["pre-pour"],
@@ -534,7 +534,7 @@ def test_as_built_and_claim_helpers_parse_operator_facts():
     )
 
     vs = _as_built_volume_facts_from_text(
-        "PWPS-02 blinding 350 m3 versus 310 m3 on 7 January 2025"
+        "PWPS-09 blinding 350 m3 versus 310 m3 on 7 January 2025"
     )
     assert vs["planned_m3"] == 350
     assert vs["poured_m3"] == 310
@@ -795,11 +795,11 @@ def test_format_cash_om_safety_and_recover():
     )
     om = {
         "action": "om_manual_generated",
-        "title": "Operations and Maintenance manual outline — PWPS-02",
+        "title": "Operations and Maintenance manual outline — PWPS-09",
         "sections": [{"section": "1. Purpose and scope", "content": "O&M"}],
         "note": "Outline from the operator brief",
     }
-    assert "PWPS-02" in _format_om_outline(om)
+    assert "PWPS-09" in _format_om_outline(om)
     safety = {
         "action": "safety_briefing",
         "briefing": "Signage, speed control, and pedestrian crossing.",
@@ -811,7 +811,7 @@ def test_format_cash_om_safety_and_recover():
     assert "1,754,504,456.25" in recovered_cash or "1754504456.25" in (
         recovered_cash.replace(",", "")
     )
-    assert "PWPS-02" in _recover_answer_from_tool_messages(
+    assert "PWPS-09" in _recover_answer_from_tool_messages(
         "", [{"role": "tool", "content": json.dumps(om)}]
     )
     assert "Signage" in _recover_answer_from_tool_messages(

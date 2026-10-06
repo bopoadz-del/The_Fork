@@ -50,7 +50,7 @@ PRICE_ROW = (
 # Live shape: the wrong amount is in other documents and is concatenated
 # first. The Milestone rate and the Contract Price share the conditions.
 LIVE_BUNDLE = (
-    "[doc_id=REDACTED chunk=0] Form of Agreement | package value "
+    "[doc_id=ocr9demo chunk=0] Form of Agreement | package value "
     f"SAR {OTHER_AMOUNT:,.2f} | "
     "[doc_id=fixture-doc-b chunk=11] FIXTURE-c-20260927 kickoff note | "
     f"Accepted Contract Amount excluding VAT SAR {OTHER_AMOUNT:,.2f} | "

@@ -11,9 +11,8 @@ Run inside the The_Fork venv (pandas, openpyxl, xlrd installed).
 import os, re, csv, numbers
 import pandas as pd
 
-SRC = "C:/Users/shimm/Downloads/wetransfer_docs_2026-05-20_1430"
-OUT = ("C:/Users/shimm/AppData/Local/Temp/claude/C--Users-shimm/"
-       "436703f7-0a30-48b6-a650-29d75aac4fa5/scratchpad/wetransfer_boq")
+SRC = os.environ.get("BOQ_SRC_DIR", "/data/example/boqs")
+OUT = os.path.join(os.environ.get("FORK_SCRATCH_DIR", "/data/example/scratch"), "wetransfer_boq")
 EXEL = OUT + "/exel_sheets"
 PLAS = OUT + "/plaster"
 CSTU = OUT + "/construction_studies"
@@ -214,7 +213,7 @@ def do_vol3():
     RESULTS.append(dict(
         file="Vol III - Bill of Quantities (Part 2 of 2).xls", group="",
         sheet="Sheet1 (12972 rows; repeating OCR headers ~every 40 rows)",
-        currency="AED (implied; Nakheel/Jumeirah Islands, Dubai) - not printed",
+        currency="AED (implied; example developer, Dubai) - not printed",
         n=len(items), priced="PARTIALLY PRICED", qa=qa_rate(items),
         total=priced_amt,
         recon=(f"{n_priced} rows carry a rate+amount pair (e.g. doors/joinery); most rows are "
@@ -222,7 +221,7 @@ def do_vol3():
                "no reliable full reconciliation. Partial priced sum shown is indicative only."),
         note=("OCR-DERIVED SCAN: garbled headers ('QtyUnit','Qhi','TEN DE UUGUMENTS'), columns "
               "shift row-to-row. BEST-EFFORT extraction, low confidence. Some sections priced "
-              "(rate+amount present), many qty-only. Jumeirah Islands 'Fronds' - Nakheel, "
+              "(rate+amount present), many qty-only. example developer 'Fronds', "
               "Bill No.4 Apartments."),
         csv=os.path.basename(path)))
 

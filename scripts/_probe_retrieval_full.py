@@ -21,13 +21,13 @@ from app.core.rag.embeddings import get_embedder
 from app.core.rag.vector_store import get_store
 
 PROJECT = "drive_archive"
-TARGET_DOC = "REDACTED"  # TL-600-0000002-D.pdf
+TARGET_DOC = "d0c00004"  # TL-600-0000002-D.pdf
 TARGET_CHUNK = 0
 
 QUERIES_ALL = {
-    "Q1": "What is the JCB drawing-number format used on the the client project project?",
+    "Q1": "What is the EXC drawing-number format used on the the client project project?",
     "Q2": "What does the SECTIONAL ELEVATION telecom drawing show?",
-    "Q3": "What is the procedure for design review acceptance under PRC-501?",
+    "Q3": "What is the procedure for design review acceptance under PRC-951?",
     "Q4": "What is the payable trench width specification for the water supply pipe?",
     "Q5": "Manhole spacing requirements for telecom ducts on the the client project project?",
 }

@@ -7,8 +7,8 @@ from app.core import projects as projects_mod
 
 
 def test_get_or_create_is_idempotent_same_id():
-    name = "Client Infra Pack 1"
-    pid = "REDACTED"
+    name = "Example Infra Pack"
+    pid = "example_infra_pack"
     a, created_a = projects_mod.get_or_create_project(name, project_id=pid)
     b, created_b = projects_mod.get_or_create_project(name, project_id=pid)
     assert a["id"] == b["id"] == pid

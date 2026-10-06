@@ -289,7 +289,7 @@ async def test_fallback_sources_do_not_leak_raw_filesystem_paths(monkeypatch):
     async def fake_search(project_id, query, top_k=5):
         return [{
             "document_id": "d1", "filename": "Contract.docx",
-            "snippet": r"[source: G:\My Drive\600-Procurement\QRS-637.docx] text",
+            "snippet": r"[source: X:\Example Drive\600-Procurement\QRS-637.docx] text",
             "score": 0.7,
         }]
     monkeypatch.setattr(

@@ -153,7 +153,7 @@ def main() -> int:
 
     ap = argparse.ArgumentParser(description="Ingest one local Drive folder into v2")
     ap.add_argument("--folder", default="construction-3-001",
-                    help="Folder name under G:/My Drive")
+                    help="Folder name under the Drive root")
     ap.add_argument("--project-name", default=None,
                     help="Platform project name (default: folder name)")
     ap.add_argument("--limit", type=int, default=None,
@@ -170,7 +170,7 @@ def main() -> int:
                     help="This worker's shard index (env: INGEST_SHARD_INDEX)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Plan only — no DB writes (env: INGEST_DRY_RUN)")
-    ap.add_argument("--drive-root", default="G:/My Drive",
+    ap.add_argument("--drive-root", default=os.environ.get("FORK_DRIVE_ROOT", "/data/example"),
                     help="Local Drive mount root")
     ap.add_argument(
         "--reingest",

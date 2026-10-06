@@ -17,10 +17,10 @@ Spec: `docs/superpowers/specs/2026-06-08-track1-rag-production.md` at commit `0b
 Live state assumed by this plan:
 
 - Project `fb776aa2` (Anthropic) holds:
-  - RFP `REDACTED.docx`
-  - BOD `ca6292f9` (`REDACTED.pdf`)
-  - Appendix B `0f9ffc6b` (`REDACTED.xlsx`)
-  - PRC-201, PRC-301 procurement PDFs
+  - RFP `Example Client - Request for Proposals 010101.docx`
+  - BOD `ca6292f9` (`Example Client - Performance Basis of Design.pdf`)
+  - Appendix B `0f9ffc6b` (`Example Client - RFP Appendix B 010101.xlsx`)
+  - PRC-921, PRC-931 procurement PDFs
   - Three noise files: `nambae-menu(4).pptx`, `SandsChina_Application_ChaD.docx`, `~$C-201_Time Management.docx`
 - Project `3f6f28b2` (the client BOQ Test) holds the client project BOQ `c6dae280` (`the client project - Infra-1 - Demolition BOQ.pdf`).
 - Render env already has `LLM_PROVIDER=ollama`, `OLLAMA_URL=<tunnel>`, `OLLAMA_MODEL=qwen3-coder:480b-cloud`. No new env vars exist yet for any of `RAG_*`.
@@ -380,7 +380,7 @@ def test_noise_filter_default_regex_matches_known_garbage():
     assert _is_noise_filename("nambae-menu(4).pptx") is True
     assert _is_noise_filename("SandsChina_Application_ChaD.docx") is True
     # And NOT a real doc.
-    assert _is_noise_filename("REDACTED.pdf") is False
+    assert _is_noise_filename("Example Client - Performance Basis of Design.pdf") is False
     assert _is_noise_filename("RFP_Appendix_B.xlsx") is False
 
 
@@ -472,7 +472,7 @@ def test_retrieve_drops_noise_before_top_k(monkeypatch):
     def fake_doc_name(doc_id):
         return {
             "d-noise": "~$lockfile.docx",
-            "d-real":  "Anthropic - BOD.pdf",
+            "d-real":  "Example Client - BOD.pdf",
         }[doc_id]
 
     monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)

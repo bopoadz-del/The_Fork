@@ -65,7 +65,7 @@ def test_a_rounded_result_inside_tolerance_agrees():
 # ── it does not invent work for itself ─────────────────────────────────────
 
 @pytest.mark.parametrize("text", [
-    "The contract is REDACTED and the period is 365 days.",
+    "The contract is AB-2023-101 and the period is 365 days.",
     "Rates range 10 - 20 per m2.",
     "Clause 8.8.1 applies.",
     "",

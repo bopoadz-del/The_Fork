@@ -5,7 +5,7 @@ model — the RETIRED legacy ``chunks`` table. Production retrieval reads the
 namespaced table (``chunks_v2``), so every chunk loaded via this endpoint
 after the namespace split was invisible to retrieval: a silent no-op for
 the endpoint's stated purpose. Found 2026-08-05 while preparing the
-REDACTED Vol 3 backfill.
+ab-2023-101 Vol 3 backfill.
 
 Corrected contract, verified here:
   * admin-only (403 for non-admin) — unchanged

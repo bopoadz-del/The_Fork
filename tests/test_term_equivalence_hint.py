@@ -1,7 +1,7 @@
 """TERM EQUIVALENCE answer-mapping hint + its A9 leak guard.
 
 Live gap (2026-09-13): the retriever surfaced the right Contract Data document
-(REDACTED Vol 1, High confidence) yet the model answered "I don't have the
+(AB-2023-101 Vol 1, High confidence) yet the model answered "I don't have the
 contract sum before VAT" — it would not equate the everyday synonym with the
 formal "Accepted Contract Amount". The synonym-expansion PR fixed RETENTION
 (a genuine retrieval miss) but not this, because ACA was never a retrieval

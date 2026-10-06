@@ -173,7 +173,7 @@ def test_preview_drive_backed_corpus_doc_missing_local_file(
     pdf = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
     doc = store.add_document(
         project_id=corpus["id"],
-        original_name="REDACTED - Infrastructure Package 1- vol 1-Executed.pdf",
+        original_name="AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf",
         file_path=str(tmp_path / "gone-after-index.pdf"),
         size=0,
         metadata={"drive_file_id": "drive-deadbeef"},
@@ -326,10 +326,10 @@ def test_preview_drive_source_when_local_copy_gone(
 def _p1b_meta(**extra):
     """Exact keys ``scripts/p1b_ingest_drive_server.py`` writes to metadata."""
     meta = {
-        "drive_file_id": "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI",
+        "drive_file_id": "1ExampleDriveFileId001xxxxxxxxxxx",
         "drive_path": (
             "Master Folder/the client project/Contract Docs/Contractor/"
-            "Contract docs SIGNED/REDACTED - Infrastructure Package 1- vol 1-Executed.pdf"
+            "Contract docs SIGNED/AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf"
         ),
         "source": "p1b_server_drive_reingestion",
         "ingestion_run_id": "run-test",
@@ -347,7 +347,7 @@ def test_extract_p1b_keys_including_string_and_aliases():
     from app.core.projects import extract_document_source_pointers
 
     p1b = extract_document_source_pointers({"metadata": _p1b_meta()})
-    assert p1b == {"drive_file_id": "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"}
+    assert p1b == {"drive_file_id": "1ExampleDriveFileId001xxxxxxxxxxx"}
 
     as_string = extract_document_source_pointers(
         {"metadata": json.dumps(_p1b_meta())},
@@ -380,7 +380,7 @@ def test_preview_p1b_string_metadata_drive_hydrate(
     pdf = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
     doc = store.add_document(
         project_id=corpus["id"],
-        original_name="REDACTED - Infrastructure Package 1- vol 1-Executed.pdf",
+        original_name="AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf",
         file_path=str(tmp_path / "gone-after-index.pdf"),
         size=0,
         metadata=_p1b_meta(),
@@ -430,8 +430,8 @@ def test_preview_rag_render_row_opens_from_its_drive_id(
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     workspace = _new_project(client, "Preview Workspace")
     corpus = _new_project(client, "Citeable Corpus")
-    drive_id = "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"
-    name = "REDACTED - Infrastructure Package 1- vol 1-Executed.pdf"
+    drive_id = "1ExampleDriveFileId001xxxxxxxxxxx"
+    name = "AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf"
     pdf = b"%PDF-1.4 from the Drive id\n"
     doc = store.add_document(
         project_id=corpus["id"],
@@ -440,7 +440,7 @@ def test_preview_rag_render_row_opens_from_its_drive_id(
         size=0,
         metadata={
             "drive_file_id": drive_id,
-            "source_path": "G:\\\\My Drive\\\\Master Folder\\\\" + name,
+            "source_path": "X:\\\\Example Drive\\\\Master Folder\\\\" + name,
             "source": "rag_backfill_client_clean_all",
         },
     )
@@ -475,7 +475,7 @@ def test_preview_drive_not_configured_clear_404(
     proj = _new_project(client)
     doc = store.add_document(
         project_id=proj["id"],
-        original_name="REDACTED - Infrastructure Package 1- vol 1-Executed.pdf",
+        original_name="AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf",
         file_path=str(tmp_path / "deleted-local.pdf"),
         size=0,
         metadata=_p1b_meta(),
@@ -545,7 +545,7 @@ def test_list_documents_has_file_for_remote_pointer(client, tmp_path):
     proj = _new_project(client)
     doc = store.add_document(
         project_id=proj["id"],
-        original_name="REDACTED - Infrastructure Package 1- vol 1-Executed.pdf",
+        original_name="AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf",
         file_path=str(tmp_path / "stale.pdf"),
         size=0,
         metadata=_p1b_meta(),
@@ -561,7 +561,7 @@ def test_list_documents_has_file_for_remote_pointer(client, tmp_path):
 def test_preview_rag_backfill_stub_resolves_drive_by_filename(
     client, monkeypatch, tmp_path,
 ):
-    """Live REDACTED shape: size=0, G:\\ path, source=rag_backfill_client_clean_all,
+    """Live ocr9demo shape: size=0, G:\\ path, source=rag_backfill_client_clean_all,
     drive_file_id null. Filename lookup + download must
     200 and persist the Drive id."""
     from app.core import projects as store
@@ -569,14 +569,14 @@ def test_preview_rag_backfill_stub_resolves_drive_by_filename(
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     workspace = _new_project(client, "Preview Workspace")
     corpus = _new_project(client, "Citeable Corpus")
-    name = "REDACTED - Infrastructure Package 1- vol 1-Executed.pdf"
-    drive_id = "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"
+    name = "AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf"
+    drive_id = "1ExampleDriveFileId001xxxxxxxxxxx"
     pdf = b"%PDF-1.4 from Drive filename resolve\n"
     doc = store.add_document(
         project_id=corpus["id"],
         original_name=name,
         file_path=(
-            r"G:\My Drive\Master Folder\the client project\Contract Docs"
+            r"X:\Example Drive\Master Folder\the client project\Contract Docs"
             r"\Contractor\Contract docs SIGNED\\" + name
         ),
         size=0,
@@ -584,7 +584,7 @@ def test_preview_rag_backfill_stub_resolves_drive_by_filename(
             "source": "rag_backfill_client_clean_all",
             "drive_file_id": None,
             "source_path": (
-                r"G:\My Drive\Master Folder\the client project\Contract Docs"
+                r"X:\Example Drive\Master Folder\the client project\Contract Docs"
                 r"\Contractor\Contract docs SIGNED\\" + name
             ),
             "ext": ".pdf",
@@ -632,7 +632,7 @@ def _stub_and_twins(store, tmp_path, name, twin_ids):
     twin_proj = store.create_project(name="Drive corpus", user_id="twin-owner")["id"]
     stub = store.add_document(
         project_id=stub_proj, original_name=name,
-        file_path="G:\My Drive\\" + name, size=0,
+        file_path="X:\Example Drive\\" + name, size=0,
         metadata={"source": "rag_backfill_client_clean_all", "drive_file_id": None},
     )
     for fid in twin_ids:
@@ -704,11 +704,11 @@ def test_preview_rag_backfill_stub_unresolved_clear_404(
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     proj = _new_project(client)
-    name = "REDACTED - Infrastructure Package 1- vol 1-Executed.pdf"
+    name = "AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf"
     doc = store.add_document(
         project_id=proj["id"],
         original_name=name,
-        file_path=r"G:\My Drive\Master Folder\\" + name,
+        file_path=r"X:\Example Drive\Master Folder\\" + name,
         size=0,
         metadata={
             "source": "rag_backfill_client_clean_all",
@@ -742,8 +742,8 @@ def test_preview_user_upload_local_path_still_200(client):
     assert "hello from disk" in r.json()["text"]
 
 
-REDACTED_NAME = "REDACTED - Infrastructure Package 1- vol 1-Executed.pdf"
-REDACTED_DRIVE_ID = "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"
+REDACTED_NAME = "AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf"
+REDACTED_DRIVE_ID = "1ExampleDriveFileId001xxxxxxxxxxx"
 
 
 def _rag_backfill_stub(store, project_id, tmp_path, *, drive_file_id=None):
@@ -751,7 +751,7 @@ def _rag_backfill_stub(store, project_id, tmp_path, *, drive_file_id=None):
         project_id=project_id,
         original_name=REDACTED_NAME,
         file_path=(
-            r"G:\My Drive\Master Folder\the client project\Contract Docs"
+            r"X:\Example Drive\Master Folder\the client project\Contract Docs"
             r"\Contractor\Contract docs SIGNED\\" + REDACTED_NAME
         ),
         size=0,
@@ -759,7 +759,7 @@ def _rag_backfill_stub(store, project_id, tmp_path, *, drive_file_id=None):
             "source": "rag_backfill_client_clean_all",
             "drive_file_id": drive_file_id,
             "source_path": (
-                r"G:\My Drive\Master Folder\the client project\Contract Docs"
+                r"X:\Example Drive\Master Folder\the client project\Contract Docs"
                 r"\Contractor\Contract docs SIGNED\\" + REDACTED_NAME
             ),
             "ext": ".pdf",
@@ -770,7 +770,7 @@ def _rag_backfill_stub(store, project_id, tmp_path, *, drive_file_id=None):
 def test_preview_drive_id_public_download_when_sa_list_and_media_fail(
     client, monkeypatch, tmp_path,
 ):
-    """REDACTED after PATCH: name-search still blind, SA media fails,
+    """ocr9demo after PATCH: name-search still blind, SA media fails,
     public anyone-with-link download hydrates and persists the id + size."""
     from app.core import projects as store
 

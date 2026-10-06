@@ -28,17 +28,17 @@ from app.core.rag.embeddings import get_embedder  # noqa: E402
 from app.core.rag.vector_store import get_store  # noqa: E402
 
 PROJECT = "drive_archive"
-TL_DOC = "REDACTED"        # TL-600-0000002 SECTIONAL ELEVATION
+TL_DOC = "d0c00004"        # TL-600-0000002 SECTIONAL ELEVATION
 TL_CHUNK = 0
-PRC501_DOC = "REDACTED"    # REDACTED.pdf
-TRENCH_DOC = "9c116493"    # REDACTED Vol 2 - Specification (SIGNED)
+PRC951_DOC = "d0c00005"    # PRC-951_Design Reviews & Acceptance.pdf
+TRENCH_DOC = "9c116493"    # AB-2023-101 Vol 2 - Specification (SIGNED)
 TRENCH_CHUNKS = {1115, 1116}  # chunks containing literal "trench width"
 TOP_K = 20
 
 QUERIES = {
-    "Q1": "What is the JCB drawing-number format used on the the client project project?",
+    "Q1": "What is the EXC drawing-number format used on the the client project project?",
     "Q2": "What does the SECTIONAL ELEVATION telecom drawing show?",
-    "Q3": "What is the procedure for design review acceptance under PRC-501?",
+    "Q3": "What is the procedure for design review acceptance under PRC-951?",
     "Q4": "What is the payable trench width specification for the water supply pipe?",
     "Q5": "Manhole spacing requirements for telecom ducts on the the client project project?",
 }
@@ -78,8 +78,8 @@ def main() -> None:
                 return tail[:50]
         return "?"
 
-    def is_jcb_doc(doc_id: str) -> bool:
-        return "JCB" in doc_name(doc_id).upper()
+    def is_exc_doc(doc_id: str) -> bool:
+        return "EXC" in doc_name(doc_id).upper()
 
     def known_correct_rank(results, label: str):
         for i, c in enumerate(results, 1):
@@ -87,13 +87,13 @@ def main() -> None:
                 if c.doc_id == TL_DOC and c.chunk_index == TL_CHUNK:
                     return i
             elif label == "Q3":
-                if c.doc_id == PRC501_DOC:
+                if c.doc_id == PRC951_DOC:
                     return i
             elif label == "Q4":
                 if c.doc_id == TRENCH_DOC and c.chunk_index in TRENCH_CHUNKS:
                     return i
             elif label == "Q1":
-                if is_jcb_doc(c.doc_id):
+                if is_exc_doc(c.doc_id):
                     return i
         return None
 
@@ -131,8 +131,8 @@ def main() -> None:
     print(f"  Post-rerun (now):         {n_chunks:,} chunks / {n_docs:,} docs / "
           f"{'0' if dup_count == 0 else dup_count} duplicates")
     print(f"  Test status:              {TEST_STATUS}")
-    print(f"  Verdict targets:          Q1=JCB-named doc; Q2/Q5=TL-600 chunk 0 ({TL_DOC}); "
-          f"Q3=PRC-501 doc ({PRC501_DOC}); Q4=Vol 2 chunks 1115/1116 ({TRENCH_DOC})")
+    print(f"  Verdict targets:          Q1=EXC-named doc; Q2/Q5=TL-600 chunk 0 ({TL_DOC}); "
+          f"Q3=PRC-951 doc ({PRC951_DOC}); Q4=Vol 2 chunks 1115/1116 ({TRENCH_DOC})")
     print()
 
     verdicts = {}

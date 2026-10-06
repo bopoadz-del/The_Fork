@@ -91,7 +91,7 @@ SCANNED_NET_ACA = (
 )
 SOURCES_ONLY = (
     "Delay Damages are stated in the Contract Data for the whole of the "
-    "Works. Sources: REDACTED Conditions of Contract; Contract Data."
+    "Works. Sources: AB-2023-101 Conditions of Contract; Contract Data."
 )
 DEMO_RATE_ROW = (
     "CONTRACT DATA particulars.\n"
@@ -655,7 +655,7 @@ def _ignore_all_rows_store(all_chunks, owner_pid=None):
 
 
 def _live_refuse_sys(texts, doc_id="gc118"):
-    src = "REDACTED_DG2 Infra P1_Vol 1.0_Con..."
+    src = "AB-2023-101_QP2 Infra P1_Vol 1.0_Con..."
     body = "\n\n".join(
         f"[doc_id={doc_id} chunk={9 + i} score=0.950 "
         f"class=project_corpus src={src}] {t}"

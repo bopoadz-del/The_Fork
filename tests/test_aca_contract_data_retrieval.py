@@ -33,10 +33,10 @@ ACA_INCL = "SAR 1,419,753.07"
 ACA_EXCL = "SAR 8,640,000.00"
 
 CD_NAME = (
-    "REDACTED_DG2 Infra P1_Vol 1.0_Cond of Contract "
+    "AB-2023-101_QP2 Infra P1_Vol 1.0_Cond of Contract "
     "(complete)_Contract Data.pdf"
 )
-PSA_NAME = "REDACTED.docx"
+PSA_NAME = "Long Form PSA 01_02_21 Rev 2 with Legal Amendments.docx"
 CPM_NAME = "CPM 16-01-2024.pdf"
 
 # Live shape: scanned table, no particulars prefix, label split across lines.

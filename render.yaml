@@ -162,7 +162,7 @@ services:
         value: Master Corpus
       # GK = the always-on, DISCLOSED general-knowledge layer only: genuinely
       # cross-project reference (FIDIC / OSHA / units / rates) in `curated_kb`.
-      # STEP 0 (2026-07-17): client corpora (drive_archive / REDACTED)
+      # STEP 0 (2026-07-17): client corpora (drive_archive / example_infra_pack)
       # were removed from this list — they were silently merging the client project into every
       # other project (the ha_long -> the client project leak). The client/Master corpus now
       # surfaces ONLY as the labeled empty/thin fallback via

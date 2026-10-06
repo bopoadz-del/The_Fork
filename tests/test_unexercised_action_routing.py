@@ -101,7 +101,7 @@ def test_do_not_run_clash_does_not_route_to_clash():
     assert not message_wants_clash("count IfcWall")
 
     prompt = (
-        "Process the bill of quantities REDACTED — billed "
+        "Process the bill of quantities sample_mini_boq.xlsx — billed "
         "excavation 81.2 m3 vs site remeasure 92 m3. What is the variance? "
         "Do not run clash detection."
     )

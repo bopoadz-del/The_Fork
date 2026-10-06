@@ -6,7 +6,7 @@ Live OLD-pack A6 on Master Corpus (tip 82eb9c5 / #522 C1 just shipped):
     Notification Period?
 
 Expected: 365 days (Taking-Over Certificate / Contract Data under
-REDACTED).
+AB-2023-101).
 
 Observed: refusal — retrieved excerpts were Long Form PSA chunk #4 and
 CPM 22-01-2024 / 16-01-2024 chunk #7 (TOC, recitals, document
@@ -55,14 +55,14 @@ A9_FIRM = "Northwater Engineers (Demo Saudi Limited)"
 ACA_INCL = "SAR 2,017,680,124.69"
 
 DD23_NAME = (
-    "REDACTED_the client project II Infrastructure Package 1_"
+    "AB-2023-101_the client project II Infrastructure Package 1_"
     "Vol 1 - Conditions of Contract.pdf"
 )
 CD_SCANNED_NAME = (
-    "REDACTED_DG2 Infra P1_Vol 1.0_Cond of Contract "
+    "AB-2023-101_QP2 Infra P1_Vol 1.0_Cond of Contract "
     "(complete)_Contract Data.pdf"
 )
-PSA_NAME = "REDACTED.docx"
+PSA_NAME = "Long Form PSA 01_02_21 Rev 2 with Legal Amendments.docx"
 CPM_NAME = "CPM 22-01-2024.pdf"
 CPM16_NAME = "CPM 16-01-2024.pdf"
 
@@ -369,7 +369,7 @@ def test_a2_a3_a5_a9_c1_e1_f1_are_not_stolen_onto_the_dnp_row(monkeypatch):
         ), ask
 
 
-def test_election_prefers_dd2023_dnp_over_psa_toc():
+def test_election_prefers_ab2023_dnp_over_psa_toc():
     from app.core.rag.retriever import elect_answer_bearing_contract
 
     ranked = [
@@ -377,8 +377,8 @@ def test_election_prefers_dd2023_dnp_over_psa_toc():
         (CPM_NAME, CPM_REGISTER),
         (CD_SCANNED_NAME, SCANNED_DNP),
     ]
-    assert elect_answer_bearing_contract(A6_ASK, ranked) == "REDACTED"
-    assert elect_answer_bearing_contract(LIVE_A6, ranked) == "REDACTED"
+    assert elect_answer_bearing_contract(A6_ASK, ranked) == "ab-2023-101"
+    assert elect_answer_bearing_contract(LIVE_A6, ranked) == "ab-2023-101"
 
 
 def _sys(*chunk_texts: str) -> dict:

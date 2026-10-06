@@ -144,16 +144,16 @@ def test_approve_from_drive_creates_row_and_slugs_name(client, monkeypatch):
 
     resp = client.post(
         "/v1/admin/projects/approve-from-drive",
-        json={"folder_id": "drive-folder-abc", "name": "Client Infra Pack 1"},
+        json={"folder_id": "drive-folder-abc", "name": "Example Infra Pack"},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["status"] == "queued"
     project = body["project"]
-    assert project["name"] == "Client Infra Pack 1"
+    assert project["name"] == "Example Infra Pack"
     assert project["is_approved"] is True
     assert project["user_id"] == "system"
-    assert project["id"] == "REDACTED"
+    assert project["id"] == "example_infra_pack"
     assert project["origin"] == "admin_drive_approved"
     try:
         projects_mod.delete_project(project["id"])

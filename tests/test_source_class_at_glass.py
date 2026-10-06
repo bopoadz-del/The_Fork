@@ -61,7 +61,7 @@ def _audit(chunks):
 
 
 def _g1_chunk():
-    name = "REDACTED Contract Template Vol 4.pdf"
+    name = "AB-2023-101 Contract Template Vol 4.pdf"
     text = "Schedule 10 sets out any applicable Works Guarantees"
     return {
         "doc_id": "d-g1",
@@ -112,7 +112,7 @@ def _sources_dom(sources: list[dict]) -> str:
 def test_g1_shaped_turn_renders_class_template_in_sources_dom(monkeypatch):
     monkeypatch.setattr(
         "app.core.projects.get_document",
-        lambda did: {"original_name": "REDACTED Contract Template Vol 4.pdf"},
+        lambda did: {"original_name": "AB-2023-101 Contract Template Vol 4.pdf"},
     )
     sources = _build_sources_from_audit(_audit([_g1_chunk()]), final_text="")
     assert sources, G1_ASK

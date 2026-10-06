@@ -49,7 +49,7 @@ RAG_AUDIT_V3.md (retrieval decision table), FEATURE_MATRIX.md (sweep v1).
    schedule, S-curve, QTO, RFP); **golden-set gate RUN** (>=26/28 or
    not-pilot-ready); PILOT_READINESS.md + final report.
 
-## Open decisions for Chadi (unchanged)
+## Open decisions for the owner (unchanged)
 
 - PR #152 merge (golden-set gate).
 - K2 cutover / synthesis streaming: parked on the G2 quality verdict
@@ -72,5 +72,5 @@ RAG_AUDIT_V3.md (retrieval decision table), FEATURE_MATRIX.md (sweep v1).
   the local venv now has sentence-transformers (drift vs the V3 grid runs -
   shim documented in RAG_AUDIT_V3.md section 7).
 - The Cloudflare Workers bot ("theshovel") still fails a build check on
-  every PR - cosmetic, unhooked from merge decisions; Chadi to disconnect
+  every PR - cosmetic, unhooked from merge decisions; the owner to disconnect
   or configure.

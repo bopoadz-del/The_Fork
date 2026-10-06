@@ -8,23 +8,23 @@ The v2 corpus is **well-formed and the client project-scoped**, not the full Dri
 ## Counts (canonical store = `chunks_v2`)
 | project | docs | chunks |
 |---|---|---|
-| REDACTED | 39 | 9,857 |
+| example_infra_pack | 39 | 9,857 |
 | curated_kb (GK) | 8 | 605 |
-| ha_long_xanh_2 | 6 | 40 |
+| example_estate_2 | 6 | 40 |
 | **total** | **53** | **10,502** |
 
-- Chunks/doc: **min 1, avg 198, max 1,936**. Large contracts/specs are fully chunked (REDACTED Vol 3 = 1,323 + 1,198; Accelerated Work Programme = 1,936; PMC contract = 776; demolition contract = 750). **No truncation of large PDFs.**
+- Chunks/doc: **min 1, avg 198, max 1,936**. Large contracts/specs are fully chunked (AB-2023-101 Vol 3 = 1,323 + 1,198; Accelerated Work Programme = 1,936; PMC contract = 776; demolition contract = 750). **No truncation of large PDFs.**
 - **Duplicate chunk_ids: 0.**
 
 ## Completeness (4a)
-- **the client project package (the pilot core): ingested** — 39 docs / 9,857 chunks, incl. the REDACTED demolition contract, REDACTED Vol 1-3, PMC/PSA contracts, drawings, programmes.
+- **the client project package (the pilot core): ingested** — 39 docs / 9,857 chunks, incl. the AB-2022-202 demolition contract, AB-2023-101 Vol 1-3, PMC/PSA contracts, drawings, programmes.
 - **Coverage gap:** only 53 docs are in v2. The broader Drive archive (a prior `drive_archive` of ~2,997 docs / ~139,949 chunks per session memory) is **NOT** in this DB — there is no `drive_archive` table. Individual non-the client project project shells (Ha Long Xanh, etc.) are near-empty (UI: "still being indexed"). **If the pilot requires the full multi-project Drive corpus, that ingestion has not run into v2.** PARKED — needs a scoped re-ingest decision (pilot may be the client project-only by design).
 
 ## Chunk-math sanity (4b)
 Healthy per-doc. Low-chunk docs are legitimately low-text: `.pptx` presentations (1 chunk), graphical drawing PDFs (3-4). **Two real quality flags:**
-1. **Uploaded RFPs under-extracted** — `Anthropic - Request for Proposals.docx`, `RFP Appendix B.xlsx`, `RFP_Kenya_200MW_DataCenter.docx` each produced only **2 chunks**. A multi-page RFP yielding 2 chunks = the docx/xlsx text extractor grabbed little. **This is the likely cause of weak RFP/attachment reasoning.** PARKED-with-evidence → re-extract this class (targeted).
+1. **Uploaded RFPs under-extracted** — `Example Client - Request for Proposals.docx`, `RFP Appendix B.xlsx`, `RFP_Kenya_200MW_DataCenter.docx` each produced only **2 chunks**. A multi-page RFP yielding 2 chunks = the docx/xlsx text extractor grabbed little. **This is the likely cause of weak RFP/attachment reasoning.** PARKED-with-evidence → re-extract this class (targeted).
 2. **`.kmz` over-chunked** — `PMCM Status Tracking.kmz` = 810 chunks (map XML coordinate noise polluting retrieval). PARKED → exclude `.kmz` or extract its metadata only.
-3. Duplicate *documents* (not chunks): the Anthropic RFP was uploaded 2-3×. Doc-level dedup opportunity; chunk_ids remain unique.
+3. Duplicate *documents* (not chunks): the client RFP was uploaded 2-3×. Doc-level dedup opportunity; chunk_ids remain unique.
 
 ## Duplicate-chunk check (4c)
 `SELECT COUNT(*) FROM (SELECT chunk_id FROM chunks_v2 GROUP BY chunk_id HAVING COUNT(*)>1)` = **0**. No fleet-overlap duplication in v2.

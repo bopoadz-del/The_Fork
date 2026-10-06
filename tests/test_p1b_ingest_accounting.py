@@ -30,7 +30,7 @@ import pytest
 from scripts import p1b_ingest_drive_server as p1b
 
 CLIENT_FOLDER_ID = "folder-client-1"
-PROJECT_ID = "REDACTED"
+PROJECT_ID = "example_infra_pack"
 FOLDER_NAME = "the client project"
 
 

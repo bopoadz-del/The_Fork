@@ -2,7 +2,7 @@
 
 ~57 retrieval_visible .docx sit at EXTRACTOR_VERSION + TEXT_SPARSE +
 rag_indexed>0 with no rag_error. Most are honest single-window sheets.
-A handful (live ~5, e.g. REDACTED 2.3MB → 224 chars) are under-extracts:
+A handful (live ~5, e.g. d0c0000d 2.3MB → 224 chars) are under-extracts:
 big files, one tiny chunk. Those get the reopen sentinel so
 ``docx_stale_extractor_open`` selects them again.
 
