@@ -1,7 +1,7 @@
 """Regression for leftover-hat UI fails L1 / L2 / L3 / L4 / L5 / L7.
 
 Live UI battery (pinned hats on /v1/chat/stream):
-  L1 named-file fetch of REDACTED (timestamped .docx)
+  L1 named-file fetch of fenwick_waterproofing_spec (timestamped .docx)
   L2 bim-analyst hung in clash geom and never reported IfcWall=8
   L3 contracts-manager searched the project instead of computing 480,000
      from word-numbers ("ten percent of four million eight hundred thousand")
@@ -356,7 +356,7 @@ def test_bim_kernel_clash_off_unless_asked():
 
 
 L1_PROMPT = (
-    "Open REDACTED. Quote the unique document token "
+    "Open fenwick_waterproofing_spec. Quote the unique document token "
     "string from that file."
 )
 
@@ -368,7 +368,7 @@ def test_leftover_l1_named_stem_does_not_rag_miss():
     audit = {
         "identifier_miss": True,
         "threshold_fired": True,
-        "extracted_identifiers": ["REDACTED"],
+        "extracted_identifiers": ["fenwick_waterproofing_spec"],
     }
     assert not _should_short_circuit_rag_miss(audit, None, L1_PROMPT)
 
@@ -401,7 +401,7 @@ def test_leftover_l5_does_not_graft_other_hats():
 
 def test_leftover_l5_docx_handoff_is_contracts_manager():
     msgs = [{"role": "user", "content": (
-        "Open REDACTED.docx and classify it."
+        "Open fenwick_waterproofing_spec.docx and classify it."
     )}]
     assert _next_agent_from_turn(msgs) == "contracts-manager"
     out = _ensure_ingestion_handoff("Looks like a spec.", msgs, "document-ingestion")

@@ -60,8 +60,8 @@ metadata-aware retrieval, not ranking). Priority order and evidence:
 **2026-08-02 corpus restore:** the 9 eval-verified missing documents were
 located on Drive (3 had moved folders), re-uploaded through the app API
 (pilot-verified retrievable before batching), and confirmed live-answerable.
-ip-inf-053/054 drawing-package chunks verified present. The remaining known
-chunk gap concentrates in the `REDACTED vol 3` drawings block — restoring
+drawing-package chunks verified present. The remaining known
+chunk gap concentrates in the vol 3 drawings block of the executed contract — restoring
 it needs the owner-gated direct-DB re-encode (see PLATFORM_HEALTH_REPORT
 addendum, owner action 6). Note: restored uploads carry NEW doc ids, so the
 seed-42 recall metric still scores those 9 queries as ID-misses even though

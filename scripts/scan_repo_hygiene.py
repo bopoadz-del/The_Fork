@@ -102,7 +102,7 @@ ALLOWED_BINARIES: dict[str, str] = {
     # Being replaced by a synthetic fixture set in a parallel PR; delete these
     # entries when it lands (they then show up as stale).
     "tests/fixtures/drawing_tm_200.pdf": "pending replacement by a synthetic drawing",
-    "tests/fixtures/REDACTED.pdf": "pending replacement by a synthetic drawing",
+    "tests/fixtures/drawing_tm_9900001.pdf": "pending replacement by a synthetic drawing",
     **{f"tests/fixtures/ingest_shard_sample/construction-3-001/docs/file_{n}.{ext}":
        "pending replacement by a synthetic ingest shard"
        for n, ext in ((1, "docx"), (2, "xlsx"), (4, "png"), (8, "pdf"), (9, "docx"),

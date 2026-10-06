@@ -949,7 +949,7 @@ class DrawingQTOBlock(UniversalBlock):
             if rev:
                 tb["revision"] = rev
         # Phase 1.5 fallback: many drawing filenames carry the revision as a
-        # trailing letter (e.g. ...-1000005-A.pdf). When title-block parse
+        # trailing letter (e.g. ...-0000001-A.pdf). When title-block parse
         # and drawing-number-tail extraction both miss it, look at the
         # filename. Single uppercase letter immediately before the .pdf
         # extension wins. Numeric tails like "04" / "05" are NOT accepted

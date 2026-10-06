@@ -365,12 +365,12 @@ async def test_named_docx_is_not_rag_miss_short_circuited(monkeypatch):
     async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         call_count["n"] += 1
         blob = " ".join(str(m.get("content") or "") for m in messages)
-        assert "WORD-SPEC-TOKEN-KHOR" in blob
+        assert "WORD-SPEC-TOKEN-FENWICK" in blob
         return {
             "status": "success",
             "choice": {
                 "message": {
-                    "content": "Token: WORD-SPEC-TOKEN-KHOR-20260819-081916",  # pragma: allowlist secret
+                    "content": "Token: WORD-SPEC-TOKEN-FENWICK-20260819-081916",  # pragma: allowlist secret
                     "tool_calls": [],
                 },
                 "finish_reason": "stop",
@@ -382,20 +382,20 @@ async def test_named_docx_is_not_rag_miss_short_circuited(monkeypatch):
             "project_id": "proj_a",
             "identifier_miss": True,
             "threshold_fired": True,
-            "extracted_identifiers": ["REDACTED_20260819-081916.docx"],
+            "extracted_identifiers": ["fenwick_waterproofing_spec_20260819-081916.docx"],
             "chunks": [],
         }
 
     import app.core.projects as projects_mod
     monkeypatch.setattr(
         projects_mod, "list_documents",
-        lambda pid: [{"original_name": "REDACTED_20260819-081916.docx"}],
+        lambda pid: [{"original_name": "fenwick_waterproofing_spec_20260819-081916.docx"}],
         raising=False,
     )
 
     def fake_fetch(pid, doc_id, filename):
         return (
-            {"text": "WORD-SPEC-TOKEN-KHOR-20260819-081916", "truncated": False, "source": "extracted"},
+            {"text": "WORD-SPEC-TOKEN-FENWICK-20260819-081916", "truncated": False, "source": "extracted"},
             {"original_name": filename, "id": "d-docx"},
             None,
         )
@@ -406,12 +406,12 @@ async def test_named_docx_is_not_rag_miss_short_circuited(monkeypatch):
     _patch_guardrail(monkeypatch)
 
     result = await agent.chat(
-        "Open REDACTED_20260819-081916.docx and quote the unique token.",
+        "Open fenwick_waterproofing_spec_20260819-081916.docx and quote the unique token.",
         project_id="proj_a",
     )
     assert call_count["n"] == 1
     assert "could not confirm this reference" not in result["answer"].lower()
-    assert "WORD-SPEC-TOKEN-KHOR-20260819-081916" in result["answer"]
+    assert "WORD-SPEC-TOKEN-FENWICK-20260819-081916" in result["answer"]
     assert any(t.get("name") == "fetch_document" for t in (result.get("tool_calls") or []))
 
 

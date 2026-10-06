@@ -742,17 +742,17 @@ def test_preview_user_upload_local_path_still_200(client):
     assert "hello from disk" in r.json()["text"]
 
 
-REDACTED_NAME = "AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf"
-REDACTED_DRIVE_ID = "1ExampleDriveFileId001xxxxxxxxxxx"
+SIGNED_VOLUME_NAME = "AB-2023-101 - Infrastructure Package 1- vol 1-Executed.pdf"
+SIGNED_VOLUME_DRIVE_ID = "1ExampleDriveFileId001xxxxxxxxxxx"
 
 
 def _rag_backfill_stub(store, project_id, tmp_path, *, drive_file_id=None):
     return store.add_document(
         project_id=project_id,
-        original_name=REDACTED_NAME,
+        original_name=SIGNED_VOLUME_NAME,
         file_path=(
             r"X:\Example Drive\Master Folder\the client project\Contract Docs"
-            r"\Contractor\Contract docs SIGNED\\" + REDACTED_NAME
+            r"\Contractor\Contract docs SIGNED\\" + SIGNED_VOLUME_NAME
         ),
         size=0,
         metadata={
@@ -760,7 +760,7 @@ def _rag_backfill_stub(store, project_id, tmp_path, *, drive_file_id=None):
             "drive_file_id": drive_file_id,
             "source_path": (
                 r"X:\Example Drive\Master Folder\the client project\Contract Docs"
-                r"\Contractor\Contract docs SIGNED\\" + REDACTED_NAME
+                r"\Contractor\Contract docs SIGNED\\" + SIGNED_VOLUME_NAME
             ),
             "ext": ".pdf",
         },
@@ -779,7 +779,7 @@ def test_preview_drive_id_public_download_when_sa_list_and_media_fail(
     corpus = _new_project(client, "Citeable Corpus")
     pdf = b"%PDF-1.4 public anyone-with-link\n"
     doc = _rag_backfill_stub(
-        store, corpus["id"], tmp_path, drive_file_id=REDACTED_DRIVE_ID,
+        store, corpus["id"], tmp_path, drive_file_id=SIGNED_VOLUME_DRIVE_ID,
     )
     monkeypatch.setattr(
         "app.routers.projects._preview_citeable_owner_ids",
@@ -793,8 +793,8 @@ def test_preview_drive_id_public_download_when_sa_list_and_media_fail(
     monkeypatch.setattr(
         "app.core.gdrive_service.get_file_metadata",
         lambda fid: (
-            ({"id": fid, "name": REDACTED_NAME, "mimeType": "application/pdf"}, None)
-            if fid == REDACTED_DRIVE_ID
+            ({"id": fid, "name": SIGNED_VOLUME_NAME, "mimeType": "application/pdf"}, None)
+            if fid == SIGNED_VOLUME_DRIVE_ID
             else (None, "Drive files.get returned 404")
         ),
     )
@@ -806,7 +806,7 @@ def test_preview_drive_id_public_download_when_sa_list_and_media_fail(
 
     def _public(fid: str):
         public_hits.append(fid)
-        return (pdf, None) if fid == REDACTED_DRIVE_ID else (None, "wrong id")
+        return (pdf, None) if fid == SIGNED_VOLUME_DRIVE_ID else (None, "wrong id")
 
     monkeypatch.setattr(
         "app.core.gdrive_service.download_public_file_bytes", _public,
@@ -821,11 +821,11 @@ def test_preview_drive_id_public_download_when_sa_list_and_media_fail(
     assert r.json()["has_file"] is True
     assert r.json()["size"] == len(pdf)
     assert lookups == []  # id already on the row — skip name-search
-    assert public_hits == [REDACTED_DRIVE_ID]
+    assert public_hits == [SIGNED_VOLUME_DRIVE_ID]
 
     refreshed = store.get_document(doc["id"])
     assert refreshed is not None
-    assert (refreshed.get("metadata") or {}).get("drive_file_id") == REDACTED_DRIVE_ID
+    assert (refreshed.get("metadata") or {}).get("drive_file_id") == SIGNED_VOLUME_DRIVE_ID
     assert refreshed["size"] == len(pdf)
 
 
@@ -840,7 +840,7 @@ def test_preview_name_search_miss_files_get_media_hit(
     corpus = _new_project(client, "Citeable Corpus")
     pdf = b"%PDF-1.4 from files.get media\n"
     doc = _rag_backfill_stub(
-        store, corpus["id"], tmp_path, drive_file_id=REDACTED_DRIVE_ID,
+        store, corpus["id"], tmp_path, drive_file_id=SIGNED_VOLUME_DRIVE_ID,
     )
     monkeypatch.setattr(
         "app.routers.projects._preview_citeable_owner_ids",
@@ -852,11 +852,11 @@ def test_preview_name_search_miss_files_get_media_hit(
     )
     monkeypatch.setattr(
         "app.core.gdrive_service.get_file_metadata",
-        lambda fid: ({"id": fid, "name": REDACTED_NAME}, None),
+        lambda fid: ({"id": fid, "name": SIGNED_VOLUME_NAME}, None),
     )
     monkeypatch.setattr(
         "app.core.gdrive_service.download_file_bytes",
-        lambda fid: (pdf, None) if fid == REDACTED_DRIVE_ID else (None, "wrong id"),
+        lambda fid: (pdf, None) if fid == SIGNED_VOLUME_DRIVE_ID else (None, "wrong id"),
     )
     monkeypatch.setattr(
         "app.core.gdrive_service.download_public_file_bytes",
@@ -922,12 +922,12 @@ def test_patch_drive_file_id_owner_then_preview_hydrates(
 
     patched = client.patch(
         f"/v1/projects/{proj['id']}/documents/{doc['id']}",
-        json={"drive_file_id": REDACTED_DRIVE_ID},
+        json={"drive_file_id": SIGNED_VOLUME_DRIVE_ID},
         headers=H,
     )
     assert patched.status_code == 200, patched.text
     body = patched.json()
-    assert (body.get("metadata") or {}).get("drive_file_id") == REDACTED_DRIVE_ID
+    assert (body.get("metadata") or {}).get("drive_file_id") == SIGNED_VOLUME_DRIVE_ID
     assert body["has_remote_source"] is True
 
     monkeypatch.setattr(
@@ -944,7 +944,7 @@ def test_patch_drive_file_id_owner_then_preview_hydrates(
     )
     monkeypatch.setattr(
         "app.core.gdrive_service.download_public_file_bytes",
-        lambda fid: (pdf, None) if fid == REDACTED_DRIVE_ID else (None, "wrong id"),
+        lambda fid: (pdf, None) if fid == SIGNED_VOLUME_DRIVE_ID else (None, "wrong id"),
     )
     r = client.get(
         f"/v1/projects/{proj['id']}/documents/{doc['id']}/preview", headers=H,
@@ -952,7 +952,7 @@ def test_patch_drive_file_id_owner_then_preview_hydrates(
     assert r.status_code == 200, r.text
     assert r.json()["kind"] == "pdf"
     refreshed = store.get_document(doc["id"])
-    assert (refreshed.get("metadata") or {}).get("drive_file_id") == REDACTED_DRIVE_ID
+    assert (refreshed.get("metadata") or {}).get("drive_file_id") == SIGNED_VOLUME_DRIVE_ID
     assert refreshed["size"] == len(pdf)
 
 
@@ -993,7 +993,7 @@ def test_patch_drive_file_id_stranger_unauthorized(client, tmp_path):
 
     denied_private = client.patch(
         f"/v1/projects/{private_pid}/documents/{private_doc['id']}",
-        json={"drive_file_id": REDACTED_DRIVE_ID},
+        json={"drive_file_id": SIGNED_VOLUME_DRIVE_ID},
         headers=stranger_h,
     )
     assert denied_private.status_code in (403, 404), denied_private.text
@@ -1017,7 +1017,7 @@ def test_patch_drive_file_id_stranger_unauthorized(client, tmp_path):
     assert opened.status_code == 200, opened.text
     denied_shared = client.patch(
         f"/v1/projects/{shared_pid}/documents/{shared_doc['id']}",
-        json={"drive_file_id": REDACTED_DRIVE_ID},
+        json={"drive_file_id": SIGNED_VOLUME_DRIVE_ID},
         headers=stranger_h,
     )
     assert denied_shared.status_code == 403, denied_shared.text
@@ -1045,11 +1045,11 @@ def test_patch_drive_file_id_admin_ok(client, tmp_path):
     doc = _rag_backfill_stub(store, pid, tmp_path)
     r = client.patch(
         f"/v1/projects/{pid}/documents/{doc['id']}",
-        json={"drive_file_id": REDACTED_DRIVE_ID},
+        json={"drive_file_id": SIGNED_VOLUME_DRIVE_ID},
         headers=admin_h,
     )
     assert r.status_code == 200, r.text
-    assert (r.json().get("metadata") or {}).get("drive_file_id") == REDACTED_DRIVE_ID
+    assert (r.json().get("metadata") or {}).get("drive_file_id") == SIGNED_VOLUME_DRIVE_ID
 
 
 def test_patch_drive_file_id_rejects_url(client, tmp_path):
@@ -1105,7 +1105,7 @@ def test_download_public_file_bytes_handles_confirm_token(monkeypatch):
     monkeypatch.setattr(
         "httpx.Client", lambda *a, **k: fake,
     )
-    blob, err = gdrive_service.download_public_file_bytes(REDACTED_DRIVE_ID)
+    blob, err = gdrive_service.download_public_file_bytes(SIGNED_VOLUME_DRIVE_ID)
     assert err is None
     assert blob == pdf
     assert any(c[1].get("confirm") == "t" for c in fake.calls)
@@ -1143,7 +1143,7 @@ def test_download_public_file_bytes_private_html_fails_closed(monkeypatch):
 def test_is_valid_drive_file_id():
     from app.core.gdrive_service import is_valid_drive_file_id
 
-    assert is_valid_drive_file_id(REDACTED_DRIVE_ID)
+    assert is_valid_drive_file_id(SIGNED_VOLUME_DRIVE_ID)
     assert not is_valid_drive_file_id("")
     assert not is_valid_drive_file_id("short")
     assert not is_valid_drive_file_id("https://drive.google.com/file/d/abc/view")
