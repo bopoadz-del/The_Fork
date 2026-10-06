@@ -10,7 +10,15 @@ w in kN/m, P in kN, spans in m.
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
 
+
+@formula(
+    owner='design',
+    description='Maximum bending moment of a simply supported beam under a uniformly distributed load.',
+    inputs={'udl_w_kn_m': 'kN/m', 'span_m': 'm'},
+    outputs={'max_moment_kn_m': 'kN.m'},
+)
 def beam_moment_simple(udl_w_kn_m: float, span_m: float) -> dict:
     """Simply-supported beam under a uniform load: Mmax = w*L^2/8 at midspan.
     (This is also the "uniform load" case — beam_moment_uniform is the same
@@ -30,6 +38,12 @@ def beam_moment_simple(udl_w_kn_m: float, span_m: float) -> dict:
     }
 
 
+@formula(
+    owner='design',
+    description='Maximum bending moment of a simply supported beam under one point load at a given position.',
+    inputs={'point_load_kn': 'kN', 'span_m': 'm', 'distance_from_left_m': 'm'},
+    outputs={'max_moment_kn_m': 'kN.m'},
+)
 def beam_moment_point_load(
     point_load_kn: float,
     span_m: float,
@@ -63,6 +77,12 @@ def beam_moment_point_load(
     }
 
 
+@formula(
+    owner='design',
+    description='Maximum shear of a simply supported beam under a distributed load and an optional central point load.',
+    inputs={'udl_w_kn_m': 'kN/m', 'span_m': 'm', 'central_point_load_kn': 'kN'},
+    outputs={'max_shear_kn': 'kN'},
+)
 def beam_shear_simple(
     udl_w_kn_m: float = 0.0,
     span_m: float = 0.0,
@@ -84,6 +104,12 @@ def beam_shear_simple(
     }
 
 
+@formula(
+    owner='design',
+    description='Support and midspan bending moments of a fixed-ended beam under a uniformly distributed load.',
+    inputs={'udl_w_kn_m': 'kN/m', 'span_m': 'm'},
+    outputs={'support_moment_kn_m': 'kN.m', 'midspan_moment_kn_m': 'kN.m', 'max_moment_kn_m': 'kN.m'},
+)
 def beam_moment_fixed_udl(udl_w_kn_m: float, span_m: float) -> dict:
     """Beam fixed at both ends under a uniform load: hogging M = w*L^2/12 at the
     supports (the max), sagging M = w*L^2/24 at midspan."""

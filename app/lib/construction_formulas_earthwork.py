@@ -6,9 +6,17 @@ Volume states: BANK (in situ), LOOSE (excavated, bulked), COMPACTED (placed).
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import math
 
 
+@formula(
+    owner='base',
+    description='Bank (in-situ) excavation volume of a rectangular pit or trench, and the loose volume after bulking.',
+    inputs={'length_m': 'm', 'width_m': 'm', 'depth_m': 'm', 'bulking_factor': '-'},
+    outputs={'bank_volume_m3': 'm3', 'loose_volume_m3': 'm3', 'bulked_volume_m3': 'm3', 'bulking_factor': '-'},
+)
 def excavation_volume(
     length_m: float,
     width_m: float,
@@ -36,6 +44,12 @@ def excavation_volume(
     }
 
 
+@formula(
+    owner='base',
+    description='Backfill needed around a structure: the void left after the structure, and the loose volume to import allowing for swell.',
+    inputs={'excavation_bank_m3': 'm3', 'structure_volume_m3': 'm3', 'swell_factor': '-'},
+    outputs={'void_volume_m3': 'm3', 'loose_backfill_needed_m3': 'm3', 'swell_factor': '-'},
+)
 def backfill_volume(
     excavation_bank_m3: float,
     structure_volume_m3: float,
@@ -61,6 +75,12 @@ def backfill_volume(
     }
 
 
+@formula(
+    owner='quantities',
+    description='Site earthwork balance: surplus to export or deficit to import, from cut and fill volumes.',
+    inputs={'cut_volume_m3': 'm3', 'fill_volume_m3': 'm3', 'bulking_factor': '-'},
+    outputs={'balance_bank_m3': 'm3', 'haul_loose_m3': 'm3'},
+)
 def cut_fill_balance(
     cut_volume_m3: float,
     fill_volume_m3: float,
@@ -87,6 +107,12 @@ def cut_fill_balance(
     }
 
 
+@formula(
+    owner='qaqc',
+    description='Field compaction as a percentage of the laboratory maximum dry density, against the specified minimum.',
+    inputs={'field_dry_density': '-', 'max_dry_density': '-', 'required_compaction_percent': '%'},
+    outputs={'compaction_percent': '%', 'required_percent': '%', 'passed': '-'},
+)
 def compaction_control(
     field_dry_density: float,
     max_dry_density: float,
@@ -110,6 +136,12 @@ def compaction_control(
     }
 
 
+@formula(
+    owner='design',
+    description='Factor of safety of an infinite slope, with and without cohesion.',
+    inputs={'friction_angle_deg': 'deg', 'slope_angle_deg': 'deg', 'cohesion_kpa': 'kPa', 'unit_weight_kn_m3': 'm3', 'depth_m': 'm'},
+    outputs={'factor_of_safety': '-', 'frictional_term': '-', 'cohesive_term': '-'},
+)
 def slope_fos_simple(
     friction_angle_deg: float,
     slope_angle_deg: float,

@@ -7,6 +7,8 @@ so a plausible-looking number is never mistaken for a derivation.
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 
 # Indicative embodied-carbon factors (kgCO2e per m3 of concrete), ICE/EPD family.
 # Real projects use the supplier's EPD — these are typical GGBS-free CEM I values.
@@ -14,6 +16,12 @@ _CONCRETE_ECO2_KGM3 = {"c20": 260.0, "c25": 290.0, "c30": 320.0,
                        "c35": 350.0, "c40": 390.0}
 
 
+@formula(
+    owner='design',
+    description='Embodied carbon of a concrete volume from an emission factor per cubic metre.',
+    inputs={'volume_m3': 'm3', 'grade': '-', 'embodied_kgco2e_m3': 'kgCO2e/m3'},
+    outputs={'total_kgco2e': 'kgCO2e', 'total_tco2e': 'tCO2e', 'factor_kgco2e_m3': 'kgCO2e/m3'},
+)
 def carbon_footprint_concrete(
     volume_m3: float,
     grade: str = "c30",
@@ -42,6 +50,12 @@ def carbon_footprint_concrete(
 _LEED_LEVELS = [(80, "Platinum"), (60, "Gold"), (50, "Silver"), (40, "Certified")]
 
 
+@formula(
+    owner='commercial',
+    description='Maps a LEED point total to its certification level.',
+    inputs={'points': '-'},
+    outputs={'points': '-', 'certification_level': '-'},
+)
 def leed_points_estimate(points: float) -> dict:
     """Map a LEED v4 point total to a certification level. Certified 40-49,
     Silver 50-59, Gold 60-79, Platinum 80+."""
@@ -64,6 +78,12 @@ def leed_points_estimate(points: float) -> dict:
 _LOD_CLASH_MM = {100: None, 200: 50.0, 300: 25.0, 350: 12.0, 400: 6.0, 500: 3.0}
 
 
+@formula(
+    owner='qaqc',
+    description="Clash tolerance for a model's level of development.",
+    inputs={'lod': '-'},
+    outputs={'lod': '-', 'clash_tolerance_mm': 'mm'},
+)
 def bim_clash_tolerance(lod: int = 350) -> dict:
     """Typical hard-clash tolerance for a BIM level of development. This is a
     BEP convention, NOT a standard constant — confirm in the project BEP."""
@@ -83,6 +103,12 @@ def bim_clash_tolerance(lod: int = 350) -> dict:
     }
 
 
+@formula(
+    owner='qaqc',
+    description="A scanner's stated ranging accuracy scaled to a working range, for comparison with the tolerance.",
+    inputs={'range_m': 'm', 'accuracy_at_10m_mm': 'mm'},
+    outputs={'range_m': 'm', 'estimated_accuracy_mm': 'mm'},
+)
 def laser_scan_accuracy(range_m: float, accuracy_at_10m_mm: float = 2.0) -> dict:
     """Scale a scanner's stated ranging accuracy to a working range (linear
     approximation). Pass the accuracy from the scanner datasheet; the value is

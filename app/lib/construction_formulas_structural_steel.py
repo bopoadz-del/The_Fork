@@ -11,6 +11,8 @@ Standards: AISC 360-16 (Ch. D tension, Ch. J connections); EN 1993-1-1 §6.2.3
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import math
 from typing import Optional
 
@@ -25,6 +27,12 @@ def _norm_code(code: str) -> str:
     return _ACI  # default AISC/ACI family
 
 
+@formula(
+    owner='design',
+    description='Design tensile strength of a steel member: the lesser of gross-section yielding and net-section rupture.',
+    inputs={'gross_area_mm2': 'mm2', 'net_area_mm2': 'mm2', 'fy_mpa': 'MPa', 'fu_mpa': 'MPa', 'code': '-'},
+    outputs={'capacity_kn': 'kN', 'governing_limit_state': '-', 'yield_capacity_kn': 'kN', 'rupture_capacity_kn': 'kN'},
+)
 def steel_tension_capacity(
     gross_area_mm2: float,
     net_area_mm2: Optional[float] = None,
@@ -73,6 +81,12 @@ def steel_tension_capacity(
     }
 
 
+@formula(
+    owner='design',
+    description='Design shear capacity of a bolt over its shear planes, to the selected code.',
+    inputs={'bolt_area_mm2': 'mm2', 'shear_strength_mpa': 'MPa', 'n_shear_planes': '-', 'code': '-', 'alpha_v': '-'},
+    outputs={'capacity_kn': 'kN', 'n_shear_planes': '-'},
+)
 def bolt_shear_capacity(
     bolt_area_mm2: float,
     shear_strength_mpa: float = 372.0,
@@ -115,6 +129,12 @@ def bolt_shear_capacity(
     }
 
 
+@formula(
+    owner='design',
+    description='Design strength of a fillet weld over its length.',
+    inputs={'leg_size_mm': 'mm', 'length_mm': 'mm', 'electrode_strength_mpa': 'MPa', 'code': '-', 'beta_w': '-'},
+    outputs={'capacity_kn': 'kN', 'capacity_per_mm_kn': 'kN', 'effective_throat_mm': 'mm'},
+)
 def weld_capacity(
     leg_size_mm: float,
     length_mm: float,

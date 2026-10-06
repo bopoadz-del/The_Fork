@@ -64,6 +64,7 @@ _AUDIT_SLICE = [
     "steel_tension_capacity",
     "supervision_ratio",
     "thermal_shrinkage_equivalence",
+    "tolerance_check",
     "unit_cost_total",
     "unit_weight_concrete",
     "weld_capacity",
@@ -1078,6 +1079,21 @@ class TestScoreRisk:
     def test_out_of_range_is_error(self):
         _err("score_risk", probability=0, impact=5)
         _err("score_risk", probability=4, impact=6)
+
+
+class TestToleranceCheck:
+    """Measured vs specified +/- tolerance."""
+
+    def test_inside_the_band(self):
+        r = _ok("tolerance_check", measured=24.6, specified=25.0, tolerance_plus=0.5)
+        assert r["within_tolerance"] is True
+        assert r["deviation"] == pytest.approx(-0.4, abs=1e-9)
+        assert r["margin"] == pytest.approx(0.1, abs=1e-9)
+
+    def test_outside_an_asymmetric_band(self):
+        r = _ok("tolerance_check", measured=25.4, specified=25.0, tolerance_plus=0.3, tolerance_minus=1.0)
+        assert r["within_tolerance"] is False
+        assert (r["lower_limit"], r["upper_limit"]) == (pytest.approx(24.0), pytest.approx(25.3))
 
 
 class TestUnitCostTotal:

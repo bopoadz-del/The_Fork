@@ -14,6 +14,8 @@ the inputs do.
 
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -34,6 +36,12 @@ class DewateringResult:
     notes: List[str] = field(default_factory=list)
 
 
+@formula(
+    owner='design',
+    description="Whether dewatering can stop: factor of safety of the structure's weight against groundwater uplift.",
+    inputs={'water_depth': '-', 'raft_thickness': '-', 'floor_count': '-', 'floor_thickness': '-', 'concrete_unit_weight': '-', 'water_unit_weight': '-', 'required_fos': '-'},
+    outputs={'uplift_force_t_m2': 't/m2', 'counter_weight_t_m2': 't/m2', 'fos': '-', 'can_stop': '-', 'needs_tension_piles': '-', 'min_floors_for_stop': '-'},
+)
 def dewatering_uplift_check(
     water_depth: float,
     raft_thickness: float,
@@ -84,6 +92,12 @@ def dewatering_uplift_check(
     )
 
 
+@formula(
+    owner='base',
+    description='Concrete volume of diaphragm wall panels, with an allowance for tremie overbreak.',
+    inputs={'panel_length': '-', 'wall_thickness': '-', 'excavation_depth': '-', 'panel_count': '-'},
+    outputs={'panel_count': '-', 'volume_per_panel_m3': 'm3', 'total_volume_m3': 'm3', 'volume_with_waste_m3': 'm3', 'waste_factor': '-'},
+)
 def diaphragm_wall_panel_volume(
     panel_length: float, wall_thickness: float,
     excavation_depth: float, panel_count: int = 1,
@@ -104,6 +118,12 @@ def diaphragm_wall_panel_volume(
     }
 
 
+@formula(
+    owner='design',
+    description='Well-point spacing and number of stages for a dewatering depth and soil type.',
+    inputs={'soil_permeability_m_s': 'm/s', 'required_drawdown_m': 'm', 'well_point_diameter_m': 'm'},
+    outputs={'soil_type': '-', 'permeability_m_s': 'm/s', 'required_drawdown_m': 'm', 'stages_needed': '-', 'max_depth_capacity_m': 'm', 'well_point_spacing_m': 'm', 'well_point_diameter_m': 'm'},
+)
 def dewatering_well_point_spacing(
     soil_permeability_m_s: float,
     required_drawdown_m: float,
@@ -155,6 +175,12 @@ class FormworkStrikingResult:
     notes: List[str] = field(default_factory=list)
 
 
+@formula(
+    owner='qaqc',
+    description='Earliest formwork striking time from element type, temperature and test strength.',
+    inputs={'concrete_strength_7h': '-', 'design_required_strength': '-', 'ciria_surface_strength': '-', 'bs8110_minimum_hours': 'h', 'proposed_hours': 'h'},
+    outputs={'recommended_hours': 'h', 'bs8110_minimum_hours': 'h', 'ciria_minimum_strength_n_mm2': 'N/mm2', 'design_required_strength_n_mm2': 'N/mm2', 'actual_early_strength_n_mm2': 'N/mm2'},
+)
 def formwork_striking_time(
     concrete_strength_7h: float = 7.0,
     design_required_strength: float = 0.332,
@@ -193,6 +219,12 @@ def formwork_striking_time(
     )
 
 
+@formula(
+    owner='qaqc',
+    description='Fineness modulus of an aggregate from its cumulative sieve retentions.',
+    inputs={'sieve_retained_percentages': '%'},
+    outputs={'fineness_modulus': '-'},
+)
 def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     """FM = (cumulative % retained on all sieves) / 100."""
     if not sieve_retained_percentages:
@@ -200,6 +232,12 @@ def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     return round(sum(sieve_retained_percentages) / 100.0, 2)
 
 
+@formula(
+    owner='design',
+    description='Concrete mix design by the absolute-volume method from specific gravities and the water/cement ratio.',
+    inputs={'w_c_ratio': '-', 'cement_sg': '-', 'fine_agg_sg': '-', 'coarse_agg_sg': '-', 'fine_agg_ratio': '-', 'coarse_agg_ratio': '-', 'dune_sand_pct': '%'},
+    outputs={'w_c_ratio': '-', 'cement_kg_m3': 'kg/m3', 'water_litres_m3': 'L/m3', 'fine_aggregate_kg_m3': 'kg/m3', 'coarse_aggregate_kg_m3': 'kg/m3', 'total_weight_kg_m3': 'kg/m3', 'proportions': '-'},
+)
 def concrete_mix_design_sg(
     w_c_ratio: float,
     cement_sg: float = 3.15,
@@ -238,6 +276,12 @@ def concrete_mix_design_sg(
     }
 
 
+@formula(
+    owner='design',
+    description='Mix proportions for slip-formed concrete, flagged as indicative defaults when not supplied.',
+    inputs={},
+    outputs={'cube_strength_n_mm2': 'N/mm2', 'slump_mm': 'mm', 'max_concrete_temp_c': 'degC', 'retarder_10c_lit_m3': 'L/m3', 'retarder_20c_lit_m3': 'L/m3'},
+)
 def concrete_mix_slip_form(**_kwargs: Any) -> Dict[str, Any]:
     """Slip-forming mix: 1:2:2.6, W/C=0.42, slump=150 +/- 30 mm.
 
@@ -254,6 +298,12 @@ def concrete_mix_slip_form(**_kwargs: Any) -> Dict[str, Any]:
     return mix
 
 
+@formula(
+    owner='design',
+    description='Modulus of elasticity of concrete from its compressive strength, to the selected code.',
+    inputs={'fck_n_mm2': 'N/mm2', 'code': '-'},
+    outputs={'value': 'currency', 'unit': '-', 'value_mpa': 'MPa'},
+)
 def modulus_of_elasticity_concrete(
     fck_n_mm2: float, code: str = "metric_technical",
 ) -> dict:
@@ -311,6 +361,12 @@ def _second_moment_mm4(i_mm4: float) -> float:
     return float(i_mm4)
 
 
+@formula(
+    owner='design',
+    description='Midspan deflection of a simply supported beam under a uniformly distributed load.',
+    inputs={'w_kn_m': 'kN/m', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
+    outputs={'deflection': 'mm'},
+)
 def beam_deflection_ss_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
     """Simply supported, UDL: delta = 5wL^4 / (384EI). Returns mm."""
     if span_m < 0 or w_kn_m < 0:
@@ -323,6 +379,12 @@ def beam_deflection_ss_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: f
     return round((5 * w_n_mm * l_mm**4) / (384 * ec_mpa * i_mm4), 2)
 
 
+@formula(
+    owner='design',
+    description='Tip deflection of a cantilever under a uniformly distributed load.',
+    inputs={'w_kn_m': 'kN/m', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
+    outputs={'deflection': 'mm'},
+)
 def beam_deflection_cantilever_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
     """Cantilever, UDL: delta = wL^4 / (8EI). Returns mm."""
     if span_m < 0 or w_kn_m < 0:
@@ -335,6 +397,12 @@ def beam_deflection_cantilever_udl(w_kn_m: float, span_m: float, ec_mpa: float, 
     return round((w_n_mm * l_mm**4) / (8 * ec_mpa * i_mm4), 2)
 
 
+@formula(
+    owner='design',
+    description='Tip deflection of a cantilever under a point load at its free end.',
+    inputs={'p_kn': 'kN', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
+    outputs={'deflection': 'mm'},
+)
 def beam_deflection_cantilever_point_load(p_kn: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
     """Cantilever, point load at the tip: delta = PL^3 / (3EI). Returns mm.
 
@@ -351,6 +419,12 @@ def beam_deflection_cantilever_point_load(p_kn: float, span_m: float, ec_mpa: fl
     return round((p_n * l_mm**3) / (3 * ec_mpa * i_mm4), 2)
 
 
+@formula(
+    owner='design',
+    description='Midspan deflection of a simply supported beam under a central point load.',
+    inputs={'p_kn': 'kN', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
+    outputs={'deflection': 'mm'},
+)
 def beam_deflection_ss_point_load_midspan(p_kn: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
     """Simply supported, point load at midspan: delta = PL^3 / (48EI). Returns mm."""
     if span_m < 0 or p_kn < 0:
@@ -363,6 +437,12 @@ def beam_deflection_ss_point_load_midspan(p_kn: float, span_m: float, ec_mpa: fl
     return round((p_n * l_mm**3) / (48 * ec_mpa * i_mm4), 2)
 
 
+@formula(
+    owner='qaqc',
+    description='Flexural tensile strength (modulus of rupture) of concrete, to the selected code.',
+    inputs={'fck_n_mm2': 'N/mm2', 'code': '-'},
+    outputs={'fck_n_mm2': 'N/mm2', 'value': 'currency', 'unit': '-', 'modulus_of_rupture_n_mm2': 'N/mm2', 'split_cylinder_aci_n_mm2': 'N/mm2', 'tensile_pct_of_compressive': '-'},
+)
 def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict[str, float]:
     """Tensile strength. Two forms, and the caller's code decides which.
 
@@ -403,6 +483,12 @@ def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict
     }
 
 
+@formula(
+    owner='design',
+    description='Converts a shrinkage strain to the equivalent temperature drop.',
+    inputs={'shrinkage_strain': '-', 'alpha_c': 'degC'},
+    outputs={'shrinkage_strain': '-', 'equivalent_temp_drop_c': 'degC'},
+)
 def thermal_shrinkage_equivalence(shrinkage_strain: float = 0.0002, alpha_c: float = 10e-6) -> Dict[str, float]:
     """Convert shrinkage strain to equivalent temperature drop: delta_t = epsilon_sh / alpha_c."""
     return {
@@ -411,6 +497,12 @@ def thermal_shrinkage_equivalence(shrinkage_strain: float = 0.0002, alpha_c: flo
     }
 
 
+@formula(
+    owner='qaqc',
+    description='Mass-concrete thermal check: core temperature and core-to-surface difference against limits.',
+    inputs={'core_temp_c': 'degC', 'surface_temp_c': 'degC'},
+    outputs={'core_temp_c': 'degC', 'surface_temp_c': 'degC', 'delta_t_c': 'degC', 'core_ok': '-', 'delta_ok': '-', 'thermal_cracking_risk': '-'},
+)
 def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -> Dict[str, Any]:
     """Mass concrete limits: core <= 70C, delta_T <= 20C."""
     delta_t = core_temp_c - surface_temp_c
@@ -427,6 +519,12 @@ def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -
     }
 
 
+@formula(
+    owner='design',
+    description='Unit weight of plain or reinforced concrete, flagged as an indicative default when not supplied.',
+    inputs={'reinforced': '-'},
+    outputs={'unit_weight_kg_m3': 'kg/m3', 'type': '-', 'range_kg_m3': 'kg/m3'},
+)
 def unit_weight_concrete(reinforced: bool = True) -> Dict[str, float]:
     """Unit weight: RC = 2500 kg/m3, plain = 2400 kg/m3 (range 2330-2470)."""
     if reinforced:
@@ -434,6 +532,12 @@ def unit_weight_concrete(reinforced: bool = True) -> Dict[str, float]:
     return {"unit_weight_kg_m3": 2400, "type": "Plain Concrete", "range_kg_m3": (2330, 2470)}
 
 
+@formula(
+    owner='design',
+    description='Nominal shear stress on a section from shear force, width and effective depth.',
+    inputs={'v_kn': 'kN', 'b_mm': 'mm', 'd_mm': 'mm'},
+    outputs={'shear_force_kn': 'kN', 'width_mm': 'mm', 'effective_depth_mm': 'mm', 'shear_stress_n_mm2': 'N/mm2'},
+)
 def shear_stress_check(v_kn: float, b_mm: float, d_mm: float) -> Dict[str, float]:
     """Shear stress: v = V/(b x d) in N/mm2."""
     return {
@@ -446,6 +550,12 @@ def shear_stress_check(v_kn: float, b_mm: float, d_mm: float) -> Dict[str, float
 #  SECTION 3 — STRUCTURAL SYSTEMS
 # ═══════════════════════════════════════════════════════════════════════════
 
+@formula(
+    owner='design',
+    description='Post-tensioning force needed to balance a share of the distributed load, from span and tendon drape.',
+    inputs={'span_m': 'm', 'slab_thickness_m': 'm', 'live_load_kn_m2': 'kN/m2', 'dead_load_kn_m2': 'kN/m2', 'tendon_stress_n_mm2': 'N/mm2', 'tendon_diameter_mm': 'mm', 'eccentricity_ratio': '-'},
+    outputs={'tendon_force_kn': 'kN', 'tendon_area_mm2': 'mm2', 'num_strands': '-', 'balanced_load_kn_m': 'kN/m', 'eccentricity_mm': 'mm', 'cable_profile': '-'},
+)
 def post_tensioning_force(
     span_m: float, slab_thickness_m: float, live_load_kn_m2: float,
     dead_load_kn_m2: Optional[float] = None,
@@ -473,6 +583,12 @@ def post_tensioning_force(
     }
 
 
+@formula(
+    owner='design',
+    description='Compares a composite column with an embedded steel section against a reinforced concrete column for a given axial load.',
+    inputs={'axial_load_kn': 'kN', 'column_diameter_mm': 'mm', 'concrete_grade_n_mm2': 'N/mm2', 'use_i_beam': '-', 'i_beam_weight_t': 't'},
+    outputs={'option_a': '-', 'option_b': '-', 'recommended': '-'},
+)
 def composite_column_design(
     axial_load_kn: float, column_diameter_mm: float,
     concrete_grade_n_mm2: float = 60.0,
@@ -497,6 +613,12 @@ def composite_column_design(
     }
 
 
+@formula(
+    owner='safety',
+    description='Wind force and overturning moment on climbing formwork from wind speed and exposed area.',
+    inputs={'wind_velocity_m_s': 'm/s', 'formwork_area_m2': 'm2', 'formwork_height_m': 'm', 'formwork_width_m': 'm', 'shape_factor': '-'},
+    outputs={'wind_pressure_kpa': 'kPa', 'wind_force_kn': 'kN', 'overturning_moment_kn_m': 'kN.m', 'bending_stress_n_m2': 'N/m2'},
+)
 def wind_load_on_formwork(
     wind_velocity_m_s: float, formwork_area_m2: float,
     formwork_height_m: float, formwork_width_m: float,
@@ -515,6 +637,12 @@ def wind_load_on_formwork(
     }
 
 
+@formula(
+    owner='design',
+    description='Bearing pressure under a foundation from load and area, and its factor of safety against the soil capacity.',
+    inputs={'foundation_width_m': 'm', 'foundation_length_m': 'm', 'column_load_kn': 'kN', 'soil_bearing_capacity_kn_m2': 'kN/m2', 'foundation_depth_m': 'm'},
+    outputs={'bearing_pressure_kn_m2': 'kN/m2', 'net_pressure_kn_m2': 'kN/m2', 'fos_against_bearing': '-', 'bearing_ok': '-'},
+)
 def foundation_bearing_pressure(
     foundation_width_m: float, foundation_length_m: float,
     column_load_kn: float, soil_bearing_capacity_kn_m2: float,
@@ -535,6 +663,12 @@ def foundation_bearing_pressure(
     }
 
 
+@formula(
+    owner='design',
+    description='Crane load for lifting a precast beam: beam plus rigging with a dynamic factor, against crane capacity.',
+    inputs={'beam_weight_t': 't', 'beam_length_m': 'm', 'crane_capacity_t': 't', 'lift_radius_m': 'm', 'rigging_weight_t': 't', 'dynamic_factor': '-'},
+    outputs={'effective_lift_weight_t': 't', 'utilization_pct': '%', 'is_safe': '-'},
+)
 def precast_beam_erection_check(
     beam_weight_t: float, beam_length_m: float,
     crane_capacity_t: float, lift_radius_m: float,
@@ -554,6 +688,12 @@ def precast_beam_erection_check(
 #  SECTION 4 — CRANE PLANNING (by Tonnage)
 # ═══════════════════════════════════════════════════════════════════════════
 
+@formula(
+    owner='procurement',
+    description='Number of cranes needed for a lifting demand and crane cycle capacity.',
+    inputs={'total_lift_demand_tons': '-', 'crane_capacity_tons': '-', 'utilization_pct': '%', 'shifts_per_day': '-', 'hours_per_shift': '-', 'cycle_time_minutes': '-', 'working_days': 'days'},
+    outputs={'total_lift_demand_tons': '-', 'crane_capacity_tons': '-', 'utilization_pct': '%', 'shifts_per_day': '-', 'hours_per_shift': '-', 'cycle_time_minutes': '-', 'lifts_per_hour_per_crane': '-', 'daily_tonnage_per_crane': '-', 'cranes_required': '-', 'monthly_rate_sar': 'currency', 'total_monthly_cost_sar': 'currency'},
+)
 def crane_planning(
     total_lift_demand_tons: float,
     crane_capacity_tons: float,
@@ -638,6 +778,12 @@ def crane_planning(
     }
 
 
+@formula(
+    owner='quantities',
+    description='Crane cost over a hire period including operator and rigging crew.',
+    inputs={'num_cranes': '-', 'crane_capacity_tons': '-', 'duration_months': '-', 'include_operator': '-', 'include_riggers': '-', 'remote_area_factor': '-'},
+    outputs={'num_cranes': '-', 'crane_capacity_tons': '-', 'duration_months': '-', 'dry_hire_sar_month': '-', 'operator_sar_month': '-', 'riggers_sar_month': '-', 'remote_area_factor': '-', 'per_crane_monthly_sar': 'currency', 'total_project_cost_sar': 'currency', 'mobilization_sar': 'currency', 'demobilization_sar': 'currency', 'grand_total_sar': 'currency'},
+)
 def crane_cost_estimate(
     num_cranes: int,
     crane_capacity_tons: float,
@@ -700,6 +846,12 @@ def crane_cost_estimate(
 #  SECTION 5 — COST ESTIMATION
 # ═══════════════════════════════════════════════════════════════════════════
 
+@formula(
+    owner='quantities',
+    description='Cost build-up of concrete per cubic metre from materials, labour, plant and overheads.',
+    inputs={'quantity_m3': 'm3', 'cement_kg_m3': 'kg/m3', 'cement_price_sar_t': 't', 'aggregate_price_sar_t': 't', 'water_price_sar_m3': 'm3', 'microsilica_kg_m3': 'kg/m3', 'microsilica_price_sar_kg': 'kg', 'plasticizer_lit_m3': 'm3', 'plasticizer_price_sar_lit': 'currency', 'plant_cost_sar_m3': 'm3', 'labour_cost_sar_m3': 'm3', 'erection_sar_m3': 'm3', 'power_sar_m3': 'm3', 'indirect_sar_m3': 'm3', 'indirect_pct': '%', 'markup_pct': '%', 'waste_pct': '%'},
+    outputs={'material_cost_sar_m3': 'm3', 'direct_cost_sar_m3': 'm3', 'selling_price_sar_m3': 'm3', 'total_project_value_sar': 'currency'},
+)
 def cost_buildup_concrete(
     quantity_m3: float,
     cement_kg_m3: float = 400,
@@ -771,6 +923,12 @@ def cost_buildup_concrete(
     }
 
 
+@formula(
+    owner='quantities',
+    description='Cost build-up of reinforcement per tonne from material, fabrication, fixing and overheads.',
+    inputs={'quantity_kg': 'kg', 'material_price_sar_t': 't', 'labour_mhr_t': 't', 'labour_rate_sar_hr': '-', 'crane_hr_t': 't', 'crane_rate_sar_hr': '-', 'waste_pct': '%', 'indirect_pct': '%', 'markup_pct': '%'},
+    outputs={'material_sar_t': 't', 'labour_sar_t': 't', 'equipment_sar_t': 't', 'selling_price_sar_t': 't', 'total_project_value_sar': 'currency'},
+)
 def cost_buildup_rebar(
     quantity_kg: float,
     material_price_sar_t: float = 2600,
@@ -801,6 +959,12 @@ def cost_buildup_rebar(
     }
 
 
+@formula(
+    owner='quantities',
+    description='Cost build-up of formwork per square metre from materials, reuses, labour and overheads.',
+    inputs={'area_m2': 'm2', 'shuttering_supply_sar_m2': 'm2', 'scaffolding_sar_m2_day': '-', 'cycle_days': 'days', 'labour_mhr_m2': 'm2', 'labour_rate_sar_hr': '-', 'crane_rate_sar_hr': '-', 'crane_output_m2_hr': '-', 'indirect_pct': '%', 'markup_pct': '%'},
+    outputs={'shuttering_sar_m2': 'm2', 'scaffolding_sar_m2': 'm2', 'material_sar_m2': 'm2', 'labour_sar_m2': 'm2', 'selling_price_sar_m2': 'm2', 'total_for_area_sar': 'currency'},
+)
 def cost_buildup_formwork(
     area_m2: float,
     shuttering_supply_sar_m2: float = 55,
@@ -845,6 +1009,12 @@ NOTE_REMOTE_AREA = (
 )
 
 
+@formula(
+    owner='quantities',
+    description='Mobilisation cost for site set-up from its component items.',
+    inputs={'num_personnel': '-', 'duration_months': '-', 'camp_type': '-', 'include_offices': '-', 'include_camp': '-', 'include_transport': '-', 'include_safety_medical': '-', 'remote_area_factor': '-'},
+    outputs={'num_personnel': '-', 'duration_months': '-', 'camp_type': '-', 'remote_area_factor': '-', 'breakdown': '-', 'recurring_monthly_sar': 'currency', 'total_recurring_sar': 'currency', 'total_fixed_sar': 'currency', 'grand_total_sar': 'currency'},
+)
 def mobilization_cost_estimate(
     num_personnel: int,
     duration_months: int,
@@ -923,6 +1093,12 @@ def mobilization_cost_estimate(
     }
 
 
+@formula(
+    owner='planning',
+    description='Supervision manpower for given quantities, from supervision ratios flagged as indicative defaults.',
+    inputs={'concrete_m3': 'm3', 'structural_steel_t': 't', 'piping_dia_inch': '-', 'electrical_cable_km': '-', 'area_m2': 'm2'},
+    outputs={'civil_supervisors': '-', 'structural_supervisors': '-', 'piping_supervisors': '-', 'electrical_supervisors': '-', 'general_supervisors': '-', 'total_supervisors': '-', 'hse_officers': '-', 'document_controllers': '-', 'total_supervision_staff': '-'},
+)
 def supervision_ratio(
     concrete_m3: float = 0,
     structural_steel_t: float = 0,
@@ -972,6 +1148,12 @@ def supervision_ratio(
 #  SECTION 7 — MEP SEQUENCING (for Schedule Production)
 # ═══════════════════════════════════════════════════════════════════════════
 
+@formula(
+    owner='planning',
+    description='Electrical installation programme: stage durations from first fix to handover.',
+    inputs={'floor_area_m2': 'm2', 'num_floors': '-'},
+    outputs={'total_area_m2': 'm2', 'stages': '-', 'total_days': 'days'},
+)
 def electrical_installation_sequence(
     floor_area_m2: float, num_floors: int = 1,
 ) -> Dict[str, Any]:
@@ -987,6 +1169,12 @@ def electrical_installation_sequence(
     return {"total_area_m2": total, "stages": stages, "total_days": sum(stages.values())}
 
 
+@formula(
+    owner='planning',
+    description='Plumbing installation programme: stage durations from submittal to handover.',
+    inputs={'floor_area_m2': 'm2', 'num_floors': '-'},
+    outputs={'stages': '-', 'cumulative_days': 'days', 'total_days': 'days'},
+)
 def plumbing_flow_programme(floor_area_m2: float, num_floors: int = 1) -> Dict[str, Any]:
     """Plumbing flow: submittal -> procure -> 1st/2nd fix -> connect -> handover."""
     total = floor_area_m2 * num_floors
@@ -1012,6 +1200,12 @@ def plumbing_flow_programme(floor_area_m2: float, num_floors: int = 1) -> Dict[s
 #  SECTION 8 — GROUTING & MATURITY
 # ═══════════════════════════════════════════════════════════════════════════
 
+@formula(
+    owner='qaqc',
+    description='Grouting pressure and strength checks for post-tensioning ducts.',
+    inputs={'tendon_duct_diameter_mm': 'mm', 'required_pressure_n_mm2': 'N/mm2', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_minutes': '-'},
+    outputs={'duct_area_mm2': 'mm2', 'grout_volume_l_m': 'm', 'pressure_n_mm2': 'N/mm2', 'pressure_kg_cm2': '-', 'pressure_psi': '-', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_min': '-'},
+)
 def grout_pressure_calc(
     tendon_duct_diameter_mm: float,
     required_pressure_n_mm2: float = 0.5,
@@ -1035,6 +1229,12 @@ def grout_pressure_calc(
     }
 
 
+@formula(
+    owner='qaqc',
+    description='Concrete strength from its temperature history by the maturity method.',
+    inputs={'temperature_history_c': 'degC', 'time_intervals_hours': 'h', 'datum_temperature': '-', 'strength_28d_n_mm2': 'N/mm2', 'reference_temperature_c': 'degC', 'gain_a': '-', 'gain_b': '-'},
+    outputs={'maturity_index_c_hrs': 'degC.h', 'equivalent_age_days': 'days', 'predicted_strength_n_mm2': 'N/mm2', 'percent_of_28d': '%'},
+)
 def concrete_maturity_strength(
     temperature_history_c: List[float],
     time_intervals_hours: List[float],
@@ -1097,102 +1297,16 @@ logger = logging.getLogger(__name__)
 
 # Public functions in this module that are DISPATCH infrastructure, not
 # calculators — excluded from the registry regardless of definition order.
-# bind_calculation_params / describe_calculation_params /
-# extract_calculation_params_from_text are the shared dispatcher helpers
-# (#639 + Agent C / #636 / #652). Do not register them.
-_NON_CALCULATORS = {
-    "available_calculations",
-    "run_calculation",
-    "bind_calculation_params",
-    "describe_calculation_params",
-    "coerce_calc_params",
-    "extract_calculation_params_from_text",
-    "calculator_name_from_text",
-}
 
 
 def _build_calculator_registry() -> "Dict[str, Any]":
-    """Every public calculator defined in this module, by name. Drift-free:
-    a new calculator is exposed automatically (and its smoke-input guard test
-    fails until it is covered)."""
-    reg: Dict[str, Any] = {}
-    for _name, _obj in _inspect.getmembers(__import__(__name__, fromlist=["*"]),
-                                           _inspect.isfunction):
-        if _name.startswith("_") or _name in _NON_CALCULATORS:
-            continue
-        if getattr(_obj, "__module__", None) != __name__:
-            continue  # skip imported names (dataclass/field/etc.)
-        reg[_name] = _obj
-    # Also expose the reporting / commercial / procurement / risk calculators
-    # that live in construction_knowledge (EVM, IPC payment, tender scoring,
-    # risk scoring). REFERENCED, not copied — construction_knowledge stays the
-    # single source of that maths; construction_calc just makes them callable
-    # (they were tested but 0-caller). Optional import: if unavailable, the
-    # engineering calculators above still work.
-    try:
-        from app.core import construction_knowledge as _ck
-        for _n in ("calculate_evm", "calculate_payment", "evaluate_tender", "score_risk"):
-            _f = getattr(_ck, _n, None)
-            if callable(_f):
-                reg[_n] = _f
-    except Exception:  # noqa: BLE001 — never break the formula registry on import
-        logger.warning(
-            "swallowed %s in _build_calculator_registry() — continuing",
-            "Exception", exc_info=True,
-        )
-    # Post-live-chat additions (guardrail height, interim payment) live in a
-    # separate module so they can also feed the discipline-hats binding
-    # resolver. Merge them here too so the LIVE construction_calc tool can
-    # actually call them — before this they resolved ONLY through the flag-off
-    # hats resolver and were unreachable from the running agent (the Q2/Q12
-    # "registered in CALCULATORS" gap). REFERENCED, single source stays in the
-    # additions module.
-    try:
-        from app.lib.construction_formulas_additions import ADDITIONAL_CALCULATORS as _add
-        for _n, _f in _add.items():
-            if callable(_f):
-                reg[_n] = _f
-    except Exception:  # noqa: BLE001 — never break the formula registry on import
-        logger.warning(
-            "swallowed %s in _build_calculator_registry() — continuing",
-            "Exception", exc_info=True,
-        )
-    # Additive discipline modules (the drop-catalog gap-fill library). Each
-    # module exposes ADDITIONAL_CALCULATORS; listed here so a new discipline is a
-    # one-line addition and never touches the existing calculators. Every merged
-    # name is gated by the coverage guard + a per-formula oracle test. See
-    # docs/additive-formula-library-scope.md.
-    for _ext in _EXTENSION_MODULES:
-        try:
-            _mod = __import__(_ext, fromlist=["ADDITIONAL_CALCULATORS"])
-            for _n, _f in getattr(_mod, "ADDITIONAL_CALCULATORS", {}).items():
-                if callable(_f):
-                    reg[_n] = _f
-        except Exception:  # noqa: BLE001 — a broken/absent module never breaks the registry
-            logger.warning(
-                "swallowed %s in _build_calculator_registry() — continuing",
-                "Exception", exc_info=True,
-            )
-    return reg
+    """name -> function for every DECLARED formula (``@formula`` in
+    ``app.lib.formula_registry``). A function is a calculator only when it
+    declares its owner, description, inputs and outputs where it is defined;
+    importing the formula modules is what registers them."""
+    from app.lib import formula_registry
 
-
-# Discipline extension modules merged into CALCULATORS (order-independent; a
-# later module wins a name collision, but names are unique by design).
-_EXTENSION_MODULES: Tuple[str, ...] = (
-    "app.lib.construction_formulas_structural_steel",
-    "app.lib.construction_formulas_loads",
-    "app.lib.construction_formulas_quantities",
-    "app.lib.construction_formulas_earthwork",
-    "app.lib.construction_formulas_beam_analysis",
-    "app.lib.construction_formulas_structural_rc",
-    "app.lib.construction_formulas_qc",
-    "app.lib.construction_formulas_commercial",
-    "app.lib.construction_formulas_planning",
-    "app.lib.construction_formulas_safety",
-    "app.lib.construction_formulas_reference_tables",
-    "app.lib.construction_formulas_columns",
-    "app.lib.construction_formulas_masonry",
-)
+    return formula_registry.calculators()
 
 
 CALCULATORS: Dict[str, Any] = _build_calculator_registry()

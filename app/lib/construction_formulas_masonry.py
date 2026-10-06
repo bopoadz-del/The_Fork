@@ -7,6 +7,8 @@ t/sqrt(12) for a solid rectangular wall. Arithmetic shown in ``note``.
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import math
 
 _ACI = "aci"
@@ -20,6 +22,12 @@ def _norm_code(code: str) -> str:
     return _ACI
 
 
+@formula(
+    owner='design',
+    description='Axial compressive capacity of a masonry wall, allowing for slenderness.',
+    inputs={'masonry_strength_mpa': 'MPa', 'net_area_mm2': 'mm2', 'height_mm': 'mm', 'thickness_mm': 'mm', 'code': '-', 'radius_gyration_mm': 'mm', 'steel_area_mm2': 'mm2', 'steel_stress_mpa': 'MPa', 'gamma_m': 'm', 'eccentricity_mm': 'mm', 'ke': '-', 'eff_height_mm': 'mm', 'eff_thickness_mm': 'mm'},
+    outputs={'capacity_kn': 'kN', 'slenderness_reduction_R': '-', 'h_over_r': '-', 'phi_reduction': '-', 'slenderness_lambda_c': 'degC'},
+)
 def masonry_wall_capacity(
     masonry_strength_mpa: float,
     net_area_mm2: float,
