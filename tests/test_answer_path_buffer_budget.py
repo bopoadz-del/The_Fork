@@ -11,10 +11,12 @@ and each read is re-run under EXPLAIN (ANALYZE, BUFFERS). Budgets:
 
 * buffers read from storage per question <= 50 MB;
 * buffers touched per question <= 600 MB;
-* and, scale-free, buffers touched <= half the chunk table's own size -- the
-  synthetic corpus is smaller than live, so the absolute numbers alone could
-  pass while a full-table read crept back. The control proves that last
-  bound bites: one full read of the table's text and embeddings exceeds it.
+* and, scale-free, no single statement on the chunk table touches more than
+  a quarter of that table's own size -- the synthetic corpus is smaller than
+  live, so the absolute numbers alone could pass while a full-table read crept
+  back. (A turn's TOTAL counts the same index pages once per statement, so the
+  bound is per statement.) The control proves it bites: one full read of the
+  table's text and embeddings exceeds it.
 
 PostgreSQL only (buffer counts are a PostgreSQL executor property): the CI
 job ``test-postgres`` runs it.
@@ -38,7 +40,7 @@ pytestmark = pytest.mark.skipif(
 PAGE = 8192
 READ_BUDGET = 50 * 1024 * 1024
 TOUCH_BUDGET = 600 * 1024 * 1024
-TABLE_SHARE = 0.5
+TABLE_SHARE = 0.25
 
 #: An item-code lookup on the project (the shape of the live measurement).
 QUESTION = "What is the quantity and rate for bill item Q731.4?"
@@ -113,10 +115,13 @@ def test_one_question_stays_inside_its_database_budget(monkeypatch):
     reads = _reads(statements)
     assert any(table in s for s, _ in reads), "the turn never read the chunk table"
     read_blocks = hit_blocks = 0
+    worst_on_table = 0
     for statement, params in reads:
         r, h = _buffers(engine, statement, params)
         read_blocks += r
         hit_blocks += h
+        if table in statement:
+            worst_on_table = max(worst_on_table, (r + h) * PAGE)
     read_bytes = read_blocks * PAGE
     touched = (read_blocks + hit_blocks) * PAGE
     with engine.connect() as conn:
@@ -124,8 +129,8 @@ def test_one_question_stays_inside_its_database_budget(monkeypatch):
 
     assert read_bytes <= READ_BUDGET, f"read {read_bytes / 1e6:.1f} MB from storage for one question"
     assert touched <= TOUCH_BUDGET, f"touched {touched / 1e6:.1f} MB of buffers for one question"
-    assert touched <= TABLE_SHARE * table_bytes, (
-        f"touched {touched / 1e6:.1f} MB for one question against a {table_bytes / 1e6:.1f} MB "
+    assert worst_on_table <= TABLE_SHARE * table_bytes, (
+        f"one statement touched {worst_on_table / 1e6:.1f} MB of a {table_bytes / 1e6:.1f} MB "
         f"chunk table (> {TABLE_SHARE:.0%})"
     )
 
