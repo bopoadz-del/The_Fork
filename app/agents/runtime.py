@@ -8134,6 +8134,31 @@ def _record_figure_provenance(
     return text
 
 
+def _rss_mb() -> int:
+    """Resident memory of this process in MB (Linux /proc; psutil elsewhere;
+    -1 when neither is readable)."""
+    try:
+        with open("/proc/self/status", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    try:
+        import psutil
+
+        return int(psutil.Process().memory_info().rss // (1024 * 1024))
+    except Exception:  # noqa: BLE001 — a missing reading is reported as -1
+        _LOG.debug("rss unreadable", exc_info=True)
+        return -1
+
+
+def _timing_log(fmt: str, *args: Any) -> None:
+    """A TIMING line, always carrying the process's resident memory, so a
+    capacity run shows whether memory stays flat turn after turn."""
+    _LOG.warning(fmt + " rss=%dMB", *args, _rss_mb())
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -12756,7 +12781,7 @@ class Agent:
                             )
                             yield {"type": "token", "content": suffix}
                     if _timing:
-                        _LOG.warning("TIMING chat_stream STREAMED-SYNTH iter=%d chars=%d cum=%.1fs",
+                        _timing_log("TIMING chat_stream STREAMED-SYNTH iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
                     if conversation_id:
                         from app.core import agent_memory
@@ -12782,7 +12807,7 @@ class Agent:
             )
             if _timing:
                 _tcs = [((tc.get("function") or {}).get("name")) for tc in (resp.get("choice", {}).get("message", {}).get("tool_calls") or [])]
-                _LOG.warning("TIMING chat_stream iter=%d call=%.1fs status=%s tools=%s cum=%.1fs",
+                _timing_log("TIMING chat_stream iter=%d call=%.1fs status=%s tools=%s cum=%.1fs",
                              iteration, time.monotonic() - _call_t0, resp.get("status"),
                              _tcs or "final", time.monotonic() - _turn_t0)
             if resp.get("status") == "error":
@@ -12907,7 +12932,7 @@ class Agent:
                                     _left, _need,
                                 )
                                 if _timing:
-                                    _LOG.warning(
+                                    _timing_log(
                                         "TIMING chat_stream FORCED-RETRY-SKIPPED "
                                         "raw=%dc left=%.1fs cum=%.1fs",
                                         len(raw_content), _left,
@@ -12917,7 +12942,7 @@ class Agent:
                             else:
                                 _LOG.info("chat_stream: unusable final_text, forcing no-tools retry")
                                 if _timing:
-                                    _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
+                                    _timing_log("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
                                                  len(raw_content), time.monotonic() - _turn_t0)
                                 if final_text == _TOOL_FORMAT_FALLBACK:
                                     messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
@@ -12931,7 +12956,7 @@ class Agent:
                                     deadline=_llm_deadline(),
                                 )
                                 if _timing:
-                                    _LOG.warning("TIMING chat_stream forced-retry call=%.1fs status=%s cum=%.1fs",
+                                    _timing_log("TIMING chat_stream forced-retry call=%.1fs status=%s cum=%.1fs",
                                                  time.monotonic() - _fr_t0, forced_resp.get("status"), time.monotonic() - _turn_t0)
                                 if forced_resp.get("status") == "error":
                                     final_text = _EMPTY_RESPONSE_FALLBACK
@@ -12947,7 +12972,7 @@ class Agent:
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
                     if _timing:
-                        _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
+                        _timing_log("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
                     _set_phase(f"streaming-final iter={iteration}")
                     _LOG.info("chat_stream: final_text iter=%d chars=%d", iteration, len(final_text))
