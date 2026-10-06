@@ -226,5 +226,8 @@ CREATE TABLE chunks (
 CREATE INDEX idx_chunks_project ON chunks (project_id);
 CREATE INDEX idx_chunks_doc ON chunks (project_id, doc_id);
 CREATE INDEX idx_chunks_knowledge_layer ON chunks (knowledge_layer);
+-- Keep the embedding in the heap row: an exact distance over a project's rows
+-- must not walk the TOAST index per row (alembic 0023).
+ALTER TABLE chunks ALTER COLUMN embedding SET STORAGE MAIN;
 CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX chunks_fts_gin ON chunks USING GIN (text_search);
