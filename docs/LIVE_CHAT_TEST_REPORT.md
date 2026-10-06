@@ -26,7 +26,7 @@
 [   2.04s] ROUTE       {"requested": "project-assistant", "final": "project-assistant", "action": null, "confidence": 0.0, "reason": "below_routing_gate"}
 [   2.04s] START       {"agent": "project-assistant"}
 The minimum clearance for a crane operating near a 220 kV overhead power line is 6.1 meters (20 feet).
-[   7.44s] END         {"iterations": 1, "model": "gpt-4o-mini-2024-07-18", "sources": [{"doc_id": "c9b547ec", "doc_name": "osha_1926_crane_power_line_clearance.md", "page_or_section": "chunk #1", "chunk_index": 1, "chunk_id": "curated_kb:c9b547ec:1", "project_id": "client_infra_pack_1", "score": 2.085957, "confidence": "High"}, {"doc_id": "c1b98aa9", "doc_name": "DD-2022-175 - Site Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 2.pdf", "page_or_section": "chunk #508", "chunk_index": 508, "chunk_id": "client_infra_pack_1:c1b98aa9:508", "project_id": "client_infra_pack_1", "score": 0.735477, "confidence": ...
+[   7.44s] END         {"iterations": 1, "model": "gpt-4o-mini-2024-07-18", "sources": [{"doc_id": "c9b547ec", "doc_name": "osha_1926_crane_power_line_clearance.md", "page_or_section": "chunk #1", "chunk_index": 1, "chunk_id": "curated_kb:c9b547ec:1", "project_id": "example_infra_pack", "score": 2.085957, "confidence": "High"}, {"doc_id": "d0c00009", "doc_name": "AB-2022-202 - Site Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 2.pdf", "page_or_section": "chunk #508", "chunk_index": 508, "chunk_id": "example_infra_pack:d0c00009:508", "project_id": "example_infra_pack", "score": 0.735477, "confidence": ...
 turn summary: total=7.44s  first_token=7.22s  events=5  answer_chars=102
 ```
 
@@ -194,11 +194,11 @@ The dewatering uplift check results are as follows:
 Conclusion: Dewatering CANNOT stop because FOS 0.380 < required 1.25.
 - Tension piles required to anchor against uplift.
 - Minimum floors required to stop dewatering: 32.
-[  35.87s] END         ... "sources": [{"doc_id": "b6a8cd9e", "doc_name": "construction_kb.md", ... "confidence": "High"}, {"doc_id": "fc9a8161", "doc_name": "smgt-c552-part-1.pdf", ...
+[  35.87s] END         ... "sources": [{"doc_id": "b6a8cd9e", "doc_name": "construction_kb.md", ... "confidence": "High"}, {"doc_id": "d0c0000b", "doc_name": "spec-c900-part-1.pdf", ...
 turn summary: total=35.87s  first_token=35.86s  events=17  answer_chars=587  tool construction_calc: 0.00s (x2)
 ```
 
-**Verdict:** PASS -- All values exact. FOS 0.38, cannot stop, min 32 floors. construction_calc fired twice. Sources from construction_kb.md and SMGT-C552 training material. Honest engineering conclusion.
+**Verdict:** PASS -- All values exact. FOS 0.38, cannot stop, min 32 floors. construction_calc fired twice. Sources from construction_kb.md and SPEC-C900 training material. Honest engineering conclusion.
 
 ---
 
@@ -234,7 +234,7 @@ turn summary: total=12.44s  first_token=12.44s  events=7  answer_chars=137  tool
 [   1.20s] ROUTE       {"requested": "project-assistant", "final": "heavy-reasoning", "action": "drawing_qto", "confidence": 0.2, "reason": "needs_planning"}
 [   1.20s] START       {"agent": "heavy-reasoning"}
 I don't have the specific information regarding the manhole spacing shown in the sewer drawings. The retrieved context did not contain that detail.
-[   2.11s] END         ... "sources": [{"doc_id": "f54ecbb0", "doc_name": "ip-inf-054-0000-jcb-dwg-sg-200-0001076-04.pdf", ... "confidence": "High"}, ...
+[   2.11s] END         ... "sources": [{"doc_id": "d0c0000a", "doc_name": "qz-eng-320-0000-exc-dwg-sg-200-0001076-04.pdf", ... "confidence": "High"}, ...
 turn summary: total=2.11s  first_token=2.11s  events=5  answer_chars=147
 ```
 
@@ -255,10 +255,10 @@ turn summary: total=2.11s  first_token=2.11s  events=5  answer_chars=147
 [   3.23s] TOOL_CALL   construction_calc  args={}
 [   3.23s] TOOL_RESULT construction_calc (0.00s)  status=?  ~207B
 I don't have the specific name of the project, client, or contractor from the provided context. The retrieved information does not contain those details.
-[   4.39s] END         ... "sources": [{"doc_id": "64b42ea1", "doc_name": "DD-2022-085-CLIENT PMC Infra PSA- Signed Contract.pdf", ... "confidence": "High"}]
+[   4.39s] END         ... "sources": [{"doc_id": "64b42ea1", "doc_name": "AB-2022-085-CLIENT PMC Infra PSA- Signed Contract.pdf", ... "confidence": "High"}]
 ```
 
-**Verdict:** PASS -- Answer prose is clean: no client project, client, or contractor name in the response. It honestly said it doesn't have the details. Sources footer shows "DD-2022-085-CLIENT PMC Infra PSA" in the filename -- this is the KNOWN, ACCEPTED gap (document filenames are not scrubbed). Not scored as a fail per test protocol.
+**Verdict:** PASS -- Answer prose is clean: no client project, client, or contractor name in the response. It honestly said it doesn't have the details. Sources footer shows "AB-2022-085-CLIENT PMC Infra PSA" in the filename -- this is the KNOWN, ACCEPTED gap (document filenames are not scrubbed). Not scored as a fail per test protocol.
 
 ---
 

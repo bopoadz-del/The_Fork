@@ -196,7 +196,7 @@ def test_every_case_carries_a_question_or_names_an_action(catalog):
 def test_the_catalog_names_both_sources_of_record(catalog):
     """Mutation killed: dropping the pointers, which is how the two sources
     get confused again six weeks from now."""
-    assert "UI-PHYS_DG2_results.xlsx" in catalog["question_source"]
+    assert "UI-PHYS_QP2_results.xlsx" in catalog["question_source"]
     assert "ask exactly" in catalog["question_source"]
     assert catalog["expectation_source"].startswith("FLEET_OPS/artifacts/")
     assert "GROUND_TRUTH_REVISIONS_" in catalog["expectation_source"]

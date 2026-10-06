@@ -94,8 +94,8 @@ first. Update on every task state change.
   | Fixture | project_id | Documents | Status |
   |---|---|---|---|
   | `FIXTURE — Fresh Upload Eval` | `ce1ced1a` | 12 small .txt cases | 12/12 indexed, 1 chunk each |
-  | `FIXTURE — BOQ` | `96bd7cd1` | `IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf` (28 MB, Drive OAuth) | 26 chunks after manual re-index |
-  | `FIXTURE — Programme+Drawings` | `7ce7b9d0` | `Annexure 2 - Baseline Program XER.xer` (25 MB, Drive OAuth), `IP-INF-053-0000-JCB-PLN-DE-000006-A_Post-appointment BIM Execution Plan (3).pdf` (2.3 MB), `BLVD conditional IFC DWGs - caw.pdf` (164 KB) | PDFs indexed; XER produces 0 RAG chunks by design (parsed by `primavera_parser` block at query time) |
+  | `FIXTURE — BOQ` | `96bd7cd1` | `QZ-ENG-310-0000-EXC-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf` (28 MB, Drive OAuth) | 26 chunks after manual re-index |
+  | `FIXTURE — Programme+Drawings` | `7ce7b9d0` | `Annexure 2 - Baseline Program XER.xer` (25 MB, Drive OAuth), `QZ-ENG-310-0000-EXC-PLN-DE-000006-A_Post-appointment BIM Execution Plan (3).pdf` (2.3 MB), `AVE conditional IFC DWGs - xyz.pdf` (164 KB) | PDFs indexed; XER produces 0 RAG chunks by design (parsed by `primavera_parser` block at query time) |
 - Operational findings:
   - Eager indexing (`maybe_eager_index` BackgroundTask) did not run for the
     Drive-imported files or the fresh-upload .txt cases on prod; manual
@@ -177,7 +177,7 @@ first. Update on every task state change.
   - `OLLAMA_MODEL=glm-5.2:cloud`
 - Acceptance gate passed: `smoke --runs 10` = **10/10 PASS**, all
   tool-backed, model = `gpt-4o-mini-2024-07-18`, zero fallbacks, ~11s/run.
-- Deliverable outputs saved to `review_pack/openai/` for Chadi's quality
+- Deliverable outputs saved to `review_pack/openai/` for the owner's quality
   read (BOQ summary, WBS, RFP).
 - DECISIONS.md updated with final v2 freeze: OpenAI primary, Ollama native
   fallback, all other providers permanently out of scope.
@@ -193,7 +193,7 @@ first. Update on every task state change.
 
 | Task | State | Where |
 |---|---|---|
-| Task 2 (Kimi K2 migration) | CLOSED - 2d gate FAILED 8/10 on the 90s chat_stream deadline; prod rolled back to Scout and confirmed green. Config fix merged (PR #145). Decision on K2 (raise deadline / streaming / park) with Chadi. | K2_QUALITY_SAMPLES.md, memory |
+| Task 2 (Kimi K2 migration) | CLOSED - 2d gate FAILED 8/10 on the 90s chat_stream deadline; prod rolled back to Scout and confirmed green. Config fix merged (PR #145). Decision on K2 (raise deadline / streaming / park) with the owner. | K2_QUALITY_SAMPLES.md, memory |
 | Task 3 (RAG audit V2) | DONE - RAG_AUDIT_V2.md on main (afcb768). Headline: GK notes outrank fresh uploads 9/12. | RAG_AUDIT_V2.md |
 | Task 4 (CI revival) | IN FLIGHT - PR #146: security-scan fix + timeouts + cancel-in-progress + pytest-timeout. First run expected to FAIL loudly at the hanging test (test_sandbox_block.py::test_execute_javascript_simple suspected - spawns node, runs only on Linux runners). Fix lands in same PR once the stack names the line. | PR #146, branch worktree-ci-revival |
 | Task 5 (streaming on K2) | BLOCKED on Task 2 decision | - |
@@ -204,7 +204,7 @@ first. Update on every task state change.
 
 - Everything in TASK G goes through the normal chat path (fork_cli -> chat/stream -> smart_orchestrator). No direct block calls, no /v1/execute, no test hooks. A feature that only works via bypass is a routing FAIL.
 - Do NOT rebuild/tune the keyword router now - log routing misses as evidence only.
-- TASK H: no production default changes; Chadi picks from the V3 table.
+- TASK H: no production default changes; the owner picks from the V3 table.
 - Prod protection: SYNTHESIS_STREAMING=0, LLM_PROVIDER=groq (Scout) + Ollama fallback. Do not flip without a deployed-smoke gate.
 - No emojis anywhere in the repo. No secrets echoed in command lines.
 - PARK after 3 failed attempts on the same error.
@@ -216,7 +216,7 @@ first. Update on every task state change.
 - Burst /v1/rag/search calls can health-check-kill the single-worker box - pace 3s+, back off on 5xx.
 - Groq free tier 429s frequently; fallback (glm-5.2:cloud via Ollama tunnel) carries load. A throttled sweep run is not evidence - park if degraded.
 - gh CLI installed + authed (bopoadz-del) on this machine. Python 3.11.9 reinstalled at the pyvenv.cfg path; use The_Fork/.venv.
-- CI zombie runs: 2 of mine cancelled; 6 older ones (cloudflare bot branch + pre-existing) left running - Chadi may cancel from the Actions UI.
+- CI zombie runs: 2 of mine cancelled; 6 older ones (cloudflare bot branch + pre-existing) left running - the owner may cancel from the Actions UI.
 
 ## 2026-07-06 log
 
@@ -226,7 +226,7 @@ first. Update on every task state change.
 - TASK C findings: the 3 zero-chunk projects (bb00878f, df28d3c0, e483b574) NO LONGER EXIST on prod
   (removed in the 2026-06-29 junk purge) - C1 closes as resolved-by-purge. C3 (zero-chunk WARNING
   log at index time) still valuable, small - queued. C2 (471-file Drive drain) depends on the Drive
-  connector, disconnected on prod - PARK pending Chadi (also a G3-adjacent infra decision).
+  connector, disconnected on prod - PARK pending the owner (also a G3-adjacent infra decision).
 - TASK G-1 registry extracted from code: 53 distinct actions verified (docstring "52" and config
   "39" are stale); ~11 actions are hint-only labels; routing gate = select_agent_for_message,
   kill-switch SMART_ORCH_ROUTING_DISABLED; evidence events: route/tool_call/tool_result.
@@ -264,7 +264,7 @@ first. Update on every task state change.
 - TASK G COMPLETE: 68/68 sweep runs through the orchestrator on prod. 23 PASS / 2 PARTIAL /
   29 FAIL. 20 routing misses at confidence 0.0 (verbatim evidence in DECISIONS.md); 13 exec
   fails (thin answers + 2 stream timeouts); 34/68 served by the fallback under Groq 429s.
-  PR #147 opened (manifest + runner + results + review_pack for Chadi).
+  PR #147 opened (manifest + runner + results + review_pack for the owner).
 - TASK C3 published: PR #148 (ZERO_CHUNK warning). C1 resolved-by-purge, C2 parked.
 - TASK H COMPLETE: full 8-config grid measured (agent cfg0-3, in-main cfg4-7 after the session
   limit killed agents). RAG_AUDIT_V3.md delivered on feat/gk-contamination-knobs (2414848),
@@ -273,7 +273,7 @@ first. Update on every task state change.
   GK-won rank 1 everywhere (GK lexical bonus ~+0.5 beyond any margin; cap pulls the project doc
   to rank 3) - follow-up documented. Embedder: best-config doc recall 41% < 50% -> embedder
   upgrade ENTERS THE PRE-PILOT LIST (re-index plan in V3 s.5). Prod defaults untouched; pick is
-  Chadi's G4 gate. Local eval server killed; prod healthy (44/44) throughout.
+  the owner's G4 gate. Local eval server killed; prod healthy (44/44) throughout.
 
 ## 2026-07-06 post-merge session
 
@@ -310,7 +310,7 @@ first. Update on every task state change.
   tests + manifest contract tests pass (29/29).
 - Step 1c: BOQ total discrepancy classified as data/expectation issue (no code fix). Live corpus
   cites 29,207,138.5 USD; remembered SAR 62,236,109 unverified. Golden set already avoids pinning
-  the number. Chadi to confirm authoritative figure.
+  the number. The owner to confirm authoritative figure.
 - Step 1 follow-up: `cash_flow_forecast` thin-answer (251 chars, "I don't have that information")
   classified as fixture/data gap (no cost data in test project) in DECISIONS.md. Red line kept.
 - Step 1 → Step 2 follow-up: `parse_primavera_schedule` returning FIDIC contract deadlines instead
@@ -334,7 +334,7 @@ first. Update on every task state change.
   `5c13510e` (BOQ), `ff905e29` (schedule/drawings), and `bc812f36` (fresh-upload
   / golden set). This BLOCKS `boq_process`, `parse_primavera_schedule`, and
   `drawing_qto` in the feature matrix; it also blocks Step 2 fresh-upload eval
-  and Step 3 golden-set gate. Chadi must restore/recreate fixtures before those
+  and Step 3 golden-set gate. The owner must restore/recreate fixtures before those
   gates can run. DECISIONS.md updated.
 
 ## 2026-07-06 recovery session
@@ -349,7 +349,7 @@ first. Update on every task state change.
 - Storage map confirmed: Postgres (metadata + vector chunks) persists; `/app/data`
   persistent disk survives deploys. `master_corpus` / `projects_folder`
   blobs are missing because those early imports pre-date the proven disk state;
-  later Drive imports (`client_infra_pack_1`, `5c13510e`, `ha_long_xanh_2`) retained
+  later Drive imports (`example_infra_pack`, `5c13510e`, `example_estate_2`) retained
   blobs.
 - Fixture projects as code: added `scripts/seed_fixtures.py` (idempotent,
   API-only, ZERO_CHUNK check). Seeded `FIXTURE — Fresh Upload Eval` from the 12
@@ -391,7 +391,7 @@ Switched to `LLM_PROVIDER=kimi` (K2.6):
 - Kimi smoke: PASS 3/3, all tool=Y, 70-90s first token, 8.5-10.8k chars.
 - No "internal search formatting issue" observed.
 
-Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on pilot default.
+Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting the owner's decision on pilot default.
 
 ## 2026-07-07 provider saga — prod serving status
 
@@ -515,7 +515,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     - `POST /v1/admin/drive/download-proof` → `200 {ok: False, error: "no Drive folder configured for project master_corpus"}`
     - `POST /v1/admin/drive/ingest-proof` → same.
   - **Blocker for full T4 live verification:** `GDRIVE_PROJECT_FOLDERS` is not
-    set on Render, and the service account (`thefork-drive-import@project-drive-469320.iam.gserviceaccount.com`)
+    set on Render, and the service account (`drive-import@example-project.iam.gserviceaccount.com`)
     currently has zero files/folders shared with it (root empty, no shared
     drives, no `sharedWithMe` files). The service-account token is read-only
     (`drive.readonly` scope), so the account cannot create test files either.
@@ -535,14 +535,14 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 
 - **2026-07-08 (continued) — T4c OAuth Drive proof completed on prod:**
   - Used Kimi WebBridge to complete Google OAuth consent for
-    `shadido.dxb@gmail.com`; callback landed at `/?drive=connected`.
-  - `/v1/drive/status` → `connected: True`, `email: shadido.dxb@gmail.com`.
+    `owner@example.com`; callback landed at `/?drive=connected`.
+  - `/v1/drive/status` → `connected: True`, `email: owner@example.com`.
   - `/v1/drive/files` listed the user's Drive root (folders + files) successfully.
   - Created a test project `153674a8` (`T4 OAuth Drive Proof`).
-  - Imported `1-Project Management Process.pdf` via
+  - Imported `A-Project Management Process.pdf` via
     `POST /v1/projects/153674a8/drive/import` → `201 stored`.
   - Document metadata stamped:
-    `{"drive_file_id": "1pm0CMD6davATGNHwiDfTzR-EvtZnAymF", "source": "drive_oauth_single"}`.
+    `{"drive_file_id": "1ExampleFolderId002xxxxxxxxxxxxxx", "source": "drive_oauth_single"}`.
   - Verified indexing: `/v1/admin/corpus/collections` shows project `153674a8`
     with **1 document, 1 chunk**; admin doc-extract shows
     `indexed_chunk_count: 1`, snippet preview present.
@@ -571,7 +571,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     - All three: 12/12 fresh-upload top-1 wins.
   - Draft recommendation in `EMBEDDER_DECISION.md`: `BAAI/bge-small-en-v1.5`
     as winner (best combined doc/chunk recall, fits Render envelope).
-    Pending Chadi confirmation before Phase 1.
+    Pending the owner confirmation before Phase 1.
 
 - **2026-07-08 (later) — CLEAN REBUILD Phase 1b extractors, `feat/clean-rebuild-rag`:**
   - Added PPTX text extraction (`python-pptx`) — committed.
@@ -614,7 +614,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 
 ## 2026-07-12 — T-ladder outcomes (autonomous run)
 - **T1 DONE**: construction kit restored (40 blocks, 0 failures verified on prod).
-- **T2 PARKED**: SENTRY_DSN needed from Chadi (G-gated). AGENT_TIMING_LOG=1 set.
+- **T2 PARKED**: SENTRY_DSN needed from the owner (G-gated). AGENT_TIMING_LOG=1 set.
 - **T3 DONE(backend)/PARKED(20-turn)**: backend healthy — AGENT_TIMING shows chat_stream 2-4s successful completions w/ RAG tool calls. Embedder preload shipped (#189), deploy-churn stream-kills fixed by freezing deploys. Browser automation unreliable for SSE (sends don't fire/render — automation artifact, not backend). Formal 20-turn fork_cli verification parked with timing evidence.
 - **T4 DONE**: RECONCILIATION.md (#190). 53 docs/10,502 chunks, avg 198/doc, 0 dups, chunks_v2 canonical, DB fail-loud guard shipped (#190). PARKED: full Drive coverage, RFP under-extraction (2 chunks), .kmz over-chunk.
 - **T5 PARKED w/ evidence**: recall 15/15 HIT but GK note 980e19f6 dominates top → precision issue. cfg7 knobs BREAK v2 retrieval (return empty) — old-index tuning doesn't transfer. Keep knobs OFF; re-sweep required.
@@ -623,6 +623,6 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 
 ## 2026-07-12 — Autonomous completion run (T-ladder, earlier snapshot)
 - **T1 DONE**: 44→17 block collapse = construction kit unset. Set CEREBRUM_DOMAIN_KITS=construction on prod; /v1/health now 40 blocks, 0 failures. Old `chunks` table empty (0), chunks_v2 canonical (10,502).
-- **T2 PARKED**: SENTRY_DSN unset (Chadi secret — needs his DSN to restore). Set AGENT_TIMING_LOG=1 for T3 tracing.
+- **T2 PARKED**: SENTRY_DSN unset (the owner secret — needs his DSN to restore). Set AGENT_TIMING_LOG=1 for T3 tracing.
 - **T3 in-flight**: root cause = RAG embedder (bge-small) not warm-loaded at startup (safety detector is, embedder isn't); seed_knowledge skips on already-seeded restart → lazy load on first query eats stream deadline → hang. Fix: explicit embedder warm-load in lifespan (main.py). Smoke 4/4.
 - **T4 data**: chunks_v2 53 docs / 10,502 chunks, avg 198 chunks/doc (min 1 max 1936), 0 dup chunk_ids. "<2 chunks/file" was wrong denominator (6,178 expected vs 53 ingested). Coverage gap: only the client project pkg + GK + a little Ha Long Xanh in v2; full Drive archive NOT in v2 (no drive_archive table). RECONCILIATION.md pending.

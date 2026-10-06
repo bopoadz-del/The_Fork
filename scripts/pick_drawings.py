@@ -23,7 +23,7 @@ SRC_ABS = os.path.join(_REPO_ROOT, r"data\logs\drawings_pilot_inventory.jsonl")
 DST_ABS = os.path.join(_REPO_ROOT, r"data\logs\drawings_pilot_chosen.jsonl")
 
 DWG_NUM_RE = re.compile(
-    r"IP-INF-\d+-\d+-JCB-DWG-([A-Z]{2,4})-(\d{3})-",
+    r"QZ-ENG-\d+-\d+-EXC-DWG-([A-Z]{2,4})-(\d{3})-",
     re.IGNORECASE,
 )
 

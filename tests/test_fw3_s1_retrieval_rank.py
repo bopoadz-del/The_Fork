@@ -5,7 +5,7 @@ Live probe (d708b5d, POST /v1/rag/search, k=50) for
     Per the project specification, what is the minimum concrete cover
     to reinforcement for foundations?
 
-put Vol 5 Other Documents (4 of 5) chunk 92 at rank 22 (score ~3.26).
+put Vol 5 Other Documents (4 of 6) chunk 92 at rank 22 (score ~3.26).
 Ranks 1–12 were Vol 2 Specification chunks at a flat ~3.70–3.77. Chat
 injection (``rag_inject`` → ``retrieve_with_filter``, k=5) never passed
 chunk 92 to the model.
@@ -124,7 +124,7 @@ def _fmt(chunks) -> str:
 def _cover_copies() -> dict:
     return {
         UNSIGNED: (
-            "[source: FIXTURE-e-20260926 Contract docs NOT SIGNED "
+            "[source: FIXTURE-e-20260926 Contract docs UNSIGNED "
             "vol5-other-documents-4-of-5.pdf]\n" + COVER_BODY
         ),
         SIGNED: (

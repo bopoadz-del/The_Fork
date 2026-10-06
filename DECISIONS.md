@@ -1,6 +1,6 @@
 # Decisions log
 
-Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
+Autonomous-mode decisions with rationale, plus parked items awaiting the owner.
 Newest first.
 
 ## 2026-09-06 — DeepSeek restored as a first-class cloud LLM provider
@@ -90,7 +90,7 @@ source (uploads inherit active-project metadata — the no-assumptions rule).
 
 ## 2026-07-13 — historical_benchmark config-rot: NEEDS-DECISION (parked)
 
-**Parked for Chadi:** 4 agent configs say historical_benchmark "was removed" but
+**Parked for the owner:** 4 agent configs say historical_benchmark "was removed" but
 it exists + is contract-tested. The wording is an LLM-facing steer; rewriting it
 could change routing behavior, so it needs a product call (truthfully reword vs.
 actually retire the block + its contract test), not a unilateral guess.
@@ -120,7 +120,7 @@ additive `_gk_lexical_bonus` lifting GK chunks to 1.1-2.0 vs own docs at
 0.80-0.91 (the EOT/FIDIC bug at 140k-chunk scale). The lexical fold only acts
 inside the margin gate, so the knobs MUST be paired.
 
-**Standing authorization (Chadi):** if this config ever regresses client/calc, the
+**Standing authorization (the owner):** if this config ever regresses client/calc, the
 fix is a small PR bounding the lexical component (clamp GK total <= cosine + eps,
 or project-scope the bonus), same referee set — NOT further env-knob tuning.
 
@@ -183,7 +183,7 @@ pilot.
 
 Provider work is **permanently out of scope** for the remainder of the
 pilot program. The only remaining provider knob is `OPENAI_MODEL`, and it
-may be bumped **only on Chadi's explicit written instruction** citing this
+may be bumped **only on the owner's explicit written instruction** citing this
 freeze. Any exception must also be written and reference this decision.
 
 ## 2026-07-08 — PARKED: retrieval-quality blocker on legacy 256-dim embeddings
@@ -206,7 +206,7 @@ lexical fold) to mask the embedding weakness — that would be chasing symptoms.
 Run the T5 sweep and golden set to capture the baseline, publish the failure
 itemization, and proceed to **T6 embedder migration** as the intended fix.
 If a new embedder cannot lift doc recall@5 to ≥50 % and golden-set score to
-≥ its T5 value, the cutover is PARKED for Chadi.
+≥ its T5 value, the cutover is PARKED for the owner.
 
 ## 2026-07-07 — Provider switch: Ollama native `/api/chat` primary
 
@@ -281,7 +281,7 @@ Kimi K2.6 and Moonshot v1 are **out of the active chain** for the pilot.
    Render env as `GROQ_MODEL`).
 2. **Fallback:** Ollama — `glm-5.2:cloud` ( Render env `OLLAMA_*` ), used only
    on Groq retryable failures (429, 5xx, timeout).
-3. **Kimi / Moonshot:** parked. Any post-pilot re-evaluation requires Chadi's
+3. **Kimi / Moonshot:** parked. Any post-pilot re-evaluation requires the owner's
    explicit written instruction naming this freeze.
 
 ### Operational env
@@ -369,12 +369,12 @@ Kimi K2.6 and Moonshot v1 are **out of the active chain** for the pilot.
   under TASK H on its own branch, defaults-off. Un-xfail when the knobs
   land.
 
-## Parked (Chadi's gates)
+## Parked (the owner's gates)
 
 - K2 decision: raise CHAT_STREAM_TIMEOUT_SECONDS vs synthesis streaming on
   kimi vs park K2. Task 5 blocked on this.
 - RAG production default config: picked from the RAG_AUDIT_V3 table only.
-- Construction correctness of TASK G outputs: review_pack/ is for Chadi's
+- Construction correctness of TASK G outputs: review_pack/ is for the owner's
   hands-on judgment; the sweep certifies routing/execution/structure only.
 - 6 remaining zombie CI runs (cloudflare bot branch + pre-existing) left
   running; classifier requires operator action to mass-cancel.
@@ -425,7 +425,7 @@ answer in retrieved chunks.
 
 **Disposition:** No code fix. The golden-set gate (`tests/golden_set.yaml` on
 `feat/golden-set-gate`) already avoids pinning a number for the BOQ total
-query; it expects only a currency token plus a million-scale value. Chadi to
+query; it expects only a currency token plus a million-scale value. The owner to
 confirm whether the corpus value is the authoritative client figure or
 whether the project BOQ corpus needs to be refreshed/replaced.
 
@@ -440,7 +440,7 @@ FEATURE_MATRIX_V2 sweep. `drawing_qto` uses project `ff905e29` and is unaffected
 
 **Classification:** Fixture/data gap, not a routing or block bug.
 
-**Disposition:** Do not guess-fix. Chadi to either (a) restore project
+**Disposition:** Do not guess-fix. The owner to either (a) restore project
 `5c13510e` from backup, (b) provide the correct BOQ project ID, or (c) upload a
 new BOQ workbook to a fresh fixture project and update the manifest. Until then,
 `boq_process` will be reported BLOCKED in the feature matrix.
@@ -493,14 +493,14 @@ bug, now fixed in PR #154. `ff905e29` and `bc812f36` are still missing.
 **Impact:**
 - `boq_process` is now unblocked for the feature matrix (still needs the chat fix deployed).
 - `parse_primavera_schedule` and `drawing_qto` remain BLOCKED until
-  `FIXTURE — Programme+Drawings` is seeded from the files Chadi provides.
+  `FIXTURE — Programme+Drawings` is seeded from the files the owner provides.
 - Fresh-upload eval / golden-set gate use `FIXTURE — Fresh Upload Eval`.
 
 **Disposition:**
 - `boq_process`: use `FIXTURE — BOQ` canonical name in the manifest; seed once
-  Chadi provides the BOQ files in `FIXTURES_DIR`.
+  the owner provides the BOQ files in `FIXTURES_DIR`.
 - `parse_primavera_schedule` / `drawing_qto`: use `FIXTURE — Programme+Drawings`
-  canonical name; seed once Chadi provides `project_programme.xer`,
+  canonical name; seed once the owner provides `project_programme.xer`,
   `ground_floor_plan.dxf`, and optionally `sample_office.ifc`.
 
 ## Drive re-import blocked on service-account config (2026-07-06)
@@ -512,12 +512,12 @@ metadata does not contain the Drive folder IDs. The Render env currently has no
 
 **Classification:** Infrastructure/configuration gap, not a code bug.
 
-**Disposition:** PARKED pending Chadi providing:
+**Disposition:** PARKED pending the owner providing:
 1. A service-account JSON key with read access to the Drive folders, set as
    `GDRIVE_SERVICE_ACCOUNT_JSON` on Render (or as a mounted file path).
 2. The complete `GDRIVE_PROJECT_FOLDERS` mapping, including sibling packs under
    the same parent as `the client project` (folder ID
-   `1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j`).
+   `1ExampleFolderId001xxxxxxxxxxxxxx`).
 
 Once both are in place, run `scripts/inspect_drive_projects.py` to update the
 manifest, then perform the full re-import/re-index before resuming gates.
@@ -554,7 +554,7 @@ and Scout demonstrably does not on the current (migrated) corpus.
 2. Run the Kimi+streaming gate on branch config (`SYNTHESIS_STREAMING=1`,
    smoke 10, tool=Y, first_token < 50% of total, browser check). If it passes,
    the 90s timeout risk evaporates.
-3. Chadi to read `K2_QUALITY_SAMPLES.md` against `review_pack/` Scout outputs
+3. The owner to read `K2_QUALITY_SAMPLES.md` against `review_pack/` Scout outputs
    (G2 verdict).
 
 **Open risk:** Kimi first token is at 70–90s, close to `CHAT_STREAM_TIMEOUT_SECONDS=90`.

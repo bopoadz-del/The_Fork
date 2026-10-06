@@ -424,7 +424,7 @@ Three of the original five are now closed. Updated 2026-08-02.
 4. **Repo secrets for `eval-battery.yml` — DONE.** `FORK_API_KEY` and
    `FORK_BASE_URL` are set on the repository, so the scheduled battery
    workflow can run.
-5. **`dd-2023-118 vol 3` chunk backfill — OPEN, yours.** Needs the DB
+5. **`ab-2023-101 vol 3` chunk backfill — OPEN, yours.** Needs the DB
    allowlist plus the direct-DB re-encode path (heavy scanned PDFs must
    not go through the 512Mi web box, which OOMs on them).
 

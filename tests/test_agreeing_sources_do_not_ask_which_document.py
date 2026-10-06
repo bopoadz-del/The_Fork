@@ -40,8 +40,8 @@ S1_ASK = (
 
 # Two package copies of one clause. Neither filename is a specification,
 # which is the live shape: the 98% sentence sits in Vol 5 Other Documents.
-COPY_A = "SYN-2023-118 Package 1_Vol 5 - Other Documents (4 of 5).pdf"
-COPY_B = "SYN-2023-118 G2 Infra P1_Vol 5 - Other Documents (4 of 5).pdf"
+COPY_A = "SYN-2023-101 Package 1_Vol 5 - Other Documents (4 of 6).pdf"
+COPY_B = "SYN-2023-101 G2 Infra P1_Vol 5 - Other Documents (4 of 6).pdf"
 BACKFILL_98 = (
     "Compaction of structural backfill under foundations to minimum 98% of "
     "maximum dry density of the modified proctor test."
@@ -176,7 +176,7 @@ def test_s2_optional_higher_degree_of_the_same_subgrade_does_not_ask_which_docum
 # a raised-floor panel, and an access-cover size. None is concrete cover
 # to reinforcement. The word "cover" sits near each number, which is why
 # the harvester labels them concrete-cover figures.
-VOL2 = "SYN-SPEC-004 Vol 2 - Specification (4 of 9).pdf"
+VOL2 = "SYN-SPEC-004 Vol 2 - Specification (4 of 11).pdf"
 PAINT_AND_TILE = (
     "Bollards shall be painted in alternating bands of 200 mm. The cleanout "
     "tile is 200 x 200 mm with a screwed and sealed cover."
@@ -206,7 +206,7 @@ def test_unrelated_millimetres_in_one_specification_do_not_ask_which_document():
 
     Live on d708b5d the question was minimum concrete cover to
     reinforcement for foundations. Retrieval returned only Vol 2
-    Specification (4 of 9). The guard harvested 200 mm (bollard paint
+    Specification (4 of 11). The guard harvested 200 mm (bollard paint
     bands; a 200 x 200 mm cleanout tile next to the word cover), 600 mm
     (600 x 600 raised-floor panels; a manhole opening) and 680 mm (another
     chunk of that same file) and asked which document's figure is meant.

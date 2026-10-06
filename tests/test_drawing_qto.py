@@ -235,48 +235,42 @@ async def test_drawing_title_rejects_pure_numeric():
         assert rejected, f"title {t!r} should have been rejected by numeric/scale filter"
 
 
-async def test_drawing_title_rejects_client_place_names(monkeypatch):
+async def test_drawing_title_rejects_client_place_names(tmp_path):
     """Phase 1.6: area / district names that win the largest-font cluster on
     key-plan sheets must be rejected as drawing_title candidates.
 
-    The real names identify the client's site, so they live ONLY in the
-    DRAWING_QTO_EXCLUDED_PLACE_NAMES env var (set on the service). The test
-    drives the same loader with synthetic names: the contract under test is
-    the normalisation, not the gazetteer's contents.
+    Rejected by POSITION, not by a list: the place labels sit out in the
+    drawing area, the title sits in the title-block region (bottom band /
+    right-hand column). The sheet is synthetic and its place names are
+    invented, so no gazetteer -- in code or in the environment -- can be
+    what rejects them.
     """
-    import importlib
-
-    from app.blocks import drawing_qto
-
-    monkeypatch.setenv(
-        "DRAWING_QTO_EXCLUDED_PLACE_NAMES", " north  ward ,East Quarter, ,ZED "
+    from tests.test_drawing_titleblock_structural import (
+        PLACE, build_keyplan_sheet,
     )
-    try:
-        importlib.reload(drawing_qto)
-        names = drawing_qto._EXCLUDED_PLACE_NAMES
-        assert names == frozenset({"NORTH WARD", "EAST QUARTER", "ZED"})
-        # Lowercase and whitespace variants round-trip to a blocked entry
-        for variant in ("north ward", " EAST   QUARTER ", "Zed"):
-            normalized = re.sub(r"\s+", " ", variant.upper()).strip()
-            assert normalized in names, (
-                f"variant {variant!r} normalised to {normalized!r} not in blocklist"
-            )
-    finally:
-        monkeypatch.delenv("DRAWING_QTO_EXCLUDED_PLACE_NAMES", raising=False)
-        importlib.reload(drawing_qto)
+    sheet = build_keyplan_sheet(tmp_path / "sheet_kp.pdf")
+    r = await DrawingQTOBlock().process({"file_path": str(sheet)}, {})
+    title = r["drawing"].get("drawing_title") or ""
+    for name in (PLACE, "NORTH QUAY", "OSPREY WARD"):
+        assert name not in title.upper(), f"place label won the title: {title!r}"
+    assert title == "KEY PLAN", (title, r["errors"])
 
 
 async def test_place_name_blocklist_is_empty_without_the_env_var(monkeypatch):
-    """No client place name may be baked into the code path."""
+    """No client place name may be baked into the code path -- and no place
+    or name list exists at all, in code or behind an environment variable."""
     import importlib
 
     from app.blocks import drawing_qto
 
-    monkeypatch.delenv("DRAWING_QTO_EXCLUDED_PLACE_NAMES", raising=False)
+    monkeypatch.setenv("DRAWING_QTO_EXCLUDED_PLACE_NAMES", "KEY PLAN")
     try:
         importlib.reload(drawing_qto)
-        assert drawing_qto._EXCLUDED_PLACE_NAMES == frozenset()
+        assert not hasattr(drawing_qto, "_EXCLUDED_PLACE_NAMES")
+        import inspect
+        assert "DRAWING_QTO_EXCLUDED_PLACE_NAMES" not in inspect.getsource(drawing_qto)
     finally:
+        monkeypatch.delenv("DRAWING_QTO_EXCLUDED_PLACE_NAMES", raising=False)
         importlib.reload(drawing_qto)
 
 

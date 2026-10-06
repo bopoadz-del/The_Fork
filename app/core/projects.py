@@ -1734,8 +1734,8 @@ def documents_matching_filename_terms(
     hundreds of names contain "bill" that cut can drop the one file that
     contains all of "bill", "quantities" and "priced".
 
-    Used by letter/signatory retrieval so a named-site letter (the UBCC /
-    Wadi Safar completion letter lives in ``Misc/`` with the site and
+    Used by letter/signatory retrieval so a named-site letter (the XBCC /
+    Wadi Example completion letter lives in ``Misc/`` with the site and
     party in the filename) can be found without listing the whole corpus.
     ``terms`` are already sanitised by the retriever (alphanumeric, ≥4
     chars); LIKE wildcards are therefore not attacker-controlled.
@@ -1819,7 +1819,7 @@ def documents_matching_title_phrase(
 
     Used by specification-title retrieval (live pack C2). The Variation
     Procedure spec is named in its filename
-    (``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``); cosine and
+    (``EXDAX-EXD-PMO-SPE-099650-1.0 Variation Procedure``); cosine and
     term-rescue cannot tell that file from a demolition-spec volume that
     merely mentions variations. Exact-phrase LIKE on the upload name is
     the discriminator those volumes cannot fake.

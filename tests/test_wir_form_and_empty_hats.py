@@ -24,9 +24,9 @@ from tests.conftest import requires_construction_kit
 
 M15 = (
     "Complete a Work Inspection Request on "
-    "SW-SWD-550-0000-DGD-TEM-QL-000002(00) WIR_Work_Insp_Req.docx "
+    "SW-QRS-990-0000-EXD-TEM-QL-000002(00) WIR_Work_Insp_Req.docx "
     "for Week 53 Boulevard North-West stormwater concrete collars: "
-    "11 manholes MH-3-2 to MH-3-12, C-35 SRC, 28 m3, supplier UBCC. "
+    "11 manholes MH-3-2 to MH-3-12, C-35 SRC, 28 m3, supplier XBCC. "
     "List hold points before pour and witness points for slump, cubes, and cover."
 )
 
@@ -51,7 +51,7 @@ async def test_wir_form_fills_m15_pour_facts():
     assert "SRC" in result["mix"]
     assert result["manhole_count"] == 11
     assert "MH-3-2" in (result.get("manhole_range") or "")
-    assert result["supplier"] == "UBCC"
+    assert result["supplier"] == "XBCC"
     assert "WIR_Work_Insp_Req.docx" in (result.get("template") or "")
     holds = " ".join(result["hold_points"]).lower()
     assert "hold" in holds or "notice" in holds

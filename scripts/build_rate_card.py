@@ -12,7 +12,7 @@ reflects observed market rates only.
 import os, re, glob, statistics as st
 import pandas as pd
 
-SCR = r"C:/Users/shimm/AppData/Local/Temp/claude/C--Users-shimm/436703f7-0a30-48b6-a650-29d75aac4fa5/scratchpad"
+SCR = os.environ.get("FORK_SCRATCH_DIR", "/data/example/scratch")
 OUT = os.path.join(SCR, "rate_card")
 os.makedirs(OUT, exist_ok=True)
 
@@ -20,13 +20,13 @@ os.makedirs(OUT, exist_ok=True)
 SOURCES = [
     (f"{SCR}/waste_water_boq_items.xlsx", "Infrastructure", "SAR", "items"),
     (f"{SCR}/infra1_demolition_boq_items.xlsx", "Infrastructure", "SAR", "items"),
-    (f"{SCR}/alostool_demolition_boq_items.xlsx", "Infrastructure", "SAR", "items"),
+    (f"{SCR}/demo_contract_demolition_boq_items.xlsx", "Infrastructure", "SAR", "items"),
     (f"{SCR}/boq_batch/kenya_dc.xlsx", "Data Center", "USD", "raw"),
     (f"{SCR}/boq_batch/gcc_farmhouse.xlsx", "Villas", "SAR", "raw"),
     # medieval_modern GCC cost-BOQ doubles as the operator's general GCC building
     # rate book (full-trade SAR market rates), so expose it under Buildings too.
     (f"{SCR}/boq_batch/gcc_farmhouse.xlsx", "Buildings/Towers", "SAR", "raw"),
-    (f"{SCR}/boq_batch/acacia1_items.csv", "Buildings/Towers", "AED", "items"),
+    (f"{SCR}/boq_batch/tower1_items.csv", "Buildings/Towers", "AED", "items"),
     (f"{SCR}/wetransfer_boq/BOQ_xlsx_items.csv", "Buildings/Towers", "AED", "items"),
     (f"{SCR}/wetransfer_boq/exel_SectionB_Sitework_items.csv", "Buildings/Towers", "AED", "items"),
     (f"{SCR}/wetransfer_boq/exel_SectionC_Concrete_items.csv", "Buildings/Towers", "AED", "items"),

@@ -53,7 +53,7 @@ KSA civil-infrastructure bills of this class are CESMM4 (items carry refs like `
 
 ## Part 2 — POMI sections (building BOQs)
 
-Building bills (Capital Towers, Acacia, Nakheel apartments, fit-outs) follow
+Building bills (tower, residential and fit-out bills) follow
 POMI / building-SMM conventions.
 
 | Section | Trade | Primary unit(s) |

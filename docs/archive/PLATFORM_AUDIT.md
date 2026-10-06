@@ -20,7 +20,7 @@ The construction container exposes **59 actions** via `/v1/execute`. API-fallbac
 | Commit after work | `aee0c86` |
 | Deployed state | Live on Render (Postgres + pgvector, single worker) |
 | Browser / Bridge | Microsoft Edge + Kimi WebBridge extension v1.9.13 / daemon v1.10.0 |
-| User/session | `shadido.dxb@gmail.com` (existing session) |
+| User/session | `owner@example.com` (existing session) |
 | Domain kit enabled | `CEREBRUM_DOMAIN_KITS=construction` |
 | Timestamp | 2026-06-26 |
 
@@ -117,14 +117,14 @@ The construction container exposes 59 actions. The API-fallback sweep tested eve
 | S01 | PASS | Projects list loaded with master corpus and others | URL `/`, heading "Projects", 28 project cards | — |
 | S02 | PASS | Navigated to master corpus workspace | URL `/projects/master_corpus`, workspace-main present | — |
 | S03 | PASS | Assistant answered question | bubble: "The the client project project is an infrastructure programme..." | — |
-| S04 | PASS | Sources panel showed cited chunks | 9 source items, e.g. "SW-SWD-025-0000-AEC-PEP-NS-000001-02 the client project Project Execution Plan.pdf chunk #50" | — |
+| S04 | PASS | Sources panel showed cited chunks | 9 source items, e.g. "SW-QRS-925-0000-EXA-PEP-NS-000001-02 the client project Project Execution Plan.pdf chunk #50" | — |
 | S05 | PASS | Test project "kimi-audit-test" created and visible | project id `9531b1b1` appeared in grid | — |
 | S06 | PASS | `audit_upload.txt` uploaded and listed | doc row: "audit_upload.txt TXT 174 B just now" | first synthetic-file attempt left UI in "Uploading…"; retry succeeded quickly |
 | S07 | PASS | Answer summarized file and cited source | bubble: "The document is a brief audit test file... Source: audit_upload.txt, chunk 0." | — |
 | S08 | PASS | Chat bubbles cleared | bubble count 0 | — |
 | S09 | PASS | Export request returned DOCX | network: `200 application/vnd.openxmlformats-officedocument.wordprocessingml.document` | — |
 | S10 | PASS | Test project removed from grid | matching count 0 | — |
-| S11 | PASS | Admin page loaded, Drive connected | text: "Google Drive Connected as shadido.dxb@gmail.com" | — |
+| S11 | PASS | Admin page loaded, Drive connected | text: "Google Drive Connected as owner@example.com" | — |
 | S12 | PARTIAL | Chat bubble empty for generative WBS prompt, but `/v1/execute` `generate_wbs` returns 76 activities | API response: `actual_count: 76` | Frontend stream times out before final answer is rendered |
 | S13 | PARTIAL | Chat returns LLM-generated cost prose; API `estimate_costs` errors on prod (missing block) | API error: "No historical benchmark source configured" | Fixed in repo by restoring `historical_benchmark` block |
 | S15 | PASS | Health endpoint healthy | `{"status":"healthy",...}` | — |

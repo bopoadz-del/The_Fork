@@ -11,7 +11,7 @@
 
 **Conventions:** same as Plan 1 — working-day offsets; a "period" is a fixed run of working days (week = 5, month = 21). `resource_histogram` reports concurrent headcount per period (an activity contributes its crew to every period it overlaps).
 
-**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\shimm\The_Fork`. **Plan 1 must be complete first.**
+**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\example\The_Fork`. **Plan 1 must be complete first.**
 
 ---
 

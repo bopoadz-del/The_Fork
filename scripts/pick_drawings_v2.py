@@ -8,7 +8,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_ABS = os.path.join(_REPO_ROOT, r"data\logs\drawings_pilot_inventory.jsonl")
 DST_ABS = os.path.join(_REPO_ROOT, r"data\logs\drawings_pilot_chosen.jsonl")
 
-RE = re.compile(r"IP-INF-\d+-\d+-JCB-DWG-([A-Z]{2,4})-(\d{3})-", re.IGNORECASE)
+RE = re.compile(r"QZ-ENG-\d+-\d+-EXC-DWG-([A-Z]{2,4})-(\d{3})-", re.IGNORECASE)
 
 # Explicit picks: 5 from 200-series, 5 from 600-series; 10 distinct disciplines;
 # revision variety (-A, -B, -C, -04, -05).

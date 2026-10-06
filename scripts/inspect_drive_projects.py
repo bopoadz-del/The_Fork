@@ -30,20 +30,20 @@ DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork-jn3t.onrender.com")
 
 # Drive-linked projects from docs/recovery/re_import_manifest.md.
 # Each entry has the platform project_id and one or more folder-name aliases to
-# match against. The anchor pair client_infra_pack_1 is validated on discovery.
+# match against. The anchor pair example_infra_pack is validated on discovery.
 RECOVERY_PROJECTS: List[Dict[str, Any]] = [
     # master_corpus is a virtual alias backed by projects_folder;
     # the physical hydration target is projects_folder.
     {"project_id": "master_corpus", "names": ["Master Corpus"], "no_map": True, "note": "alias -> projects_folder"},
     {"project_id": "projects_folder", "names": ["Projects Folder"]},
-    {"project_id": "ha_long_xanh", "names": ["Ha Long Xanh"]},
-    {"project_id": "ha_long_xanh_2", "names": ["Ha Long Xanh"]},
-    {"project_id": "client_infra_pack_1", "names": ["the client project"]},
+    {"project_id": "example_estate", "names": ["Ha Long Xanh"]},
+    {"project_id": "example_estate_2", "names": ["Ha Long Xanh"]},
+    {"project_id": "example_infra_pack", "names": ["the client project"]},
     {"project_id": "5c13510e", "names": ["the client project Bills of Quantities"]},
 ]
 
-ANCHOR_PROJECT = "client_infra_pack_1"
-ANCHOR_FOLDER_ID = "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j"
+ANCHOR_PROJECT = os.environ.get("FORK_ANCHOR_PROJECT", "example_infra_pack")
+ANCHOR_FOLDER_ID = os.environ.get("FORK_ANCHOR_FOLDER_ID", "1ExampleFolderId001xxxxxxxxxxxxxx")
 
 
 def _auth_header(base: str) -> dict:

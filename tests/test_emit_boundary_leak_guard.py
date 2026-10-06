@@ -26,7 +26,7 @@ from app.agents.runtime import (
 )
 
 BRIEF = "AUTHORITATIVE REFERENCE CONTEXT \u2014 the material below was retrieved"
-TELEMETRY = "[doc_id=cbca195d chunk=11 score=2.199 src=Contract_Data.pdf]"
+TELEMETRY = "[doc_id=d0c00002 chunk=11 score=2.199 src=Contract_Data.pdf]"
 
 
 def _tokens(events):
@@ -75,7 +75,7 @@ def test_a_marker_split_across_two_tokens_is_still_caught():
 def test_everything_after_the_trip_is_dropped():
     guard = _EmitLeakGuard()
     guard.check({"type": "token", "content": BRIEF})
-    for content in (TELEMETRY, "G:\\My Drive\\Contract Docs", "more of the brief"):
+    for content in (TELEMETRY, "X:\\Example Drive\\Contract Docs", "more of the brief"):
         assert guard.check({"type": "token", "content": content}) is None
 
 
@@ -127,13 +127,13 @@ def test_a9_routing_preamble_is_stripped_and_jacobs_survives():
         "The Engineer is APPOINTMENT — an excerpt below names the Engineer. "
         "That IS the answer. State the appointed firm. Do not say "
         "the identity is absent.\n\n"
-        "JACOBS (CH2M Saudi Limited)"
+        "EXAMPLAR (EXCON Example Limited)"
     )
     guard = _EmitLeakGuard()
     end = guard.check({"type": "end", "content": leaked, "iterations": 1})
     assert end["content"]
-    assert "JACOBS" in end["content"]
-    assert "CH2M" in end["content"]
+    assert "EXAMPLAR" in end["content"]
+    assert "EXCON" in end["content"]
     assert not answer_contains_routing_preamble(end["content"])
     assert "That IS the answer" not in end["content"]
     assert "INTERNAL GUIDANCE" not in end["content"]
@@ -144,7 +144,7 @@ def test_a9_routing_preamble_is_stripped_and_jacobs_survives():
 def test_a_real_answer_is_never_suppressed():
     guard = _EmitLeakGuard()
     for chunk in (
-        "Under DD-2023-118, the daily rate for Delay Damages is 0.1% of the ",
+        "Under AB-2023-101, the daily rate for Delay Damages is 0.1% of the ",
         "Contract Price per calendar day (source: Contract_Data.pdf, chunks 10 & 11). ",
         "The retrieved excerpts do not contain the Contract Price in SAR.",
     ):
@@ -187,13 +187,13 @@ def test_a_leak_from_any_inner_path_is_stopped_at_the_boundary():
         {"type": "token", "content": '{"status": "success", "wbs_id": "wbs-c199246d", "brief": "'},
         {"type": "token", "content": BRIEF},
         {"type": "token", "content": TELEMETRY},
-        {"type": "token", "content": "G:\\My Drive\\Master Folder\\Contract Docs"},
+        {"type": "token", "content": "X:\\Example Drive\\Master Folder\\Contract Docs"},
         {"type": "end", "content": "the whole leak", "iterations": 2},
     ])
     text = _tokens(events)
     assert "AUTHORITATIVE" not in text
     assert "doc_id=" not in text
-    assert "My Drive" not in text
+    assert "Example Drive" not in text
     end = _end(events)
     assert end is not None and end["content"] == _TOOL_FORMAT_FALLBACK
 

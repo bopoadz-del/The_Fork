@@ -145,8 +145,8 @@ def test_identifier_search_drops_hidden_doc(vis_store):
 
 # ── the read paths the three tests above did not cover ────────────────────
 #
-# Live d8d9573. The Contract Data PDF ``cbca195d`` was retired in favour of
-# ``9f849c87`` that morning. Asked "Who is the Engineer under this contract?",
+# Live d8d9573. The Contract Data PDF ``d0c00002`` was retired in favour of
+# ``d0c00003`` that morning. Asked "Who is the Engineer under this contract?",
 # results #3-#5 were chunks of the RETIRED document. The vector and BM25 legs
 # and identifier_search all hide it; the rescue paths fetch through two other
 # doors, and neither had a lock: chunks_for_docs() and
