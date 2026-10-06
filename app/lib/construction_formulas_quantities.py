@@ -7,6 +7,8 @@ parameters; arithmetic shown in ``note``.
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import logging
 import math
 import os
@@ -221,7 +223,7 @@ def follow_up_refers_to_stated_total(text: str) -> bool:
     """True when this ask adjusts a total named in an earlier turn.
 
     "Add a waste allowance and price the total…" carries the rate and the
-    waste, not the 24 caps. An ask that restates the geometry is not a
+    waste, not the element count. An ask that restates the geometry is not a
     continuation — its own dimensions are the operands.
     """
     raw = text or ""
@@ -336,9 +338,9 @@ def resolve_concrete_volume_calc(
         out["waste_factor"] = 0.0
 
     # A follow-up that says "that total" often re-calls this calculator with
-    # the per-element size (2.5 × 2.5 × 1.2) and no count. ``quantity`` used
-    # to be dropped on bind — concrete_volume did not accept it — so 24 caps
-    # came back as one. The stated count wins only when those dims are the
+    # the per-element size and no count. ``quantity`` used to be dropped on
+    # bind — concrete_volume did not accept it — so N elements came back as
+    # one. The stated count wins only when those dims are the
     # "each" size; a length that is already the rolled total is left alone.
     stated_n = element_count_from_text(blob)
     each = unit_dims_metres(blob)
@@ -396,6 +398,7 @@ FW_ROUTE_NAMES = frozenset({
     "steel_tension_capacity",
     "supervision_ratio",
     "thermal_shrinkage_equivalence",
+    "tolerance_check",
     "unit_cost_total",
     "unit_weight_concrete",
     "weld_capacity",
@@ -720,6 +723,12 @@ def _concrete_quantity(quantity: float) -> float | None:
     return qty
 
 
+@formula(
+    owner='base',
+    description='Concrete volume of a rectangular element, a cylinder or a trapezoidal section, with an optional waste factor and element count.',
+    inputs={'length_m': 'm', 'width_m': 'm', 'thickness_m': 'm', 'shape': '-', 'diameter_m': 'm', 'height_m': 'm', 'top_width_m': 'm', 'bottom_width_m': 'm', 'depth_m': 'm', 'waste_factor': '-', 'quantity': '-'},
+    outputs={'shape': '-', 'quantity': '-', 'volume_m3': 'm3', 'net_volume_m3': 'm3', 'volume_with_waste_m3': 'm3', 'value': 'currency', 'waste_factor': '-'},
+)
 def concrete_volume(
     length_m: float = 0.0,
     width_m: float = 0.0,
@@ -821,6 +830,12 @@ def _rebar_mass_kg(
     return 0.0
 
 
+@formula(
+    owner='quantities',
+    description='Mass of reinforcing bars from diameter and length, or the length from a mass.',
+    inputs={'bar_diameter_mm': 'mm', 'total_length_m': 'm', 'quantity': '-', 'density_kg_m3': 'kg/m3', 'total_weight_kg': 'kg', 'total_mass_kg': 'kg', 'total_mass_t': 't', 'mode': '-'},
+    outputs={'unit_mass_kg_m': 'kg/m', 'total_mass_kg': 'kg', 'total_mass_t': 't', 'total_length_m': 'm', 'quantity': '-', 'metres_run': '-', 'mode': '-'},
+)
 def rebar_weight(
     bar_diameter_mm: float,
     total_length_m: float = 0.0,
@@ -913,6 +928,12 @@ def rebar_weight(
     }
 
 
+@formula(
+    owner='quantities',
+    description='Reinforcement mass for a slab or wall area from bar diameter and spacing.',
+    inputs={'area_m2': 'm2', 'spacing_mm': 'mm', 'bar_diameter_mm': 'mm', 'both_ways': '-', 'density_kg_m3': 'kg/m3'},
+    outputs={'bars_per_m': 'm', 'total_bar_length_m': 'm', 'total_mass_kg': 'kg', 'both_ways': '-'},
+)
 def rebar_by_area(
     area_m2: float,
     spacing_mm: float,
@@ -942,6 +963,12 @@ def rebar_by_area(
 
 
 
+@formula(
+    owner='quantities',
+    description='Interior finish quantities (wall, ceiling, skirting) from a room take-off and the floor-to-ceiling height.',
+    inputs={'floor_area_m2': 'm2', 'perimeter_m': 'm', 'room_count': '-', 'floor_to_ceiling_m': 'm', 'door_width_m': 'm', 'door_height_m': 'm', 'doors_per_room': '-', 'shared_wall_fraction': '-', 'window_deduction_m2': 'm2'},
+    outputs={'floor_screed_m2': 'm2', 'floor_tiling_m2': 'm2', 'ceiling_finish_m2': 'm2', 'skirting_m': 'm', 'wall_paint_m2': 'm2', 'blockwork_m2': 'm2', 'gross_wall_face_m2': 'm2', 'door_deduction_m2': 'm2'},
+)
 def interior_finishes_takeoff(
     floor_area_m2: float,
     perimeter_m: float,
@@ -1015,6 +1042,12 @@ def interior_finishes_takeoff(
     }
 
 
+@formula(
+    owner='quantities',
+    description='Material, labour and plant split of one estimate line.',
+    inputs={'quantity': '-', 'daily_output': '-', 'day_rate': '-', 'material_rate_per_unit': '-', 'plant_fraction_of_labour': '-'},
+    outputs={'quantity': '-', 'crew_days': 'days', 'labour_cost': 'currency', 'plant_cost': 'currency', 'material_cost': 'currency', 'total_cost': 'currency', 'total_is_partial': '-'},
+)
 def resource_line_cost(
     quantity: float,
     daily_output: float,

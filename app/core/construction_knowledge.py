@@ -19,6 +19,8 @@ Usage:
 
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import json
 import logging
 import re
@@ -297,6 +299,12 @@ def next_ncr_status(current_status: str) -> Optional[str]:
 # RISK SCORING (risk management procedure)
 # ---------------------------------------------------------------------------
 
+@formula(
+    owner='contracts',
+    description='Risk score and band from probability and impact ratings.',
+    inputs={'probability': '-', 'impact': '-'},
+    outputs={'probability': '-', 'impact': '-', 'score': '-', 'band': '-', 'requires_action': '-', 'description': '-'},
+)
 def score_risk(probability: int, impact: int) -> Dict:
     """
     Score a risk per the risk management procedure methodology.
@@ -326,6 +334,12 @@ def score_risk(probability: int, impact: int) -> Dict:
 # PAYMENT CALCULATIONS (interim payment procedure)
 # ---------------------------------------------------------------------------
 
+@formula(
+    owner='commercial',
+    description='Payment due on a claim: certified amount less retention and previous certificates.',
+    inputs={'claimed_amount': 'currency', 'certified_amount': 'currency', 'retention_rate': '-', 'cumulative_previous_certified': 'currency', 'contract_value': 'currency'},
+    outputs={'claimed_amount': 'currency', 'certified_amount': 'currency', 'retention_held': 'currency', 'net_payment_due': 'currency', 'cumulative_certified': 'currency', 'percent_complete': '%', 'disputed_amount': 'currency', 'retention_rate_pct': '%'},
+)
 def calculate_payment(
     claimed_amount: float,
     certified_amount: float,
@@ -363,6 +377,12 @@ def calculate_payment(
 # EVM CALCULATIONS (construction standard)
 # ---------------------------------------------------------------------------
 
+@formula(
+    owner='commercial',
+    description='Earned value measures (cost and schedule variance, CPI, SPI, estimate at completion) from PV, EV, AC and BAC.',
+    inputs={'bac': 'currency', 'bcwp': 'currency', 'bcws': 'currency', 'acwp': 'currency', 'pv': 'currency', 'ev': 'currency', 'ac': 'currency'},
+    outputs={'cost': 'currency (CV, CPI, EAC)', 'schedule': 'currency (SV, SPI)', 'cpi_health': '-'},
+)
 def calculate_evm(
     bac: Optional[float] = None,       # Budget at Completion (optional — needed for forecasts)
     bcwp: Optional[float] = None,      # Budgeted Cost of Work Performed (Earned Value)
@@ -473,6 +493,12 @@ def calculate_evm(
 # TENDER EVALUATION (tender analysis procedure)
 # ---------------------------------------------------------------------------
 
+@formula(
+    owner='procurement',
+    description='Scores and ranks tender submissions on weighted technical and commercial criteria.',
+    inputs={'tenderers': '-', 'weights': '-'},
+    outputs={'ranked_tenderers': '-', 'recommended': '-', 'weights_applied': '-', 'procedure': '-'},
+)
 def evaluate_tender(
     tenderers: List[Dict],
     weights: Optional[Dict] = None,

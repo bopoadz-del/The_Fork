@@ -8,6 +8,8 @@ full member design (no detailing / serviceability limit states).
 """
 from __future__ import annotations
 
+from app.lib.formula_registry import formula
+
 import math
 import re
 
@@ -22,6 +24,12 @@ def _norm_code(code: str) -> str:
     return _ACI
 
 
+@formula(
+    owner='design',
+    description='Design flexural capacity of a singly reinforced rectangular concrete beam.',
+    inputs={'steel_area_mm2': 'mm2', 'fy_mpa': 'MPa', 'width_mm': 'mm', 'eff_depth_mm': 'mm', 'fc_mpa': 'MPa', 'code': '-'},
+    outputs={'moment_capacity_kn_m': 'kN.m'},
+)
 def rc_beam_moment_capacity(
     steel_area_mm2: float,
     fy_mpa: float,
@@ -62,6 +70,12 @@ def rc_beam_moment_capacity(
     }
 
 
+@formula(
+    owner='design',
+    description='Shear capacity of a concrete section without shear reinforcement.',
+    inputs={'width_mm': 'mm', 'eff_depth_mm': 'mm', 'fc_mpa': 'MPa', 'code': '-', 'rho_l': '-'},
+    outputs={'shear_capacity_kn': 'kN'},
+)
 def rc_beam_shear_capacity(
     width_mm: float,
     eff_depth_mm: float,
@@ -108,6 +122,12 @@ _EC_RATIOS = {"simply_supported": 20.0, "one_end_continuous": 26.0,
               "both_ends_continuous": 30.0, "cantilever": 8.0}
 
 
+@formula(
+    owner='design',
+    description='Minimum one-way slab thickness for deflection control, from span and support condition.',
+    inputs={'span_mm': 'mm', 'support_condition': '-', 'code': '-', 'fy_mpa': 'MPa'},
+    outputs={'min_thickness_mm': 'mm', 'support_condition': '-'},
+)
 def slab_thickness_min(
     span_mm: float,
     support_condition: str = "simply_supported",
@@ -321,6 +341,12 @@ def answer_states_slab_thickness_result(ask: str, answer: str) -> bool:
     ))
 
 
+@formula(
+    owner='design',
+    description='Tension lap-splice length of a deformed reinforcing bar.',
+    inputs={'bar_diameter_mm': 'mm', 'fy_mpa': 'MPa', 'fc_mpa': 'MPa', 'code': '-', 'confinement_ratio': '-'},
+    outputs={'lap_length_mm': 'mm'},
+)
 def rebar_lap_length(
     bar_diameter_mm: float,
     fy_mpa: float,

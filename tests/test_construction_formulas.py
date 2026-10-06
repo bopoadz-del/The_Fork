@@ -98,6 +98,7 @@ _SMOKE_INPUTS = {
                                        time_intervals_hours=[6, 6, 6]),
     "concrete_mix_design_sg": dict(w_c_ratio=0.48),
     "concrete_mix_slip_form": dict(),
+    "tolerance_check": dict(measured=10.2, specified=10.0, tolerance_plus=0.5),
     "concrete_thermal_cracking_check": dict(core_temp_c=60, surface_temp_c=40),
     "cost_buildup_concrete": dict(quantity_m3=100),
     "cost_buildup_formwork": dict(area_m2=500),
