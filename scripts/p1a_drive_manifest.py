@@ -7,8 +7,8 @@ Walks each configured Drive folder recursively and emits:
     "service_account": "...",
     "folders": [
       {
-        "project_id": "client_infra_pack_1",
-        "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j",
+        "project_id": "example_infra_pack",
+        "folder_id": "1ExampleFolderId001xxxxxxxxxxxxxx",
         "folder_name": "the client project",
         "total_files": N,
         "subfolders": [
@@ -40,7 +40,7 @@ from app.core import gdrive_service
 
 
 DEFAULT_FOLDERS = {
-    "client_infra_pack_1": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j",
+    "example_infra_pack": "1ExampleFolderId001xxxxxxxxxxxxxx",
 }
 
 

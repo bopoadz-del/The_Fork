@@ -27,7 +27,7 @@ MANIFEST_DIR = REPO_ROOT / "manifests"
 # Folder IDs must be supplied when the service-account credential is fixed.
 KNOWN_FOLDERS: list[dict] = [
     # Tier 1 — pilot project + golden set/fixtures
-    {"project_id": "client_infra_pack_1", "folder_name": "the client project", "tier": 1, "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j"},
+    {"project_id": "example_infra_pack", "folder_name": "the client project", "tier": 1, "folder_id": "1ExampleFolderId001xxxxxxxxxxxxxx"},
 
     # Tier 2 — procedures and other pilot-relevant folders
     {"project_id": "sop_project_controls", "folder_name": "200-Project Controls Procedures", "tier": 2, "folder_id": None},
@@ -50,7 +50,7 @@ def _load_client_subfolders() -> list[dict]:
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
     for folder in data.get("folders", []):
-        if folder.get("project_id") != "client_infra_pack_1":
+        if folder.get("project_id") != "example_infra_pack":
             continue
         counts: Counter[str] = Counter()
         for f in folder.get("files", []):
@@ -94,7 +94,7 @@ def main() -> int:
 
     for entry in KNOWN_FOLDERS:
         tier = str(entry.pop("tier"))
-        if entry["project_id"] == "client_infra_pack_1":
+        if entry["project_id"] == "example_infra_pack":
             entry["subfolders"] = _load_client_subfolders()
             entry["file_count"] = sum(s["file_count"] for s in entry["subfolders"])
         else:

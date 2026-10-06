@@ -22,35 +22,31 @@ classify the events it was handed and populate the report sections.
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pytest
 
-XER = Path("tests/fixtures/ohdd_baseline_2013.xer")
-
-pytestmark = pytest.mark.skipif(
-    not XER.is_file(),
-    reason=f"real Primavera baseline fixture missing at {XER}",
-)
+from tests._synthetic_fixtures import build_baseline_xer
 
 
-@pytest.mark.skipif(
-    "construction" not in os.getenv("CEREBRUM_DOMAIN_KITS", ""),
-    reason="fixture-presence guard is for the production-like CI profile",
-)
-def test_the_fixture_this_file_depends_on_is_present():
-    """Without this, a deleted fixture returns forensic_delay_analysis to zero
-    coverage SILENTLY -- the tests below become green skips, which read as
-    passing. The .xer is pending an owner decision on client content; if it is
-    purged, that must break the build rather than quietly retire the only
-    payload coverage the EOT/prolongation path has.
+@pytest.fixture(scope="module")
+def baseline(tmp_path_factory):
+    """A synthetic P6 baseline programme (``build_baseline_xer``)."""
+    path = tmp_path_factory.mktemp("forensic_delay") / "sample_works_baseline.xer"
+    build_baseline_xer(path)
+    return path
+
+
+def test_the_fixture_this_file_depends_on_is_present(baseline):
+    """Without this, a broken generator would return forensic_delay_analysis
+    to zero coverage SILENTLY. The programme is generated, never committed,
+    so it must exist and carry a TASK table on every run, in every profile.
     """
-    assert XER.is_file(), (
-        f"{XER} is gone, so the forensic delay payload tests are skipping and "
-        "the action has no coverage. Supply a replacement Primavera baseline "
-        "and point this file at it."
-    )
+    assert baseline.is_file(), f"{baseline} was not generated"
+    tables = {
+        line.split("\t", 1)[1]
+        for line in baseline.read_text(encoding="cp1252").splitlines()
+        if line.startswith("%T\t")
+    }
+    assert {"PROJECT", "TASK", "TASKPRED"} <= tables, tables
 
 
 @pytest.fixture
@@ -67,21 +63,21 @@ def container():
 
 DELAY_EVENTS = [
     {"description": "late site access", "days": 14, "type": "employer",
-     "start_date": "2013-12-01"},
+     "start_date": "2025-03-10"},
     {"description": "exceptional weather", "days": 7, "type": "neutral",
-     "start_date": "2014-01-15"},
+     "start_date": "2025-04-15"},
 ]
 
 
 @pytest.mark.asyncio
-async def test_identical_baseline_and_as_built_yields_no_net_delay(container):
+async def test_identical_baseline_and_as_built_yields_no_net_delay(container, baseline):
     """A programme compared with itself has not slipped. Anything else is wrong.
 
     This is the property a stub cannot fake in the right direction: it must
     parse BOTH files and difference them to arrive at zero honestly.
     """
     result = await container.forensic_delay_analysis(
-        {"baseline_file": str(XER), "updated_file": str(XER),
+        {"baseline_file": str(baseline), "updated_file": str(baseline),
          "delay_events": DELAY_EVENTS}, {})
 
     assert result["status"] == "success", result
@@ -95,14 +91,14 @@ async def test_identical_baseline_and_as_built_yields_no_net_delay(container):
 
 
 @pytest.mark.asyncio
-async def test_every_supplied_delay_event_is_classified(container):
+async def test_every_supplied_delay_event_is_classified(container, baseline):
     """Events handed in must be accounted for, not dropped.
 
     A claim that silently loses an event understates entitlement, which is the
     expensive direction to be wrong in.
     """
     result = await container.forensic_delay_analysis(
-        {"baseline_file": str(XER), "updated_file": str(XER),
+        {"baseline_file": str(baseline), "updated_file": str(baseline),
          "delay_events": DELAY_EVENTS}, {})
 
     events = result["delay_events"]
@@ -114,9 +110,9 @@ async def test_every_supplied_delay_event_is_classified(container):
 
 
 @pytest.mark.asyncio
-async def test_expert_report_sections_are_produced(container):
+async def test_expert_report_sections_are_produced(container, baseline):
     result = await container.forensic_delay_analysis(
-        {"baseline_file": str(XER), "updated_file": str(XER),
+        {"baseline_file": str(baseline), "updated_file": str(baseline),
          "delay_events": DELAY_EVENTS}, {})
 
     sections = result["expert_report_sections"]
@@ -126,10 +122,10 @@ async def test_expert_report_sections_are_produced(container):
 
 
 @pytest.mark.asyncio
-async def test_analysis_method_is_honoured(container):
+async def test_analysis_method_is_honoured(container, baseline):
     """`method` selects the analysis; a stub ignoring it would report the default."""
     result = await container.forensic_delay_analysis(
-        {"baseline_file": str(XER), "updated_file": str(XER),
+        {"baseline_file": str(baseline), "updated_file": str(baseline),
          "delay_events": DELAY_EVENTS}, {"method": "windows"})
 
     assert result["status"] == "success", result
@@ -137,11 +133,11 @@ async def test_analysis_method_is_honoured(container):
 
 
 @pytest.mark.asyncio
-async def test_refuses_honestly_without_both_programmes(container):
+async def test_refuses_honestly_without_both_programmes(container, baseline):
     """Delay analysis needs two schedules. One, or none, must be an explicit
     error — never a zeroed-out claim that reads like a finding of no delay."""
     result = await container.forensic_delay_analysis(
-        {"baseline_file": str(XER)}, {})
+        {"baseline_file": str(baseline)}, {})
 
     assert result["status"] == "error"
     assert "baseline" in result["error"].lower() or "updated" in result["error"].lower()

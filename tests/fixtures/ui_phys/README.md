@@ -6,7 +6,7 @@ from the instrument, and it is the reason this note exists.
 
 | | source of record | may it change? |
 | --- | --- | --- |
-| **Questions** | `UI-PHYS_DG2_results.xlsx`, column **"Question (ask exactly)"** (owner's Drive) | **No.** Never reworded, never paraphrased, never "tidied". |
+| **Questions** | `UI-PHYS_QP2_results.xlsx`, column **"Question (ask exactly)"** (owner's Drive) | **No.** Never reworded, never paraphrased, never "tidied". |
 | **Expectations** | a **dated revision log** under `FLEET_OPS/artifacts/`, currently `GROUND_TRUTH_REVISIONS_2026-09-01.md` | Yes — only by appending a new dated entry. |
 
 ## Questions are frozen

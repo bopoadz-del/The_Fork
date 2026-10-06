@@ -34,7 +34,7 @@ Proof artifacts: `data/learning/rag_audit/rerank_proof.json` and
    fine-tune), not ranking.
 3. **Near-duplicate sheet ambiguity — 7 queries.** Even the verbatim
    title-block phrase cannot isolate the target because hundreds of drawing
-   sheets share the same text ("King Khalid Road (South) — ORIENTATION —
+   sheets share the same text ("Example Ring Road (South) — ORIENTATION —
    DATUM"...). Irreducible by any text ranking; would need metadata-aware
    retrieval (sheet-number extraction at query time; `identifier_search`
    already covers part of this).

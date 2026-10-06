@@ -8,7 +8,7 @@
 
 ## Bug 1 — `drawing_title` returns drawing-number-with-typo
 
-**Observed (SG):** `drawing_title: "IP-INF-053-0000-JCB-DWG-SG-200-100100A0"` — the drawing number itself, with a clustering artifact appending the revision letter.
+**Observed (SG):** `drawing_title: "QZ-ENG-310-0000-EXC-DWG-SG-200-100100A0"` — the drawing number itself, with a clustering artifact appending the revision letter.
 **Observed (EL):** Same pattern.
 
 **Root cause:** The title-block extractor picks "longest text cluster" as the title. The longest cluster is often the drawing number (a long contiguous text run) or a near-duplicate with bad word-boundary clustering.
@@ -21,18 +21,18 @@
 
 ---
 
-## Bug 2 — Truncated JCB regex match accepted as final answer (WS case)
+## Bug 2 — Truncated EXC regex match accepted as final answer (WS case)
 
-**Observed (WS):** `drawing_number: "IP-INF-053-JCB"`, `discipline: None`, `revision: "JCB"`.
+**Observed (WS):** `drawing_number: "QZ-ENG-310-EXC"`, `discipline: None`, `revision: "EXC"`.
 
-**Root cause:** The drawing-number regex has a primary pattern (long JCB) and a fallback short pattern (`[A-Z]{2,}-[A-Z]{2,}-\d+-\w+`). The short fallback matched `IP-INF-053-JCB` from a random text fragment in the title block, and the code accepted it without re-running the full fallback chain. The actual WS drawing number is `IP-INF-053-0000-JCB-DWG-WS-600-0000001-C` per filename.
+**Root cause:** The drawing-number regex has a primary pattern (long EXC) and a fallback short pattern (`[A-Z]{2,}-[A-Z]{2,}-\d+-\w+`). The short fallback matched `QZ-ENG-310-EXC` from a random text fragment in the title block, and the code accepted it without re-running the full fallback chain. The actual WS drawing number is `QZ-ENG-310-0000-EXC-DWG-WS-600-0000001-C` per filename.
 
 **Fix:**
-1. Reject any drawing-number match that does NOT contain `JCB-DWG-` as a substring on this corpus. If the long regex didn't match and the short regex didn't include `JCB-DWG-`, the title-block search has failed for the drawing-number field — trigger the operator's title-block fallback chain (right 20% → full page).
-2. If even the full-page scan can't find a `JCB-DWG-` pattern, fall back to filename-derived drawing number per the existing spec rule and append `"drawing_number_fallback_to_filename"` to errors. Do NOT return a half-matched substring.
-3. Re-derive `discipline` and `revision` from the corrected drawing number. The discipline parser was getting `None` because the truncated number had no discipline code; the revision parser was returning `"JCB"` because it grabbed the literal string from the truncated tail.
+1. Reject any drawing-number match that does NOT contain `EXC-DWG-` as a substring on this corpus. If the long regex didn't match and the short regex didn't include `EXC-DWG-`, the title-block search has failed for the drawing-number field — trigger the operator's title-block fallback chain (right 20% → full page).
+2. If even the full-page scan can't find a `EXC-DWG-` pattern, fall back to filename-derived drawing number per the existing spec rule and append `"drawing_number_fallback_to_filename"` to errors. Do NOT return a half-matched substring.
+3. Re-derive `discipline` and `revision` from the corrected drawing number. The discipline parser was getting `None` because the truncated number had no discipline code; the revision parser was returning `"EXC"` because it grabbed the literal string from the truncated tail.
 
-**Acceptance:** WS returns `drawing_number: "IP-INF-053-0000-JCB-DWG-WS-600-0000001"` (or `-C` revision if the parser captures it), `discipline: "WS"`, `discipline_full: "Water Supply"`, `revision: "C"`.
+**Acceptance:** WS returns `drawing_number: "QZ-ENG-310-0000-EXC-DWG-WS-600-0000001"` (or `-C` revision if the parser captures it), `discipline: "WS"`, `discipline_full: "Water Supply"`, `revision: "C"`.
 
 ---
 

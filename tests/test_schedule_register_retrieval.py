@@ -38,7 +38,7 @@ REGISTER_ROW = "Schedule 10: Not Used"
 SCHEDULE_9_ROW = "Schedule 9: Health & Safety KPIs"
 
 REG_NAME = (
-    "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract "
+    "AB-2023-101_QP2 Infra P1_Vol 1.0_Cond of Contract "
     "(complete)_Contract Data.pdf"
 )
 # Live citations were Vol 5 / Vol 4 / CPM — those uploads do not carry
@@ -48,7 +48,7 @@ REG_NAME = (
 VOL4_NAME = "Vol 4 - Schedules.pdf"
 VOL5_NAME = "Vol 5 - Specifications.pdf"
 CPM_NAME = "CPM 16-01-2024.pdf"
-SHOW_NAME = "2015 MWC (Show Package).docx"
+SHOW_NAME = "2012 EXW (Show Package).docx"
 
 # Live shape: scanned / unprefixed schedule index. No CONTRACT DATA
 # particulars header, so the particulars boost and unnamed election
@@ -73,7 +73,7 @@ CPM_TEXT = (
     "updates. No contract-volume schedule register."
 )
 SHOW_TEXT = (
-    "2015 MWC Show Package. Schedule 10 — Works Guarantee. The "
+    "2012 EXW Show Package. Schedule 10 — Works Guarantee. The "
     "Contractor shall provide a Works Guarantee in the form annexed. "
     "Schedule 10 sets out any applicable Works Guarantees."
 )

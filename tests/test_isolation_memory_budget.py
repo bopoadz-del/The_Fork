@@ -13,7 +13,7 @@ the document indexed as ZERO_CHUNK with nothing logged anywhere.
 
 Observed live on 2026-08-21 after deploying the isolation change::
 
-    doc-reindex d8c63ec7 (7.9 MB, 738 pages) -> ZERO_CHUNK in 0.42s
+    doc-reindex d0c0000c (7.9 MB, 738 pages) -> ZERO_CHUNK in 0.42s
     fresh_extraction = {"total_chars": 0, "meta": {}}
     pdf_first_pages_chars = [357, 791, 540, 847, ... 6610, 6725]
 

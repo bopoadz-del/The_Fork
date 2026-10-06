@@ -9,7 +9,7 @@
 
 **Tech Stack:** Python 3.11, Pydantic v2. Redis backend uses the `redis` package **only if `REDIS_URL` is set** — it is an optional dependency; the in-memory backend needs nothing.
 
-**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\shimm\The_Fork`.
+**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\example\The_Fork`.
 
 ---
 

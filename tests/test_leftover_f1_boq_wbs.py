@@ -242,11 +242,11 @@ def test_deliver_schedule_only_still_skips_tree():
 
 
 DD23_BOQ_NAME = (
-    "DD-2023-118_the client project II Infrastructure Package 1_"
+    "AB-2023-101_the client project II Infrastructure Package 1_"
     "Demolition and Site Clearance BOQ.pdf"
 )
 DD22_COC_NAME = (
-    "DD-2022-175_Vol 1 - Conditions of Contract.pdf"
+    "AB-2022-202_Vol 1 - Conditions of Contract.pdf"
 )
 _CONTRACT_PROSE = (
     "Volume 1 - Conditions of Contract. Sub-Clause 4.1. The Contractor "
@@ -360,7 +360,7 @@ def test_retrieve_boq_scope_items_parses_named_bill(monkeypatch):
         text=S2_BOQ,
     )
     chunk.source_name = (
-        "DD-2023-118_the client project II Infrastructure Package 1_"
+        "AB-2023-101_the client project II Infrastructure Package 1_"
         "Demolition and Site Clearance BOQ.pdf"
     )
 

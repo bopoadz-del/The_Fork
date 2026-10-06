@@ -15,7 +15,7 @@ The invariants these lock (owner directive, 2026-07-17):
       is layer-labelled. A *populated, strong* project does NOT pull the Master
       Corpus even if it would outscore (the ha_long -> the client project leak).
 
-  regression  The live leak was a client corpus (drive_archive / client_infra_pack_1)
+  regression  The live leak was a client corpus (drive_archive / example_infra_pack)
       listed in RAG_GENERAL_KNOWLEDGE_PROJECTS, silently merged into every other
       project. The Master-Corpus source is now structurally barred from the GK
       merge even when a stale env still lists it.

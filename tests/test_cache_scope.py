@@ -1,6 +1,6 @@
 """Cache keys must include project/contract id AND source class.
 
-#443-via-cache: an unscoped key lets DD-2022's answer satisfy a DD-2023
+#443-via-cache: an unscoped key lets AB-2022's answer satisfy a DD-2023
 question. This file proves that shape FAILS on a deliberately unscoped
 key, then PASSES on the scoped implementation.
 """
@@ -25,14 +25,14 @@ async def test_unscoped_key_allows_a_cross_contract_hit():
     key = _unscoped_key(question)
     await block.set(
         {},
-        {"key": key, "value": {"contract": "DD-2022-175", "days": 365}, "ttl": 60},
+        {"key": key, "value": {"contract": "AB-2022-202", "days": 365}, "ttl": 60},
     )
     hit = await block.get({}, {"key": _unscoped_key(question)})
     assert hit["found"] is True
-    assert hit["value"]["contract"] == "DD-2022-175"
+    assert hit["value"]["contract"] == "AB-2022-202"
     # A later turn on a different contract would have received 365 days.
     assert hit["key"] == key
-    assert "DD-2023" not in hit["key"]
+    assert "AB-2023" not in hit["key"]
     assert "class=" not in hit["key"]
 
 
@@ -44,9 +44,9 @@ async def test_scoped_key_makes_a_cross_contract_hit_impossible():
         {
             "key": question,
             "project_id": "proj-a",
-            "contract_id": "DD-2022-175",
+            "contract_id": "AB-2022-202",
             "source_class": "project_corpus",
-            "value": {"contract": "DD-2022-175", "days": 365},
+            "value": {"contract": "AB-2022-202", "days": 365},
             "ttl": 60,
         },
         {},
@@ -55,13 +55,13 @@ async def test_scoped_key_makes_a_cross_contract_hit_impossible():
         {
             "key": question,
             "project_id": "proj-a",
-            "contract_id": "DD-2023-118",
+            "contract_id": "AB-2023-101",
             "source_class": "project_corpus",
         },
         {},
     )
     assert other["found"] is False
-    assert "DD-2023-118" in other["key"]
+    assert "AB-2023-101" in other["key"]
     assert "class=project_corpus" in other["key"]
     assert "p=proj-a" in other["key"]
 
@@ -71,16 +71,16 @@ async def test_scoped_key_includes_project_contract_and_source_class():
     key = compose_scoped_key(
         "delay-damages",
         project_id="proj-a",
-        contract_id="DD-2023-118",
+        contract_id="AB-2023-101",
         source_class="template",
     )
     assert "p=proj-a" in key
-    assert "c=DD-2023-118" in key
+    assert "c=AB-2023-101" in key
     assert "class=template" in key
     other_class = compose_scoped_key(
         "delay-damages",
         project_id="proj-a",
-        contract_id="DD-2023-118",
+        contract_id="AB-2023-101",
         source_class="project_corpus",
     )
     assert key != other_class
@@ -95,7 +95,7 @@ async def test_template_class_cannot_cache_hit_this_contract():
         {
             "key": "schedule-10",
             "project_id": "proj-a",
-            "contract_id": "DD-2023-118",
+            "contract_id": "AB-2023-101",
             "source_class": "template",
             "value": "sets out any applicable Works Guarantees",
             "ttl": 60,
@@ -106,7 +106,7 @@ async def test_template_class_cannot_cache_hit_this_contract():
         {
             "key": "schedule-10",
             "project_id": "proj-a",
-            "contract_id": "DD-2023-118",
+            "contract_id": "AB-2023-101",
             "source_class": "project_corpus",
         },
     )

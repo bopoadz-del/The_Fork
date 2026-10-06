@@ -149,5 +149,5 @@ RetailOps' `learning/engine.py` — we already have the equivalent, wired and te
 4. Wire grounding/failure enforcement to the existing gates — `test_grounding_enforced`.
 5. Flag-gate + `test_flag_off_is_noop`; PR; deploy; live smoke.
 
-Keep it small and reviewable; the contract is Chadi's RetailOps commit, the wiring is
+Keep it small and reviewable; the contract is the owner's RetailOps commit, the wiring is
 into The Fork's existing engine. When in doubt, prefer mapping over rewriting.

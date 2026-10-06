@@ -45,7 +45,7 @@ def _en_dash_docs(n: int) -> dict:
     """The shape that actually broke it — en dashes become \\u2013."""
     return {
         "documents": [
-            {"name": f"dd-2023-118 vol 2 – specification ({i} of 9).pdf",
+            {"name": f"ab-2023-101 vol 2 – specification ({i} of 11).pdf",
              "type": "pdf"}
             for i in range(n)
         ]

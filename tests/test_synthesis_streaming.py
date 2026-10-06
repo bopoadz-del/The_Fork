@@ -196,7 +196,7 @@ def test_midstream_synth_error_appends_cutoff_notice(deepseek_streaming):
 
 def test_streamed_lines_are_citation_sanitised(deepseek_streaming):
     call_llm = _tool_then_final()
-    deltas = ["See [source: C:\\\\Users\\\\shimm\\\\data\\\\XYZ-406_HSE.pdf, chunk 3]\n"]
+    deltas = ["See [source: C:\\\\Users\\\\example\\\\data\\\\XYZ-406_HSE.pdf, chunk 3]\n"]
     with patch.object(Agent, "_call_llm", call_llm), \
          patch.object(Agent, "_run_tool_call", _tool_ok), \
          patch.object(Agent, "_stream_synthesis", _mk_stream(deltas)):

@@ -246,7 +246,7 @@ def test_text_states_clause_111_aca_tells_the_base_from_the_partial():
 
 # ── Attempt 2 (live 0d6163d, still 0/6): the real row has NO VAT qualifier ──
 #
-# The Contract Data chunk 0 states, verbatim (doc 9f849c87):
+# The Contract Data chunk 0 states, verbatim (doc d0c00003):
 #     1.1.1: | | Accepted Contract Amount: SAR 1,754,504,456.25(One Billion …) |
 # and, in the SAME chunk, a separate particular:
 #     | | Accepted Contract Amount (including VAT): SAR 2,017,680,124.69 |

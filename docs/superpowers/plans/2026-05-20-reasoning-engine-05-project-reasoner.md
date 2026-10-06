@@ -22,7 +22,7 @@
 
 **Tech Stack:** Python 3.11, Pydantic v2, `httpx`. No new dependencies.
 
-**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\shimm\The_Fork`. **Plans 1, 1b, 2 and 4 must be complete first.**
+**Run tests:** `& .venv\Scripts\python.exe -m pytest <path> -q` from `C:\Users\example\The_Fork`. **Plans 1, 1b, 2 and 4 must be complete first.**
 
 ---
 

@@ -1,6 +1,6 @@
 # Formula-drop integration — status + Slice 4 reconciliation decision
 
-Integrating the operator's SMGT-C552 formula/engine upgrade
+Integrating the operator's SPEC-C900 formula/engine upgrade
 (`~/Downloads/Kimi_Agent_Fork Repo Upgrade Plan/`). Recorded 2026-07-14.
 
 ## Slices

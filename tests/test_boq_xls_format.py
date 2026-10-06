@@ -107,7 +107,7 @@ async def test_a_boq_with_a_title_block_above_the_header_still_parses(tmp_path):
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
-    ws.append(["PROJECT: JUMEIRAH ISLANDS"])
+    ws.append(["PROJECT: EXAMPLE ISLANDS"])
     ws.append(["For M/s EMPLOYER"])
     ws.append([])
     ws.append(["BILL NO.4 - APARTMENTS"])

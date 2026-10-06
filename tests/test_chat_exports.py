@@ -155,7 +155,7 @@ def test_wbs_with_cited_rfp_yields_document_driven_schedule(monkeypatch):
     """A generate_wbs turn that cited an RFP/BOD spec offers the DOCUMENT-driven
     schedule (real lead times) instead of the generic brief-driven one."""
     audit = _audit_citing("rfp1", 1)
-    _stub_doc(monkeypatch, "Anthropic RFP - Basis of Design.docx", doc_type="spec")
+    _stub_doc(monkeypatch, "Example Client RFP - Basis of Design.docx", doc_type="spec")
     out = _build_exports_from_audit(audit, "Schedule built from the RFP.", [_wbs_call()])
     sched = [e for e in out if "schedule" in e["endpoint"]]
     assert len(sched) == 1

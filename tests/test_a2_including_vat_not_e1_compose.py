@@ -67,7 +67,7 @@ ACA_EXCL = f"SAR {NET_ACA:,.2f}"
 PARTIAL_ACA_TXT = f"SAR {PARTIAL_ACA:,.2f}"
 
 CD_NAME = (
-    "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract "
+    "AB-2023-101_QP2 Infra P1_Vol 1.0_Cond of Contract "
     "(complete)_Contract Data.pdf"
 )
 CHUNK0_DELAY_PARTIAL = (
