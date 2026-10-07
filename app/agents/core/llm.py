@@ -386,7 +386,10 @@ async def _call_llm(
             # Best-effort cost tracking — never let it sink an LLM call.
             try:
                 from app.core import usage_tracker
-                usage_tracker.record(
+                from app.core.offload import off_loop
+                # A database write: off the event loop (live: 1.0 s stall at 15 users).
+                await off_loop(
+                    usage_tracker.record,
                     user_id=user_id,
                     agent_name=self.name,
                     provider=active_cfg.get("provider", ""),
