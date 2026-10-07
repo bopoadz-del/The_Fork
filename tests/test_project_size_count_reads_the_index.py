@@ -1,59 +1,70 @@
-"""The bounded project-size count reads the (project_id, doc_id) index, not
-the table -- even when the planner would otherwise gamble on a sequential
-scan (a project holding most rows, wide rows, a visibility map not yet set).
-PostgreSQL only; synthetic rows."""
+"""Deciding whether a project is small reads no table page: it asks the
+planner for its row estimate, and the estimate sorts projects into the
+right size class. PostgreSQL only; synthetic rows."""
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 pytestmark = pytest.mark.skipif(
     os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() not in ("1", "true", "yes"),
-    reason="query plans are a PostgreSQL planner property (test-postgres job)",
+    reason="planner estimates are a PostgreSQL property (test-postgres job)",
 )
 
 
-def _nodes(plan):
-    stack = [plan]
-    while stack:
-        node = stack.pop()
-        yield node
-        stack.extend(node.get("Plans") or [])
-
-
-@pytest.mark.parametrize("share", [60, 95, 99])
-def test_the_count_never_scans_the_table(share):
+@pytest.fixture
+def probe_table():
     from app.core.db import get_engine
-    from app.core.rag.vector_store import _EXACT_SCAN_MAX_ROWS, _PROJECT_ROWS_SQL
+    from app.core.rag import vector_store
 
-    table = f"qp_size_probe_{share}"
+    table = "qp_size_probe"
     engine = get_engine()
     with engine.begin() as conn:
         conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
         conn.execute(text(f"CREATE TABLE {table} (chunk_id text PRIMARY KEY, project_id text, "
                           "doc_id text, body text)"))
         conn.execute(text(
-            f"INSERT INTO {table} SELECT 'c' || g, CASE WHEN g % 100 < :share THEN 'big' "
-            "ELSE 'p' || (g % 37) END, 'd' || (g % 50), repeat('x', 1500) "
-            "FROM generate_series(1, 30000) g"), {"share": share})
-        conn.execute(text(f"CREATE INDEX ON {table} (project_id)"))
+            f"INSERT INTO {table} SELECT 'b' || g, 'big', 'd' || (g % 50), repeat('x', 1500) "
+            "FROM generate_series(1, :n) g"), {"n": vector_store._EXACT_SCAN_MAX_ROWS * 3})
+        conn.execute(text(
+            f"INSERT INTO {table} SELECT 's' || g, 'small', 'd1', repeat('x', 1500) "
+            "FROM generate_series(1, 40) g"))
         conn.execute(text(f"CREATE INDEX ON {table} (project_id, doc_id)"))
-        conn.execute(text(f"ANALYZE {table}"))  # statistics, but no VACUUM: no all-visible pages
+        conn.execute(text(f"ANALYZE {table}"))  # statistics, but no VACUUM
+    yield engine, table
+    with engine.begin() as conn:
+        conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+
+
+def test_the_estimate_sorts_projects_by_size_and_reads_no_table(probe_table):
+    from sqlalchemy.orm import Session
+
+    from app.core.rag import vector_store
+
+    engine, table = probe_table
+    store = SimpleNamespace(_table_name=table)
+    sent = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        sent.append(statement)
+
+    event.listen(engine, "before_cursor_execute", _record)
     try:
-        raw = engine.raw_connection()
+        memo = vector_store.start_turn_memo()
         try:
-            cur = raw.cursor()
-            sql = _PROJECT_ROWS_SQL.format(table=table).replace(":p", "%(p)s").replace(":m", "%(m)s")
-            cur.execute("EXPLAIN (FORMAT JSON) " + sql, {"p": "big", "m": _EXACT_SCAN_MAX_ROWS + 1})
-            plan = cur.fetchone()[0]
-            plan = plan[0]["Plan"] if isinstance(plan, list) else plan
-            seq = [n for n in _nodes(plan) if n.get("Node Type") == "Seq Scan"]
-            assert seq == [], plan
+            with Session(engine) as session:
+                small = vector_store.VectorStore._project_is_small(store, session, "small")
+                big = vector_store.VectorStore._project_is_small(store, session, "big")
+                again = vector_store.VectorStore._project_is_small(store, session, "big")
         finally:
-            raw.rollback()
-            raw.close()
+            vector_store.end_turn_memo(memo)
     finally:
-        with engine.begin() as conn:
-            conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert small is True and big is False and again is False
+    on_table = [s for s in sent if table in s]
+    assert len(on_table) == 2  # one per project; the repeat came from the turn memo
+    assert all(s.lstrip().upper().startswith("EXPLAIN") for s in on_table), on_table
