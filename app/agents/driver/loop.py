@@ -18,6 +18,19 @@ _STOP = ("I could not finish this answer within the steps a turn may take. "
          "Please narrow the question or split it into parts.")
 
 
+def exit_check(answer: str, msgs: List[Dict[str, Any]]) -> tuple:
+    """The one check before a driver answer leaves: an attribution no
+    evidence record backs is removed (citation_provenance.gate), and every
+    figure is credited to the user's words, a tool run or a retrieved
+    passage -- one that matches none is removed (figure_provenance). The
+    evidence is this turn's own messages: the user's words and the tool
+    runs. Returns (answer, provenance trail)."""
+    from app.agents import citation_provenance
+
+    checked = citation_provenance.gate(answer, None, msgs, tool_passages=True)
+    return citation_provenance.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
+
+
 def _args(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     raw = (tool_call.get("function") or {}).get("arguments") or "{}"
     try:
@@ -75,11 +88,13 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 result = await agent._run_tool_call(call, api_key, project_id, conversation_id,
                                                     user_message=user_message, history=history)
             yield {"type": "tool_result", "tool": name, "name": name, "ok": bool(result.get("ok", True))}
-            msgs.append({"role": "tool", "tool_call_id": call.get("id") or name,
+            msgs.append({"role": "tool", "name": name, "tool_call_id": call.get("id") or name,
                          "content": json.dumps(result, default=str)[:20000]})
     if answer is None:
         answer = _STOP
+    answer, provenance = exit_check(answer, msgs)
     for word in answer.split(" "):
         yield {"type": "token", "content": word + " "}
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
+           "provenance": provenance,
            "steps": step + 1, "elapsed_s": round(time.monotonic() - t0, 2)}

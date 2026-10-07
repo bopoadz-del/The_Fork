@@ -67,7 +67,9 @@ def test_the_model_picks_the_hat_and_gets_that_hats_tools(monkeypatch):
 
     async def fake_tool(call, api_key=None, project_id=None, conversation_id=None, **kw):
         ran.append(call["function"]["name"])
-        return {"ok": True, "result": {"chunks": ["slump 75 mm"]}}
+        # The real search tool's result shape: passages under result.results.
+        return {"ok": True, "result": {"results": [{"text": "Slump: 75 mm, spec section 3.",
+                                                     "doc_name": "spec.pdf", "page": 3}]}}
 
     monkeypatch.setattr(agent, "_run_tool_call", fake_tool)
     events = _run(agent, user_message="What slump does the spec allow?", project_id="synthetic-proj")
@@ -262,3 +264,34 @@ def test_an_unknown_workflow_is_refused(monkeypatch):
     monkeypatch.setattr(routes, "catalogue", lambda: ["generate_wbs"])
     out = asyncio.run(routes.run({"workflow": "invent_a_bridge"}, "x", None, None, None))
     assert out["ok"] is False and "invent_a_bridge" in out["error"]
+
+
+def test_the_exit_check_keeps_backed_figures_and_removes_unbacked_ones():
+    msgs = [
+        {"role": "user", "content": "What slump does the spec allow?"},
+        {"role": "assistant", "content": "", "tool_calls": [_call("search_project_documents", {"query": "slump"}, "c1")]},
+        {"role": "tool", "name": "search_project_documents", "tool_call_id": "c1",
+         "content": json.dumps({"ok": True, "result": {"results": [{"text": "Slump shall be 75 mm."}]}})},
+    ]
+    kept, trail = loop.exit_check("The specified slump is 75 mm.", msgs)
+    assert "75 mm" in kept
+    assert isinstance(trail, list)
+    gone, _ = loop.exit_check("The specified slump is 75 mm. The cube strength is 913 MPa.", msgs)
+    assert "75 mm" in gone and "913" not in gone
+
+
+def test_a_driver_answer_passes_the_exit_check_before_it_streams(monkeypatch):
+    _no_retrieval(monkeypatch)
+    seen = []
+    monkeypatch.setattr(llm, "call", _scripted([{"content": "It needs 4,217 bags."}], seen))
+    calls = []
+    real = loop.exit_check
+
+    def spy(answer, msgs):
+        calls.append(answer)
+        return real(answer, msgs)
+
+    monkeypatch.setattr(loop, "exit_check", spy)
+    events = _run(_agent(), user_message="How many bags of cement?")
+    assert calls == ["It needs 4,217 bags."]
+    assert "provenance" in events[-1]

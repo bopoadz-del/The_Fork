@@ -376,12 +376,50 @@ def _message_records(messages: Iterable[dict[str, Any]] | None) -> list[Evidence
     return records
 
 
+def _tool_passage_records(messages: Iterable[dict[str, Any]] | None) -> list[EvidenceRecord]:
+    """Retrieved passages that came back as a tool's result -- any tool result
+    shaped ``{"result": {"results": [{"text": ...}, ...]}}`` -- one record per
+    passage. Driver mode retrieves with tools, so this is where its passages
+    are; the old path's arrive in the injected retrieval message instead."""
+    records: list[EvidenceRecord] = []
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get("role") != "tool":
+            continue
+        try:
+            payload = json.loads(m.get("content") or "")
+        except (TypeError, ValueError):
+            continue
+        result = payload.get("result") if isinstance(payload, dict) else None
+        hits = result.get("results") if isinstance(result, dict) else None
+        for hit in hits if isinstance(hits, list) else []:
+            if not isinstance(hit, dict) or not str(hit.get("text") or "").strip():
+                continue
+            page = hit.get("page")
+            layer = str(hit.get("layer") or "") or None
+            records.append(EvidenceRecord(
+                kind="retrieval",
+                text=str(hit["text"]),
+                source_name=str(hit.get("doc_name") or hit.get("original_name") or hit.get("doc_id") or ""),
+                source_class="general_knowledge" if layer == "general_knowledge" else "project_corpus",
+                chunk_index=hit.get("chunk_index") if isinstance(hit.get("chunk_index"), int) else None,
+                doc_id=str(hit.get("doc_id")) if hit.get("doc_id") else None,
+                page=page if isinstance(page, int) else None,
+                layer=layer,
+            ))
+    return records
+
+
 def build_evidence(
     rag_sys_msg: dict[str, Any] | None,
     messages: Iterable[dict[str, Any]] | None,
+    *,
+    tool_passages: bool = False,
 ) -> Evidence:
-    """The turn's evidence objects. This is what a citation is rendered from."""
-    return Evidence(records=_retrieval_records(rag_sys_msg) + _message_records(messages))
+    """The turn's evidence objects. This is what a citation is rendered from.
+    ``tool_passages``: also count passages returned by retrieval tools."""
+    messages = list(messages or [])
+    extra = _tool_passage_records(messages) if tool_passages else []
+    return Evidence(records=_retrieval_records(rag_sys_msg) + extra + _message_records(messages))
 
 
 # A removal leaves a hole. Marking it lets the tidy pass clean up exactly the
@@ -844,6 +882,8 @@ def gate(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
+    *,
+    tool_passages: bool = False,
 ) -> str:
     """Strip attributions no evidence record backs; flag the answer when any
     were removed. Content is never rewritten. Never raises -- a gate that can
@@ -851,7 +891,7 @@ def gate(
     try:
         if not _enabled() or not text or not text.strip():
             return text
-        ev = build_evidence(rag_sys_msg, messages)
+        ev = build_evidence(rag_sys_msg, messages, tool_passages=tool_passages)
         credits = _calculator_credits(ev)
         removed: list[str] = []
 
@@ -977,6 +1017,7 @@ def figure_provenance(
     messages: list[dict[str, Any]] | None,
     *,
     enforce: bool = True,
+    tool_passages: bool = False,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Return ``(answer, provenance)``: every figure credited to its source --
     the user's own words, a calculator run (formula and inputs), or a
@@ -989,7 +1030,7 @@ def figure_provenance(
     try:
         if not text or not text.strip():
             return text, []
-        ev = build_evidence(rag_sys_msg, messages)
+        ev = build_evidence(rag_sys_msg, messages, tool_passages=tool_passages)
         user_vals: set[float] = set()
         for rec in ev.records:
             if rec.kind == "user":
