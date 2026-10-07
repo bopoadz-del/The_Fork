@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from app.core.offload import off_loop as _off_loop
 from app.core.turn_timing import timed as _turn_timing_stage
+from app.core import turn_progress as _turn_progress
 import asyncio
 import bisect
 import inspect
@@ -12067,6 +12068,8 @@ class Agent:
         # rerank) and froze the single worker's event loop for its whole
         # duration -- live, one turn stalled /livez for 4.2 s. to_thread
         # copies contextvars, so the caller-role gate still applies.
+        if project_id:
+            yield _turn_progress.event("searching")
         _rag_sys_msg, _rag_audit = await _rag_inject_off_process(
             user_message=user_message,
             project_id=project_id,
@@ -12504,6 +12507,7 @@ class Agent:
         from app.core import turn_timing as _turn_timing
         _turn_timing.mark("predispatch")
         _turn_t0 = _turn_timing.arrived_at() or time.monotonic()
+        yield _turn_progress.event("writing")
 
         # `_deadline` is the caller's wall-clock cap for the WHOLE turn (a
         # time.monotonic() instant), or None when nothing is capping us.
