@@ -13949,46 +13949,18 @@ class Agent:
         else:
             block_input = args.get("input")
             block_params = args.get("params") or {}
-        if name == "construction" and isinstance(args, dict):
-            # Forced / NL calls put action + figures at the TOP level
-            # (``{action: payment_certificate}`` or ``{}``), not under
-            # input/params. Fold them so route() does not fall through
-            # to ``status``.
-            if not isinstance(block_params, dict):
-                block_params = {}
-            else:
-                block_params = dict(block_params)
-            for key, val in args.items():
-                if key in ("input", "params"):
-                    continue
-                if block_params.get(key) in (None, ""):
-                    block_params[key] = val
-            action = str(block_params.get("action") or "")
-            if action == "payment_certificate" or (
-                not action and _ask_is_ipc_certificate(user_message or "")
-            ):
-                return await _dispatch_payment_certificate(
-                    block_params, user_message=user_message,
-                )
-            if not block_input:
-                block_input = dict(block_params)
-        if name == "validation_pipeline":
-            # Leftover-hat L4: the model called validation_pipeline with
-            # value=null on a prose claim (40 m span / 50 mm beam). The
-            # pipeline short-circuited at syntactic and skipped Physical.
-            # Fold top-level LLM keys and the user message in as `claim`.
-            merged: dict[str, Any] = {}
-            if isinstance(block_input, dict):
-                merged.update(block_input)
-            if isinstance(block_params, dict):
-                for k, v in block_params.items():
-                    merged.setdefault(k, v)
-            for k, v in args.items():
-                if k not in ("input", "params"):
-                    merged.setdefault(k, v)
-            if merged.get("value") is None and not merged.get("claim") and user_message:
-                merged["claim"] = user_message
-            block_input = merged
+        # A block that needs its arguments shaped has an adapter in its
+        # owner's package (tool_registry.block_args); it may answer itself.
+        _adapter = _tool_registry.get_block_args(name)
+        if _adapter is not None:
+            _adapted = await _adapter.adapt(_tool_registry.ToolCall(
+                agent=self, name=name, args=args, tool_call=tool_call, api_key=api_key,
+                project_id=project_id, conversation_id=conversation_id, depth=_depth,
+                call_stack=_call_stack, user_message=user_message, history=history,
+            ), block_input, block_params)
+            if isinstance(_adapted, dict):
+                return _adapted
+            block_input, block_params = _adapted
         # File-consuming blocks: the LLM typically supplies just the filename
         # (e.g. 'Infra-1 - Demolition BOQ.pdf') because that is what the
         # user said. The block then calls os.path.exists on a bare filename
@@ -13998,39 +13970,6 @@ class Agent:
         if name in _FILE_CONSUMING_BLOCKS and project_id:
             block_input = (await _off_loop(_resolve_block_file_input, project_id, block_input))
             block_params = (await _off_loop(_resolve_block_file_input, project_id, block_params))
-        elif name == "construction" and project_id:
-            # F43: the construction container's file actions (bim_extract,
-            # boq_process, drawing takeoffs) received the BARE filename and
-            # died on 'File not found: qa_building.ifc' while file-schema
-            # blocks got the stored path. Dict payloads only -- a bare-string
-            # input here is a natural-language request, and the resolver's
-            # substring matching must never rewrite prose into a file path.
-            if isinstance(block_input, dict):
-                block_input = (await _off_loop(_resolve_block_file_input, project_id, block_input))
-            if isinstance(block_params, dict):
-                block_params = (await _off_loop(_resolve_block_file_input, project_id, block_params))
-        if name == "construction" and user_message:
-            # Live M14: the model rewrote wir_form scope to "blinding pour"
-            # so refuse missed the operator RFP / job-req / claim.
-            action = ""
-            if isinstance(block_params, dict):
-                action = str(block_params.get("action") or "")
-            if action in {
-                "wir_form", "inspection_request", "job_requisition",
-                "rfp_draft", "rfp_management", "claims_builder",
-                "payment_certificate",
-            }:
-                if isinstance(block_params, dict):
-                    block_params = dict(block_params)
-                    block_params.setdefault("user_message", user_message)
-                else:
-                    block_params = {"user_message": user_message, "action": action}
-                if isinstance(block_input, dict):
-                    block_input = dict(block_input)
-                    block_input.setdefault("user_message", user_message)
-                    block_input.setdefault("text", user_message)
-                elif not block_input:
-                    block_input = {"user_message": user_message, "text": user_message}
         try:
             result = await instance.execute(block_input, block_params)
             envelope = {"name": name, "ok": True, "result": result}
