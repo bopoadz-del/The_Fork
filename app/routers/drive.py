@@ -646,7 +646,7 @@ async def _walk_drive_folder_into_project(
                         "source": "drive_oauth_folder",
                     },
                 )
-                audit.record("document.added", project_id=project_id,
+                await audit.arecord("document.added", project_id=project_id,
                              document_id=doc["id"], name=stored_basename,
                              size=len(raw_bytes), user_id=user_id,
                              source="drive_walker")
@@ -760,7 +760,7 @@ async def drive_import(project_id: str, req: DriveImportRequest,
             "source": "drive_oauth_single",
         },
     )
-    audit.record("document.added", project_id=project_id,
+    await audit.arecord("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size)
     background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])
     return {

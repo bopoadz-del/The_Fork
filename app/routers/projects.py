@@ -170,7 +170,7 @@ async def create_project(req: CreateProjectRequest, auth: dict = Depends(require
         name, (req.client or "").strip() or None, user_id=auth["user_id"],
         location=(req.location or "").strip() or None,
     )
-    audit.record("project.created", project_id=proj["id"], name=name, user_id=auth["user_id"])
+    await audit.arecord("project.created", project_id=proj["id"], name=name, user_id=auth["user_id"])
     return proj
 
 
@@ -187,7 +187,7 @@ async def update_project(project_id: str, req: UpdateProjectRequest,
         project_id, (req.location or "").strip() or None)
     if updated is None:
         raise HTTPException(404, "Project not found")
-    audit.record("project.updated", project_id=project_id, user_id=auth["user_id"])
+    await audit.arecord("project.updated", project_id=project_id, user_id=auth["user_id"])
     return updated
 
 
@@ -244,7 +244,7 @@ async def create_project_from_drive(
         project_id=slug,
         origin="user_drive_import",
     )
-    audit.record(
+    await audit.arecord(
         "project.created_from_drive",
         project_id=proj["id"], name=name, user_id=auth["user_id"],
         folder_id=folder_id,
@@ -669,7 +669,7 @@ async def delete_project(project_id: str, auth: dict = Depends(require_user)):
     # the RAG; build on it only", so documents, files on disk, and chunks all
     # stay and the project is restorable (set status back to 'active').
     store.archive_project(resolved_id)
-    audit.record("project.archived", project_id=resolved_id,
+    await audit.arecord("project.archived", project_id=resolved_id,
                  user_id=auth["user_id"])
     return {
         "status": "archived",
@@ -724,7 +724,7 @@ async def clear_project_conversation(
         raise HTTPException(404, "Conversation not found")
 
     cleared = agent_memory.clear_conversation(conversation_id)
-    audit.record(
+    await audit.arecord(
         "conversation.cleared",
         project_id=project_id,
         conversation_id=conversation_id,
@@ -863,7 +863,7 @@ async def add_document(
         project_id, original_name, stored_as, filepath, size, role=role,
         metadata={"provenance": "user_upload", "uploader_id": auth["user_id"]},
     )
-    audit.record("document.added", project_id=project_id,
+    await audit.arecord("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])
     # Only the admin path adds to the project's knowledge base (owner ruling,
     # app/core/privileges.py). A user's upload is stored, not indexed.
@@ -1076,7 +1076,7 @@ async def update_document(
         raise HTTPException(
             404, f"Document '{document_id}' not found in project '{project_id}'"
         )
-    audit.record(
+    await audit.arecord(
         "document.drive_file_id_set",
         project_id=resolved_id,
         document_id=document_id,
@@ -1100,7 +1100,7 @@ async def delete_document(
     purged = store.purge_document(document_id)
     file_removed = purged["file_removed"]
     index_pruned = purged["index_pruned"]
-    audit.record("document.deleted", project_id=project_id,
+    await audit.arecord("document.deleted", project_id=project_id,
                  document_id=document_id, file_removed=file_removed,
                  index_pruned=index_pruned, user_id=auth["user_id"])
     return {
@@ -1154,7 +1154,7 @@ async def governance_purge(auth: dict = Depends(require_user)):
     # there's no forensic trail of which specific documents the bulk purge
     # removed (the "BOQ disappeared with no explanation" failure mode).
     for doc in purged:
-        audit.record(
+        await audit.arecord(
             "document.deleted",
             project_id=doc.get("project_id"),
             document_id=doc.get("id"),
@@ -1173,7 +1173,7 @@ async def governance_purge(auth: dict = Depends(require_user)):
                     "swallowed %s in governance_purge() — continuing",
                     "OSError", exc_info=True,
                 )
-    audit.record("governance.purge",
+    await audit.arecord("governance.purge",
                  documents_purged=len(purged), files_removed=files_removed, user_id=auth["user_id"])
     return {
         "status": "purged",
