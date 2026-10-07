@@ -11,14 +11,15 @@ the corpus-readiness check and file-name matching. The web process no longer
 loads the embedding model at all on the chat path, so the worker's copy is the
 only one (memory moves, it does not double).
 
-``RAG_RETRIEVAL_PROCESS``: ``auto`` (default) = on when ENV is production;
-``1``/``0`` force it. Worker count: ``RAG_RETRIEVAL_WORKERS`` when set, else
+``RAG_RETRIEVAL_PROCESS``: off unless set to ``1`` (see ``enabled``). Worker count: ``RAG_RETRIEVAL_WORKERS`` when set, else
 the task's available vCPUs (its CPU quota, not the host's cores) times
 ``RAG_RETRIEVAL_WORKERS_PER_VCPU`` (default 2: a retrieval spends much of its
 time waiting on the database, when another can use the CPU). Callers beyond
 them wait in the pool's queue, which the chat endpoint's turn gate bounds
 (``app.core.turn_gate``). Workers run at a lower CPU priority
-(``RAG_RETRIEVAL_WORKER_NICE``, default 5) so the web process answers first.
+(``RAG_RETRIEVAL_WORKER_NICE``, default 0: same priority as the web
+process -- live, a lowered priority starved retrieval, which every turn
+waits on, on a saturated vCPU).
 
 The models are loaded once, in the model server (app.core.rag.model_server),
 and shared by every worker, so memory does not grow with the worker count.
@@ -45,12 +46,12 @@ _POOL_LOCK = threading.Lock()
 
 
 def enabled() -> bool:
-    raw = (os.getenv("RAG_RETRIEVAL_PROCESS") or "auto").strip().lower()
-    if raw in ("1", "true", "yes", "on"):
-        return True
-    if raw in ("0", "false", "no", "off"):
-        return False
-    return (os.getenv("ENV") or "").strip().lower() in ("production", "prod")
+    """Opt-in (``RAG_RETRIEVAL_PROCESS=1``). Measured live 2026-10-08 at 15
+    users, retrieval in worker processes left first token at 24.8 s median
+    against 18.9 s with retrieval in threads, so threads are the default
+    again (F-SPEED step 1)."""
+    raw = (os.getenv("RAG_RETRIEVAL_PROCESS") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
 
 
 def available_vcpus() -> float:
@@ -119,9 +120,9 @@ def _workers() -> int:
 def _worker_start(model_server: Optional[tuple]) -> None:
     """Runs once in each new worker."""
     try:
-        nice = int(os.getenv("RAG_RETRIEVAL_WORKER_NICE") or "5")
+        nice = int(os.getenv("RAG_RETRIEVAL_WORKER_NICE") or "0")
     except ValueError:
-        nice = 5
+        nice = 0
     if nice and hasattr(os, "nice"):
         try:
             os.nice(nice)
