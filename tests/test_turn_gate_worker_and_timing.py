@@ -77,9 +77,10 @@ def test_the_slot_is_released_when_the_stream_ends_or_fails(monkeypatch):
 
 # ── retrieval worker process ─────────────────────────────────────────────────
 
+# Opt-in since F-SPEED step 1 (2026-10-08): threads measured faster live.
 @pytest.mark.parametrize("value,env,expected", [
-    ("1", "testing", True), ("0", "production", False), ("auto", "production", True),
-    ("auto", "testing", False), ("", "prod", True),
+    ("1", "testing", True), ("on", "production", True), ("0", "production", False),
+    ("auto", "production", False), ("", "production", False), ("", "testing", False),
 ])
 def test_the_worker_switch(monkeypatch, value, env, expected):
     monkeypatch.setenv("RAG_RETRIEVAL_PROCESS", value)
