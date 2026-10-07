@@ -427,12 +427,12 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     # non-streaming endpoints.
     from app.routers.hat_frames import with_hat_signals
 
-    from app.core import turn_gate
+    from app.core import turn_gate, turn_progress
     with turn_timing.stage("queue"):
         _release_turn = await turn_gate.acquire()
     return StreamingResponse(
-        turn_gate.hold_until_done(
-        with_hat_signals(event_stream(), message), _release_turn),
+        turn_gate.hold_until_done(turn_progress.opened(
+        with_hat_signals(event_stream(), message)), _release_turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
