@@ -76,13 +76,13 @@ async def test_drawing_number_extracted_not_fallback(primary_result, sheets):
     assert dn == sheets["primary_spec"]["drawing_number"], dn
 
 
-async def test_discipline_is_tm(primary_result):
+async def test_discipline_without_label_or_profile_is_unknown(primary_result):
+    """The sheet has no DISCIPLINE label and no project is open, so no code
+    table may guess one from the drawing number's segments."""
     drawing = primary_result["drawing"]
-    assert drawing.get("discipline") == "TM", \
-        f"discipline expected 'TM', got {drawing.get('discipline')!r}"
-    assert drawing.get("discipline_full") == "Traffic Management", \
-        f"discipline_full expected 'Traffic Management', " \
-        f"got {drawing.get('discipline_full')!r}"
+    assert drawing.get("discipline") is None, drawing.get("discipline")
+    assert drawing.get("discipline_full") is None, drawing.get("discipline_full")
+    assert drawing.get("discipline_source") == "unknown"
 
 
 async def test_notes_present_and_meaningful(primary_result):

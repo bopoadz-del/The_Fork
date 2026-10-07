@@ -10042,7 +10042,8 @@ _FILE_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "drawing_qto": {
         "description": (
             "Extract quantity takeoff from a drawing file "
-            "(DXF/DWG/PDF). Returns measured areas, lengths, counts. "
+            "(DXF/PDF; a DWG is refused -- ask for a DXF or PDF export). "
+            "Returns measured areas, lengths, counts. "
             "The file_path must be the exact original_name returned by "
             "search_project_documents — never guess paths."
         ),

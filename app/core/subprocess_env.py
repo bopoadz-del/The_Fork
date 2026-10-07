@@ -1,6 +1,6 @@
 """Scrubbed environment for subprocesses (security fix — audit §6.1).
 
-Subprocesses spawned by the app — file converters (ODAFileConverter, antiword),
+Subprocesses spawned by the app — file converters (antiword, catdoc),
 the code/bash sandbox block, hardware probes — previously inherited the FULL
 parent environment, including ``SECRET_KEY``, ``DATABASE_URL`` (with the DB
 password), the LLM/provider API keys, ``DATA_ENCRYPTION_KEY``, cloud tokens,
@@ -9,10 +9,10 @@ exfiltrate it to output.
 
 This builds a copy of ``os.environ`` with every secret-bearing variable removed
 while keeping functional system env (PATH, HOME, LANG, LC_*, TMPDIR,
-QT_QPA_PLATFORM, LD_LIBRARY_PATH, TESSDATA_PREFIX, PYTHON*, NODE_*, …) intact.
+LD_LIBRARY_PATH, TESSDATA_PREFIX, PYTHON*, NODE_*, …) intact.
 
 **Denylist, not allowlist — deliberate.** A denylist can only ever REMOVE a
-variable that a working subprocess never needed (secrets are not read by a DWG
+variable that a working subprocess never needed (secrets are not read by a file
 converter or a code sandbox), so it cannot break a subprocess that was already
 working. Over-stripping a non-secret *config* var is harmless because these
 subprocesses do not read the app's configuration from the environment. On a

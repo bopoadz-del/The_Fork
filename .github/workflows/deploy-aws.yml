@@ -23,12 +23,6 @@ env:
   AWS_REGION: us-west-2
   ECR_REPOSITORY: the-fork
   ECS_CLUSTER: cerebrum
-  # The image the Dockerfile's oda-donor stage copies the ODA File Converter
-  # out of (the vendor's .deb downloads are gated; see the Dockerfile). The
-  # original donor (main 0d6163d, 2026-09-29) was deleted in the 2026-10 image
-  # purge; c66dcc8's image carries the same 157 converter files and passed the
-  # ODA_REQUIRED=1 check. The ECR lifecycle policy never expires `oda-donor*`.
-  ODA_DONOR_TAG: oda-donor-c66dcc8
 
 jobs:
   deploy:
@@ -69,8 +63,6 @@ jobs:
           # (RENDER_GIT_COMMIT, GIT_SHA, SOURCE_VERSION). Bake the commit.
           docker build \
             --build-arg GIT_SHA=${{ github.sha }} \
-            --build-arg ODA_DONOR_IMAGE="$IMAGE:$ODA_DONOR_TAG" \
-            --build-arg ODA_REQUIRED=1 \
             -t "$IMAGE:${{ github.sha }}" \
             -t "$IMAGE:latest" \
             .

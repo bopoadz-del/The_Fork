@@ -1,4 +1,4 @@
-"""Phase-4 re-gate follow-ups (F38b, F42, F43) plus the ODA Qt env fix.
+"""Phase-4 re-gate follow-ups (F38b, F42, F43).
 
 Found by running the post-deploy live re-gates for PR #363:
 
@@ -176,81 +176,6 @@ def test_ok_false_is_errored_and_deep_nesting_gives_up_false():
     # beyond the 4-level walk: treated as green (bounded, never recursive)
     assert runtime._tool_result_errored(deep) is False
     assert runtime._tool_result_errored("not a dict") is False
-
-
-# ---------------------------------------------------------------- DWG Qt env
-
-
-@pytest.mark.asyncio
-async def test_oda_launcher_wraps_in_xvfb_when_available(tmp_path, monkeypatch):
-    """The ODA QT6 bundle ships ONLY the xcb platform plugin (verified on the
-    deployed image: plugins/platforms/ = libqxcb.so alone), so offscreen can
-    never work. With xvfb-run on PATH the converter must run under a virtual
-    display with xcb; without it, fall back to requesting offscreen."""
-    import shutil as _shutil
-    import subprocess as _subprocess
-    from app.blocks.drawing_qto import DrawingQTOBlock
-
-    tool = tmp_path / "ODAFileConverter"
-    tool.write_text("#!/bin/sh\n")
-    xvfb = tmp_path / "xvfb-run"
-    xvfb.write_text("#!/bin/sh\n")
-    dwg = tmp_path / "plan.dwg"
-    dwg.write_bytes(b"AC1032 fake dwg")
-
-    captured = {}
-
-    def fake_run(cmd, timeout, check, capture_output, env):
-        captured["cmd"], captured["env"] = cmd, env
-        out_dir = cmd[cmd.index("ACAD2018") - 1]
-        with open(f"{out_dir}/plan.dxf", "w") as f:
-            f.write("0\nEOF\n")
-        class P:
-            returncode = 0
-            stderr = b""
-        return P()
-
-    def which(c):
-        return {"ODAFileConverter": str(tool), "xvfb-run": str(xvfb)}.get(c)
-
-    monkeypatch.setattr(_shutil, "which", which)
-    monkeypatch.setattr(_subprocess, "run", fake_run)
-    out = DrawingQTOBlock()._try_convert_dwg(str(dwg))
-    assert isinstance(out, str) and out.endswith(".dxf")
-    assert captured["cmd"][0] == str(xvfb)
-    assert captured["cmd"][1] == "-a"
-    assert captured["cmd"][2] == str(tool)
-    assert captured["env"]["QT_QPA_PLATFORM"] == "xcb"
-
-
-@pytest.mark.asyncio
-async def test_oda_launcher_falls_back_to_offscreen_without_xvfb(tmp_path, monkeypatch):
-    import shutil as _shutil
-    import subprocess as _subprocess
-    from app.blocks.drawing_qto import DrawingQTOBlock
-
-    tool = tmp_path / "ODAFileConverter"
-    tool.write_text("#!/bin/sh\n")
-    dwg = tmp_path / "plan.dwg"
-    dwg.write_bytes(b"AC1032 fake dwg")
-    captured = {}
-
-    def fake_run(cmd, timeout, check, capture_output, env):
-        captured["cmd"], captured["env"] = cmd, env
-        with open(f"{cmd[2]}/plan.dxf", "w") as f:
-            f.write("0\nEOF\n")
-        class P:
-            returncode = 0
-            stderr = b""
-        return P()
-
-    monkeypatch.setattr(_shutil, "which",
-                        lambda c: str(tool) if c == "ODAFileConverter" else None)
-    monkeypatch.setattr(_subprocess, "run", fake_run)
-    out = DrawingQTOBlock()._try_convert_dwg(str(dwg))
-    assert isinstance(out, str) and out.endswith(".dxf")
-    assert captured["cmd"][0] == str(tool)
-    assert captured["env"]["QT_QPA_PLATFORM"] == "offscreen"
 
 
 # ---------------------------------------------------------------- file-tool hint

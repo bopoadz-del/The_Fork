@@ -35,7 +35,7 @@ When the user says "the construction block", they almost always mean `app/contai
 Each is a separate file in `app/blocks/` that the container often calls:
 - `boq_processor` — Excel/CSV BOQ parsing → priced line items
 - `bim`, `bim_extractor` — IFC building elements, clash detection
-- `drawing_qto` — DXF/DWG measurements
+- `drawing_qto` — DXF/PDF measurements
 - `primavera_parser` — P6 `.xer` schedules
 - `spec_analyzer` — grade/material/compliance extraction
 - `formula_executor` — chat-to-Python with sandboxed eval

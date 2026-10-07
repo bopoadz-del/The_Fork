@@ -23,7 +23,7 @@ class _StubAgent:
                 "name": "boq_processor",
                 "description": "Extract a Bill of Quantities from a file. Returns line items.",
             }},
-            {"name": "drawing_qto", "description": "Quantity takeoff from a drawing (DXF/DWG/PDF)."},
+            {"name": "drawing_qto", "description": "Quantity takeoff from a drawing (DXF/PDF)."},
         ]
 
 

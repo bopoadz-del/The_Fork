@@ -10,8 +10,8 @@
 - Navisworks / DWG: BIM models in the corpus are .nwd (no native IFC
   exists; "IFC" folders hold Issued-For-Construction drawings, not BIM).
   The honest paths those files hit are pinned here deterministically:
-  .nwd -> convert-to-IFC guidance; .dwg without the ODA converter ->
-  structured install guidance.
+  .nwd -> convert-to-IFC guidance; .dwg -> "DWG is not supported" (DWG
+  take-off is removed; export DXF or PDF).
 """
 
 from __future__ import annotations
@@ -73,16 +73,14 @@ class TestNavisworksHonestRejection:
         assert "IFC" in result["error"]
 
 
-class TestDwgWithoutConverterGuidance:
+class TestDwgNotSupported:
     @pytest.mark.asyncio
-    async def test_dwg_without_oda_gives_install_guidance(self, tmp_path, monkeypatch):
-        import shutil as _shutil
+    async def test_dwg_is_refused_with_the_export_message(self, tmp_path):
         from app.blocks.drawing_qto import DrawingQTOBlock
+        from app.core.cad_formats import DWG_NOT_SUPPORTED
 
-        monkeypatch.setattr(_shutil, "which", lambda *_a, **_k: None)
         fake = tmp_path / "site_plan.dwg"
         fake.write_bytes(b"AC1032 not really a dwg")
         result = await DrawingQTOBlock().process({"file_path": str(fake)}, {})
         assert result["status"] == "error"
-        assert "ODA File Converter" in result["error"]
-        assert ".dxf" in result["error"]
+        assert result["error"] == DWG_NOT_SUPPORTED
