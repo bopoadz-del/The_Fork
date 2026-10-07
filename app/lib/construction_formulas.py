@@ -11,1293 +11,85 @@ callers should pass real rates from RAG (company priced BOQ -> GK) so the cost
 answer stays grounded (see the-fork-rates-in-rag). The maths never changes; only
 the inputs do.
 """
-
 from __future__ import annotations
 
 from app.lib.formula_registry import formula
 
 import math
+
 from dataclasses import dataclass, field
+
 from typing import Any, Dict, List, Optional, Tuple
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  SECTION 1 — DEEP FOUNDATIONS
-# ═══════════════════════════════════════════════════════════════════════════
-
-@dataclass
-class DewateringResult:
-    uplift_force_t_m2: float
-    counter_weight_t_m2: float
-    fos: float
-    can_stop: bool
-    needs_tension_piles: bool
-    min_floors_for_stop: int
-    notes: List[str] = field(default_factory=list)
-
-
-@formula(
-    owner='design',
-    description="Whether dewatering can stop: factor of safety of the structure's weight against groundwater uplift.",
-    inputs={'water_depth': '-', 'raft_thickness': '-', 'floor_count': '-', 'floor_thickness': '-', 'concrete_unit_weight': '-', 'water_unit_weight': '-', 'required_fos': '-'},
-    outputs={'uplift_force_t_m2': 't/m2', 'counter_weight_t_m2': 't/m2', 'fos': '-', 'can_stop': '-', 'needs_tension_piles': '-', 'min_floors_for_stop': '-'},
-)
-def dewatering_uplift_check(
-    water_depth: float,
-    raft_thickness: float,
-    floor_count: int,
-    floor_thickness: float = 0.3,
-    concrete_unit_weight: float = 2.5,
-    water_unit_weight: float = 1.0,
-    required_fos: float = 1.25,
-) -> DewateringResult:
-    """Check if dewatering can stop — FOS = counter-weight / uplift >= 1.25."""
-    if water_depth < 0:
-        raise ValueError("water_depth must be >= 0")
-    if raft_thickness < 0 or floor_count < 0 or floor_thickness < 0:
-        raise ValueError("raft_thickness, floor_count and floor_thickness must be >= 0")
-    if concrete_unit_weight <= 0 or water_unit_weight <= 0 or required_fos <= 0:
-        raise ValueError("unit weights and required_fos must be > 0")
-    uplift = water_depth * water_unit_weight
-    raft_weight = raft_thickness * concrete_unit_weight
-    floor_weight = floor_count * floor_thickness * concrete_unit_weight
-    counter_weight = raft_weight + floor_weight
-    fos = counter_weight / uplift if uplift > 0 else float("inf")
-
-    notes = [
-        f"Uplift = {water_depth} x {water_unit_weight} = {uplift:.3f} T/m2",
-        f"Counter = {raft_weight:.3f} + {floor_weight:.3f} = {counter_weight:.3f} T/m2",
-        f"FOS = {fos:.3f} (required: {required_fos})",
-    ]
-    can_stop = fos >= required_fos
-    if can_stop:
-        notes.append(f"OK - dewatering CAN stop at {floor_count} floors")
-    else:
-        notes.append(f"NG - dewatering CANNOT stop, FOS {fos:.3f} < {required_fos}")
-        notes.append("Tension piles required to anchor against uplift")
-
-    min_counter = uplift * required_fos
-    add_floor = floor_thickness * concrete_unit_weight
-    min_floors = max(0, math.ceil((min_counter - raft_weight) / add_floor))
-    notes.append(f"Minimum floors to stop dewatering: {min_floors}")
-
-    return DewateringResult(
-        uplift_force_t_m2=round(uplift, 3),
-        counter_weight_t_m2=round(counter_weight, 3),
-        fos=round(fos, 3),
-        can_stop=can_stop,
-        needs_tension_piles=not can_stop,
-        min_floors_for_stop=min_floors,
-        notes=notes,
-    )
-
-
-@formula(
-    owner='base',
-    description='Concrete volume of diaphragm wall panels, with an allowance for tremie overbreak.',
-    inputs={'panel_length': '-', 'wall_thickness': '-', 'excavation_depth': '-', 'panel_count': '-'},
-    outputs={'panel_count': '-', 'volume_per_panel_m3': 'm3', 'total_volume_m3': 'm3', 'volume_with_waste_m3': 'm3', 'waste_factor': '-'},
-)
-def diaphragm_wall_panel_volume(
-    panel_length: float, wall_thickness: float,
-    excavation_depth: float, panel_count: int = 1,
-) -> Dict[str, float]:
-    """Concrete volume for diaphragm wall panels with 10% tremie waste."""
-    if panel_length <= 0 or wall_thickness <= 0 or excavation_depth <= 0:
-        raise ValueError("panel_length, wall_thickness and excavation_depth must be > 0")
-    if panel_count <= 0:
-        raise ValueError("panel_count must be > 0")
-    vol = panel_length * wall_thickness * excavation_depth
-    total = vol * panel_count
-    return {
-        "panel_count": panel_count,
-        "volume_per_panel_m3": round(vol, 2),
-        "total_volume_m3": round(total, 2),
-        "volume_with_waste_m3": round(total * 1.10, 2),
-        "waste_factor": 1.10,
-    }
-
-
-@formula(
-    owner='design',
-    description='Well-point spacing and number of stages for a dewatering depth and soil type.',
-    inputs={'soil_permeability_m_s': 'm/s', 'required_drawdown_m': 'm', 'well_point_diameter_m': 'm'},
-    outputs={'soil_type': '-', 'permeability_m_s': 'm/s', 'required_drawdown_m': 'm', 'stages_needed': '-', 'max_depth_capacity_m': 'm', 'well_point_spacing_m': 'm', 'well_point_diameter_m': 'm'},
-)
-def dewatering_well_point_spacing(
-    soil_permeability_m_s: float,
-    required_drawdown_m: float,
-    well_point_diameter_m: float = 0.05,
-) -> Dict[str, Any]:
-    """Well point spacing by soil type. Multi-stage: 5m/stage, max 3 stages (15m)."""
-    if soil_permeability_m_s <= 0:
-        raise ValueError("soil_permeability_m_s must be > 0")
-    if required_drawdown_m < 0:
-        raise ValueError("required_drawdown_m must be >= 0")
-    if soil_permeability_m_s > 1e-3:
-        spacing_m, soil_type = 1.5, "coarse sand/gravel"
-    elif soil_permeability_m_s > 1e-4:
-        spacing_m, soil_type = 1.2, "medium sand"
-    elif soil_permeability_m_s > 1e-5:
-        spacing_m, soil_type = 0.9, "fine sand"
-    else:
-        spacing_m, soil_type = 0.6, "silty sand - consider vacuum well points"
-
-    stages = math.ceil(required_drawdown_m / 5.0)
-    notes = [f"Soil: {soil_type}", f"Spacing: {spacing_m}m", f"Stages: {stages}"]
-    if stages > 3:
-        notes.append("Exceeds 3-stage limit (15m) - use deep well system")
-
-    return {
-        "soil_type": soil_type,
-        "permeability_m_s": soil_permeability_m_s,
-        "required_drawdown_m": required_drawdown_m,
-        "stages_needed": stages,
-        "max_depth_capacity_m": stages * 5.0,
-        "well_point_spacing_m": spacing_m,
-        "well_point_diameter_m": well_point_diameter_m,
-        "notes": notes,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  SECTION 2 — CONCRETE TECHNOLOGY
-# ═══════════════════════════════════════════════════════════════════════════
-
-@dataclass
-class FormworkStrikingResult:
-    recommended_hours: float
-    bs8110_minimum_hours: float
-    ciria_minimum_strength_n_mm2: float
-    design_required_strength_n_mm2: float
-    actual_early_strength_n_mm2: float
-    based_on: str
-    notes: List[str] = field(default_factory=list)
-
-
-@formula(
-    owner='qaqc',
-    description='Earliest formwork striking time from element type, temperature and test strength.',
-    inputs={'concrete_strength_7h': '-', 'design_required_strength': '-', 'ciria_surface_strength': '-', 'bs8110_minimum_hours': 'h', 'proposed_hours': 'h'},
-    outputs={'recommended_hours': 'h', 'bs8110_minimum_hours': 'h', 'ciria_minimum_strength_n_mm2': 'N/mm2', 'design_required_strength_n_mm2': 'N/mm2', 'actual_early_strength_n_mm2': 'N/mm2'},
-)
-def formwork_striking_time(
-    concrete_strength_7h: float = 7.0,
-    design_required_strength: float = 0.332,
-    ciria_surface_strength: float = 3.0,
-    bs8110_minimum_hours: float = 12.0,
-    proposed_hours: float = 8.0,
-) -> FormworkStrikingResult:
-    """Safe formwork striking per BS 8110 + CIRIA + cube test data."""
-    notes = [
-        f"BS 8110: min {bs8110_minimum_hours}h for wall formwork",
-        f"CIRIA: need >= {ciria_surface_strength} N/mm2 for surface protection",
-        f"Design check: required = {design_required_strength} N/mm2",
-        f"Cube test: {concrete_strength_7h} N/mm2 at 7 hours",
-    ]
-    if concrete_strength_7h >= ciria_surface_strength:
-        notes.append(f"OK - {concrete_strength_7h} >= CIRIA min {ciria_surface_strength}")
-    else:
-        notes.append(f"NG - {concrete_strength_7h} < CIRIA min {ciria_surface_strength}")
-    strength_ok = (
-        concrete_strength_7h >= ciria_surface_strength
-        and concrete_strength_7h >= design_required_strength
-    )
-    based_on = "test_data" if strength_ok else "insufficient"
-    recommended_hours = (
-        proposed_hours if strength_ok else max(proposed_hours, bs8110_minimum_hours)
-    )
-    notes.append(f"Recommended: {recommended_hours}h after pour")
-    return FormworkStrikingResult(
-        recommended_hours=recommended_hours,
-        bs8110_minimum_hours=bs8110_minimum_hours,
-        ciria_minimum_strength_n_mm2=ciria_surface_strength,
-        design_required_strength_n_mm2=design_required_strength,
-        actual_early_strength_n_mm2=concrete_strength_7h,
-        based_on=based_on,
-        notes=notes,
-    )
-
-
-@formula(
-    owner='qaqc',
-    description='Fineness modulus of an aggregate from its cumulative sieve retentions.',
-    inputs={'sieve_retained_percentages': '%'},
-    outputs={'fineness_modulus': '-'},
-)
-def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
-    """FM = (cumulative % retained on all sieves) / 100."""
-    if not sieve_retained_percentages:
-        return 0.0
-    return round(sum(sieve_retained_percentages) / 100.0, 2)
-
-
-@formula(
-    owner='design',
-    description='Concrete mix design by the absolute-volume method from specific gravities and the water/cement ratio.',
-    inputs={'w_c_ratio': '-', 'cement_sg': '-', 'fine_agg_sg': '-', 'coarse_agg_sg': '-', 'fine_agg_ratio': '-', 'coarse_agg_ratio': '-', 'dune_sand_pct': '%'},
-    outputs={'w_c_ratio': '-', 'cement_kg_m3': 'kg/m3', 'water_litres_m3': 'L/m3', 'fine_aggregate_kg_m3': 'kg/m3', 'coarse_aggregate_kg_m3': 'kg/m3', 'total_weight_kg_m3': 'kg/m3', 'proportions': '-'},
-)
-def concrete_mix_design_sg(
-    w_c_ratio: float,
-    cement_sg: float = 3.15,
-    fine_agg_sg: float = 2.67,
-    coarse_agg_sg: float = 2.54,
-    fine_agg_ratio: float = 2.0,
-    coarse_agg_ratio: float = 4.0,
-    dune_sand_pct: float = 0.0,
-) -> Dict[str, float]:
-    """Mix design by Specific Gravity (absolute volume method).
-    W/(SGw) + C/(SGc) + F/(SGf) + Cr/(SGcr) = 1.0 m3."""
-    if w_c_ratio <= 0:
-        raise ValueError("w_c_ratio must be > 0")
-    if min(cement_sg, fine_agg_sg, coarse_agg_sg) <= 0:
-        raise ValueError("specific gravities must be > 0")
-    if fine_agg_ratio < 0 or coarse_agg_ratio < 0:
-        raise ValueError("aggregate ratios must be >= 0")
-    if float(dune_sand_pct) != 0.0:
-        raise ValueError(
-            "dune_sand_pct is not applied in the absolute-volume mix "
-            "(no dune-sand SG is defined). Omit it or pass 0."
-        )
-    cement_tonnes = 1.0 / (w_c_ratio / 1.0 + 1.0 / cement_sg + fine_agg_ratio / fine_agg_sg + coarse_agg_ratio / coarse_agg_sg)
-    cement_kg = round(cement_tonnes * 1000, 0)
-    water_litres = round(cement_kg * w_c_ratio, 0)
-    fine_kg = round(cement_kg * fine_agg_ratio, 0)
-    coarse_kg = round(cement_kg * coarse_agg_ratio, 0)
-    return {
-        "w_c_ratio": w_c_ratio,
-        "cement_kg_m3": cement_kg,
-        "water_litres_m3": water_litres,
-        "fine_aggregate_kg_m3": fine_kg,
-        "coarse_aggregate_kg_m3": coarse_kg,
-        "total_weight_kg_m3": cement_kg + water_litres + fine_kg + coarse_kg,
-        "proportions": f"1:{int(fine_agg_ratio)}:{coarse_agg_ratio}",
-    }
-
-
-@formula(
-    owner='design',
-    description='Mix proportions for slip-formed concrete, flagged as indicative defaults when not supplied.',
-    inputs={},
-    outputs={'cube_strength_n_mm2': 'N/mm2', 'slump_mm': 'mm', 'max_concrete_temp_c': 'degC', 'retarder_10c_lit_m3': 'L/m3', 'retarder_20c_lit_m3': 'L/m3'},
-)
-def concrete_mix_slip_form(**_kwargs: Any) -> Dict[str, Any]:
-    """Slip-forming mix: 1:2:2.6, W/C=0.42, slump=150 +/- 30 mm.
-
-    Extra kwargs are ignored. Documented constants stay locked — live
-    probes send slump/w_c next to the name; forwarding them would
-    TypeError a zero-arg signature (tool_error / cause).
-    """
-    mix = concrete_mix_design_sg(w_c_ratio=0.42, fine_agg_ratio=2.0, coarse_agg_ratio=2.6)
-    mix["slump_mm"] = "150 +/- 30"
-    mix["retarder_20c_lit_m3"] = 3.8
-    mix["retarder_10c_lit_m3"] = 2.9
-    mix["max_concrete_temp_c"] = 32
-    mix["cube_strength_n_mm2"] = "50-55 @ 28 days"
-    return mix
-
-
-@formula(
-    owner='design',
-    description='Modulus of elasticity of concrete from its compressive strength, to the selected code.',
-    inputs={'fck_n_mm2': 'N/mm2', 'code': '-'},
-    outputs={'value': 'currency', 'unit': '-', 'value_mpa': 'MPa'},
-)
-def modulus_of_elasticity_concrete(
-    fck_n_mm2: float, code: str = "metric_technical",
-) -> dict:
-    """Concrete modulus of elasticity, with its unit stated.
-
-    Two forms, because they are different numbers and a reader cannot tell
-    them apart from a bare float:
-
-    * ``metric_technical`` (default, unchanged): Ec = 15000 sqrt(f'c) with
-      f'c in kg/cm2 -- for C35 that is 280,624 kg/cm2.
-    * ``aci``: ACI 318-19 Eq. 19.2.2.1b SI form, Ec = 4700 sqrt(f'c) in MPa
-      -- for C35, 27,806 MPa.
-
-    Live concrete-modulus ask: this returned the bare float 280624.0. The answer stated the ACI
-    formula and its substitution correctly, then printed "28,062 MPa" -- the
-    kg/cm2 figure divided by 10 instead of converted (x0.0980665 = 27,520),
-    and neither number is the 27,806 the ACI form gives. The value now carries
-    its unit, and the MPa conversion is done here rather than guessed.
-    """
-    # Not _norm_code: that helper defaults every unknown string to ACI,
-    # which would silently change this function's default form.
-    fck = float(fck_n_mm2)
-    if _is_aci_code(code):
-        ec_mpa = round(4700 * math.sqrt(fck), 0)
-        return {
-            "value": ec_mpa,
-            "unit": "MPa",
-            "standard": "ACI 318-19 Eq. 19.2.2.1b (SI): 4700*sqrt(f'c)",
-        }
-    ec_kg_cm2 = round(15000 * math.sqrt(fck * 10), 0)
-    return {
-        "value": ec_kg_cm2,
-        "unit": "kg/cm2",
-        "value_mpa": round(ec_kg_cm2 * 0.0980665, 0),
-        "standard": "15000*sqrt(f'c) with f'c in kg/cm2 (metric-technical form)",
-    }
-
-
-# A beam's second moment of area is quoted in m4 in a question and consumed in
-# mm4 by every formula below -- 1e12 apart. Taking the stated number at face
-# value returns a deflection in kilometres and prints it as millimetres, so an
-# implausibly small value is refused rather than used. The smallest real
-# section is orders above 1 mm4 (a 10 mm square bar is 833).
-_I_MM4_FLOOR = 1.0
-
-
-def _second_moment_mm4(i_mm4: float) -> float:
-    """Check the second moment of area is in mm4, refusing a unit mix-up."""
-    if i_mm4 <= 0:
-        raise ValueError("i_mm4 must be > 0")
-    if i_mm4 < _I_MM4_FLOOR:
-        raise ValueError(
-            f"i_mm4={i_mm4:g} is too small to be mm4 -- a value this size is "
-            "in m4; multiply it by 1e12 (1 m4 = 1e12 mm4) and call again")
-    return float(i_mm4)
-
-
-@formula(
-    owner='design',
-    description='Midspan deflection of a simply supported beam under a uniformly distributed load.',
-    inputs={'w_kn_m': 'kN/m', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
-    outputs={'deflection': 'mm'},
-)
-def beam_deflection_ss_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
-    """Simply supported, UDL: delta = 5wL^4 / (384EI). Returns mm."""
-    if span_m < 0 or w_kn_m < 0:
-        raise ValueError("span_m and w_kn_m must be >= 0")
-    if ec_mpa <= 0:
-        raise ValueError("ec_mpa must be > 0")
-    i_mm4 = _second_moment_mm4(i_mm4)
-    w_n_mm = w_kn_m  # kN/m = N/mm
-    l_mm = span_m * 1e3
-    return round((5 * w_n_mm * l_mm**4) / (384 * ec_mpa * i_mm4), 2)
-
-
-@formula(
-    owner='design',
-    description='Tip deflection of a cantilever under a uniformly distributed load.',
-    inputs={'w_kn_m': 'kN/m', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
-    outputs={'deflection': 'mm'},
-)
-def beam_deflection_cantilever_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
-    """Cantilever, UDL: delta = wL^4 / (8EI). Returns mm."""
-    if span_m < 0 or w_kn_m < 0:
-        raise ValueError("span_m and w_kn_m must be >= 0")
-    if ec_mpa <= 0:
-        raise ValueError("ec_mpa must be > 0")
-    i_mm4 = _second_moment_mm4(i_mm4)
-    w_n_mm = w_kn_m
-    l_mm = span_m * 1e3
-    return round((w_n_mm * l_mm**4) / (8 * ec_mpa * i_mm4), 2)
-
-
-@formula(
-    owner='design',
-    description='Tip deflection of a cantilever under a point load at its free end.',
-    inputs={'p_kn': 'kN', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
-    outputs={'deflection': 'mm'},
-)
-def beam_deflection_cantilever_point_load(p_kn: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
-    """Cantilever, point load at the tip: delta = PL^3 / (3EI). Returns mm.
-
-    Distinct from ``beam_deflection_cantilever_udl``: substituting a point
-    load into wL^4/8EI overstates a 4 m / 30 kN tip deflection by half.
-    """
-    if span_m < 0 or p_kn < 0:
-        raise ValueError("span_m and p_kn must be >= 0")
-    if ec_mpa <= 0:
-        raise ValueError("ec_mpa must be > 0")
-    i_mm4 = _second_moment_mm4(i_mm4)
-    p_n = p_kn * 1e3
-    l_mm = span_m * 1e3
-    return round((p_n * l_mm**3) / (3 * ec_mpa * i_mm4), 2)
-
-
-@formula(
-    owner='design',
-    description='Midspan deflection of a simply supported beam under a central point load.',
-    inputs={'p_kn': 'kN', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
-    outputs={'deflection': 'mm'},
-)
-def beam_deflection_ss_point_load_midspan(p_kn: float, span_m: float, ec_mpa: float, i_mm4: float) -> float:
-    """Simply supported, point load at midspan: delta = PL^3 / (48EI). Returns mm."""
-    if span_m < 0 or p_kn < 0:
-        raise ValueError("span_m and p_kn must be >= 0")
-    if ec_mpa <= 0:
-        raise ValueError("ec_mpa must be > 0")
-    i_mm4 = _second_moment_mm4(i_mm4)
-    p_n = p_kn * 1e3
-    l_mm = span_m * 1e3
-    return round((p_n * l_mm**3) / (48 * ec_mpa * i_mm4), 2)
-
-
-@formula(
-    owner='qaqc',
-    description='Flexural tensile strength (modulus of rupture) of concrete, to the selected code.',
-    inputs={'fck_n_mm2': 'N/mm2', 'code': '-'},
-    outputs={'fck_n_mm2': 'N/mm2', 'value': 'currency', 'unit': '-', 'modulus_of_rupture_n_mm2': 'N/mm2', 'split_cylinder_aci_n_mm2': 'N/mm2', 'tensile_pct_of_compressive': '-'},
-)
-def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict[str, float]:
-    """Tensile strength. Two forms, and the caller's code decides which.
-
-    * ``metric_technical`` (default, unchanged): fr = 2.4 sqrt(f'c) with f'c
-      in kg/cm2, plus the split-cylinder figure -- for C30 that is 4.157 MPa.
-    * ``aci``: ACI 318-19 Eq. 19.2.3.1, fr = 0.62 sqrt(f'c) in MPa (normal
-      weight, lambda = 1.0) -- for C30, 3.40 MPa.
-
-    Live, asked as a follow-up naming ACI 318-19 for f'c = 30: this
-    returned 4.157 and the operator was shown 4.16 MPa. The sibling
-    ``modulus_of_elasticity_concrete`` had already been given this parameter;
-    this one was left behind, so an ACI question got the metric-technical
-    answer with no sign that the code had been ignored.
-    """
-    # Not _norm_code: it defaults every unknown string to ACI, which would
-    # silently change this function's default form.
-    fck = float(fck_n_mm2)
-    if _is_aci_code(code):
-        fr_mpa = round(0.62 * math.sqrt(fck), 3)
-        return {
-            "fck_n_mm2": fck_n_mm2,
-            "value": fr_mpa,
-            "unit": "MPa",
-            "modulus_of_rupture_n_mm2": fr_mpa,
-            "standard": "ACI 318-19 Eq. 19.2.3.1: 0.62*sqrt(f'c) MPa, normal weight",
-        }
-    fck_kg = fck * 10
-    fr = 2.4 * math.sqrt(fck_kg) / 10
-    ft_aci = 1.78 * math.sqrt(fck_kg) / 10
-    return {
-        "fck_n_mm2": fck_n_mm2,
-        "value": round(fr, 3),
-        "unit": "MPa",
-        "modulus_of_rupture_n_mm2": round(fr, 3),
-        "split_cylinder_aci_n_mm2": round(ft_aci, 3),
-        "tensile_pct_of_compressive": round(ft_aci / fck_n_mm2 * 100, 1),
-        "standard": "2.4*sqrt(f'c) with f'c in kg/cm2 (metric-technical form)",
-    }
-
-
-@formula(
-    owner='design',
-    description='Converts a shrinkage strain to the equivalent temperature drop.',
-    inputs={'shrinkage_strain': '-', 'alpha_c': 'degC'},
-    outputs={'shrinkage_strain': '-', 'equivalent_temp_drop_c': 'degC'},
-)
-def thermal_shrinkage_equivalence(shrinkage_strain: float = 0.0002, alpha_c: float = 10e-6) -> Dict[str, float]:
-    """Convert shrinkage strain to equivalent temperature drop: delta_t = epsilon_sh / alpha_c."""
-    return {
-        "shrinkage_strain": shrinkage_strain,
-        "equivalent_temp_drop_c": round(shrinkage_strain / alpha_c, 1),
-    }
-
-
-@formula(
-    owner='qaqc',
-    description='Mass-concrete thermal check: core temperature and core-to-surface difference against limits.',
-    inputs={'core_temp_c': 'degC', 'surface_temp_c': 'degC'},
-    outputs={'core_temp_c': 'degC', 'surface_temp_c': 'degC', 'delta_t_c': 'degC', 'core_ok': '-', 'delta_ok': '-', 'thermal_cracking_risk': '-'},
-)
-def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -> Dict[str, Any]:
-    """Mass concrete limits: core <= 70C, delta_T <= 20C."""
-    delta_t = core_temp_c - surface_temp_c
-    core_ok = core_temp_c <= 70
-    delta_ok = delta_t <= 20
-    notes = []
-    if not core_ok: notes.append(f"Core temp {core_temp_c}C > limit 70C")
-    if not delta_ok: notes.append(f"Delta T = {delta_t}C > limit 20C")
-    if core_ok and delta_ok: notes.append(f"OK - core={core_temp_c}C, dT={delta_t}C")
-    return {
-        "core_temp_c": core_temp_c, "surface_temp_c": surface_temp_c,
-        "delta_t_c": round(delta_t, 1), "core_ok": core_ok, "delta_ok": delta_ok,
-        "thermal_cracking_risk": not (core_ok and delta_ok), "notes": notes,
-    }
-
-
-@formula(
-    owner='design',
-    description='Unit weight of plain or reinforced concrete, flagged as an indicative default when not supplied.',
-    inputs={'reinforced': '-'},
-    outputs={'unit_weight_kg_m3': 'kg/m3', 'type': '-', 'range_kg_m3': 'kg/m3'},
-)
-def unit_weight_concrete(reinforced: bool = True) -> Dict[str, float]:
-    """Unit weight: RC = 2500 kg/m3, plain = 2400 kg/m3 (range 2330-2470)."""
-    if reinforced:
-        return {"unit_weight_kg_m3": 2500, "type": "Reinforced Concrete"}
-    return {"unit_weight_kg_m3": 2400, "type": "Plain Concrete", "range_kg_m3": (2330, 2470)}
-
-
-@formula(
-    owner='design',
-    description='Nominal shear stress on a section from shear force, width and effective depth.',
-    inputs={'v_kn': 'kN', 'b_mm': 'mm', 'd_mm': 'mm'},
-    outputs={'shear_force_kn': 'kN', 'width_mm': 'mm', 'effective_depth_mm': 'mm', 'shear_stress_n_mm2': 'N/mm2'},
-)
-def shear_stress_check(v_kn: float, b_mm: float, d_mm: float) -> Dict[str, float]:
-    """Shear stress: v = V/(b x d) in N/mm2."""
-    return {
-        "shear_force_kn": v_kn, "width_mm": b_mm, "effective_depth_mm": d_mm,
-        "shear_stress_n_mm2": round((v_kn * 1000) / (b_mm * d_mm), 3),
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  SECTION 3 — STRUCTURAL SYSTEMS
-# ═══════════════════════════════════════════════════════════════════════════
-
-@formula(
-    owner='design',
-    description='Post-tensioning force needed to balance a share of the distributed load, from span and tendon drape.',
-    inputs={'span_m': 'm', 'slab_thickness_m': 'm', 'live_load_kn_m2': 'kN/m2', 'dead_load_kn_m2': 'kN/m2', 'tendon_stress_n_mm2': 'N/mm2', 'tendon_diameter_mm': 'mm', 'eccentricity_ratio': '-'},
-    outputs={'tendon_force_kn': 'kN', 'tendon_area_mm2': 'mm2', 'num_strands': '-', 'balanced_load_kn_m': 'kN/m', 'eccentricity_mm': 'mm', 'cable_profile': '-'},
-)
-def post_tensioning_force(
-    span_m: float, slab_thickness_m: float, live_load_kn_m2: float,
-    dead_load_kn_m2: Optional[float] = None,
-    tendon_stress_n_mm2: float = 1300.0,
-    tendon_diameter_mm: float = 12.7,
-    eccentricity_ratio: float = 0.15,
-) -> Dict[str, Any]:
-    """PT force: P = w x L^2 / (8 x e), balancing 75% of DL."""
-    if dead_load_kn_m2 is None:
-        dead_load_kn_m2 = slab_thickness_m * 25
-    e = eccentricity_ratio * slab_thickness_m
-    balanced = dead_load_kn_m2 * 0.75
-    force_kn = balanced * span_m**2 / (8 * e) if e > 0 else 0
-    area_mm2 = (force_kn * 1000) / tendon_stress_n_mm2
-    # 7-wire strand fill ≈ 0.78 (ASTM A416 / EN 10138: 12.7 mm → 98.7 mm²).
-    strand_area = 0.78 * math.pi * (tendon_diameter_mm / 2)**2
-    strands = math.ceil(area_mm2 / strand_area) if strand_area > 0 else 0
-    return {
-        "tendon_force_kn": round(force_kn, 1),
-        "tendon_area_mm2": round(area_mm2, 1),
-        "num_strands": strands,
-        "balanced_load_kn_m": round(balanced, 2),
-        "eccentricity_mm": round(e * 1000, 1),
-        "cable_profile": f"parabolic, e={e*1000:.0f}mm midspan",
-    }
-
-
-@formula(
-    owner='design',
-    description='Compares a composite column with an embedded steel section against a reinforced concrete column for a given axial load.',
-    inputs={'axial_load_kn': 'kN', 'column_diameter_mm': 'mm', 'concrete_grade_n_mm2': 'N/mm2', 'use_i_beam': '-', 'i_beam_weight_t': 't'},
-    outputs={'option_a': '-', 'option_b': '-', 'recommended': '-'},
-)
-def composite_column_design(
-    axial_load_kn: float, column_diameter_mm: float,
-    concrete_grade_n_mm2: float = 60.0,
-    use_i_beam: bool = True, i_beam_weight_t: float = 0.0,
-) -> Dict[str, Any]:
-    """Compare C60+I-Beam vs C80+rebar for composite columns."""
-    if column_diameter_mm <= 0:
-        raise ValueError("column_diameter_mm must be > 0")
-    if axial_load_kn < 0 or concrete_grade_n_mm2 <= 0:
-        raise ValueError("axial_load_kn must be >= 0 and concrete_grade_n_mm2 must be > 0")
-    col_area = math.pi * (column_diameter_mm / 2)**2
-    cap_a = col_area * concrete_grade_n_mm2 / 1000 * (1.10 if use_i_beam and i_beam_weight_t > 0 else 1.0)
-    upgraded = min(concrete_grade_n_mm2 * 1.33, 80.0)
-    cap_b = col_area * upgraded / 1000 * 0.95
-    return {
-        "option_a": {"type": f"C{concrete_grade_n_mm2:.0f}+I-Beam", "capacity_kn": round(cap_a, 0),
-                     "is_safe": cap_a >= axial_load_kn},
-        "option_b": {"type": f"C{upgraded:.0f}+rebar", "capacity_kn": round(cap_b, 0),
-                     "is_safe": cap_b >= axial_load_kn},
-        "recommended": "B" if cap_b >= axial_load_kn and not (cap_a >= axial_load_kn) else (
-            "A or B" if cap_a >= axial_load_kn and cap_b >= axial_load_kn else "A" if cap_a >= axial_load_kn else "NEITHER"),
-    }
-
-
-@formula(
-    owner='safety',
-    description='Wind force and overturning moment on climbing formwork from wind speed and exposed area.',
-    inputs={'wind_velocity_m_s': 'm/s', 'formwork_area_m2': 'm2', 'formwork_height_m': 'm', 'formwork_width_m': 'm', 'shape_factor': '-'},
-    outputs={'wind_pressure_kpa': 'kPa', 'wind_force_kn': 'kN', 'overturning_moment_kn_m': 'kN.m', 'bending_stress_n_m2': 'N/m2'},
-)
-def wind_load_on_formwork(
-    wind_velocity_m_s: float, formwork_area_m2: float,
-    formwork_height_m: float, formwork_width_m: float,
-    shape_factor: float = 1.0,
-) -> Dict[str, float]:
-    """Wind on climbing formwork: q = 0.613 x V^2, F = q x A, M = F x h/2."""
-    q = 0.613 * wind_velocity_m_s**2
-    force_n = q * formwork_area_m2 * shape_factor
-    moment_n_m = force_n * (formwork_height_m / 2)
-    z = formwork_width_m * formwork_height_m**2 / 6
-    return {
-        "wind_pressure_kpa": round(q / 1000, 3),
-        "wind_force_kn": round(force_n / 1000, 3),
-        "overturning_moment_kn_m": round(moment_n_m / 1000, 3),
-        "bending_stress_n_m2": round(moment_n_m / z, 2) if z > 0 else 0,
-    }
-
-
-@formula(
-    owner='design',
-    description='Bearing pressure under a foundation from load and area, and its factor of safety against the soil capacity.',
-    inputs={'foundation_width_m': 'm', 'foundation_length_m': 'm', 'column_load_kn': 'kN', 'soil_bearing_capacity_kn_m2': 'kN/m2', 'foundation_depth_m': 'm'},
-    outputs={'bearing_pressure_kn_m2': 'kN/m2', 'net_pressure_kn_m2': 'kN/m2', 'fos_against_bearing': '-', 'bearing_ok': '-'},
-)
-def foundation_bearing_pressure(
-    foundation_width_m: float, foundation_length_m: float,
-    column_load_kn: float, soil_bearing_capacity_kn_m2: float,
-    foundation_depth_m: float = 0.0,
-) -> Dict[str, float]:
-    """q = P/A, FOS vs soil capacity."""
-    if foundation_width_m <= 0 or foundation_length_m <= 0:
-        return {"error": "foundation_width_m and foundation_length_m must be > 0"}
-    area = foundation_width_m * foundation_length_m
-    q = column_load_kn / area
-    net_q = q - foundation_depth_m * 18
-    fos = soil_bearing_capacity_kn_m2 / net_q if net_q > 0 else float("inf")
-    return {
-        "bearing_pressure_kn_m2": round(q, 2),
-        "net_pressure_kn_m2": round(net_q, 2),
-        "fos_against_bearing": round(fos, 2),
-        "bearing_ok": fos >= 2.0,
-    }
-
-
-@formula(
-    owner='design',
-    description='Crane load for lifting a precast beam: beam plus rigging with a dynamic factor, against crane capacity.',
-    inputs={'beam_weight_t': 't', 'beam_length_m': 'm', 'crane_capacity_t': 't', 'lift_radius_m': 'm', 'rigging_weight_t': 't', 'dynamic_factor': '-'},
-    outputs={'effective_lift_weight_t': 't', 'utilization_pct': '%', 'is_safe': '-'},
-)
-def precast_beam_erection_check(
-    beam_weight_t: float, beam_length_m: float,
-    crane_capacity_t: float, lift_radius_m: float,
-    rigging_weight_t: float = 0.5, dynamic_factor: float = 1.25,
-) -> Dict[str, Any]:
-    """Crane lift check: effective = (beam + rigging) x 1.25 dynamic."""
-    effective = (beam_weight_t + rigging_weight_t) * dynamic_factor
-    util = effective / crane_capacity_t * 100
-    return {
-        "effective_lift_weight_t": round(effective, 2),
-        "utilization_pct": round(util, 1),
-        "is_safe": util <= 100,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  SECTION 4 — CRANE PLANNING (by Tonnage)
-# ═══════════════════════════════════════════════════════════════════════════
-
-@formula(
-    owner='procurement',
-    description='Number of cranes needed for a lifting demand and crane cycle capacity.',
-    inputs={'total_lift_demand_tons': '-', 'crane_capacity_tons': '-', 'utilization_pct': '%', 'shifts_per_day': '-', 'hours_per_shift': '-', 'cycle_time_minutes': '-', 'working_days': 'days'},
-    outputs={'total_lift_demand_tons': '-', 'crane_capacity_tons': '-', 'utilization_pct': '%', 'shifts_per_day': '-', 'hours_per_shift': '-', 'cycle_time_minutes': '-', 'lifts_per_hour_per_crane': '-', 'daily_tonnage_per_crane': '-', 'cranes_required': '-', 'monthly_rate_sar': 'currency', 'total_monthly_cost_sar': 'currency'},
-)
-def crane_planning(
-    total_lift_demand_tons: float,
-    crane_capacity_tons: float,
-    utilization_pct: float = 65.0,
-    shifts_per_day: int = 2,
-    hours_per_shift: float = 9.5,
-    cycle_time_minutes: float = 20.0,
-    working_days: int = 26,
-) -> Dict[str, Any]:
-    """
-    Determine number of cranes needed to service construction lifting demand.
-
-    Formula:
-        lifts_per_hour = 60 / cycle_time
-        daily_capacity_per_crane = capacity x (util/100) x lifts_per_hour x hours x shifts
-        num_cranes = ceil(total_demand / (daily_capacity x working_days))
-
-    Typical crane rental rates (GCC, dry hire without operator):
-        25-30 MT:  8,000-12,000 SAR/month
-        50 MT:     15,000-20,000 SAR/month
-        100 MT:    25,000-35,000 SAR/month
-        200 MT:    60,000-80,000 SAR/month
-        300+ MT:   100,000+ SAR/month
-
-    Args:
-        total_lift_demand_tons: Total tonnage to be lifted over the period
-        crane_capacity_tons: Single crane rated capacity (MT)
-        utilization_pct: Effective utilization (default 65%)
-        shifts_per_day: Number of shifts (default 2)
-        hours_per_shift: Hours per shift (default 9.5)
-        cycle_time_minutes: Average cycle time per lift (default 20 min)
-        working_days: Working days per month (default 26)
-
-    Returns:
-        Dict with crane count, monthly cost, and capacity analysis
-    """
-    if total_lift_demand_tons < 0:
-        raise ValueError("total_lift_demand_tons must be >= 0")
-    if crane_capacity_tons <= 0 or cycle_time_minutes <= 0 or working_days <= 0:
-        raise ValueError("crane_capacity_tons, cycle_time_minutes and working_days must be > 0")
-    if hours_per_shift <= 0 or shifts_per_day <= 0:
-        raise ValueError("hours_per_shift and shifts_per_day must be > 0")
-    lifts_per_hour = 60.0 / cycle_time_minutes
-    effective_capacity_per_lift = crane_capacity_tons * (utilization_pct / 100.0)
-    daily_lifts_per_crane = lifts_per_hour * hours_per_shift * shifts_per_day
-    daily_tonnage_per_crane = effective_capacity_per_lift * daily_lifts_per_crane
-
-    total_working_days = working_days  # Assume 1 month period; scale for longer
-    total_capacity_per_crane = daily_tonnage_per_crane * total_working_days
-
-    num_cranes = math.ceil(total_lift_demand_tons / total_capacity_per_crane) if total_capacity_per_crane > 0 else 0
-
-    # Monthly rental rate estimate (SAR/month, dry hire)
-    rate_table = {
-        25: 8000, 30: 10000, 50: 18000, 100: 30000,
-        200: 70000, 300: 120000, 500: 200000,
-    }
-    # Interpolate or find closest
-    closest_cap = min(rate_table.keys(), key=lambda c: abs(c - crane_capacity_tons))
-    monthly_rate = rate_table.get(closest_cap, 30000)
-
-    total_monthly_cost = num_cranes * monthly_rate
-
-    return {
-        "total_lift_demand_tons": total_lift_demand_tons,
-        "crane_capacity_tons": crane_capacity_tons,
-        "utilization_pct": utilization_pct,
-        "shifts_per_day": shifts_per_day,
-        "hours_per_shift": hours_per_shift,
-        "cycle_time_minutes": cycle_time_minutes,
-        "lifts_per_hour_per_crane": round(lifts_per_hour, 1),
-        "daily_tonnage_per_crane": round(daily_tonnage_per_crane, 1),
-        "cranes_required": num_cranes,
-        "monthly_rate_sar": monthly_rate,
-        "total_monthly_cost_sar": total_monthly_cost,
-        "notes": [
-            f"Each {crane_capacity_tons}T crane handles {daily_tonnage_per_crane:.1f} tons/day",
-            f"At {utilization_pct}% utilization, {lifts_per_hour:.1f} lifts/hr, {cycle_time_minutes}min cycle",
-            f"Require {num_cranes} crane(s) @ {monthly_rate:,} SAR/month each",
-            f"Total crane cost: {total_monthly_cost:,} SAR/month",
-        ],
-    }
-
-
-@formula(
-    owner='quantities',
-    description='Crane cost over a hire period including operator and rigging crew.',
-    inputs={'num_cranes': '-', 'crane_capacity_tons': '-', 'duration_months': '-', 'include_operator': '-', 'include_riggers': '-', 'remote_area_factor': '-'},
-    outputs={'num_cranes': '-', 'crane_capacity_tons': '-', 'duration_months': '-', 'dry_hire_sar_month': '-', 'operator_sar_month': '-', 'riggers_sar_month': '-', 'remote_area_factor': '-', 'per_crane_monthly_sar': 'currency', 'total_project_cost_sar': 'currency', 'mobilization_sar': 'currency', 'demobilization_sar': 'currency', 'grand_total_sar': 'currency'},
-)
-def crane_cost_estimate(
-    num_cranes: int,
-    crane_capacity_tons: float,
-    duration_months: int,
-    include_operator: bool = True,
-    include_riggers: bool = True,
-    remote_area_factor: float = 1.0,
-) -> Dict[str, float]:
-    """
-    Estimate total crane project cost including operator and riggers.
-
-    Args:
-        num_cranes: Number of cranes
-        crane_capacity_tons: Capacity per crane
-        duration_months: Project duration in months
-        include_operator: Add operator cost (default True)
-        include_riggers: Add rigger cost (default True)
-        remote_area_factor: Multiplier for remote sites (default 1.0, oil/gas = 1.3-1.5)
-
-    Returns:
-        Dict with breakdown
-    """
-    if num_cranes < 0 or duration_months < 0:
-        raise ValueError("num_cranes and duration_months must be >= 0")
-    if crane_capacity_tons <= 0:
-        raise ValueError("crane_capacity_tons must be > 0")
-    if remote_area_factor < 0:
-        raise ValueError("remote_area_factor must be >= 0")
-    rate_table = {25: 8000, 30: 10000, 50: 18000, 100: 30000, 200: 70000, 300: 120000}
-    closest = min(rate_table.keys(), key=lambda c: abs(c - crane_capacity_tons))
-    dry_hire_monthly = rate_table.get(closest, 30000)
-
-    # Operator: ~3,500 SAR/month per crane
-    operator_monthly = 3500 if include_operator else 0
-    # Riggers (2 per crane): ~2,800 SAR/month each
-    riggers_monthly = 5600 if include_riggers else 0
-
-    per_crane_monthly = (dry_hire_monthly + operator_monthly + riggers_monthly) * remote_area_factor
-    total_project_cost = per_crane_monthly * num_cranes * duration_months
-    mobilization = num_cranes * dry_hire_monthly * 0.5  # ~50% of monthly rate per crane
-    demobilization = mobilization * 0.75
-
-    return {
-        "num_cranes": num_cranes,
-        "crane_capacity_tons": crane_capacity_tons,
-        "duration_months": duration_months,
-        "dry_hire_sar_month": dry_hire_monthly,
-        "operator_sar_month": operator_monthly,
-        "riggers_sar_month": riggers_monthly,
-        "remote_area_factor": remote_area_factor,
-        "per_crane_monthly_sar": round(per_crane_monthly, 0),
-        "total_project_cost_sar": round(total_project_cost, 0),
-        "mobilization_sar": round(mobilization, 0),
-        "demobilization_sar": round(demobilization, 0),
-        "grand_total_sar": round(total_project_cost + mobilization + demobilization, 0),
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  SECTION 5 — COST ESTIMATION
-# ═══════════════════════════════════════════════════════════════════════════
-
-@formula(
-    owner='quantities',
-    description='Cost build-up of concrete per cubic metre from materials, labour, plant and overheads.',
-    inputs={'quantity_m3': 'm3', 'cement_kg_m3': 'kg/m3', 'cement_price_sar_t': 't', 'aggregate_price_sar_t': 't', 'water_price_sar_m3': 'm3', 'microsilica_kg_m3': 'kg/m3', 'microsilica_price_sar_kg': 'kg', 'plasticizer_lit_m3': 'm3', 'plasticizer_price_sar_lit': 'currency', 'plant_cost_sar_m3': 'm3', 'labour_cost_sar_m3': 'm3', 'erection_sar_m3': 'm3', 'power_sar_m3': 'm3', 'indirect_sar_m3': 'm3', 'indirect_pct': '%', 'markup_pct': '%', 'waste_pct': '%'},
-    outputs={'material_cost_sar_m3': 'm3', 'direct_cost_sar_m3': 'm3', 'selling_price_sar_m3': 'm3', 'total_project_value_sar': 'currency'},
-)
-def cost_buildup_concrete(
-    quantity_m3: float,
-    cement_kg_m3: float = 400,
-    cement_price_sar_t: float = 190,
-    aggregate_price_sar_t: float = 29,
-    water_price_sar_m3: float = 10,
-    microsilica_kg_m3: float = 12,
-    microsilica_price_sar_kg: float = 1.5,
-    plasticizer_lit_m3: float = 5,
-    plasticizer_price_sar_lit: float = 2.4,
-    plant_cost_sar_m3: float = 39.2,
-    labour_cost_sar_m3: float = 8.0,
-    erection_sar_m3: float = 3.0,
-    power_sar_m3: float = 2.5,
-    indirect_sar_m3: float = 4.0,
-    indirect_pct: float = 0.18,
-    markup_pct: float = 0.15,
-    waste_pct: float = 0.03,
-) -> Dict[str, Any]:
-    """Full concrete cost build-up (SAR/m3).
-
-    Waste is a material allowance (batching loss), same as
-    ``cost_buildup_rebar``. Plant, labour, erection, power and the
-    indirect SAR/m3 line are not wasted. The indirect percent is applied
-    once, on that direct cost. Selling price is
-
-        direct × (1 + indirect_pct) / (1 − markup_pct)
-
-    Documented batch masses (not caller inputs): combined aggregate
-    1839 kg/m3, mixing water 160 L/m3 (= 0.16 m3).
-    """
-    if quantity_m3 < 0:
-        raise ValueError("quantity_m3 must be >= 0")
-    cement_cost = (cement_kg_m3 / 1000) * cement_price_sar_t
-    aggregate_cost = (1839 / 1000) * aggregate_price_sar_t  # ~1839 kg/m3 combined
-    water_cost = (160 / 1000) * water_price_sar_m3  # 160 L/m3 = 0.16 m3
-    material_cost = (
-        cement_cost
-        + aggregate_cost
-        + water_cost
-        + (microsilica_kg_m3 * microsilica_price_sar_kg)
-        + (plasticizer_lit_m3 * plasticizer_price_sar_lit)
-    )
-    wasted_material = material_cost * (1 + waste_pct)
-    direct = (
-        wasted_material
-        + plant_cost_sar_m3
-        + labour_cost_sar_m3
-        + erection_sar_m3
-        + power_sar_m3
-        + indirect_sar_m3
-    )
-    selling = direct * (1 + indirect_pct) / (1 - markup_pct)
-    selling_r = round(selling, 2)
-    total_r = round(selling_r * quantity_m3, 0)
-    return {
-        "material_cost_sar_m3": round(material_cost, 2),
-        "direct_cost_sar_m3": round(direct, 2),
-        "selling_price_sar_m3": selling_r,
-        "total_project_value_sar": total_r,
-        "note": (
-            f"Material {material_cost:.2f} SAR/m3 × (1+{waste_pct:g} waste) "
-            f"= {wasted_material:.2f}; direct {direct:.2f} SAR/m3 "
-            f"(plant, labour, erection, power and the indirect line are "
-            f"not wasted); selling {selling_r:.2f} SAR/m3 "
-            f"= direct × (1+{indirect_pct:g}) / (1-{markup_pct:g}); "
-            f"total {total_r:.0f} SAR for {quantity_m3:g} m3."
-        ),
-    }
-
-
-@formula(
-    owner='quantities',
-    description='Cost build-up of reinforcement per tonne from material, fabrication, fixing and overheads.',
-    inputs={'quantity_kg': 'kg', 'material_price_sar_t': 't', 'labour_mhr_t': 't', 'labour_rate_sar_hr': '-', 'crane_hr_t': 't', 'crane_rate_sar_hr': '-', 'waste_pct': '%', 'indirect_pct': '%', 'markup_pct': '%'},
-    outputs={'material_sar_t': 't', 'labour_sar_t': 't', 'equipment_sar_t': 't', 'selling_price_sar_t': 't', 'total_project_value_sar': 'currency'},
-)
-def cost_buildup_rebar(
-    quantity_kg: float,
-    material_price_sar_t: float = 2600,
-    labour_mhr_t: float = 90,
-    labour_rate_sar_hr: float = 4.1,
-    crane_hr_t: float = 2,
-    crane_rate_sar_hr: float = 134.6,
-    waste_pct: float = 0.10,
-    indirect_pct: float = 0.18,
-    markup_pct: float = 0.15,
-) -> Dict[str, float]:
-    """Rebar cost build-up (SAR/Tonne)."""
-    if quantity_kg <= 0:
-        raise ValueError("quantity_kg must be > 0")
-    qty_t = quantity_kg / 1000
-    material = qty_t * material_price_sar_t * (1 + waste_pct)
-    labour = qty_t * labour_mhr_t * labour_rate_sar_hr
-    equipment = qty_t * crane_hr_t * crane_rate_sar_hr
-    direct = material + labour + equipment
-    with_markup = direct * (1 + indirect_pct) / (1 - markup_pct)
-    sell_t = round(with_markup / qty_t, 0) if qty_t > 0 else 0
-    return {
-        "material_sar_t": round(material / qty_t, 0) if qty_t > 0 else 0,
-        "labour_sar_t": round(labour / qty_t, 0) if qty_t > 0 else 0,
-        "equipment_sar_t": round(equipment / qty_t, 0) if qty_t > 0 else 0,
-        "selling_price_sar_t": sell_t,
-        "total_project_value_sar": round(sell_t * qty_t, 0) if qty_t > 0 else 0,
-    }
-
-
-@formula(
-    owner='quantities',
-    description='Cost build-up of formwork per square metre from materials, reuses, labour and overheads.',
-    inputs={'area_m2': 'm2', 'shuttering_supply_sar_m2': 'm2', 'scaffolding_sar_m2_day': '-', 'cycle_days': 'days', 'labour_mhr_m2': 'm2', 'labour_rate_sar_hr': '-', 'crane_rate_sar_hr': '-', 'crane_output_m2_hr': '-', 'indirect_pct': '%', 'markup_pct': '%'},
-    outputs={'shuttering_sar_m2': 'm2', 'scaffolding_sar_m2': 'm2', 'material_sar_m2': 'm2', 'labour_sar_m2': 'm2', 'selling_price_sar_m2': 'm2', 'total_for_area_sar': 'currency'},
-)
-def cost_buildup_formwork(
-    area_m2: float,
-    shuttering_supply_sar_m2: float = 55,
-    scaffolding_sar_m2_day: float = 2.15,
-    cycle_days: int = 10,
-    labour_mhr_m2: float = 9,
-    labour_rate_sar_hr: float = 4.1,
-    crane_rate_sar_hr: float = 134.6,
-    crane_output_m2_hr: float = 30,
-    indirect_pct: float = 0.18,
-    markup_pct: float = 0.15,
-) -> Dict[str, float]:
-    """Formwork cost build-up (SAR/m2)."""
-    if area_m2 < 0:
-        raise ValueError("area_m2 must be >= 0")
-    if crane_output_m2_hr <= 0:
-        raise ValueError("crane_output_m2_hr must be > 0")
-    shuttering = shuttering_supply_sar_m2 / 6  # 6 uses
-    scaffolding = scaffolding_sar_m2_day * cycle_days
-    material = shuttering + scaffolding
-    labour = labour_mhr_m2 * labour_rate_sar_hr
-    equipment = crane_rate_sar_hr / crane_output_m2_hr
-    direct = material + labour + equipment
-    with_markup = direct * (1 + indirect_pct) / (1 - markup_pct)
-    return {
-        "shuttering_sar_m2": round(shuttering, 2),
-        "scaffolding_sar_m2": round(scaffolding, 2),
-        "material_sar_m2": round(material, 2),
-        "labour_sar_m2": round(labour, 2),
-        "selling_price_sar_m2": round(with_markup, 2),
-        "total_for_area_sar": round(with_markup * area_m2, 0),
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  SECTION 6 — MOBILIZATION (for Schedule Production)
-# ═══════════════════════════════════════════════════════════════════════════
-
-NOTE_REMOTE_AREA = (
-    "Note: Rates include remote area and oil/gas construction project factors. "
-    "These are typically 30-50% higher than standard urban construction rates."
-)
-
-
-@formula(
-    owner='quantities',
-    description='Mobilisation cost for site set-up from its component items.',
-    inputs={'num_personnel': '-', 'duration_months': '-', 'camp_type': '-', 'include_offices': '-', 'include_camp': '-', 'include_transport': '-', 'include_safety_medical': '-', 'remote_area_factor': '-'},
-    outputs={'num_personnel': '-', 'duration_months': '-', 'camp_type': '-', 'remote_area_factor': '-', 'breakdown': '-', 'recurring_monthly_sar': 'currency', 'total_recurring_sar': 'currency', 'total_fixed_sar': 'currency', 'grand_total_sar': 'currency'},
-)
-def mobilization_cost_estimate(
-    num_personnel: int,
-    duration_months: int,
-    camp_type: str = "rented",  # "rented", "self_operated", "hotel"
-    include_offices: bool = True,
-    include_camp: bool = True,
-    include_transport: bool = True,
-    include_safety_medical: bool = True,
-    remote_area_factor: float = 1.35,
-) -> Dict[str, Any]:
-    """
-    Mobilization cost estimate for construction site setup.
-
-    Covers: offices, camp/accommodation, transport, safety/medical, IT,
-    warehouse equipment, demobilization.
-
-    Args:
-        num_personnel: Total site personnel count
-        duration_months: Project duration in months
-        camp_type: "rented" | "self_operated" | "hotel"
-        remote_area_factor: 1.0 urban, 1.35 remote, 1.5 very remote
-    """
-    # Per-person monthly rates (SAR)
-    office_per_person = 350 if include_offices else 0
-
-    if camp_type == "rented":
-        camp_per_person = 2800
-    elif camp_type == "self_operated":
-        camp_per_person = 1800
-    else:  # hotel
-        camp_per_person = 4500
-
-    transport_per_person = 220 if include_transport else 0
-    safety_medical_per_person = 150 if include_safety_medical else 0
-
-    total_monthly = (office_per_person + camp_per_person + transport_per_person +
-                     safety_medical_per_person) * num_personnel * remote_area_factor
-
-    # Fixed costs
-    office_setup = 450000 if include_offices else 0  # Furniture, fencing, parking
-    camp_setup = 60000   # Plumbing, electrical, fuel station
-    demobilization = 280000
-    safety_setup = 40000  # PPE, signs, training, badging system
-
-    # IT costs
-    it_costs = num_personnel * 85 * duration_months  # ~85 SAR/person/month
-
-    # Warehouse equipment (forklift, crane for laydown). Factor applied once in fixed.
-    warehouse_equip = 35000
-
-    recurring = total_monthly * duration_months
-    fixed = (office_setup + camp_setup + demobilization + safety_setup +
-             it_costs + warehouse_equip) * remote_area_factor
-
-    grand_total = recurring + fixed
-
-    return {
-        "num_personnel": num_personnel,
-        "duration_months": duration_months,
-        "camp_type": camp_type,
-        "remote_area_factor": remote_area_factor,
-        "note": NOTE_REMOTE_AREA,
-        "breakdown": {
-            "offices_sar": round(office_setup * remote_area_factor, 0),
-            "camp_sar": round((camp_setup + camp_per_person * num_personnel * duration_months) * remote_area_factor, 0),
-            "transport_sar": round(transport_per_person * num_personnel * duration_months * remote_area_factor, 0),
-            "safety_medical_sar": round((safety_setup + safety_medical_per_person * num_personnel * duration_months) * remote_area_factor, 0),
-            "it_sar": round(it_costs * remote_area_factor, 0),
-            "warehouse_equipment_sar": round(warehouse_equip * remote_area_factor, 0),
-            "demobilization_sar": round(demobilization * remote_area_factor, 0),
-        },
-        "recurring_monthly_sar": round(total_monthly, 0),
-        "total_recurring_sar": round(recurring, 0),
-        "total_fixed_sar": round(fixed, 0),
-        "grand_total_sar": round(grand_total, 0),
-    }
-
-
-@formula(
-    owner='planning',
-    description='Supervision manpower for given quantities, from supervision ratios flagged as indicative defaults.',
-    inputs={'concrete_m3': 'm3', 'structural_steel_t': 't', 'piping_dia_inch': '-', 'electrical_cable_km': '-', 'area_m2': 'm2'},
-    outputs={'civil_supervisors': '-', 'structural_supervisors': '-', 'piping_supervisors': '-', 'electrical_supervisors': '-', 'general_supervisors': '-', 'total_supervisors': '-', 'hse_officers': '-', 'document_controllers': '-', 'total_supervision_staff': '-'},
-)
-def supervision_ratio(
-    concrete_m3: float = 0,
-    structural_steel_t: float = 0,
-    piping_dia_inch: float = 0,
-    electrical_cable_km: float = 0,
-    area_m2: float = 0,
-) -> Dict[str, Any]:
-    """
-    Supervision manpower based on quantities.
-    Rules of thumb:
-      - 1 civil supervisor per 30,000-40,000 m3 concrete
-      - 1 structural supervisor per 2,000-3,000 T steel
-      - 1 piping supervisor per 15,000-20,000 dia-inch
-      - 1 electrical supervisor per 50-80 km cable
-    """
-    civil_sup = math.ceil(concrete_m3 / 35000) if concrete_m3 > 0 else 0
-    steel_sup = math.ceil(structural_steel_t / 2500) if structural_steel_t > 0 else 0
-    piping_sup = math.ceil(piping_dia_inch / 17500) if piping_dia_inch > 0 else 0
-    elec_sup = math.ceil(electrical_cable_km / 65) if electrical_cable_km > 0 else 0
-    general_sup = math.ceil(area_m2 / 20000) if area_m2 > 0 else 0
-
-    total_sup = civil_sup + steel_sup + piping_sup + elec_sup + general_sup
-    hse_officers = max(2, math.ceil(total_sup / 8))  # 1 HSE per 8 supervisors
-    document_controllers = max(1, math.ceil(total_sup / 15))
-
-    return {
-        "civil_supervisors": civil_sup,
-        "structural_supervisors": steel_sup,
-        "piping_supervisors": piping_sup,
-        "electrical_supervisors": elec_sup,
-        "general_supervisors": general_sup,
-        "total_supervisors": total_sup,
-        "hse_officers": hse_officers,
-        "document_controllers": document_controllers,
-        "total_supervision_staff": total_sup + hse_officers + document_controllers,
-        "notes": [
-            f"1 civil supervisor per ~35,000 m3 concrete",
-            f"1 structural supervisor per ~2,500 T steel",
-            f"1 piping supervisor per ~17,500 dia-inch",
-            f"1 electrical supervisor per ~65 km cable",
-            f"1 HSE officer per 8 supervisors",
-        ],
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  SECTION 7 — MEP SEQUENCING (for Schedule Production)
-# ═══════════════════════════════════════════════════════════════════════════
-
-@formula(
-    owner='planning',
-    description='Electrical installation programme: stage durations from first fix to handover.',
-    inputs={'floor_area_m2': 'm2', 'num_floors': '-'},
-    outputs={'total_area_m2': 'm2', 'stages': '-', 'total_days': 'days'},
-)
-def electrical_installation_sequence(
-    floor_area_m2: float, num_floors: int = 1,
-) -> Dict[str, Any]:
-    """Electrical programme: 1st fix -> 2nd fix -> test -> commission -> handover."""
-    if floor_area_m2 <= 0 or num_floors <= 0:
-        raise ValueError("floor_area_m2 and num_floors must be > 0")
-    total = floor_area_m2 * num_floors
-    rates = {"1st_fix_conduit_boxes": 50, "2nd_fix_equipment_panels": 75,
-             "cabling_testing": 100, "final_test_temp_power": 100,
-             "authority_inspection": 50, "final_fix_fittings": 75,
-             "commissioning": 30}
-    stages = {k: math.ceil(total / v) for k, v in rates.items()}
-    return {"total_area_m2": total, "stages": stages, "total_days": sum(stages.values())}
-
-
-@formula(
-    owner='planning',
-    description='Plumbing installation programme: stage durations from submittal to handover.',
-    inputs={'floor_area_m2': 'm2', 'num_floors': '-'},
-    outputs={'stages': '-', 'cumulative_days': 'days', 'total_days': 'days'},
-)
-def plumbing_flow_programme(floor_area_m2: float, num_floors: int = 1) -> Dict[str, Any]:
-    """Plumbing flow: submittal -> procure -> 1st/2nd fix -> connect -> handover."""
-    total = floor_area_m2 * num_floors
-    stages = [
-        ("material_submittal", 7), ("procurement", 21),
-        ("1st_fix_marking_piping", max(1, math.ceil(total / 40))),
-        ("2nd_fix_sanitary_fittings", max(1, math.ceil(total / 60))),
-        ("final_fix_pumps_tanks", max(1, math.ceil(total / 80))),
-        ("water_connection", 7),
-        ("testing_commissioning", max(1, math.ceil(total / 50))),
-        ("handover", 3),
-    ]
-    result = {"stages": {}, "total_days": 0}
-    cum = 0
-    for name, days in stages:
-        cum += days
-        result["stages"][name] = {"days": days, "cumulative_days": cum}
-    result["total_days"] = cum
-    return result
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  SECTION 8 — GROUTING & MATURITY
-# ═══════════════════════════════════════════════════════════════════════════
-
-@formula(
-    owner='qaqc',
-    description='Grouting pressure and strength checks for post-tensioning ducts.',
-    inputs={'tendon_duct_diameter_mm': 'mm', 'required_pressure_n_mm2': 'N/mm2', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_minutes': '-'},
-    outputs={'duct_area_mm2': 'mm2', 'grout_volume_l_m': 'm', 'pressure_n_mm2': 'N/mm2', 'pressure_kg_cm2': '-', 'pressure_psi': '-', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_min': '-'},
-)
-def grout_pressure_calc(
-    tendon_duct_diameter_mm: float,
-    required_pressure_n_mm2: float = 0.5,
-    strength_28d_n_mm2: float = 35.0,
-    strength_7d_n_mm2: float = 20.0,
-    mixing_time_minutes: float = 2.0,
-) -> Dict[str, float]:
-    """Grouting for PT: 0.5 N/mm2 (5 kg/cm2 = 75 PSI). 35 N/mm2 @ 28d, >=20 @ 7d."""
-    if tendon_duct_diameter_mm <= 0:
-        return {"error": "tendon_duct_diameter_mm must be > 0"}
-    area_mm2 = math.pi * (tendon_duct_diameter_mm / 2)**2
-    return {
-        "duct_area_mm2": round(area_mm2, 2),
-        "grout_volume_l_m": round(area_mm2 * 1000 / 1e6, 3),
-        "pressure_n_mm2": required_pressure_n_mm2,
-        "pressure_kg_cm2": round(required_pressure_n_mm2 * 10.197, 1),
-        "pressure_psi": round(required_pressure_n_mm2 * 145.038, 0),
-        "strength_28d_n_mm2": strength_28d_n_mm2,
-        "strength_7d_n_mm2": strength_7d_n_mm2,
-        "mixing_time_min": mixing_time_minutes,
-    }
-
-
-@formula(
-    owner='qaqc',
-    description='Concrete strength from its temperature history by the maturity method.',
-    inputs={'temperature_history_c': 'degC', 'time_intervals_hours': 'h', 'datum_temperature': '-', 'strength_28d_n_mm2': 'N/mm2', 'reference_temperature_c': 'degC', 'gain_a': '-', 'gain_b': '-'},
-    outputs={'maturity_index_c_hrs': 'degC.h', 'equivalent_age_days': 'days', 'predicted_strength_n_mm2': 'N/mm2', 'percent_of_28d': '%'},
-)
-def concrete_maturity_strength(
-    temperature_history_c: List[float],
-    time_intervals_hours: List[float],
-    datum_temperature: float = -10.0,
-    strength_28d_n_mm2: float = 40.0,
-    reference_temperature_c: float = 20.0,
-    gain_a: float = 4.0,
-    gain_b: float = 0.85,
-) -> Dict[str, Any]:
-    """Nurse-Saul maturity + ACI 209 Type I moist strength gain.
-
-    MI = sum(max(0, T - T0) * dt)  (T0 = -10 °C by default).
-    Equivalent age te (hours) = MI / (Tref - T0); te_days = te / 24.
-    f(t)/f28 = te_days / (a + b*te_days)  with a=4, b=0.85 (ACI 209R).
-    """
-    if not temperature_history_c or not time_intervals_hours:
-        return {
-            "error": "temperature_history_c and time_intervals_hours are required and must be non-empty.",
-        }
-    if len(temperature_history_c) != len(time_intervals_hours):
-        return {
-            "error": "temperature_history_c and time_intervals_hours must have the same length.",
-        }
-    if any(float(dt) <= 0 for dt in time_intervals_hours):
-        return {"error": "time_intervals_hours must all be > 0."}
-    if strength_28d_n_mm2 <= 0:
-        return {"error": "strength_28d_n_mm2 must be > 0."}
-    te_denom = float(reference_temperature_c) - float(datum_temperature)
-    if te_denom <= 0:
-        return {"error": "reference_temperature_c must be greater than datum_temperature."}
-
-    mi = sum(
-        max(0.0, float(t) - float(datum_temperature)) * float(dt)
-        for t, dt in zip(temperature_history_c, time_intervals_hours)
-    )
-    te_days = (mi / te_denom) / 24.0
-    denom = gain_a + gain_b * te_days
-    ratio = (te_days / denom) if denom > 0 else 0.0
-    ratio = min(max(ratio, 0.0), 1.0)
-    return {
-        "maturity_index_c_hrs": round(mi, 0),
-        "equivalent_age_days": round(te_days, 3),
-        "predicted_strength_n_mm2": round(strength_28d_n_mm2 * ratio, 1),
-        "percent_of_28d": round(ratio * 100, 1),
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  DETERMINISTIC DISPATCH — the agent's `construction_calc` tool routes here.
-# ═══════════════════════════════════════════════════════════════════════════
-
 import dataclasses as _dc
+
 import inspect as _inspect
+
 import json
+
 import logging
+
 import re
 
+# Formulas (and the helpers only they use) live in their owner's package;
+# imported back so existing imports of this module keep working.
+from app.agents.base.formulas.construction_formulas_shared import (  # noqa: F401 -- moved
+    _is_aci_code,
+)
+from app.agents.base.formulas.construction_formulas import (  # noqa: F401 -- moved
+    diaphragm_wall_panel_volume,
+)
+from app.agents.hats.design.formulas.construction_formulas import (  # noqa: F401 -- moved
+    DewateringResult,
+    _I_MM4_FLOOR,
+    _second_moment_mm4,
+    beam_deflection_cantilever_point_load,
+    beam_deflection_cantilever_udl,
+    beam_deflection_ss_point_load_midspan,
+    beam_deflection_ss_udl,
+    composite_column_design,
+    concrete_mix_design_sg,
+    concrete_mix_slip_form,
+    dewatering_uplift_check,
+    dewatering_well_point_spacing,
+    foundation_bearing_pressure,
+    modulus_of_elasticity_concrete,
+    post_tensioning_force,
+    precast_beam_erection_check,
+    shear_stress_check,
+    thermal_shrinkage_equivalence,
+    unit_weight_concrete,
+)
+from app.agents.hats.planning.formulas.construction_formulas import (  # noqa: F401 -- moved
+    electrical_installation_sequence,
+    plumbing_flow_programme,
+    supervision_ratio,
+)
+from app.agents.hats.procurement.formulas.construction_formulas import (  # noqa: F401 -- moved
+    crane_planning,
+)
+from app.agents.hats.qaqc.formulas.construction_formulas import (  # noqa: F401 -- moved
+    FormworkStrikingResult,
+    concrete_maturity_strength,
+    concrete_thermal_cracking_check,
+    fineness_modulus,
+    formwork_striking_time,
+    grout_pressure_calc,
+    modulus_of_rupture,
+)
+from app.agents.hats.quantities.formulas.construction_formulas import (  # noqa: F401 -- moved
+    NOTE_REMOTE_AREA,
+    cost_buildup_concrete,
+    cost_buildup_formwork,
+    cost_buildup_rebar,
+    crane_cost_estimate,
+    mobilization_cost_estimate,
+)
+from app.agents.hats.safety.formulas.construction_formulas import (  # noqa: F401 -- moved
+    wind_load_on_formwork,
+)
+
 logger = logging.getLogger(__name__)
-
-
-# Public functions in this module that are DISPATCH infrastructure, not
-# calculators — excluded from the registry regardless of definition order.
-
 
 def _build_calculator_registry() -> "Dict[str, Any]":
     """name -> function for every DECLARED formula (``@formula`` in
@@ -1308,25 +100,22 @@ def _build_calculator_registry() -> "Dict[str, Any]":
 
     return formula_registry.calculators()
 
-
 CALCULATORS: Dict[str, Any] = _build_calculator_registry()
-
 
 def available_calculations() -> List[str]:
     return sorted(CALCULATORS)
-
 
 # Stem collisions: first two tokens are a document/schedule lookup, not a calc.
 _FORMULA_NAME_STEM_COLLISIONS = frozenset({
     "critical path",
 })
+
 # Optional dests that error unless the incoming key is the real name.
 # "sand" / "dune sand" must not suffix-bind onto dune_sand_pct (live mix
 # table SGs were scored tool_error).
 _EXPLICIT_BIND_ONLY = frozenset({
     "dune_sand_pct",
 })
-
 
 def calculator_name_from_text(text: str) -> Optional[str]:
     """Unique registry name implied by ``text``, or None if absent/ambiguous.
@@ -1389,7 +178,6 @@ def calculator_name_from_text(text: str) -> Optional[str]:
             return None
     return None
 
-
 # PMI (BCWS/BCWP/ACWP/BAC) and long PE-sheet names → calculate_evm kwargs.
 # ``run_calculation`` keeps only exact signature names, so uppercase / long
 # aliases were dropped and the tool reported missing PV/EV/AC.
@@ -1406,7 +194,6 @@ _EVM_CALC_ALIASES: Dict[str, str] = {
     "bac": "bac",
     "budget_at_completion": "bac",
 }
-
 
 # Symbols an engineer writes, and therefore what the model sends. Live on
 # 9e6fe98 both of these came back as tool errors instead of figures:
@@ -1425,9 +212,10 @@ _EVM_CALC_ALIASES: Dict[str, str] = {
 # value is taken as already canonical, and ``_second_moment_mm4`` still refuses
 # anything that is neither.
 _SYMBOL_DEST: Dict[str, str] = {"e": "ec_mpa", "i": "i_mm4", "c": "code"}
-_E_GPA_CEILING = 1000.0      # below this, E is GPa
-_I_M4_CEILING = 1.0          # below this, I is m4
 
+_E_GPA_CEILING = 1000.0      # below this, E is GPa
+
+_I_M4_CEILING = 1.0          # below this, I is m4
 
 # "200 GPa", "2.0e-4 m4", "2.0e8 mm^4": the model writes the unit it read.
 # The unit token must be allowed to CONTAIN digits ("m4", "mm^4", "cm4") but
@@ -1438,30 +226,20 @@ _SYMBOL_VALUE_RE = re.compile(
     r"^\s*([-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?)\s*"
     r"((?:[A-Za-z\u00b2\u00b3\u2074^/][A-Za-z0-9\u00b2\u00b3\u2074^/]*)?)\s*$"
 )
+
 _E_UNIT_TO_MPA: Dict[str, Optional[float]] = {
     "": None, "mpa": 1.0, "n/mm2": 1.0, "n/mm^2": 1.0, "n/mm\u00b2": 1.0,
     "gpa": 1e3, "kn/mm2": 1e3, "kn/mm^2": 1e3, "kn/mm\u00b2": 1e3,
 }
+
 _I_UNIT_TO_MM4: Dict[str, Optional[float]] = {
     "": None, "mm4": 1.0, "mm^4": 1.0, "mm\u2074": 1.0,
     "m4": 1e12, "m^4": 1e12, "m\u2074": 1e12,
     "cm4": 1e4, "cm^4": 1e4, "cm\u2074": 1e4,
 }
 
-
 class _UnknownUnit(ValueError):
     """A symbol carried a unit this binder cannot scale. Refuse, never guess."""
-
-
-def _is_aci_code(code: Any) -> bool:
-    """"ACI", "ACI 318-19", "aci318", "ACI 318-19 (SI)" all name the ACI form.
-
-    The previous exact-token match knew five spellings and none of them was
-    the one the model writes ("ACI 318-19"), so that spelling silently fell
-    to the metric-technical form -- 280,624 kg/cm2 under an ACI label.
-    """
-    return re.sub(r"[^a-z0-9]", "", str(code or "").lower()).startswith("aci")
-
 
 def _canonical_from_symbol(symbol: str, value: Any) -> Any:
     """Scale a symbol's value onto its canonical parameter's unit.
@@ -1506,7 +284,6 @@ def _canonical_from_symbol(symbol: str, value: Any) -> Any:
         return number * 1e12     # m4 -> mm4
     return number
 
-
 def _alias_physics_symbols(fn: Any, params: Dict[str, Any]) -> Dict[str, Any]:
     """Bind E / I / c onto the destination the calculator actually accepts.
 
@@ -1529,7 +306,6 @@ def _alias_physics_symbols(fn: Any, params: Dict[str, Any]) -> Dict[str, Any]:
             continue
         out[dest] = _canonical_from_symbol(str(key).strip().lower(), out.pop(key))
     return out
-
 
 def _alias_calculate_evm_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """Bind case-insensitive PMI / PE names onto ``calculate_evm`` kwargs.
@@ -1555,7 +331,6 @@ def _alias_calculate_evm_params(params: Dict[str, Any]) -> Dict[str, Any]:
     for key in consumed:
         out.pop(key, None)
     return out
-
 
 # Units for empty / incomplete construction_calc kwargs. The model often
 # calls with {} or a half-set; the error must name every required input
@@ -1604,11 +379,9 @@ _CALC_REQUIRED_HELP: Dict[str, str] = {
     ),
 }
 
-
 def _param_with_unit(name: str) -> str:
     unit = _PARAM_UNITS.get(name)
     return f"{name} ({unit})" if unit else name
-
 
 def required_params_error(name: str, fn: Any) -> str:
     """Error text that names every required parameter with its unit."""
@@ -1629,7 +402,6 @@ def required_params_error(name: str, fn: Any) -> str:
         return f"{name} needs its documented inputs; none were usable."
     return f"{name} needs: " + ", ".join(_param_with_unit(k) for k in required) + "."
 
-
 def _result_is_failure(result: Dict[str, Any]) -> bool:
     """Did a calculator report failure by RETURNING rather than raising?
 
@@ -1639,7 +411,6 @@ def _result_is_failure(result: Dict[str, Any]) -> bool:
     currently returns a numeric "error".)
     """
     return isinstance(result.get("error"), str)
-
 
 # Keys the model / container / tool envelope add beside real calculator kwargs.
 # Flatten unwraps ``params`` / ``input`` then drops these so they never
@@ -1654,7 +425,9 @@ _BIND_JUNK_KEYS = frozenset({
     "kwargs", "arguments", "variables", "values",
     "prior_text", "query",
 })
+
 _FLATTEN_NEST_KEYS = ("params", "input", "kwargs", "arguments", "variables", "values")
+
 _E4_PASSTHROUGH_KEYS = frozenset({
     "text", "formula", "prior_text", "query",
 })
@@ -1932,7 +705,6 @@ _PARAM_UNIT_OVERRIDE: Dict[str, str] = {
     "column_diameter_mm": "mm",
 }
 
-
 def _snake_key(raw: Any) -> str:
     s = str(raw or "").strip().replace("-", "_").replace("/", "_")
     out: List[str] = []
@@ -1941,7 +713,6 @@ def _snake_key(raw: Any) -> str:
             out.append("_")
         out.append(ch.lower())
     return "".join(out).strip("_")
-
 
 def _param_stem(name: str) -> str:
     n = _snake_key(name)
@@ -1955,7 +726,6 @@ def _param_stem(name: str) -> str:
                 break
     return n.replace("_", "")
 
-
 def _unit_from_name(name: str) -> str:
     if name in _PARAM_UNIT_OVERRIDE:
         return _PARAM_UNIT_OVERRIDE[name]
@@ -1965,33 +735,33 @@ def _unit_from_name(name: str) -> str:
             return unit
     return ""
 
-
 def _ann_label(annotation: Any) -> str:
     if annotation is _inspect.Parameter.empty:
         return ""
     return getattr(annotation, "__name__", None) or str(annotation).replace("typing.", "")
 
-
 def _is_junk_key(key: Any) -> bool:
     return _snake_key(key) in {_snake_key(j) for j in _BIND_JUNK_KEYS}
 
-
 _POSITIONAL_KEY = "_positional"
+
 _KV_ASSIGN_RE = re.compile(
     r"([A-Za-z_][\w]*(?:/[A-Za-z_][\w]*)*)\s*[:=]\s*"
     r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|"
     r"\"[^\"]*\"|'[^']*')",
 )
+
 _KV_JSON_START_RE = re.compile(
     r"([A-Za-z_][\w]*(?:/[A-Za-z_][\w]*)*)\s*[:=]\s*([\[{])",
 )
+
 _TONNE_INCOMING = frozenset({
     "quantity_t", "qty_t", "tonnes", "tons", "tonne", "ton",
 })
+
 _FRACTION_PCT_KEYS = frozenset({
     "waste_pct", "indirect_pct", "markup_pct",
 })
-
 
 def _value_has_number(val: Any) -> bool:
     if isinstance(val, (int, float)) and not isinstance(val, bool):
@@ -2001,7 +771,6 @@ def _value_has_number(val: Any) -> bool:
     if isinstance(val, dict):
         return any(_value_has_number(item) for item in val.values())
     return False
-
 
 def _parse_kv_assignments(text: str) -> Dict[str, Any]:
     """Parse ``udl_w_kn_m=20, span_m=6`` / ``temps=[20, 22, 25]``.
@@ -2045,7 +814,6 @@ def _parse_kv_assignments(text: str) -> Dict[str, Any]:
         return {}
     return out
 
-
 def coerce_calc_params(raw: Any) -> Dict[str, Any]:
     """Accept a dict, JSON object/array, or ``k=v, k=v`` assignment string.
 
@@ -2079,14 +847,12 @@ def coerce_calc_params(raw: Any) -> Dict[str, Any]:
         return {}
     return {}
 
-
 # Length units the binder converts between when the caller's key and the
 # calculator's parameter name carry the same stem but different units. No
 # calculator takes a _cm parameter, so cm is not listed: an unmapped unit
 # fails the bind with "missing required span_mm (mm)", which is the right
 # outcome -- a named error the caller can act on.
 _LENGTH_IN_MM = {"mm": 1.0, "m": 1000.0}
-
 
 def _length_unit_factor(incoming: str, dest: str) -> Optional[float]:
     """Factor to convert ``incoming``'s unit to ``dest``'s, or None.
@@ -2103,7 +869,6 @@ def _length_unit_factor(incoming: str, dest: str) -> Optional[float]:
     if inc_unit not in _LENGTH_IN_MM or dest_unit not in _LENGTH_IN_MM:
         return None
     return _LENGTH_IN_MM[inc_unit] / _LENGTH_IN_MM[dest_unit]
-
 
 def _scale_bound_value(incoming: str, dest: str, val: Any) -> Any:
     """quantity_t / tonnes → quantity_kg, and span_m → span_mm. Never invents a
@@ -2135,7 +900,6 @@ def _scale_bound_value(incoming: str, dest: str, val: Any) -> Any:
         logger.info("bind: converted %s=%s to %s=%s", inc, val, dest, scaled)
         return scaled
     return val
-
 
 def _bind_sequence_params(
     fn: Any, values: List[Any], name: Optional[str] = None,
@@ -2183,7 +947,6 @@ def _bind_sequence_params(
     order = required + [key for key in dests if key not in required]
     return {key: val for key, val in zip(order, seq)}
 
-
 def _pop_positional(params: Dict[str, Any]) -> Optional[List[Any]]:
     if not isinstance(params, dict):
         return None
@@ -2191,7 +954,6 @@ def _pop_positional(params: Dict[str, Any]) -> Optional[List[Any]]:
     if isinstance(raw, (list, tuple)):
         return list(raw)
     return None
-
 
 def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
     """Merge nested ``params`` / ``input`` into top-level calculator kwargs.
@@ -2227,7 +989,6 @@ def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
         out[key] = val
     return out
 
-
 def describe_calculation_params(
     fn: Any,
     name: Optional[str] = None,
@@ -2257,7 +1018,6 @@ def describe_calculation_params(
         rows.append(row)
     return rows
 
-
 def _unique_semantic_dest(incoming: str, accepted: Dict[str, str]) -> Optional[str]:
     hits = []
     for cand in _BIND_SEMANTIC_ALIASES.get(incoming, ()):
@@ -2267,7 +1027,6 @@ def _unique_semantic_dest(incoming: str, accepted: Dict[str, str]) -> Optional[s
     if len(hits) == 1:
         return hits[0]
     return None
-
 
 def _unique_stem_dest(
     incoming: str,
@@ -2303,7 +1062,6 @@ def _unique_stem_dest(
         return suffix[0]
     return None
 
-
 def _ignored_explicit_stem(incoming: str, accepted: Dict[str, str]) -> bool:
     """True when the only stem hit is an explicit-bind-only parameter.
 
@@ -2322,7 +1080,6 @@ def _ignored_explicit_stem(incoming: str, accepted: Dict[str, str]) -> bool:
         ):
             hits.append(dest)
     return bool(hits) and all(dest in _EXPLICIT_BIND_ONLY for dest in hits)
-
 
 def _partition_bound_params(
     fn: Any, params: Optional[Dict[str, Any]] = None,
@@ -2380,7 +1137,6 @@ def _partition_bound_params(
         return bound, []
     return bound, unknown
 
-
 def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Map incoming kwargs onto ``fn``'s signature names.
 
@@ -2399,30 +1155,30 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     bound, _unknown = _partition_bound_params(fn, params)
     return bound
 
-
 _ASK_NUM = r"(\d[\d,]*(?:\.\d+)?)"
+
 _NUM_UNIT_VALUE_RE = re.compile(
     r"^[+\-]?\s*([\d,]+(?:\.\d+)?)\s*[A-Za-zµμ/%²³³°]+"
 )
+
 _PLAIN_NUM_RE = re.compile(r"^[+\-]?\s*[\d,]+(?:\.\d+)?\s*$")
+
 _LWD_WORDS_RE = re.compile(
     rf"{_ASK_NUM}\s*m?\s*long\b.*?{_ASK_NUM}\s*m?\s*wide\b.*?"
     rf"{_ASK_NUM}\s*m?\s*(?:deep|thick)",
     re.IGNORECASE | re.DOTALL,
 )
+
 _FORMULA_TRIPLE_RE = re.compile(
     rf"{_ASK_NUM}\s*[*×x]\s*{_ASK_NUM}\s*[*×x]\s*{_ASK_NUM}",
     re.IGNORECASE,
 )
 
-
 def _ask_float(raw: str) -> float:
     return float(str(raw).replace(",", ""))
 
-
 def _ask_present(params: Dict[str, Any], *keys: str) -> bool:
     return any(params.get(k) not in (None, "") for k in keys)
-
 
 def _ask_blob(params: Dict[str, Any]) -> str:
     return " ".join(
@@ -2433,7 +1189,6 @@ def _ask_blob(params: Dict[str, Any]) -> str:
             params.get("query"),
         ) if x
     )
-
 
 def _fill_lwd_from_text(text: str, out: Dict[str, Any], depth_key: str = "depth_m") -> None:
     """Bank / trench L×W×D from the ask. Does not invent numbers."""
@@ -2464,7 +1219,6 @@ def _fill_lwd_from_text(text: str, out: Dict[str, Any], depth_key: str = "depth_
         out.setdefault("width_m", _ask_float(match.group(2)))
         out.setdefault(depth_key, _ask_float(match.group(3)))
 
-
 def _extract_slab_thickness_from_ask(text: str, out: Dict[str, Any]) -> None:
     """Fill slab_thickness_min from 'spanning 4.8 m' / one-end continuous.
 
@@ -2483,7 +1237,6 @@ def _extract_slab_thickness_from_ask(text: str, out: Dict[str, Any]) -> None:
         if out.get(key) in (None, ""):
             out[key] = val
 
-
 def _extract_beam_shear_from_ask(text: str, out: Dict[str, Any]) -> None:
     if not _ask_present(out, "udl_w_kn_m"):
         match = re.search(
@@ -2501,7 +1254,6 @@ def _extract_beam_shear_from_ask(text: str, out: Dict[str, Any]) -> None:
         )
         if match:
             out["span_m"] = _ask_float(match.group(1))
-
 
 def _extract_dewatering_from_ask(text: str, out: Dict[str, Any]) -> None:
     if not _ask_present(out, "water_depth"):
@@ -2536,7 +1288,6 @@ def _extract_dewatering_from_ask(text: str, out: Dict[str, Any]) -> None:
         if match:
             out["floor_count"] = int(_ask_float(match.group(1)))
 
-
 def _extract_carbon_from_ask(text: str, out: Dict[str, Any]) -> None:
     if not _ask_present(out, "volume_m3"):
         match = re.search(rf"{_ASK_NUM}\s*m\s*3\b", text, re.IGNORECASE)
@@ -2549,7 +1300,6 @@ def _extract_carbon_from_ask(text: str, out: Dict[str, Any]) -> None:
         if match:
             out["grade"] = match.group(1).replace(" ", "").lower()
 
-
 def _extract_mix_from_ask(text: str, out: Dict[str, Any]) -> None:
     if _ask_present(out, "w_c_ratio"):
         return
@@ -2560,10 +1310,8 @@ def _extract_mix_from_ask(text: str, out: Dict[str, Any]) -> None:
     if match:
         out["w_c_ratio"] = _ask_float(match.group(1))
 
-
 def _csv_floats(raw: str) -> List[float]:
     return [_ask_float(tok) for tok in re.findall(_ASK_NUM, raw or "")]
-
 
 def _extract_maturity_from_ask(text: str, out: Dict[str, Any]) -> None:
     """CSV temps / hours from the ask. Does not invent a missing series."""
@@ -2600,7 +1348,6 @@ def _extract_maturity_from_ask(text: str, out: Dict[str, Any]) -> None:
             if nums:
                 out["time_intervals_hours"] = nums
 
-
 def _extract_rebar_cost_from_ask(text: str, out: Dict[str, Any]) -> None:
     if not _ask_present(out, "quantity_kg"):
         match = re.search(rf"{_ASK_NUM}\s*kg\b", text, re.IGNORECASE)
@@ -2621,14 +1368,12 @@ def _extract_rebar_cost_from_ask(text: str, out: Dict[str, Any]) -> None:
         if match:
             out["material_price_sar_t"] = _ask_float(match.group(1))
 
-
 _TENDER_ROW_RE = re.compile(
     r"(Bidder\s+[A-Za-z0-9]+|[A-Za-z][\w.\-]{1,30})\s*[—\-:]\s*"
     r"technical\s+(\d+(?:\.\d+)?)\s*,\s*commercial\s+(\d+(?:\.\d+)?)\s*,\s*"
     r"HSE\s+(\d+(?:\.\d+)?)(?:\s*,\s*local(?:\s+content)?\s+(\d+(?:\.\d+)?))?",
     re.IGNORECASE,
 )
-
 
 def _extract_tender_from_ask(text: str, out: Dict[str, Any]) -> None:
     if _ask_present(out, "tenderers", "bidders", "bids"):
@@ -2645,7 +1390,6 @@ def _extract_tender_from_ask(text: str, out: Dict[str, Any]) -> None:
         })
     if rows:
         out["tenderers"] = rows
-
 
 def _extract_calc_kwargs_from_ask(
     name: str, params: Dict[str, Any],
@@ -2694,7 +1438,6 @@ def _extract_calc_kwargs_from_ask(
             out["excavation_depth"] = out["depth_m"]
     return out
 
-
 def _annotation_wants_list(annotation: Any) -> bool:
     if annotation is _inspect.Parameter.empty:
         return False
@@ -2703,7 +1446,6 @@ def _annotation_wants_list(annotation: Any) -> bool:
         return low.startswith("list[") or low == "list"
     origin = getattr(annotation, "__origin__", None)
     return origin in (list, List)
-
 
 def _coerce_scalar(val: Any) -> Any:
     if isinstance(val, bool) or val is None or isinstance(val, (int, float)):
@@ -2721,7 +1463,6 @@ def _coerce_scalar(val: Any) -> Any:
         number = match.group(1).replace(",", "")
         return float(number) if "." in number else int(number)
     return val
-
 
 def _coerce_list(val: Any) -> Any:
     if isinstance(val, (list, tuple)):
@@ -2745,7 +1486,6 @@ def _coerce_list(val: Any) -> Any:
     if isinstance(coerced, (int, float)):
         return [coerced]
     return val
-
 
 def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
     """Strip unit suffixes from numeric strings; wrap list-typed scalars."""
@@ -2779,16 +1519,19 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
                 out[key] = float(number) / 100.0
     return out
 
-
 # Thousand separators must be interior (1,000) — a trailing comma is list
 # punctuation ("100, man_hours 50") and must not be eaten as part of the number.
 _TEXT_NUM_RE = r"[+-]?\d+(?:,\d{3})*(?:\.\d+)?"
+
 _TEXT_UNIT_RE = (
     r"(?:kN/m2|kN/m²|N/mm2|N/mm²|mm2|mm²|m2|m²|m3|m³|"
     r"MPa|kPa|kN|mm|m/s|m|%|deg)"
 )
+
 _CODE_ACI_RE = re.compile(r"\b(?:aci|asce|aisc|tms)\b", re.IGNORECASE)
+
 _CODE_EC_RE = re.compile(r"\b(?:eurocode|en\s*199\d)\b", re.IGNORECASE)
+
 _UNIT_EQ = {
     "mpa": "mpa",
     "n/mm2": "mpa",
@@ -2805,16 +1548,13 @@ _UNIT_EQ = {
     "deg": "deg",
 }
 
-
 def _norm_label(raw: Any) -> str:
     return _snake_key(str(raw or "").replace(" ", "_").replace("/", "_"))
-
 
 def _norm_unit_token(raw: Any) -> str:
     s = str(raw or "").strip().lower().replace("²", "2").replace("³", "3")
     s = s.replace(" ", "").replace(".", "")
     return _UNIT_EQ.get(s, s)
-
 
 def _parse_text_number(raw: str) -> Optional[float]:
     try:
@@ -2822,7 +1562,6 @@ def _parse_text_number(raw: str) -> Optional[float]:
     except (TypeError, ValueError):
         logger.debug("engineer-ask token %r is not numeric", raw)
         return None
-
 
 def _text_label_map(fn: Any) -> Dict[str, str]:
     """Normalized ask labels → unique signature dest for this calculator."""
@@ -2865,7 +1604,6 @@ def _text_label_map(fn: Any) -> Dict[str, str]:
         if dest:
             add(incoming, dest)
     return out
-
 
 def extract_calculation_params_from_text(
     fn: Any,
@@ -2969,7 +1707,6 @@ def extract_calculation_params_from_text(
             found[dests[0]] = nums[0]
     return found
 
-
 def _missing_required(fn: Any, bound: Dict[str, Any], name: Optional[str] = None) -> List[str]:
     missing: List[str] = []
     groups = _REQUIRED_GROUPS.get(str(name or "").strip().lower())
@@ -2983,7 +1720,6 @@ def _missing_required(fn: Any, bound: Dict[str, Any], name: Optional[str] = None
             missing.append(row["name"])
     return missing
 
-
 def _format_param_label(row: Dict[str, Any]) -> str:
     name = row["name"]
     unit = row.get("unit") or ""
@@ -2993,7 +1729,6 @@ def _format_param_label(row: Dict[str, Any]) -> str:
         return name
     default = row.get("default")
     return f"{name} (default {default!r})"
-
 
 def _bind_error_envelope(
     name: str,
@@ -3023,7 +1758,6 @@ def _bind_error_envelope(
         "missing": missing,
     }
 
-
 def _accepts_param(fn: Any, param_name: str) -> bool:
     try:
         sig = _inspect.signature(fn)
@@ -3038,7 +1772,6 @@ def _accepts_param(fn: Any, param_name: str) -> bool:
         return False
     return param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
 
-
 def _numbers_agree(left: Any, right: Any) -> bool:
     """True when both tokens are the same number, including ``\"24\"`` and 24."""
     a = _coerce_scalar(left)
@@ -3048,7 +1781,6 @@ def _numbers_agree(left: Any, right: Any) -> bool:
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         return abs(float(a) - float(b)) <= 1e-9
     return a == b
-
 
 def _count_quantity_conflict(params: Dict[str, Any]) -> Optional[str]:
     """Error text when ``count`` and ``quantity`` are both set and differ.
@@ -3080,7 +1812,6 @@ def _count_quantity_conflict(params: Dict[str, Any]) -> Optional[str]:
         "Pass one element count, or the same value for both."
     )
 
-
 def _unknown_arg_envelope(
     name: str, fn: Any, unknown: List[str],
 ) -> Dict[str, Any]:
@@ -3099,7 +1830,6 @@ def _unknown_arg_envelope(
         "signature": f"{name}{_inspect.signature(fn)}",
         "expected_params": expected,
     }
-
 
 def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run one whitelisted deterministic calculator by name with keyword params.

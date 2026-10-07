@@ -91,27 +91,30 @@ def get(name: str) -> Optional[FormulaSpec]:
     return _REGISTRY.get(name)
 
 
-#: Modules whose import declares formulas. Importing them is what fills the
-#: registry; a new formula module is one line here.
-FORMULA_MODULES = (
-    "app.lib.construction_formulas",
-    "app.lib.construction_formulas_additions",
-    "app.lib.construction_formulas_general",
-    "app.lib.construction_formulas_structural_steel",
-    "app.lib.construction_formulas_loads",
-    "app.lib.construction_formulas_quantities",
-    "app.lib.construction_formulas_earthwork",
-    "app.lib.construction_formulas_beam_analysis",
-    "app.lib.construction_formulas_structural_rc",
-    "app.lib.construction_formulas_qc",
-    "app.lib.construction_formulas_commercial",
-    "app.lib.construction_formulas_planning",
-    "app.lib.construction_formulas_safety",
-    "app.lib.construction_formulas_reference_tables",
-    "app.lib.construction_formulas_columns",
-    "app.lib.construction_formulas_masonry",
-    "app.core.construction_knowledge",
-)
+def formula_modules() -> List[str]:
+    """Every module of ``app.agents.base.formulas`` and of each
+    ``app.agents.hats.<hat>.formulas`` -- discovered, so a hat's formulas are
+    files in its own package and adding one is no core edit."""
+    import importlib
+    import pkgutil
+
+    import app.agents.hats as hats
+
+    packages = ["app.agents.base.formulas"] + [
+        f"app.agents.hats.{info.name}.formulas"
+        for info in sorted(pkgutil.iter_modules(hats.__path__), key=lambda i: i.name)
+        if info.ispkg
+    ]
+    mods: List[str] = []
+    for pkg in packages:
+        try:
+            package = importlib.import_module(pkg)
+        except ModuleNotFoundError:
+            continue
+        mods.extend(f"{pkg}.{info.name}"
+                    for info in sorted(pkgutil.iter_modules(package.__path__), key=lambda i: i.name))
+    return mods
+
 
 _loaded = False
 
@@ -122,6 +125,6 @@ def _load_all() -> None:
         return
     import importlib
 
-    for mod in FORMULA_MODULES:
+    for mod in formula_modules():
         importlib.import_module(mod)
     _loaded = True
