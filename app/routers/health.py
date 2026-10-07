@@ -67,7 +67,7 @@ def _evaluate_health() -> dict:
 
 
 @router.get("/livez")
-def livez():
+async def livez():
     """Process liveness ONLY — deliberately touches no database.
 
     Exists because the database moved to Neon (2026-08-09), which bills by

@@ -305,6 +305,15 @@ def _warm_embedder() -> None:
     FIRST /v1/chat/stream RAG query — eating the cold load inside the stream
     deadline, which surfaces as an intermittent chat hang / empty bubble.
     """
+    from app.core.rag import retrieval_worker
+
+    if retrieval_worker.enabled():
+        # Retrieval -- and so the model -- lives in the worker process; warm
+        # it there, and leave this process without a second copy.
+        retrieval_worker.call_sync(retrieval_worker.warm_job)
+        logger.info("RAG embedder warm-loaded in the retrieval worker process")
+        return
+
     from app.core.rag.embeddings import embedder_health, get_embedder
 
     # Probe first: embedder_health reports WHY a load failed instead of letting

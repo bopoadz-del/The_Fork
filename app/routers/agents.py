@@ -278,6 +278,8 @@ def _bound_history(history: object) -> list:
 
 @router.post("/v1/agents/{name}/chat/stream")
 async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(require_user)):
+    from app.core import turn_timing
+    turn_timing.mark_arrival()
     agent = get_agent(name)
     if not agent or not caller_may_use_agent(agent, auth.get("role")):
         raise HTTPException(404, f"Agent '{name}' not found")
@@ -410,6 +412,8 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
             ):
                 # Same net as /v1/chat/stream: an error naming the plumbing
                 # (provider, HTTP status, upstream body) is replaced for the user.
+                if evt.get("type") == "token":
+                    turn_timing.first_token()
                 yield sanitize_error_frame(f"data: {json.dumps(evt, default=str)}\n\n")
                 await asyncio.sleep(0)  # yield to the event loop
         except Exception as e:
@@ -423,8 +427,12 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     # non-streaming endpoints.
     from app.routers.hat_frames import with_hat_signals
 
+    from app.core import turn_gate
+    with turn_timing.stage("queue"):
+        _release_turn = await turn_gate.acquire()
     return StreamingResponse(
-        with_hat_signals(event_stream(), message),
+        turn_gate.hold_until_done(
+        with_hat_signals(event_stream(), message), _release_turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

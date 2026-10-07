@@ -17,6 +17,10 @@ import pytest
 
 from app.core.loop_watchdog import LagMonitor
 
+# Measures the event loop under its own simulated load: CI runs it alone, not
+# beside xdist workers competing for the runner's cores (pytest.ini: serial).
+pytestmark = pytest.mark.serial
+
 USERS = 15
 TURNS = 3
 LIMIT_MS = 250

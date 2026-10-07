@@ -97,10 +97,8 @@ jobs:
         # the same reports as before.
         run: >
           pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120
-          -n auto --dist loadfile
-          --cov=app --cov-report=term-missing --cov-report=xml
-          --cov-report=json:coverage.json
-          --cov-fail-under=25
+          -n auto --dist loadfile -m "not serial"
+          --cov=app --cov-report=
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data
@@ -113,6 +111,23 @@ jobs:
           # (test_scenario_validation timed out this way on the virgin
           # profile of run 28755289990).
           RAG_EMBEDDING_MODEL: fake
+
+      - name: Run the serial tests (timing under their own load)
+        # These measure the event loop under a simulated load, so they run
+        # alone, not beside xdist workers competing for the runner's cores.
+        # Coverage appends to the parallel run's and every report is written
+        # here, from the whole suite.
+        run: >
+          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120
+          -m serial
+          --cov=app --cov-append --cov-report=term-missing --cov-report=xml
+          --cov-report=json:coverage.json
+          --cov-fail-under=25
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data-serial
+          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
+          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
 
       - name: No undeclared dead functions
         # Line coverage cannot answer "has this FUNCTION ever run": a module
@@ -262,10 +277,21 @@ jobs:
         # this shard's measured times back into the copy.
         run: |
           if [ -f .test_durations ]; then cp .test_durations durations-${{ matrix.shard }}.json; else echo '{}' > durations-${{ matrix.shard }}.json; fi
-          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120             -n auto --dist loadfile             --splits 4 --group ${{ matrix.shard }}             --durations-path durations-${{ matrix.shard }}.json --store-durations             --cov=app --cov-report=
+          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120             -n auto --dist loadfile -m 'not serial'             --splits 4 --group ${{ matrix.shard }}             --durations-path durations-${{ matrix.shard }}.json --store-durations             --cov=app --cov-report=
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data
+          CEREBRUM_VIRGIN: "true"
+          CEREBRUM_DOMAIN_KITS: ""
+          RAG_EMBEDDING_MODEL: fake
+          COVERAGE_FILE: .coverage.shard${{ matrix.shard }}
+
+      - name: Run the serial tests (shard 1, alone)
+        if: matrix.shard == 1
+        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m serial --cov=app --cov-append --cov-report=
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data-serial
           CEREBRUM_VIRGIN: "true"
           CEREBRUM_DOMAIN_KITS: ""
           RAG_EMBEDDING_MODEL: fake

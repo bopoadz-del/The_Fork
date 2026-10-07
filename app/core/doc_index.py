@@ -3714,6 +3714,15 @@ async def search_project_documents(
     5 s made Render restart the instance (health check timed out). It runs in
     a thread, like the chat pre-retrieval already does.
     """
+    from app.core.rag import retrieval_worker
+
+    if retrieval_worker.enabled():
+        # Retrieval's CPU work runs in the worker process (its own GIL).
+        from app.core.privileges import caller_role
+
+        return await retrieval_worker.call(
+            retrieval_worker.search_documents_job, project_id, query, top_k, caller_role(),
+        )
     return await asyncio.to_thread(
         _search_project_documents_sync, project_id, query, top_k,
     )
