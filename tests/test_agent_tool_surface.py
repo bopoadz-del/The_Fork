@@ -37,11 +37,15 @@ def _synthetic_tool_names() -> set[str]:
     synthetic tool counts the moment it is dispatched rather than when someone
     remembers to list it here.
     """
-    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    from tests import agent_source
+
     target = None
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == "_run_tool_call":
-            target = node
+    for path in agent_source.files():  # runtime.py and app/agents/core/
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == "_run_tool_call":
+                target = node
+                break
+        if target is not None:
             break
     assert target is not None, "_run_tool_call not found -- has the runtime been restructured?"
 
