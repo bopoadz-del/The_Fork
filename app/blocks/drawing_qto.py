@@ -1,4 +1,7 @@
-"""Drawing QTO Block - Quantity Take-Off from DXF/DWG construction drawings.
+"""Drawing QTO Block - Quantity Take-Off from DXF and PDF construction drawings.
+
+DWG is not read (owner ruling): a DWG input is refused with
+``app.core.cad_formats.DWG_NOT_SUPPORTED``.
 
 V1.2 swaps the text-extraction path from pdfplumber to PyMuPDF (fitz).
 pdfplumber was a 80-180s/drawing bottleneck on dense CAD PDFs; fitz
@@ -13,13 +16,14 @@ Coordinate-system note: pdfplumber returned y0 in PDF user-space
 to "bottom 15%" or sorted top-down has been flipped accordingly.
 """
 
+import json
 import logging
 import math
 import os
 import re
 from typing import Any
 
-from app.core.subprocess_env import scrubbed_env
+from app.core.cad_formats import dwg_not_supported, is_dwg
 from app.core.universal_base import UniversalBlock
 
 _logger = logging.getLogger(__name__)
@@ -36,28 +40,75 @@ _OCR_TEXT_THRESHOLD = int(os.getenv("QTO_OCR_TEXT_THRESHOLD", "80"))
 _GEOMETRY_MAX_CONTENT_BYTES = int(os.getenv("QTO_GEOMETRY_MAX_CONTENT_BYTES", "2000000"))
 
 
-# --- Discipline lookup ------------------------------------------------------
-# the client project (the client project) drawing-number discipline codes. Module-level
-# so tests can import + monkeypatch if a new project adds codes.
-DISCIPLINE_FULL: dict[str, str] = {
-    "TM": "Traffic Management",
-    "SW": "Storm Water",
-    "SG": "Sewage",
-    "EL": "Electrical",
-    "LI": "Lighting",
-    "ST": "Structural",
-    "WS": "Water Supply",
-    "IR": "Irrigation",
-    "TL": "Telecom",
-    "SE": "Security",
-    "SF": "Safety",
-    "IF": "Infrastructure",
-}
+# --- Discipline -------------------------------------------------------------
+# A drawing's discipline is read from its title block's DISCIPLINE label. A
+# drawing-number code (a two-letter segment) means something only within one
+# project's numbering scheme, so the code carries no table of them: when a
+# code has to be named, the mapping comes from the open project's profile --
+# the project fact below, a JSON object {"<code>": "<discipline>"} recorded
+# from the project's own drawing register. With no label and no mapping the
+# discipline is reported as unknown, never guessed.
+DISCIPLINE_CODES_FACT = "drawing_discipline_codes"
+DISCIPLINE_UNKNOWN = "unknown"
+_DN_SPLIT_RE = re.compile(r"[-_./\s]+")
+
+
+def _project_discipline_codes(project_id: str | None) -> dict[str, str]:
+    """The open project's drawing discipline codes, ``{CODE: name}``.
+
+    Read from the project profile (``DISCIPLINE_CODES_FACT``). Empty when no
+    project is open, the project records no mapping, or the stored value is
+    not a JSON object of code -> name.
+    """
+    if not project_id:
+        return {}
+    try:
+        from app.core import projects as projects_store
+
+        fact = projects_store.get_fact(str(project_id), DISCIPLINE_CODES_FACT)
+    except Exception:
+        _logger.warning("project discipline codes unreadable for %s", project_id,
+                        exc_info=True)
+        return {}
+    if not fact:
+        return {}
+    try:
+        raw = json.loads(fact.get("value") or "")
+    except (TypeError, ValueError):
+        _logger.warning("project %s fact %s is not JSON", project_id,
+                        DISCIPLINE_CODES_FACT)
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    codes: dict[str, str] = {}
+    for k, v in raw.items():
+        code, name = str(k).strip().upper(), str(v).strip()
+        if code and name:
+            codes[code] = name
+    return codes
+
+
+def _resolve_discipline(labelled: str | None, drawing_number: str | None,
+                        codes: dict[str, str]) -> tuple[str | None, str | None, str]:
+    """``(discipline, discipline_full, source)`` for one drawing.
+
+    1. The title block's DISCIPLINE label, as written; a project code mapping
+       names it when the label carries a code.
+    2. Else a segment of the drawing number that the project's mapping names.
+    3. Else unknown: no code is guessed.
+    """
+    if labelled:
+        return labelled, codes.get(labelled.strip().upper(), labelled), "title_block"
+    if codes and drawing_number:
+        for seg in _DN_SPLIT_RE.split(drawing_number.upper()):
+            if seg in codes:
+                return seg, codes[seg], "project_profile"
+    return None, None, DISCIPLINE_UNKNOWN
 
 # Long hyphenated drawing-number shape (any originator code).
 # Two token orders both appear in the wild:
-#   AB-CDE-001-0000-KLM-DWG-TM-200-0000001-A   (zone, then originator)
-#   AB-CDE-001-KLM-0000-DWG-WS-600-0000001-C   (tokens 4-5 swapped)
+#   AB-CDE-001-0000-KLM-DWG-QA-200-0000001-A   (zone, then originator)
+#   AB-CDE-001-KLM-0000-DWG-QB-600-0000001-C   (tokens 4-5 swapped)
 # Accept both by alternation. Shorter fallback covers project-specific
 # schemes that don't use the full two-group prefix.
 _DWG_NUMBER_FULL = re.compile(
@@ -123,6 +174,7 @@ _TB_LABEL_PATTERNS: tuple[tuple[str, str], ...] = (
     ("revision", r"REV(?:ISION)?\.?"),
     ("date", r"DATE"),
     ("sheet_number", r"SHEET(?:\s+(?:NO|NUMBER))?\.?"),
+    ("discipline", r"DISCIPLINE"),
     ("consultant", r"CONSULTANT|CLIENT|CONTRACTOR|EMPLOYER|ENGINEER"),
 )
 _TB_LABEL_RE = re.compile(
@@ -185,7 +237,7 @@ def _strip_doubled_letter_prefix(dn: str) -> str:
     """Strip stray leading characters that fall outside a clean hyphenated
     drawing-number prefix.
 
-    Bug observed in pilot: ST sheet returned ``AAB-CDE-001-...`` because
+    Bug observed in pilot: one sheet returned ``AAB-CDE-001-...`` because
     the source text run was something like ``XAAB-CDE-001-...`` and the
     regex `[A-Z]{2,}-[A-Z]{2,}-...` legitimately accepted ``XAAB`` (or in
     a leading position, ``AAB``). A negative-lookbehind in the regex does
@@ -237,9 +289,9 @@ def _has_trailing_lowercase_artifact(text: str) -> bool:
 
 
 # Phase 1.8: Levenshtein dedup for repetitive legend / schedule tables
-# (observed on ST sheet: 161 notes vs 2-4 for other disciplines of similar
+# (observed on one pilot sheet: 161 notes vs 2-4 for other disciplines of similar
 # size). Many near-identical notes survive the existing CAD-tag /
-# pure-numeric / place-name filters — e.g. five "ISSUED FOR CONSTRUCTION
+# pure-numeric filters — e.g. five "ISSUED FOR CONSTRUCTION
 # (CONDITIONAL) NN DD/MM/YY AJ" revision-history rows. We drop any note
 # whose Levenshtein distance from an already-accepted note is < 5.
 try:
@@ -322,7 +374,7 @@ def _to_metres_factor(doc_units: int) -> float:
 class DrawingQTOBlock(UniversalBlock):
     name = "drawing_qto"
     version = "1.0.0"
-    description = "Extract measurements, areas, and volumes from DXF/DWG construction drawings"
+    description = "Extract measurements, areas, and volumes from DXF and PDF construction drawings"
     layer = 3
     tags = ["domain", "construction", "drawing", "qto", "dxf", "quantities"]
     requires = []
@@ -336,8 +388,8 @@ class DrawingQTOBlock(UniversalBlock):
     ui_schema = {
         "input": {
             "type": "file",
-            "accept": [".dxf", ".dwg"],
-            "placeholder": "Upload DXF or DWG drawing...",
+            "accept": [".dxf", ".pdf"],
+            "placeholder": "Upload DXF or PDF drawing...",
         },
         "output": {
             "type": "table",
@@ -365,7 +417,10 @@ class DrawingQTOBlock(UniversalBlock):
         else:
             file_path = data.get("file_path") or params.get("file_path") or data.get("text") or data.get("input") or ""
         if not file_path:
-            return {"status": "error", "error": "No file_path provided. Requires a DXF or IFC file path."}
+            return {"status": "error", "error": "No file_path provided. Requires a DXF or PDF file path."}
+        # DWG is refused by format, before the file is looked for.
+        if is_dwg(file_path):
+            return dwg_not_supported()
         if not os.path.exists(file_path):
             return {"status": "error", "error": f"File not found: {file_path}"}
 
@@ -383,7 +438,10 @@ class DrawingQTOBlock(UniversalBlock):
             # (measurements, areas, estimated_volumes), then layer the new
             # text-based structured drawing fields on top.
             geom = self._extract_from_pdf(file_path, params)
-            text_result = self._extract_drawing_text(file_path)
+            text_result = self._extract_drawing_text(
+                file_path,
+                project_id=params.get("project_id") or data.get("project_id"),
+            )
             # Merge: legacy keys first, new fields supplement.
             merged = dict(geom) if isinstance(geom, dict) else {}
             merged.update({
@@ -399,15 +457,8 @@ class DrawingQTOBlock(UniversalBlock):
                 merged["status"] = text_result.get("status", "error")
             return merged
 
-        # --- DWG input: attempt ODA File Converter, else clear guidance ----
-        if ext == ".dwg":
-            converted = self._try_convert_dwg(file_path)
-            if isinstance(converted, dict):  # error envelope
-                return converted
-            file_path = converted  # ezdxf will read the converted DXF below
-
-        if ext not in (".dxf", ".dwg"):
-            return {"status": "error", "error": f"Unsupported format: {ext}. Use .dxf, .dwg, or .pdf"}
+        if ext != ".dxf":
+            return {"status": "error", "error": f"Unsupported format: {ext}. Use .dxf or .pdf"}
 
         try:
             import ezdxf
@@ -756,9 +807,13 @@ class DrawingQTOBlock(UniversalBlock):
                     })
         return out
 
-    def _extract_drawing_text(self, file_path: str) -> dict:
+    def _extract_drawing_text(self, file_path: str,
+                              project_id: str | None = None) -> dict:
         """Top-level text-extraction orchestrator: returns
-        ``{"text", "drawing", "errors", "status"}``."""
+        ``{"text", "drawing", "errors", "status"}``.
+
+        ``project_id`` is the open project; its profile may name the
+        drawing-number discipline codes (``DISCIPLINE_CODES_FACT``)."""
         errors: list[str] = []
         try:
             import fitz
@@ -922,28 +977,26 @@ class DrawingQTOBlock(UniversalBlock):
                     # (e.g. ``XAB-CDE-...`` -> ``AB-CDE-...``).
                     rescued = _strip_doubled_letter_prefix(m.group(0))
                     break
-            if rescued:
-                tb["drawing_number"] = rescued
-                tb["discipline"] = None
-                tb["discipline_full"] = None
-                tb["revision"] = None
-            else:
-                # Drop the half-match so the filename fallback below fires.
-                tb["drawing_number"] = None
-                tb["discipline"] = None
-                tb["discipline_full"] = None
-                tb["revision"] = None
+            # A rescued number replaces the half-match; with none, drop the
+            # half-match so the filename fallback below fires.
+            tb["drawing_number"] = rescued
+            tb["revision"] = None
         if not tb.get("drawing_number"):
             tb["drawing_number"] = os.path.splitext(
                 os.path.basename(file_path)
             )[0]
             errors.append("drawing_number_fallback_to_filename")
-        # Re-derive discipline + revision from the (possibly rescued or
-        # filename-fallback) drawing_number so all paths agree.
-        if not tb.get("discipline") and tb.get("drawing_number"):
-            tb["discipline"], tb["discipline_full"] = (
-                self._discipline_from_number(tb["drawing_number"])
+        # Discipline: the DISCIPLINE label, else the open project's own code
+        # mapping applied to the final drawing number, else unknown.
+        tb["discipline"], tb["discipline_full"], tb["discipline_source"] = (
+            _resolve_discipline(
+                tb.get("discipline"),
+                tb.get("drawing_number"),
+                _project_discipline_codes(project_id),
             )
+        )
+        # Re-derive the revision from the (possibly rescued or
+        # filename-fallback) drawing_number so all paths agree.
         if not tb.get("revision") and tb.get("drawing_number"):
             rev = _revision_from_number_tail(tb["drawing_number"])
             if rev:
@@ -1011,7 +1064,7 @@ class DrawingQTOBlock(UniversalBlock):
 
         # Capture the drawing number from the ORIGINAL bottom-15% band
         # BEFORE the richness fallback below widens ``title_block_chars``
-        # to the right-20% zone or the full page. On the LI bug fixture,
+        # to the right-20% zone or the full page. On one pilot sheet,
         # bottom-15% has only 3 spans (lines < 5), tripping the right-20%
         # fallback. Right-20% raw char order then puts a referenced
         # drawing number ahead of the title-block one, so a plain
@@ -1054,20 +1107,17 @@ class DrawingQTOBlock(UniversalBlock):
         title_block = self._extract_title_block(title_block_chars, page)
 
         # If the bottom-15% band yielded a valid full drawing number, prefer
-        # it over the (possibly contaminated) widened-zone match. Clear
-        # discipline/revision so the downstream re-derive at
-        # ``_extract_drawing_text`` lines 667-689 re-fills them from the
-        # corrected number — that re-derive only fires when the field is
-        # missing, so an explicit reset is required, not just an
-        # overwrite of ``drawing_number``.
+        # it over the (possibly contaminated) widened-zone match. Clear the
+        # revision so the downstream re-derive in ``_extract_drawing_text``
+        # re-fills it from the corrected number — that re-derive only fires
+        # when the field is missing, so an explicit reset is required, not
+        # just an overwrite of ``drawing_number``.
         if (
             band_dn
             and _is_full_drawing_number(band_dn)
             and title_block.get("drawing_number") != band_dn
         ):
             title_block["drawing_number"] = band_dn
-            title_block["discipline"] = None
-            title_block["discipline_full"] = None
             title_block["revision"] = None
             errors.append("drawing_number_picked_from_bottom_band")
 
@@ -1321,14 +1371,13 @@ class DrawingQTOBlock(UniversalBlock):
                     result["revision"] = tail
         if dn:
             result["drawing_number"] = dn
-            disc, disc_full = self._discipline_from_number(dn)
-            result["discipline"] = disc
-            result["discipline_full"] = disc_full
         if not result["revision"] and fields.get("revision"):
             result["revision"] = fields["revision"]
 
-        # People and project: only ever the value of their label.
-        for f in ("drafter", "checked_by", "approved_by", "project_name"):
+        # People, project and discipline: only ever the value of their label.
+        # (A discipline code is named later, from the open project's profile.)
+        for f in ("drafter", "checked_by", "approved_by", "project_name",
+                  "discipline"):
             if fields.get(f):
                 result[f] = fields[f]
 
@@ -1399,7 +1448,7 @@ class DrawingQTOBlock(UniversalBlock):
             if _tb_label_at_start(t) or any(v in tn for v in value_texts):
                 continue
             # Bug 1.5b: reject cross-ref callouts as title candidates.
-            # On TM detail sheets the longest cluster was the MATCH LINE
+            # On detail sheets the longest cluster was the MATCH LINE
             # text. Skip anything that looks like a sheet-to-sheet ref.
             if re.search(
                 r"\bMATCH\s*LINE\b|"
@@ -1410,7 +1459,7 @@ class DrawingQTOBlock(UniversalBlock):
             ):
                 continue
             # Phase 1.6: reject pure-numeric and scale-shaped candidates.
-            # On WS the title-block selection picked "1800" — a chainage
+            # On one pilot sheet the title-block selection picked "1800" — a chainage
             # station number. The user wanted "1:1800" as scale, but
             # that lives in a different field; for drawing_title we just
             # refuse all numeric-shaped strings. Phase 1.7: ``+`` joins
@@ -1436,8 +1485,8 @@ class DrawingQTOBlock(UniversalBlock):
                 "PROJECT SYSTEM", "ZONE:", "NOTES",
             )):
                 continue
-            # Phase 1.7: reject CAD Xref filepath strings (the SG sheet
-            # leaks the underlying ``Xref ..\..\_Refsecure\....dwg`` debug
+            # Phase 1.7: reject CAD Xref filepath strings (one pilot sheet
+            # leaks the underlying ``Xref ..\..\<folder>\<file>`` debug
             # label as a high-font cluster under fitz — pdfplumber never
             # surfaced it). Match "XREF " prefix or a backslash anywhere.
             if tu.startswith("XREF ") or "\\" in t:
@@ -1452,18 +1501,6 @@ class DrawingQTOBlock(UniversalBlock):
         )
         return result
 
-    @staticmethod
-    def _discipline_from_number(dn: str) -> tuple[str, str]:
-        """Extract the 2-letter discipline code from a long hyphenated
-        drawing number and look up the human-readable name."""
-        # The long form places discipline after the document-type token
-        # (e.g. ...-DWG-TM-200-...). Any 2-letter segment in the table wins.
-        parts = dn.split("-")
-        for p in parts:
-            if p in DISCIPLINE_FULL:
-                return p, DISCIPLINE_FULL[p]
-        return None, None
-
     # --- Step 3: drawing-zone font-size classification ---------------------
     def _classify_drawing_zone(
         self, dz_chars: list[dict]
@@ -1476,7 +1513,7 @@ class DrawingQTOBlock(UniversalBlock):
         within edit-distance 5 of an already-accepted note, it's dropped
         and the dedup counter is bumped. This kills the repetitive
         legend / schedule / revision-history overproduction observed on
-        ST sheets (161 notes vs 2-4 for other disciplines of comparable
+        one pilot sheet (161 notes vs 2-4 for other disciplines of comparable
         size).
         """
         if not dz_chars:
@@ -1532,7 +1569,7 @@ class DrawingQTOBlock(UniversalBlock):
     # --- Step 4: cross-ref extraction --------------------------------------
     # Sheet-identifier shape: either a long hyphenated number
     # (3+ tokens) OR a short sheet number (2-4 digits like "02", "10", "1234").
-    # Loose `[A-Z0-9-]+` over-matched on SG (1755 hits) so we lock this down.
+    # Loose `[A-Z0-9-]+` over-matched on one pilot sheet (1755 hits) so we lock this down.
     _SHEET_ID_RE = re.compile(
         r"(?:[A-Z0-9]+(?:-[A-Z0-9]+){2,}|\d{2,4})"
     )
@@ -1631,116 +1668,6 @@ class DrawingQTOBlock(UniversalBlock):
         return "\n".join(lines)
 
     # ====================================================================
-
-    def _try_convert_dwg(self, file_path: str):
-        """Best-effort DWG → DXF conversion via ODA File Converter CLI.
-
-        Returns the converted DXF path on success, or a structured error
-        dict on failure. The CLI is shipped as ``ODAFileConverter`` on most
-        Linux/Mac installs and as ``ODAFileConverter.exe`` on Windows; we
-        also look for ``oda_file_converter`` for image builds that ship a
-        symlink. If neither is present, return the long-standing
-        "convert to DXF first" guidance.
-        """
-        import shutil
-        import subprocess
-        import tempfile
-
-        for candidate in ("ODAFileConverter", "ODAFileConverter.exe",
-                          "oda_file_converter", "oda-file-converter"):
-            tool = shutil.which(candidate)
-            if tool:
-                break
-        else:
-            return {
-                "status": "error",
-                "error": (
-                    "DWG format requires the ODA File Converter CLI, which is "
-                    "not bundled in this image (no pure-Python DWG reader "
-                    "exists). Either: (a) install ODA File Converter — "
-                    "https://www.opendesign.com/guestfiles/oda_file_converter — "
-                    "and ensure `ODAFileConverter` is on PATH, or (b) export "
-                    "the drawing as .dxf from AutoCAD/BricsCAD/LibreCAD "
-                    "(File → Save As → DXF R2018) and upload that."
-                ),
-                "hint": "Upload the .dxf instead of .dwg",
-            }
-
-        try:
-            with tempfile.TemporaryDirectory() as src_dir, tempfile.TemporaryDirectory() as dst_dir:
-                # ODA CLI converts an input DIRECTORY to an output directory.
-                # Copy the single DWG into a clean source dir, then convert.
-                src_path = os.path.join(src_dir, os.path.basename(file_path))
-                from app.core.file_crypto import open_plaintext
-                with open_plaintext(file_path) as plain:
-                    with open(plain, "rb") as fh, open(src_path, "wb") as fo:
-                        fo.write(fh.read())
-                # Args: in_dir out_dir output_version output_format
-                #       (ACAD2018, DXF, recurse-flag, audit-flag)
-                # Live failure (exit 134): the ODA QT6 bundle ships ONLY the
-                # xcb platform plugin -- inspection of the deployed image
-                # showed plugins/platforms/ contains just libqxcb.so, so
-                # QT_QPA_PLATFORM=offscreen can NEVER work with this build.
-                # Run under a virtual X display instead: xvfb-run gives xcb a
-                # real (virtual) DISPLAY and the bundled qt.conf resolves the
-                # plugin paths itself. Falls back to a bare launch (with
-                # offscreen requested) only when xvfb-run is absent, so dev
-                # boxes with a display still convert.
-                cmd = [tool, src_dir, dst_dir, "ACAD2018", "DXF", "0", "1"]
-                qt_env: dict[str, str] = {}
-                xvfb = shutil.which("xvfb-run")
-                if xvfb:
-                    cmd = [xvfb, "-a", *cmd]
-                    # xcb is the only bundled plugin; do not force offscreen.
-                    qt_env["QT_QPA_PLATFORM"] = "xcb"
-                else:
-                    qt_env["QT_QPA_PLATFORM"] = "offscreen"
-                proc = subprocess.run(
-                    cmd,
-                    timeout=120, check=False, capture_output=True,
-                    env=scrubbed_env(qt_env),  # audit §6.1
-                )
-                dxf_name = os.path.splitext(os.path.basename(file_path))[0] + ".dxf"
-                converted = os.path.join(dst_dir, dxf_name)
-                if not os.path.exists(converted):
-                    # Diagnose, don't guess: ODA writes a per-file .err report
-                    # on conversion failure, and its exit code / stderr say
-                    # why nothing appeared (a bare "produced no DXF" hid a
-                    # live failure behind an unfalsifiable message).
-                    produced = os.listdir(dst_dir)
-                    err_detail = ""
-                    for name in produced:
-                        if name.endswith(".err"):
-                            try:
-                                with open(os.path.join(dst_dir, name),
-                                          encoding="utf-8", errors="replace") as fe:
-                                    err_detail = fe.read(400).strip()
-                            except OSError:
-                                pass
-                            break
-                    stderr_tail = (proc.stderr or b"")[-300:].decode(
-                        "utf-8", errors="replace").strip()
-                    return {
-                        "status": "error",
-                        "error": (
-                            "ODA File Converter produced no DXF "
-                            f"(exit code {proc.returncode})."
-                            + (f" Converter report: {err_detail}" if err_detail else "")
-                            + (f" stderr: {stderr_tail}" if stderr_tail else "")
-                            + (f" Output dir contents: {produced}" if produced and not err_detail else "")
-                        ),
-                    }
-                # Move into a path that survives the temp-dir teardown.
-                stable = os.path.join(
-                    tempfile.gettempdir(), f"converted_{os.path.basename(dxf_name)}"
-                )
-                with open(converted, "rb") as fh, open(stable, "wb") as fo:
-                    fo.write(fh.read())
-                return stable
-        except FileNotFoundError as e:
-            return {"status": "error", "error": f"DWG conversion launcher error: {e}"}
-        except Exception as e:
-            return {"status": "error", "error": f"DWG conversion failed: {e}"}
 
     def _extract_measurements(self, msp, unit_factor: float) -> tuple[list[dict], int, dict[str, Any]]:
         """``unit_factor`` converts raw drawing units straight to metres.

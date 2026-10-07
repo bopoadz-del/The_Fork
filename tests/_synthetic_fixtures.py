@@ -85,7 +85,7 @@ def build_drawing_detail_pdf(path: Path) -> dict[str, Any]:
 
     Properties the drawing reader relies on:
     - a bottom-band title block carrying a full long-form drawing number
-      (discipline TM, revision A), a scale, a date and a sheet number;
+      (revision A; no DISCIPLINE label), a scale, a date and a sheet number;
     - general notes in the drawing zone (> 10 words, one near-duplicate);
     - repeated MATCH LINE callouts (two distinct sheet targets);
     - a block of CAD tags that must be filtered out of the chunk;
@@ -116,8 +116,6 @@ def build_drawing_detail_pdf(path: Path) -> dict[str, Any]:
     return {
         "drawing_number": DETAIL_DRAWING_NUMBER,
         "drawing_title": DETAIL_TITLE,
-        "discipline": "TM",
-        "discipline_full": "Traffic Management",
         "revision": "A",
         "scale": "1:500",
         "match_line_targets": {"03", "05"},

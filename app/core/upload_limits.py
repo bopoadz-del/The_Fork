@@ -28,8 +28,9 @@ import os
 
 # Formats every upload route accepts. Audio/video are included because the
 # voice/transcription blocks consume them; the construction formats are the
-# ones registered blocks can actually parse (.dwg is accepted so drawing_qto
-# can answer with "convert to DXF" instead of the upload 400'ing first).
+# ones registered blocks can actually parse (.dwg is accepted so take-off and
+# BIM can answer with app.core.cad_formats.DWG_NOT_SUPPORTED -- export DXF or
+# PDF -- instead of the upload 400'ing with a bare "type not allowed").
 ALLOWED_UPLOAD_EXTENSIONS = frozenset({
     ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff",
     ".txt", ".md", ".csv", ".json", ".xml",

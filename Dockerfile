@@ -1,9 +1,4 @@
 # Multi-stage build - slim, fast, multi-platform
-# Global ARG (declared before the first FROM so a FROM line can use it):
-# the image the oda-donor stage copies the ODA File Converter out of. See
-# that stage. CI and local builds keep the busybox default (no converter);
-# deploy-aws.yml passes the ECR image that still carries it.
-ARG ODA_DONOR_IMAGE=busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
 
 # ── Base images are pinned by digest ─────────────────────────────────────
 # A bare tag such as python:3.11-slim floats: Docker Hub re-points it to a
@@ -137,41 +132,6 @@ COPY frontend/ ./
 ENV VITE_API_BASE=""
 RUN npm run build
 
-# ── ODA File Converter donor ──────────────────────────────────────────────
-# opendesign.com put its guest downloads behind a JS consent flow on
-# 2026-09-29: every guestfiles/get?filename=... URL (deb / rpm / AppImage,
-# every version) now returns a 404 consent page, and the deploy build died
-# at `curl -fSL ... oda.deb` (deploy run 36591593106). The only copy of the
-# converter we control is inside the last image built from the .deb, so a
-# production build takes it from there: deploy-aws.yml passes that ECR image
-# as ODA_DONOR_IMAGE. CI and local builds get busybox and no converter —
-# app.blocks.drawing_qto then tells the operator DWG needs the converter.
-# Self-describing: the file set is dpkg's own manifest for the package that
-# owns /usr/bin/ODAFileConverter (plus anything under that name), so no
-# install path is hard-coded here. If the vendor restores a direct link,
-# rebuild a donor from the .deb and repoint ODA_DONOR_IMAGE.
-FROM ${ODA_DONOR_IMAGE} AS oda-donor
-# The donor is our own production image, which ends on a non-root USER;
-# as that user tar cannot write /oda.tar (deploy run 36597134448:
-# "Cannot open: Permission denied"). Busybox runs as root, which is why CI
-# never saw it.
-USER root
-# dpkg's manifest can list files that were never written (python:slim
-# path-excludes docs and man pages), and GNU tar exits 2 on a missing
-# entry, so keep only paths that exist. Errors are NOT silenced: a broken
-# donor must fail this stage loudly, not ship an empty tar.
-RUN set -e; \
-    if command -v dpkg >/dev/null 2>&1 && [ -e /usr/bin/ODAFileConverter ]; then \
-        pkg=$(dpkg -S /usr/bin/ODAFileConverter 2>/dev/null | cut -d: -f1); \
-        { [ -n "$pkg" ] && dpkg -L "$pkg"; find /usr/bin/ODAFileConverter* -print; } \
-            | sort -u \
-            | while IFS= read -r p; do [ -e "$p" ] && printf '%s\n' "$p"; done \
-            | tar -cf /oda.tar --no-recursion -T -; \
-        echo "oda-donor: packaged $(tar -tf /oda.tar | wc -l) entries from ${pkg:-<unpackaged files>}"; \
-    else \
-        : > /oda.tar; echo "oda-donor: no converter in this image (CI / local build)"; \
-    fi
-
 # Same digest as the builder stage above -- keep the two in step.
 FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e
 WORKDIR /app
@@ -212,63 +172,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # `npx -y @modelcontextprotocol/server-<name>` (F35 -- without node in the
 # RUNTIME stage the external-mcp agent was a ghost; node:20-slim above is
 # only the frontend BUILD stage and never reaches this image).
-
-# ODA File Converter — required by app.blocks.drawing_qto for DWG → DXF.
-# Supplied by the oda-donor stage above (the vendor's downloads are gated;
-# see there). ODA_REQUIRED=1 (deploy-aws.yml) turns a missing converter, or
-# a converter whose system shared libraries are absent, into a BUILD
-# FAILURE — a production image must never quietly lose DWG conversion.
-# CI and local builds leave it 0 and simply have no converter.
-ARG ODA_REQUIRED=0
-# xvfb: the ODA QT6 bundle ships ONLY the xcb platform plugin (no
-# offscreen), so headless conversion needs a virtual X display --
-# drawing_qto wraps the converter in `xvfb-run -a` when available.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libxext6 libsm6 libxrender1 libice6 libxi6 \
-        libxcomposite1 libxcursor1 libxdamage1 libxfixes3 libxrandr2 \
-        libxtst6 libnss3 xvfb xauth libxcb-cursor0 libxkbcommon-x11-0 \
-        libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
-        libxcb-shape0 \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=oda-donor /oda.tar /tmp/oda.tar
-# The library check below separates the converter and its core libraries
-# (must resolve) from Qt plugins under */plugins/* (reported only): Qt
-# loads plugins lazily and skips one whose library will not dlopen, and
-# DWG -> DXF never needs them. The bundle's qtiff image plugin links the
-# Ubuntu-20.04 libtiff.so.5 it was built against, which no Debian since
-# bookworm ships (deploy run 36601489610) -- a gap the .deb install had
-# too. A library the bundle carries in its own tree is not "missing".
-RUN set -e; \
-    if [ -s /tmp/oda.tar ]; then \
-        tar -xf /tmp/oda.tar -C / && echo "ODA File Converter restored: $(tar -tf /tmp/oda.tar | wc -l) entries"; \
-    fi; \
-    rm -f /tmp/oda.tar; \
-    if [ "$ODA_REQUIRED" = "1" ]; then \
-        if [ ! -e /usr/bin/ODAFileConverter ]; then \
-            echo "ERROR: ODA_REQUIRED=1 but /usr/bin/ODAFileConverter is missing — the donor image did not supply it" >&2; exit 1; \
-        fi; \
-        missing=""; plugin_missing=""; \
-        for f in $(find /usr/bin/ODAFileConverter* -type f); do \
-            if head -c4 "$f" | grep -q ELF; then \
-                for lib in $(ldd "$f" 2>/dev/null | awk '/not found/{print $1}'); do \
-                    if find /usr/bin/ODAFileConverter* -name "$lib" | grep -q .; then continue; fi; \
-                    case "$f" in \
-                        */plugins/*) plugin_missing="$plugin_missing ${f##*/}->$lib" ;; \
-                        *) missing="$missing ${f##*/}->$lib" ;; \
-                    esac; \
-                done; \
-            fi; \
-        done; \
-        if [ -n "$plugin_missing" ]; then \
-            echo "WARNING: optional Qt plugins with unresolved libraries (skipped at runtime):$plugin_missing"; \
-        fi; \
-        if [ -n "$missing" ]; then \
-            echo "ERROR: ODA File Converter needs system libraries this image lacks:$missing" >&2; exit 1; \
-        fi; \
-        echo "ODA File Converter present; converter and core libraries resolve"; \
-    fi
-
-ENV QT_QPA_PLATFORM=offscreen
 
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
