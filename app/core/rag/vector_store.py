@@ -612,6 +612,10 @@ _TURN_MEMO: "contextvars.ContextVar[Optional[Dict[tuple, list]]]" = contextvars.
 #: ~4 chunks per heap page that is ~1,000 pages, below a typical filtered HNSW
 #: walk of the table.
 _EXACT_SCAN_MAX_ROWS = 4000
+#: A project's chunk count, bounded at the exact-scan limit; see
+#: ``_project_is_small`` for why it is ordered by ``doc_id``.
+_PROJECT_ROWS_SQL = ("SELECT count(*) FROM (SELECT 1 FROM {table} "
+                     "WHERE project_id = :p ORDER BY doc_id LIMIT :m) s")
 
 
 def start_turn_memo() -> "contextvars.Token":
@@ -1887,13 +1891,19 @@ class VectorStore:
 
     def _project_is_small(self, session: Session, project_id: str) -> bool:
         """At most ``_EXACT_SCAN_MAX_ROWS`` chunks? A count bounded at that
-        many index entries (a few pages), memoised for the turn."""
+        many index entries (a few pages), memoised for the turn.
+
+        Ordered by ``doc_id`` so the bounded read follows the
+        ``(project_id, doc_id)`` index: the planner otherwise may pick a
+        sequential scan that hopes to meet enough of the project's rows early
+        -- and reads the whole table when the project is small (CI caught
+        that plan on a seeded corpus). Read from the index the rows come
+        sorted; a sequential scan would have to sort every one of them."""
         key = ("project-rows", self._table_name, project_id)
         n = _memo_get(key)
         if n is _MISS:
             n = _memo_put(key, int(session.execute(text(
-                f"SELECT count(*) FROM (SELECT 1 FROM {self._table_name} "
-                "WHERE project_id = :p LIMIT :m) s"
+                _PROJECT_ROWS_SQL.format(table=self._table_name)
             ), {"p": project_id, "m": _EXACT_SCAN_MAX_ROWS + 1}).scalar() or 0))
         return n <= _EXACT_SCAN_MAX_ROWS
 
