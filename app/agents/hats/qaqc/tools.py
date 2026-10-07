@@ -1,0 +1,57 @@
+"""Tools owned by the qaqc hat.
+
+Moved unchanged from Agent._run_tool_call (F-DRIVER Phase A); each registers
+itself with app.agents.core.tool_registry."""
+from __future__ import annotations
+
+from app.agents.core.tool_registry import ToolCall, tool
+
+
+@tool("commissioning_checklist", owner="qaqc")
+async def handle_commissioning_checklist(call: ToolCall) -> dict:
+    """The ``commissioning_checklist`` tool."""
+    from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
+        _infer_commissioning_systems,
+    )
+    args = call.args
+    name = call.name
+    agent = call.agent
+    user_message = call.user_message
+    if "construction" not in agent.allowed_blocks:
+        return {
+            "name": name, "ok": False,
+            "result": {"status": "error", "error": "construction container not in agent's allowed_blocks"},
+        }
+    try:
+        from app.dependencies import get_block_instance
+        container = get_block_instance("construction")
+    except Exception as e:
+        return {
+            "name": name, "ok": False,
+            "result": {"status": "error", "error": f"construction unavailable: {e}"},
+        }
+    systems = args.get("systems")
+    inferred = _infer_commissioning_systems(
+        user_message or args.get("message") or ""
+    )
+    if inferred:
+        systems = inferred
+    elif not isinstance(systems, list) or not systems:
+        systems = ["hvac", "electrical", "fire"]
+    try:
+        result = await container.commissioning_checklist({}, {"systems": systems})
+    except Exception as e:
+        return {
+            "name": name, "ok": False,
+            "result": {"status": "error", "error": f"commissioning_checklist failed: {e}"},
+        }
+    # Trim the flattened master list — the model only needs the organised
+    # per-system checklists + summary to present; the full flat list is
+    # redundant and bloats context.
+    if isinstance(result, dict):
+        result = {k: v for k, v in result.items() if k != "master_test_schedule"}
+    return {
+        "name": "commissioning_checklist",
+        "ok": isinstance(result, dict) and result.get("status") == "success",
+        "result": result,
+    }

@@ -1,0 +1,129 @@
+"""Tools owned by the commercial hat.
+
+Moved unchanged from Agent._run_tool_call (F-DRIVER Phase A); each registers
+itself with app.agents.core.tool_registry."""
+from __future__ import annotations
+
+from app.agents.core.tool_registry import ToolCall, tool
+
+
+@tool("cash_flow_forecast", owner="commercial")
+async def handle_cash_flow_forecast(call: ToolCall) -> dict:
+    """cash_flow_forecast (direct construction shortcut)"""
+    from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
+        Any,
+    )
+    args = call.args
+    name = call.name
+    agent = call.agent
+    user_message = call.user_message
+    if "construction" not in agent.allowed_blocks:
+        return {
+            "name": name,
+            "ok": False,
+            "result": {
+                "status": "error",
+                "error": "construction container not in agent's allowed_blocks",
+            },
+        }
+    try:
+        from app.dependencies import get_block_instance
+        container = get_block_instance("construction")
+    except Exception as e:
+        return {
+            "name": name,
+            "ok": False,
+            "result": {"status": "error", "error": f"construction unavailable: {e}"},
+        }
+    cv_raw = args.get("contract_value")
+    try:
+        cv = float(cv_raw) if cv_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        cv = None
+    dm_raw = args.get("duration_months")
+    try:
+        dm = int(dm_raw) if dm_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        dm = None
+    params: dict[str, Any] = {}
+    if cv is not None:
+        params["contract_value"] = cv
+    if dm is not None:
+        params["duration_months"] = dm
+    try:
+        result = await container.cash_flow_forecast(
+            {"message": args.get("message") or user_message or ""},
+            params,
+        )
+    except Exception as e:
+        return {
+            "name": name,
+            "ok": False,
+            "result": {"status": "error", "error": f"cash_flow_forecast failed: {e}"},
+        }
+    return {
+        "name": "cash_flow_forecast",
+        "ok": isinstance(result, dict) and result.get("status") == "success",
+        "result": result,
+    }
+
+
+@tool("payment_certificate", owner="commercial")
+async def handle_payment_certificate(call: ToolCall) -> dict:
+    """payment_certificate (IPC from the ask)"""
+    from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
+        _dispatch_payment_certificate,
+    )
+    args = call.args
+    name = call.name
+    agent = call.agent
+    user_message = call.user_message
+    if "construction" not in agent.allowed_blocks:
+        return {
+            "name": name,
+            "ok": False,
+            "result": {
+                "status": "error",
+                "error": "construction container not in agent's allowed_blocks",
+            },
+        }
+    return await _dispatch_payment_certificate(args, user_message=user_message)
+
+
+@tool("evm_calculate", owner="commercial")
+async def handle_evm_calculate(call: ToolCall) -> dict:
+    """The ``evm_calculate`` tool."""
+    args = call.args
+    name = call.name
+    agent = call.agent
+    if "construction" not in agent.allowed_blocks:
+        return {
+            "name": name, "ok": False,
+            "result": {
+                "status": "error",
+                "error": "construction container not in agent's allowed_blocks",
+            },
+        }
+    try:
+        from app.dependencies import get_block_instance
+        container = get_block_instance("construction")
+    except Exception as e:
+        return {
+            "name": name, "ok": False,
+            "result": {"status": "error", "error": f"construction unavailable: {e}"},
+        }
+    try:
+        result = await container.evm_calculate({}, args or {})
+    except Exception as e:
+        return {
+            "name": name, "ok": False,
+            "result": {
+                "status": "error",
+                "error": f"evm_calculate failed: {e}",
+            },
+        }
+    return {
+        "name": "evm_calculate",
+        "ok": isinstance(result, dict) and result.get("status") == "success",
+        "result": result,
+    }
