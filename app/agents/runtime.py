@@ -8178,6 +8178,12 @@ def _timing_log(fmt: str, *args: Any) -> None:
     _LOG.warning(fmt + " rss=%dMB", *args, _rss_mb())
 
 
+# Stage lines (app.core.turn_timing) are written by _timing_log too, so every
+# TIMING line has one format and one rss reading.
+from app.core import turn_timing as _turn_timing_mod  # noqa: E402
+_turn_timing_mod.set_writer(lambda fmt, *args: _timing_log(fmt, *args))
+
+
 
 @_turn_timing_stage("postprocess")
 def _postprocess_answer(

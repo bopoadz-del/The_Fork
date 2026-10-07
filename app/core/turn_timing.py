@@ -62,13 +62,27 @@ def _rss_mb() -> int:
         return -1
 
 
+_WRITER = None
+
+
+def set_writer(writer) -> None:
+    """Route stage lines through ``writer(fmt, *args)`` -- the runtime's
+    ``_timing_log``, so every TIMING line is written (and carries rss) the
+    same way."""
+    global _WRITER
+    _WRITER = writer
+
+
 def log_stage(name: str, dur: float) -> None:
     """One TIMING line; like every TIMING line it carries the process's rss."""
     if not _on():
         return
     at = since_arrival()
-    _LOG.warning("TIMING turn stage=%s dur=%.2fs at=%s rss=%dMB", name, dur,
-                 f"{at:.2f}s" if at is not None else "n/a", _rss_mb())
+    at_txt = f"{at:.2f}s" if at is not None else "n/a"
+    if _WRITER is not None:
+        _WRITER("TIMING turn stage=%s dur=%.2fs at=%s", name, dur, at_txt)
+        return
+    _LOG.warning("TIMING turn stage=%s dur=%.2fs at=%s rss=%dMB", name, dur, at_txt, _rss_mb())
 
 
 @contextmanager
