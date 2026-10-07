@@ -85,6 +85,13 @@ def _build_registry() -> Dict[str, Callable]:
         registry[f"app.core.construction_knowledge.{name}"] = fn
         registry[name] = fn  # Also allow bare names
 
+    # Namespace 4: where each declared formula is defined (its owner's
+    # package, app.agents.base / app.agents.hats.<hat>).
+    from app.lib import formula_registry
+
+    for spec in formula_registry.all_specs():
+        registry[f"{spec.fn.__module__}.{spec.fn.__name__}"] = spec.fn
+
     _BINDING_REGISTRY = registry
     return registry
 
