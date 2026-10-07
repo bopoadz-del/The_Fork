@@ -5,11 +5,17 @@ A tool is ``@tool("name", owner="base" | "<hat>")`` on an
 (``app.agents.base`` or ``app.agents.hats.<hat>``). The agent's tool loop
 looks the name up here; a hat's manifest lists exactly the tools its package
 registers. Adding a hat is a new package -- no core edit.
+
+A block that needs its arguments shaped before it runs registers an adapter
+the same way, in its owner's ``blocks`` module: ``@block_args("name",
+owner=...)`` on ``async def adapt(call, block_input, block_params)``, which
+returns the new ``(block_input, block_params)`` -- or a result dict when it
+answers the call itself.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 OWNERS = ("base", "commercial", "contracts", "design", "planning", "procurement",
           "qaqc", "quantities", "safety")
@@ -57,6 +63,42 @@ def tool(name: str, *, owner: str) -> Callable[[Handler], Handler]:
     return register
 
 
+Adapter = Callable[[ToolCall, Any, Any], Awaitable[Union[Tuple[Any, Any], Dict[str, Any]]]]
+
+
+@dataclass(frozen=True)
+class BlockArgsSpec:
+    name: str
+    owner: str
+    adapt: Adapter
+
+
+_BLOCK_ARGS: Dict[str, BlockArgsSpec] = {}
+
+
+def block_args(name: str, *, owner: str) -> Callable[[Adapter], Adapter]:
+    if owner not in OWNERS:
+        raise ValueError(f"unknown block owner {owner!r}; one of {OWNERS}")
+
+    def register(fn: Adapter) -> Adapter:
+        existing = _BLOCK_ARGS.get(name)
+        if existing is not None and existing.adapt is not fn:
+            raise ValueError(f"block {name!r} has two argument adapters")
+        _BLOCK_ARGS[name] = BlockArgsSpec(name, owner, fn)
+        return fn
+    return register
+
+
+def get_block_args(name: str) -> Optional[BlockArgsSpec]:
+    load()
+    return _BLOCK_ARGS.get(name)
+
+
+def block_args_of(owner: str) -> List[str]:
+    load()
+    return sorted(n for n, s in _BLOCK_ARGS.items() if s.owner == owner)
+
+
 def get(name: str) -> Optional[ToolSpec]:
     load()
     return _TOOLS.get(name)
@@ -71,22 +113,28 @@ _loaded = False
 
 
 def tool_modules() -> List[str]:
-    """``app.agents.base.tools`` and every ``app.agents.hats.<hat>.tools`` that
-    exists -- discovered, so a new hat is a new package and no core edit."""
+    """``tools`` and ``blocks`` modules of ``app.agents.base`` and of every
+    ``app.agents.hats.<hat>`` that has them -- discovered, so a new hat is a
+    new package and no core edit."""
     import importlib.util
     import pkgutil
 
     import app.agents.hats as hats
 
-    mods = ["app.agents.base.tools"]
-    for info in sorted(pkgutil.iter_modules(hats.__path__), key=lambda i: i.name):
-        if info.ispkg:
+    packages = ["app.agents.base"] + [
+        f"app.agents.hats.{info.name}"
+        for info in sorted(pkgutil.iter_modules(hats.__path__), key=lambda i: i.name)
+        if info.ispkg
+    ]
+    mods = []
+    for pkg in packages:
+        for leaf in ("tools", "blocks"):
             try:
-                spec = importlib.util.find_spec(f"app.agents.hats.{info.name}.tools")
+                spec = importlib.util.find_spec(f"{pkg}.{leaf}")
             except ModuleNotFoundError:
                 spec = None
             if spec is not None:
-                mods.append(f"app.agents.hats.{info.name}.tools")
+                mods.append(f"{pkg}.{leaf}")
     return mods
 
 
