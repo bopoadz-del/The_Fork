@@ -95,6 +95,9 @@ def test_removal_leaves_the_rest_and_adds_the_dispatch_once():
 
 
 def test_generated_modules_carry_no_box_drawing():
-    for path in (ROOT / "app" / "agents").rglob("tools.py"):
+    agents = ROOT / "app" / "agents"
+    generated = list((agents / "base").glob("tools.py")) + list((agents / "hats").glob("*/tools.py"))
+    assert generated
+    for path in generated:  # the mover's output: base and hat tool modules
         text = path.read_text(encoding="utf-8")
         assert not any("─" <= ch <= "╿" for ch in text), path

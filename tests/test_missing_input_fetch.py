@@ -473,9 +473,9 @@ def test_the_fetch_runs_before_the_answer_is_finalised():
     Mutation killed: calling the fetch after _postprocess_answer, or wiring
     only one of the two sites.
     """
-    import app.agents.runtime as rt
+    from tests import agent_source
 
-    src = open(rt.__file__, encoding="utf-8").read()
+    src = agent_source.text()  # runtime.py and app/agents/core/
     assert src.count("await self._fetch_named_missing_input(") == 2
     for block in src.split("await self._fetch_named_missing_input(")[1:]:
         head = block[: block.index("_postprocess_answer")]

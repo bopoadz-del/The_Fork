@@ -114,8 +114,8 @@ def test_activities_in_input_data_work_as_well_as_params():
 
 def test_the_tool_advertises_the_activities_parameter():
     # The model cannot pass what the schema does not offer.
-    from app.agents import runtime as rt
-    source = inspect.getsource(rt)
+    from tests import agent_source
+    source = agent_source.text()  # runtime.py and app/agents/core/
     assert '"activities": {' in source and "listed in the message" in source
 
 
