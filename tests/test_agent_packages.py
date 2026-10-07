@@ -128,3 +128,36 @@ def test_tool_packages_are_loaded_when_the_runtime_is_imported():
             "assert r._loaded; "
             "assert 'app.agents.base.tools' in sys.modules")
     subprocess.run([sys.executable, "-c", code], check=True, timeout=300)
+
+
+def test_block_adapters_live_in_their_owner_package():
+    from app.agents.core import tool_registry as r
+
+    assert r.block_args_of("base") == ["construction"]
+    assert r.block_args_of("qaqc") == ["validation_pipeline"]
+    assert "app.agents.base.blocks" in r.tool_modules()
+    assert "app.agents.hats.qaqc.blocks" in r.tool_modules()
+
+
+def test_validation_adapter_takes_the_claim_from_the_user_when_no_value():
+    import asyncio
+
+    from app.agents.core import tool_registry as r
+
+    call = r.ToolCall(agent=None, name="validation_pipeline", args={"unit": "m"},
+                      user_message="a 40 m span on a 50 mm beam is fine")
+    bi, bp = asyncio.run(r.get_block_args("validation_pipeline").adapt(call, {"value": None}, {"k": 1}))
+    assert bi == {"value": None, "k": 1, "unit": "m", "claim": "a 40 m span on a 50 mm beam is fine"}
+    assert bp == {"k": 1}
+
+
+def test_construction_adapter_folds_top_level_figures_into_params():
+    import asyncio
+
+    from app.agents.core import tool_registry as r
+
+    call = r.ToolCall(agent=None, name="construction", args={"action": "status", "area": 12},
+                      user_message=None, project_id=None)
+    bi, bp = asyncio.run(r.get_block_args("construction").adapt(call, None, {"area": None}))
+    assert bp == {"area": 12, "action": "status"}
+    assert bi == {"area": 12, "action": "status"}
