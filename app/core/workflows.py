@@ -63,7 +63,10 @@ def init_db() -> None:
     if _initialized and _initialized_for_url == get_database_url():
         return
     with _lock:
-        if _initialized and _initialized_for_url == get_database_url():
+        # The URL this run initialises: read once, so a DATA_DIR change mid-way
+        # cannot mark another database initialised.
+        url = get_database_url()
+        if _initialized and _initialized_for_url == url:
             return
         from app.core.projects import init_db as init_projects_db
 
@@ -71,7 +74,7 @@ def init_db() -> None:
         _ensure_sqlite_parent_dir()
         Workflow.__table__.create(bind=engine, checkfirst=True)
         _initialized = True
-        _initialized_for_url = get_database_url()
+        _initialized_for_url = url
 
 
 def _ensure() -> None:

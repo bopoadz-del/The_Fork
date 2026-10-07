@@ -75,13 +75,16 @@ def init_db() -> None:
     if _initialized and _initialized_for_url == get_database_url():
         return
     with _lock:
-        if _initialized and _initialized_for_url == get_database_url():
+        # The URL this run initialises: read once, so a DATA_DIR change mid-way
+        # cannot mark another database initialised.
+        url = get_database_url()
+        if _initialized and _initialized_for_url == url:
             return
         _ensure_sqlite_parent_dir()
         User.__table__.create(bind=engine, checkfirst=True)
         ensure_system_user()
         _initialized = True
-        _initialized_for_url = get_database_url()
+        _initialized_for_url = url
 
 
 def ensure_system_user() -> None:
