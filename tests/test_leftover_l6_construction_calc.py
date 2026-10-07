@@ -27,6 +27,14 @@ L6_PROMPT = (
 )
 
 
+
+@pytest.fixture(autouse=True)
+def _names_follow_the_document_list(monkeypatch):
+    """The name matchers read ``list_document_names``; these tests stub
+    ``list_documents``. Route the former through whatever the latter is."""
+    from app.core import projects as _p
+    monkeypatch.setattr(_p, "list_document_names", lambda pid: _p.list_documents(pid))
+
 def _bank(payload: dict):
     inner = payload.get("result") or payload
     if isinstance(inner, dict) and isinstance(inner.get("result"), dict):

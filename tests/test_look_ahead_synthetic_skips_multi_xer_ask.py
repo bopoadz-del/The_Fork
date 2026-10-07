@@ -7,6 +7,7 @@ the operator message. When the ask already carries durations / activity
 codes, skip schedule_file auto-resolution (leave unset / do not ask-which).
 """
 from __future__ import annotations
+import pytest
 
 from app.routers.chat import _resolve_predefined_file_params
 
@@ -19,6 +20,14 @@ SYNTHETIC_LOOK_AHEAD = (
     "A5 Footings 5, A6 Ground slab 4. Show which activities fall in the window."
 )
 
+
+
+@pytest.fixture(autouse=True)
+def _names_follow_the_document_list(monkeypatch):
+    """The name matchers read ``list_document_names``; these tests stub
+    ``list_documents``. Route the former through whatever the latter is."""
+    from app.core import projects as _p
+    monkeypatch.setattr(_p, "list_document_names", lambda pid: _p.list_documents(pid))
 
 class _Doc(dict):
     pass

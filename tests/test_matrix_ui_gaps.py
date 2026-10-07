@@ -30,6 +30,14 @@ from app.agents.runtime import (
 from tests.conftest import requires_construction_kit
 
 
+
+@pytest.fixture(autouse=True)
+def _names_follow_the_document_list(monkeypatch):
+    """The name matchers read ``list_document_names``; these tests stub
+    ``list_documents``. Route the former through whatever the latter is."""
+    from app.core import projects as _p
+    monkeypatch.setattr(_p, "list_document_names", lambda pid: _p.list_documents(pid))
+
 def test_rfp_document_is_not_a_rate_quote():
     prompt = (
         "Prepare an RFP for leftover torch-applied waterproofing subcontract. "
