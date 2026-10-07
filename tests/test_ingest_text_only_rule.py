@@ -29,8 +29,16 @@ H = {"Authorization": "Bearer cb_dev_key"}
 
 @pytest.fixture(scope="module")
 def client():
-    with TestClient(app) as c:
-        yield c
+    # Warm-up (which seeds the knowledge documents) finishes before the
+    # client serves: a seed landing mid-test changed the document counts the
+    # photo test compares (seen under xdist, where timing differs).
+    mp = pytest.MonkeyPatch()
+    mp.setenv("WARM_MODELS_BLOCKING", "1")
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        mp.undo()
 
 
 def _new_project(client, name="Text Only"):

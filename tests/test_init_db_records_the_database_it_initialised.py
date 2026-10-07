@@ -9,7 +9,14 @@ insert failed with "no such table: projects".
 """
 from __future__ import annotations
 
+import os
+
 import pytest
+
+# DATA_DIR chooses the database only when DATABASE_URL is unset (SQLite); on
+# the PostgreSQL job the URL is explicit and this switch cannot happen.
+pytestmark = pytest.mark.skipif(bool(os.getenv("DATABASE_URL")),
+                                reason="DATA_DIR picks the database only on SQLite")
 
 
 def _switch_after(monkeypatch, mod, step_name, target):
