@@ -1059,7 +1059,7 @@ async def _predispatch_file_tool(
             return None
         # A self-contained L×W×D volume ask must not steal drawing_qto just
         # because the project happens to have a PDF (leftover L6).
-        if _looks_like_self_contained_calculation(user_msg):
+        if (await _off_loop(_looks_like_self_contained_calculation, user_msg)):
             return None
         # Contract Data Q&A (delay damages, TfC, Schedule N, …) must not
         # steal to drawing_qto just because a DXF/PDF stem collides with
@@ -11181,9 +11181,8 @@ class Agent:
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and not _calc_pre and _should_short_circuit_rag_miss(
-            _rag_audit, _rag_sys_msg, user_message
-        ):
+        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and not _calc_pre and (await _off_loop(_should_short_circuit_rag_miss, _rag_audit, _rag_sys_msg, user_message
+        )):
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory
@@ -11227,12 +11226,11 @@ class Agent:
         # is already in the excerpts / loaded CD volume. Skip the provider hop so a
         # priced-BOQ refuse cannot close the turn. Predispatch
         # deliverables keep the LLM.
-        _daily_damages_fast = _should_short_circuit_delay_damages_daily(
-            _rag_sys_msg, messages,
+        _daily_damages_fast = (await _off_loop(_should_short_circuit_delay_damages_daily, _rag_sys_msg, messages,
             has_predispatch=_has_pre,
             project_id=project_id,
             audit_rec=_rag_audit,
-        )
+        ))
         if _daily_damages_fast:
             answer = (await _off_loop(_postprocess_answer, _daily_damages_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
@@ -11256,10 +11254,9 @@ class Agent:
         # WAVE 2 B4: priced D599.5 is already in the excerpts. Skip the
         # provider hop so a transient OpenRouter / unavailable banner
         # cannot empty the turn. Predispatch deliverables keep the LLM.
-        _priced_fast = _should_short_circuit_priced_boq(
-            _rag_sys_msg, messages,
+        _priced_fast = (await _off_loop(_should_short_circuit_priced_boq, _rag_sys_msg, messages,
             has_predispatch=_has_pre,
-        )
+        ))
         if _priced_fast:
             answer = (await _off_loop(_postprocess_answer, _priced_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
@@ -11281,10 +11278,9 @@ class Agent:
                 "provenance": (_rag_audit or {}).get("provenance") or [],
             }
         # BOQ page Part Summary total already in the excerpts.
-        _part_fast = _should_short_circuit_part_summary(
-            _rag_sys_msg, messages,
+        _part_fast = (await _off_loop(_should_short_circuit_part_summary, _rag_sys_msg, messages,
             has_predispatch=_has_pre,
-        )
+        ))
         if _part_fast:
             answer = (await _off_loop(_postprocess_answer, _part_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
@@ -11353,7 +11349,7 @@ class Agent:
             if resp.get("status") == "error":
                 err = resp.get("error") or _EMPTY_RESPONSE_FALLBACK
                 recovered = _recover_answer_from_tool_messages(err, messages)
-                if recovered != err and not _text_needs_tool_recovery(recovered):
+                if recovered != err and not (await _off_loop(_text_needs_tool_recovery, recovered)):
                     final_text = _sanitize_inline_paths(
                         _sanitize_citation_labels(recovered)
                     )
@@ -11439,7 +11435,7 @@ class Agent:
                     # If sanitization left nothing usable (empty or raw tool JSON
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
-                    if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                    if (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message)):
                         priced = _compose_excerpt_boq_instead_of_retry(
                             final_text, _rag_sys_msg, messages,
                         )
@@ -11448,7 +11444,7 @@ class Agent:
                         else:
                             if final_text == _TOOL_FORMAT_FALLBACK:
                                 messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
-                            elif _looks_like_search_preamble(final_text):
+                            elif (await _off_loop(_looks_like_search_preamble, final_text)):
                                 messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
                             forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                             if forced_resp.get("status") == "error":
@@ -11459,7 +11455,7 @@ class Agent:
                                     forced_msg.get("content") or "",
                                     messages=messages, tool_results=tool_calls_made,
                                 )
-                            if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                            if (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message)):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     # An answer that names its own missing input gets ONE
@@ -11540,7 +11536,7 @@ class Agent:
                 # window with tools already disarmed.
                 if (
                     _force_synth_enabled and ok
-                    and _should_force_synthesis(tool_result)
+                    and (await _off_loop(_should_force_synthesis, tool_result))
                     and _vo_draft_ready_for_synthesis(_op, tool_result.get("name"))
                     and not _has_unread_windows(_tool_content)
                 ):
@@ -11569,10 +11565,9 @@ class Agent:
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
-        daily_damages_cap = _should_short_circuit_delay_damages_daily(
-            _rag_sys_msg, messages, has_predispatch=False,
+        daily_damages_cap = (await _off_loop(_should_short_circuit_delay_damages_daily, _rag_sys_msg, messages, has_predispatch=False,
             project_id=project_id, audit_rec=_rag_audit,
-        )
+        ))
         priced_cap = _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages)
         if daily_damages_cap:
             final_text = daily_damages_cap
@@ -11593,7 +11588,7 @@ class Agent:
                 forced_msg.get("content") or "",
                 messages=messages, tool_results=tool_calls_made,
             )
-            if _final_text_needs_forced_retry(final_text, user_message=user_message):
+            if (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message)):
                 final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
         final_text, _fetched_for = await self._fetch_named_missing_input(
@@ -11691,9 +11686,8 @@ class Agent:
             (resp["choice"].get("message") or {}).get("content") or "",
             messages=follow, tool_results=[],
         )
-        if not retry.strip() or _final_text_needs_forced_retry(
-            retry, user_message=user_message
-        ):
+        if not retry.strip() or (await _off_loop(_final_text_needs_forced_retry, retry, user_message=user_message
+        )):
             return final_text, None
         _LOG.info("missing-input fetch answered %r; answer revised", missing)
         return retry, missing
@@ -12316,9 +12310,8 @@ class Agent:
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and not _calc_pre and _should_short_circuit_rag_miss(
-            _rag_audit, _rag_sys_msg, user_message
-        ):
+        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and not _more_pre and not _calc_pre and (await _off_loop(_should_short_circuit_rag_miss, _rag_audit, _rag_sys_msg, user_message
+        )):
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory
@@ -12357,12 +12350,11 @@ class Agent:
             return
         # Delay-damages daily amount before the priced-BOQ path: compose rate × ACA so a priced-BOQ
         # refuse cannot close the turn. Predispatch keeps the LLM.
-        _daily_damages_fast = _should_short_circuit_delay_damages_daily(
-            _rag_sys_msg, messages,
+        _daily_damages_fast = (await _off_loop(_should_short_circuit_delay_damages_daily, _rag_sys_msg, messages,
             has_predispatch=_has_pre,
             project_id=project_id,
             audit_rec=_rag_audit,
-        )
+        ))
         if _daily_damages_fast:
             answer = (await _off_loop(_postprocess_answer, _daily_damages_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
@@ -12386,10 +12378,9 @@ class Agent:
             return
         # WAVE 2 B4: priced row already in excerpts — skip the provider
         # hop so a transient unavailable banner cannot empty the turn.
-        _priced_fast = _should_short_circuit_priced_boq(
-            _rag_sys_msg, messages,
+        _priced_fast = (await _off_loop(_should_short_circuit_priced_boq, _rag_sys_msg, messages,
             has_predispatch=_has_pre,
-        )
+        ))
         if _priced_fast:
             answer = (await _off_loop(_postprocess_answer, _priced_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
@@ -12412,10 +12403,9 @@ class Agent:
             }
             return
         # BOQ page Part Summary total already in the excerpts.
-        _part_fast = _should_short_circuit_part_summary(
-            _rag_sys_msg, messages,
+        _part_fast = (await _off_loop(_should_short_circuit_part_summary, _rag_sys_msg, messages,
             has_predispatch=_has_pre,
-        )
+        ))
         if _part_fast:
             answer = (await _off_loop(_postprocess_answer, _part_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
@@ -12575,9 +12565,9 @@ class Agent:
                         # flush XML tool markup or raw tool-call JSON to the client
                         # before sanitization (frontend keeps accumulated tokens).
                         if (
-                            _looks_like_tool_markup_leak(raw_so_far)
-                            or _looks_like_internal_tool_json(raw_so_far)
-                            or _looks_like_internal_context_leak(raw_so_far)
+                            (await _off_loop(_looks_like_tool_markup_leak, raw_so_far))
+                            or (await _off_loop(_looks_like_internal_tool_json, raw_so_far))
+                            or (await _off_loop(_looks_like_internal_context_leak, raw_so_far))
                         ):
                             tool_leak = True
                             pending = ""
@@ -12590,7 +12580,7 @@ class Agent:
                             seg = _sanitize_inline_paths(_sanitize_citation_labels(seg))
                             seg = _withhold_names_in_streamed_segment(seg, _rag_sys_msg)
                             seg = _strip_answer_routing_preamble(seg)
-                            if seg and not _looks_like_internal_tool_json(seg):
+                            if seg and not (await _off_loop(_looks_like_internal_tool_json, seg)):
                                 yield {"type": "token", "content": seg}
                 except _SynthStreamError as _se:
                     if streamed_any:
@@ -12613,8 +12603,8 @@ class Agent:
                     # `final_text` goes through two lines down, is the
                     # backstop.
                     if (
-                        _looks_like_tool_markup_leak(raw)
-                        or _looks_like_internal_tool_json(raw)
+                        (await _off_loop(_looks_like_tool_markup_leak, raw))
+                        or (await _off_loop(_looks_like_internal_tool_json, raw))
                     ):
                         tool_leak = True
                     # Fully-sanitised accumulated text: what we persist + feed
@@ -12654,9 +12644,8 @@ class Agent:
                     # already out and the retry appends to it -- uglier, and
                     # still better than a promise as the final word.
                     promise_hold = bool(final_text.strip()) and (
-                        _final_text_needs_forced_retry(
-                            final_text, user_message=user_message
-                        )
+                        (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message
+                        ))
                     )
                     if promise_hold:
                         _LOG.info(
@@ -12674,7 +12663,7 @@ class Agent:
                     # excerpts it echoed. Serving the dead-end fallback for
                     # that would be a second failure stacked on the first, so
                     # this takes the retry path #456 built instead.
-                    leak_hold = bool(raw.strip()) and _looks_like_internal_context_leak(raw)
+                    leak_hold = bool(raw.strip()) and (await _off_loop(_looks_like_internal_context_leak, raw))
                     if leak_hold:
                         _LOG.warning(
                             "chat_stream: streamed synthesis returned the "
@@ -12687,7 +12676,7 @@ class Agent:
                         seg = _sanitize_inline_paths(_sanitize_citation_labels(pending))
                         seg = _withhold_names_in_streamed_segment(seg, _rag_sys_msg)
                         seg = _strip_answer_routing_preamble(seg)
-                        if seg and not _looks_like_internal_tool_json(seg):
+                        if seg and not (await _off_loop(_looks_like_internal_tool_json, seg)):
                             yield {"type": "token", "content": seg}
                     # Recover-from-tools lives in _postprocess_answer. Do not
                     # run it before the empty-stream check — a successful
@@ -12780,9 +12769,8 @@ class Agent:
                             # and is one no test can kill. Pinned instead by
                             # test_a_retry_that_leaks_again_is_refused_too,
                             # which asserts the OUTCOME rather than the line.
-                            if not final_text.strip() or _final_text_needs_forced_retry(
-                                final_text, user_message=user_message
-                            ):
+                            if not final_text.strip() or (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message
+                            )):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                         final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit))
@@ -12839,7 +12827,7 @@ class Agent:
             if resp.get("status") == "error":
                 err = resp.get("error", "LLM call failed")
                 recovered = _recover_answer_from_tool_messages(err, messages)
-                if recovered != err and not _text_needs_tool_recovery(recovered):
+                if recovered != err and not (await _off_loop(_text_needs_tool_recovery, recovered)):
                     final_text = _sanitize_inline_paths(
                         _sanitize_citation_labels(recovered)
                     )
@@ -12932,7 +12920,7 @@ class Agent:
                     # If sanitization left nothing usable (empty or raw tool JSON
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
-                    if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                    if (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message)):
                         priced = _compose_excerpt_boq_instead_of_retry(
                             final_text, _rag_sys_msg, messages,
                         )
@@ -12969,7 +12957,7 @@ class Agent:
                                                  len(raw_content), time.monotonic() - _turn_t0)
                                 if final_text == _TOOL_FORMAT_FALLBACK:
                                     messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
-                                elif _looks_like_search_preamble(final_text):
+                                elif (await _off_loop(_looks_like_search_preamble, final_text)):
                                     messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
                                 _fr_t0 = time.monotonic()
                                 _set_phase("forced-retry")
@@ -12990,7 +12978,7 @@ class Agent:
                                         forced_msg.get("content") or "",
                                         messages=messages, tool_results=stream_tool_results,
                                     )
-                                    if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                                    if (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message)):
                                         final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit))
@@ -13096,7 +13084,7 @@ class Agent:
                 if (
                     _force_synth_enabled
                     and tool_result.get("ok", True)
-                    and _should_force_synthesis(tool_result)
+                    and (await _off_loop(_should_force_synthesis, tool_result))
                     and _vo_draft_ready_for_synthesis(
                         locals().get("_op") or user_message or "",
                         tool_result.get("name"),
@@ -13131,10 +13119,9 @@ class Agent:
             messages.extend(pending_nudges)
 
         # Hit the cap without a final answer — force one more call with tools disabled.
-        daily_damages_cap = _should_short_circuit_delay_damages_daily(
-            _rag_sys_msg, messages, has_predispatch=False,
+        daily_damages_cap = (await _off_loop(_should_short_circuit_delay_damages_daily, _rag_sys_msg, messages, has_predispatch=False,
             project_id=project_id, audit_rec=_rag_audit,
-        )
+        ))
         priced_cap = _compose_excerpt_boq_instead_of_retry("", _rag_sys_msg, messages)
         if daily_damages_cap:
             final_text = daily_damages_cap
@@ -13158,7 +13145,7 @@ class Agent:
                 forced_msg.get("content") or "",
                 messages=messages, tool_results=stream_tool_results,
             )
-            if _final_text_needs_forced_retry(final_text, user_message=user_message):
+            if (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message)):
                 # Forced retry returned empty or raw tool JSON — substitute the
                 # user-safe fallback so the UI never renders an empty bubble.
                 _LOG.warning("chat_stream: forced final unusable, using fallback")
@@ -15418,7 +15405,7 @@ async def _predispatch_formula_calc(
             messages,
             "construction_calc",
             rendered,
-            _formula_predispatch_instruction(calc_name, result),
+            (await _off_loop(_formula_predispatch_instruction, calc_name, result)),
         )
         return {
             "name": "construction_calc",
@@ -15596,7 +15583,7 @@ async def select_agent_for_message(
     if (
         requested_agent.name in ROUTING_GENERALISTS
         and requested_agent.name != "self-coding"
-        and _asks_self_coding(user_message)
+        and (await _off_loop(_asks_self_coding, user_message))
     ):
         sc = AGENT_REGISTRY.get("self-coding")
         if sc is not None:
@@ -15664,7 +15651,7 @@ async def select_agent_for_message(
         if (
             requested_agent.name in ROUTING_GENERALISTS
             and requested_agent.name != "self-coding"
-            and _should_handoff_unmatched_calc(user_message)
+            and (await _off_loop(_should_handoff_unmatched_calc, user_message))
         ):
             sc = AGENT_REGISTRY.get("self-coding")
             if sc is not None:
