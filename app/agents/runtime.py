@@ -13,6 +13,7 @@ chat block as a fallback; see ``app/blocks/chat.py``.
 from __future__ import annotations
 
 from app.core.offload import off_loop as _off_loop
+from app.core.turn_timing import timed as _turn_timing_stage
 import asyncio
 import bisect
 import inspect
@@ -8178,15 +8179,8 @@ def _timing_log(fmt: str, *args: Any) -> None:
 
 
 
-def _postprocess_answer(*args: Any, **kwargs: Any) -> str:
-    """The answer's post-processing, timed as one stage (see ``_postprocess_answer_impl``)."""
-    from app.core import turn_timing
-
-    with turn_timing.stage("postprocess"):
-        return _postprocess_answer_impl(*args, **kwargs)
-
-
-def _postprocess_answer_impl(
+@_turn_timing_stage("postprocess")
+def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]],

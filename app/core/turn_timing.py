@@ -13,6 +13,7 @@ when ``AGENT_TIMING_LOG`` is on, like the other TIMING lines.
 from __future__ import annotations
 
 import contextvars
+import functools
 import logging
 import os
 import time
@@ -43,12 +44,24 @@ def since_arrival() -> Optional[float]:
     return time.monotonic() - st["t0"] if st else None
 
 
+def _rss_mb() -> int:
+    try:
+        from app.core.rss_watchdog import current_rss_mb
+
+        rss = current_rss_mb()
+    except Exception:  # noqa: BLE001 — a missing reading is reported as -1
+        _LOG.debug("rss unreadable", exc_info=True)
+        return -1
+    return int(rss) if rss is not None else -1
+
+
 def log_stage(name: str, dur: float) -> None:
+    """One TIMING line; like every TIMING line it carries the process's rss."""
     if not _on():
         return
     at = since_arrival()
-    _LOG.warning("TIMING turn stage=%s dur=%.2fs at=%s", name, dur,
-                 f"{at:.2f}s" if at is not None else "n/a")
+    _LOG.warning("TIMING turn stage=%s dur=%.2fs at=%s rss=%dMB", name, dur,
+                 f"{at:.2f}s" if at is not None else "n/a", _rss_mb())
 
 
 @contextmanager
@@ -63,6 +76,18 @@ def stage(name: str) -> Iterator[None]:
         if st is not None:
             st["last"] = now
         log_stage(name, now - t)
+
+
+def timed(name: str):
+    """Decorator: time every call of a function as stage ``name``. Uses
+    functools.wraps, so the function's own source and signature stay visible."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            with stage(name):
+                return fn(*args, **kwargs)
+        return wrapper
+    return deco
 
 
 def mark(name: str) -> None:
