@@ -54,3 +54,17 @@ def test_keyword_patterns_are_compiled_at_import():
 
     every = {kw for _a, kws in so.ACTION_PATTERNS for kw in kws}
     assert every and every <= set(so._KW_REGEX_CACHE)
+
+
+def test_no_usage_record_runs_on_the_event_loop():
+    """Every usage_tracker.record call in the model-call code is awaited
+    through off_loop (a database write per model call)."""
+    import ast
+    from pathlib import Path
+
+    src = Path("app/agents/core/llm.py").read_text(encoding="utf-8")
+    direct = [n.lineno for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+              and n.func.attr == "record" and getattr(n.func.value, "id", "") == "usage_tracker"]
+    assert direct == [], f"usage_tracker.record called directly at lines {direct}"
+    assert src.count("usage_tracker.record,") >= 2
