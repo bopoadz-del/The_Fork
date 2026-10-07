@@ -257,8 +257,3 @@ ladder, and the honest answer today is "measured then, not re-measured since."
   holding 3-turn conversations at once, on 0f0b294: 45/45 turns answered,
   0 server errors; the web task's resident memory on the TIMING lines went
   988 → 1004 MB across the run (2 GB task).
-- **OPEN — the server's event loop still stalls under that load.** In the
-  same run, `/livez` (an I/O-free handler) waited up to 10.9 s, and the
-  first token took 29.5 s at the median (43.7 s p95). Something in the turn
-  still runs on the event loop; until it is found, response time degrades
-  for everyone when many users ask at once.
