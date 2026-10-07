@@ -40,4 +40,14 @@ def offered(agent: Any, project_id: Optional[str], hat: Optional[str], disciplin
         agent, allowed_blocks=sorted(set(agent.allowed_blocks) | {"construction"}))
     tools = [t for t in schema_source.tool_definitions(project_id=project_id)
              if (t.get("function") or {}).get("name") in names]
-    return [select_hat_schema(disciplines)] + tools
+    # Tools that declare their schema where they are defined (e.g. general
+    # knowledge) are offered from the registry.
+    have = {(t.get("function") or {}).get("name") for t in tools}
+    for name in sorted(names - have):
+        spec = tool_registry.get(name)
+        if spec is not None and spec.schema:
+            tools.append(spec.schema)
+    from app.agents.driver import routes
+
+    workflow = routes.schema(routes.catalogue())
+    return [select_hat_schema(disciplines)] + tools + ([workflow] if workflow else [])

@@ -17,7 +17,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -358,6 +358,21 @@ def admin_doc_reindex_job(job_id: str, auth: dict = Depends(require_api_key)):
             404, f"job '{job_id}' not found (worker may have restarted)"
         )
     return job
+
+
+@router.put("/v1/admin/projects/{project_id}/profile")
+def admin_set_project_profile(project_id: str, profile: Dict[str, Any] = Body(...),
+                              auth: dict = Depends(require_api_key)):
+    """Set a project's profile (a JSON object; ``{}`` clears it). Driver mode
+    gives it to the model on every turn of the project."""
+    _require_admin(auth)
+    from app.core import projects as _projects
+    if not isinstance(profile, dict):
+        raise HTTPException(422, "The profile is a JSON object.")
+    updated = _projects.set_project_profile(project_id, profile)
+    if updated is None:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    return {"status": "ok", "project_id": project_id, "profile": updated.get("profile")}
 
 
 @router.post("/v1/admin/projects/{project_id}/approve")

@@ -197,3 +197,68 @@ def test_chat_stream_keeps_the_old_path_when_driver_mode_is_off(monkeypatch):
     monkeypatch.setattr(loop, "stream", no_driver)
     events = _stream(agent, user_message="hello")
     assert "old path" in "".join(e.get("content", "") for e in events if e.get("type") == "token")
+
+
+def test_general_knowledge_is_a_tool_the_driver_offers(monkeypatch):
+    agent = _agent()
+    names = [t["function"]["name"] for t in tools.offered(agent, "synthetic-proj", None, ["qaqc"])]
+    assert "search_general_knowledge" in names
+
+
+def test_search_general_knowledge_searches_the_library_only(monkeypatch):
+    from app.agents.core import tool_registry
+    from app.core import doc_index
+    from app.core.rag import retriever
+
+    asked = []
+
+    async def fake_search(project_id, query, top_k):
+        asked.append(project_id)
+        return [{"text": f"{project_id} passage", "score": 0.9 if project_id == "gk-b" else 0.4}]
+
+    monkeypatch.setattr(retriever, "_general_knowledge_project_ids", lambda: ["gk-a", "gk-b"])
+    monkeypatch.setattr(doc_index, "search_project_documents", fake_search)
+    spec = tool_registry.get("search_general_knowledge")
+    call = tool_registry.ToolCall(agent=None, name="search_general_knowledge",
+                                  args={"query": "retention release", "top_k": 1}, project_id="the-users-project")
+    out = asyncio.run(spec.handler(call))
+    assert asked == ["gk-a", "gk-b"]  # the library, never the user's project
+    assert out["ok"] and [h["project_id"] for h in out["result"]["results"]] == ["gk-b"]
+    assert out["result"]["results"][0]["layer"] == "general_knowledge"
+
+
+def test_the_route_catalogue_is_a_tool_the_model_calls(monkeypatch):
+    _no_retrieval(monkeypatch)
+    from app.agents.driver import routes
+    from app.core import predefined_reasoning
+
+    monkeypatch.setattr(routes, "catalogue", lambda: ["generate_wbs", "resource_histogram"])
+    ran = {}
+
+    async def fake_run_workflow(action, ctx, session):
+        ran.update(action=action, message=ctx["message"], deliverable=ctx.get("deliverable"))
+        return {"handled": True, "answer": "WBS: 3 levels, 12 activities.",
+                "exports": [{"label": "WBS (xlsx)", "format": "xlsx"}]}
+
+    monkeypatch.setattr(predefined_reasoning, "run_workflow", fake_run_workflow)
+    seen = []
+    replies = [
+        {"content": "", "tool_calls": [_call("run_workflow", {"workflow": "generate_wbs", "deliverable": True}, "w1")]},
+        {"content": "Here is the WBS: 3 levels, 12 activities."},
+    ]
+    monkeypatch.setattr(llm, "call", _scripted(replies, seen))
+    events = _run(_agent(), user_message="build the WBS for a two-storey clinic")
+    assert "run_workflow" in seen[0]["tools"]
+    assert ran == {"action": "generate_wbs", "message": "build the WBS for a two-storey clinic",
+                   "deliverable": True}
+    end = events[-1]
+    assert end["tools"] == ["run_workflow:generate_wbs"]
+    assert end["exports"] == [{"label": "WBS (xlsx)", "format": "xlsx"}]
+
+
+def test_an_unknown_workflow_is_refused(monkeypatch):
+    from app.agents.driver import routes
+
+    monkeypatch.setattr(routes, "catalogue", lambda: ["generate_wbs"])
+    out = asyncio.run(routes.run({"workflow": "invent_a_bridge"}, "x", None, None, None))
+    assert out["ok"] is False and "invent_a_bridge" in out["error"]

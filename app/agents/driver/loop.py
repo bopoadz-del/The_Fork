@@ -9,7 +9,7 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.agents import driver
-from app.agents.driver import context, llm, tools
+from app.agents.driver import context, llm, routes, tools
 from app.core import turn_progress
 
 _LOG = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     hat: Optional[str] = None
     msgs: List[Dict[str, Any]] = context.messages(user_message, history, project_id, user_id, hat)
     used: List[str] = []
+    exports: List[Dict[str, Any]] = []
     yield {"type": "start", "mode": "driver", "agent": agent.name}
     yield turn_progress.event("writing")
     answer: Optional[str] = None
@@ -65,6 +66,10 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                     result: Dict[str, Any] = {"ok": True, "hat": hat}
                 else:
                     result = {"ok": False, "error": f"No hat named {chosen!r}; choose one of {sorted(disciplines)}."}
+            elif name == routes.RUN_WORKFLOW:
+                used.append(f"{name}:{args.get('workflow')}")
+                result = await routes.run(args, user_message, project_id, user_id, conversation_id)
+                exports.extend(result.get("exports") or [])
             else:
                 used.append(name)
                 result = await agent._run_tool_call(call, api_key, project_id, conversation_id,
@@ -76,5 +81,5 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         answer = _STOP
     for word in answer.split(" "):
         yield {"type": "token", "content": word + " "}
-    yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used,
+    yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "steps": step + 1, "elapsed_s": round(time.monotonic() - t0, 2)}

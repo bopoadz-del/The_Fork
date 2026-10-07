@@ -28,8 +28,9 @@ def test_tools_live_in_their_owners_package():
     for owner in reg.OWNERS:
         for name in reg.tools_of(owner):
             mod = reg.get(name).handler.__module__
-            expected = "app.agents.base.tools" if owner == "base" else f"app.agents.hats.{owner}.tools"
-            assert mod == expected, (name, mod)
+            package = "app.agents.base" if owner == "base" else f"app.agents.hats.{owner}"
+            # A module directly in the owner's package (tools, blocks, knowledge, ...).
+            assert mod.rsplit(".", 1)[0] == package, (name, mod)
 
 
 def test_no_hat_imports_another_hat():

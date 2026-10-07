@@ -151,12 +151,25 @@ def _ensure_sqlite_parent_dir() -> None:
             os.makedirs(parent, exist_ok=True)
 
 
+def _profile_of(project: Project) -> Optional[Dict[str, Any]]:
+    raw = getattr(project, "profile", None)
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        logger.warning("project %s has a profile that is not JSON; ignoring it", project.id)
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _project_as_dict(project: Project) -> Dict[str, Any]:
     return {
         "id": project.id,
         "name": project.name,
         "client": project.client,
         "location": getattr(project, "location", None),
+        "profile": _profile_of(project),
         "status": project.status,
         "aconex_connected": bool(project.aconex_connected),
         "user_id": project.user_id,
@@ -346,6 +359,9 @@ def _patch_legacy_columns() -> None:
                     "ALTER TABLE projects ADD COLUMN location TEXT"
                 ))
                 conn.commit()
+            if "profile" not in cols:  # 0028 (driver mode: the project profile)
+                conn.execute(sqla_text("ALTER TABLE projects ADD COLUMN profile TEXT"))
+                conn.commit()
 
             doc_cols = {row[1] for row in conn.execute(
                 sqla_text("PRAGMA table_info(documents)")
@@ -511,6 +527,21 @@ def set_project_location(project_id: str, location: Optional[str]) -> Optional[D
             if project is None:
                 return None
             project.location = (location or "").strip() or None
+            session.commit()
+    return get_project(project_id)
+
+
+def set_project_profile(project_id: str, profile: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Set (or clear, with None or {}) a project's profile. Returns the updated
+    project dict, or None if the project does not exist."""
+    _ensure_db()
+    clean = {str(k): v for k, v in (profile or {}).items() if v not in (None, "")}
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                return None
+            project.profile = json.dumps(clean) if clean else None
             session.commit()
     return get_project(project_id)
 

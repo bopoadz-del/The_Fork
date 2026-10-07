@@ -268,6 +268,10 @@ class Project(Base):
     # Confirmed site location (city/site) — daily_site_report reads its weather
     # from here, never from the chat message (F4). Nullable: unset → no weather.
     location: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The project's profile (JSON object: discipline, contract form, phase,
+    # governing codes ...), filled in once by an admin. Driver mode gives it
+    # to the model every turn. Nullable: no profile on record.
+    profile: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
     aconex_connected: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
