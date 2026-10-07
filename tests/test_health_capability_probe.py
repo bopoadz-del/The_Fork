@@ -94,7 +94,20 @@ def test_system_health_unproven_providers_are_unknown(client):
             assert entry["recommendation"] == "unproven"
 
 
-def test_system_health_overall_not_falsely_healthy_without_calls(client):
+def test_system_health_overall_not_falsely_healthy_without_calls(client, monkeypatch):
+    # The monitoring block is a process-wide singleton: a call recorded by an
+    # earlier test in this process (order varies under xdist) would make this
+    # read "healthy". Start from a monitor with no recorded calls -- the
+    # condition this test is about.
+    from collections import defaultdict, deque
+
+    from app.dependencies import MONITORING_AVAILABLE, get_monitoring_block
+    if MONITORING_AVAILABLE:
+        block = get_monitoring_block()
+        for attr in ("latency_history", "error_history", "uptime_history"):
+            monkeypatch.setattr(block, attr, defaultdict(lambda: deque(maxlen=block.metrics_window)))
+        monkeypatch.setattr(block, "leaderboard_cache", None)
+        monkeypatch.setattr(block, "last_leaderboard_update", 0)
     d = client.get("/v1/system/health").json()
     # With no real calls recorded, overall must not claim healthy.
     assert d["overall_status"] != "healthy"
