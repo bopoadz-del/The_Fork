@@ -813,21 +813,33 @@ async def chat_stream(
             # and dies with it (vector_store._TURN_MEMO).
             from app.core.rag.vector_store import start_turn_memo
             start_turn_memo()
+            from app.agents import driver
             try:
-                async for event in self._chat_stream_impl(
-                    user_message=user_message,
-                    history=history,
-                    api_key=api_key,
-                    user_id=user_id,
-                    project_id=project_id,
-                    attached_documents=attached_documents,
-                    conversation_id=conversation_id,
-                    rag_debug=rag_debug,
-                    _depth=_depth,
-                    _call_stack=_call_stack,
-                    _deadline=deadline,
-                    _phase=phase,
-                ):
+                if driver.enabled() and not _depth:
+                    # Driver mode (F-DRIVER Phase B, DRIVER_MODE): the model
+                    # drives the turn; same deadline, heartbeat and guarantee.
+                    from app.agents.driver import loop as driver_loop
+                    events = driver_loop.stream(
+                        self, user_message=user_message, history=history,
+                        project_id=project_id, conversation_id=conversation_id,
+                        user_id=user_id, api_key=api_key,
+                    )
+                else:
+                    events = self._chat_stream_impl(
+                        user_message=user_message,
+                        history=history,
+                        api_key=api_key,
+                        user_id=user_id,
+                        project_id=project_id,
+                        attached_documents=attached_documents,
+                        conversation_id=conversation_id,
+                        rag_debug=rag_debug,
+                        _depth=_depth,
+                        _call_stack=_call_stack,
+                        _deadline=deadline,
+                        _phase=phase,
+                    )
+                async for event in events:
                     await queue.put(event)
             finally:
                 await queue.put(_SENTINEL)
