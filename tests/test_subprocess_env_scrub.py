@@ -1,6 +1,6 @@
 """Subprocesses must not inherit app secrets (audit §6.1).
 
-Before this fix every subprocess (ODA/antiword converters, the code/bash
+Before this fix every subprocess (antiword/catdoc converters, the code/bash
 sandbox, hardware probes) inherited the full parent environment — SECRET_KEY,
 DATABASE_URL, the LLM API keys, the master key — and the bash sandbox could
 ``echo $SECRET_KEY`` straight to output. scrubbed_env() strips secret-bearing

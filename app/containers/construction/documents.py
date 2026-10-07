@@ -195,7 +195,7 @@ class ConstructionDocumentsMixin:
     ui_schema = {
         "input": {
             "type": "file",
-            "accept": [".pdf", ".ifc", ".dwg", ".jpg", ".png", ".xer", ".xml"],
+            "accept": [".pdf", ".ifc", ".dxf", ".jpg", ".png", ".xer", ".xml"],
             "placeholder": "Upload construction drawing, BIM model, schedule, or contract...",
             "multiline": True
         },

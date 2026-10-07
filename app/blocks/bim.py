@@ -1,4 +1,9 @@
-"""BIM Block - Real IFC/DWG/PDF file processor"""
+"""BIM Block - IFC/DXF/PDF file processor.
+
+DWG is not read (owner ruling): any action given a DWG answers with
+``app.core.cad_formats.DWG_NOT_SUPPORTED``.
+"""
+from app.core.cad_formats import DWG_NOT_SUPPORTED, dwg_not_supported, is_dwg
 from app.core.universal_base import UniversalBlock
 from typing import Dict, Any, List, Optional
 import os
@@ -11,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class BIMBlock(UniversalBlock):
     """
-    BIM File Processor - ACTUALLY parses IFC, extracts DWG metadata, OCRs PDFs
+    BIM File Processor - parses IFC, OCRs PDFs
     """
     
     auto_validate = False
@@ -30,14 +35,12 @@ class BIMBlock(UniversalBlock):
     tags = ["construction", "bim", "cad", "domain"]
     default_config = {
         "ifc_enabled": True,
-        "dwg_enabled": True,
         "auto_index": True
     }
     
     SUPPORTED_FORMATS = {
         ".ifc": "bim_model",
         ".ifczip": "bim_model_compressed",
-        ".dwg": "cad_drawing", 
         ".dxf": "cad_exchange",
         ".pdf": "drawing_pdf",
         ".rvt": "revit_model",
@@ -90,19 +93,27 @@ class BIMBlock(UniversalBlock):
     # is rejected with a status:error + a list of valid actions, so
     # callers (and agents) see a complete contract instead of a bare error.
     _KNOWN_ACTIONS = frozenset({
-        "index_folder", "parse_ifc", "extract_dwg_metadata",
+        "index_folder", "parse_ifc",
         "process_pdf", "get_elements", "spatial_query", "compare_versions",
     })
 
+    #: Input keys that name a file an action reads.
+    _FILE_KEYS = ("file_path", "path", "old_path", "new_path")
+
     async def process(self, input_data: Dict, params: Dict = None) -> Dict:
         action = (params or {}).get("action") or (input_data.get("action") if isinstance(input_data, dict) else None)
+
+        # A DWG is refused by format, whatever the action.
+        for source in (input_data, params):
+            if isinstance(source, dict) and any(
+                is_dwg(source.get(k)) for k in self._FILE_KEYS
+            ):
+                return dwg_not_supported()
 
         if action == "index_folder":
             return await self._index_folder(input_data)
         elif action == "parse_ifc":
             return await self._parse_ifc_real(input_data)
-        elif action == "extract_dwg_metadata":
-            return await self._extract_dwg_metadata(input_data)
         elif action == "process_pdf":
             return await self._process_pdf_real(input_data)
         elif action == "get_elements":
@@ -144,8 +155,12 @@ class BIMBlock(UniversalBlock):
             }
 
         bim_files: List[Dict] = []
+        not_supported: List[Dict] = []
         for entry in os.scandir(folder_path):
             if not entry.is_file():
+                continue
+            if is_dwg(entry.name):
+                not_supported.append({"name": entry.name, "error": DWG_NOT_SUPPORTED})
                 continue
             ext = os.path.splitext(entry.name)[1].lower()
             if ext not in self.SUPPORTED_FORMATS:
@@ -160,8 +175,6 @@ class BIMBlock(UniversalBlock):
             }
             if ext == ".ifc":
                 meta = await self._parse_ifc_headers(file_info)
-            elif ext in (".dwg", ".dxf"):
-                meta = await self._extract_dwg_metadata(file_info)
             elif ext == ".pdf":
                 meta = {"type": "drawing_pdf", "needs_ocr": True}
             else:
@@ -180,6 +193,7 @@ class BIMBlock(UniversalBlock):
             "project_id": project_id,
             "indexed": len(bim_files),
             "by_type": self._count_by_type(bim_files),
+            "not_supported": not_supported,
         }
     
     async def _parse_ifc_headers(self, file_info: Dict) -> Dict:
@@ -312,31 +326,6 @@ class BIMBlock(UniversalBlock):
             "schema": result.get("ifc_schema")
                 or result.get("schema")
                 or result.get("project_info", {}).get("schema"),
-        }
-    
-    async def _extract_dwg_metadata(self, file_info: Dict) -> Dict:
-        """DWG is binary AutoCAD — ezdxf only parses DXF (the text format).
-
-        Previously this method tried to feed DWG bytes to `ezdxf.readfile()`,
-        which always raises, falls into the silent exception handler, and
-        returns `{"extracted": False}` with a misleading "ezdxf fallback"
-        message. Every real DWG upload silently dropped its content.
-
-        Honest behavior: tell the caller DWG needs to be converted to DXF
-        first (via ODA File Converter, AutoCAD, or a similar tool). No
-        silent failure.
-        """
-        return {
-            "status": "error",
-            "error": (
-                "DWG is binary AutoCAD format — extraction not supported. "
-                "Convert to DXF first (ODA File Converter is free) and "
-                "re-upload, then drawing_qto / bim will process it."
-            ),
-            "description": "AutoCAD DWG (conversion required)",
-            "extracted": False,
-            "format": "dwg",
-            "requires_conversion_to": "dxf",
         }
     
     async def _process_pdf_real(self, data: Dict) -> Dict:

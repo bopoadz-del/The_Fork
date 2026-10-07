@@ -22,8 +22,6 @@ fi
 
 echo "📡 Listening on 0.0.0.0:$PORT (HARDWARE=$HARDWARE)"
 
-command -v ODAFileConverter >/dev/null 2>&1 || echo "⚠️  ODAFileConverter not on PATH — drawing_qto will reject .dwg uploads with a guidance error"
-
 if [ -n "${DATABASE_URL:-}" ] && [[ "${DATABASE_URL}" == postgresql* ]]; then
   echo "🗄️  DATABASE_URL set — running alembic upgrade head"
   if ! python -m alembic upgrade head; then

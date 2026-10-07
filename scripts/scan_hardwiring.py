@@ -10,12 +10,23 @@ Owner doctrine, 2026-10-02 -- one rule everywhere, no exceptions:
     general fix, say so and stop -- a pass patch is a failure, not progress.
 
 This is the gate that gives that rule teeth. It rejects any diff that ADDS one
-of the four hardwiring forms to product code:
+of these hardwiring forms to product code:
 
   1. a ``_rescue_*`` function        -- a per-question retrieval patch
   2. a ``*_NEEDLES`` list            -- literal strings photographed from one corpus
   3. a ``RAG_*_RESCUE`` / ``*_BONUS`` / ``*_EXTRA_K`` env knob -- a per-case switch
   4. a probe / test-case ID          -- R18, M3, E1, UI-PHYS, SET5 ... in product code
+
+and, in the blocks (``BLOCK_TABLE_ROOTS``: ``app/blocks/``), where a reader of
+one project's documents turns into a reader of that project only:
+
+  5. a code table   -- a dict literal mapping short upper-case codes to names
+                       (``{"XY": "Some Discipline", ...}``): one numbering
+                       scheme's codes. A mapping belongs to the open project's
+                       profile or its documents, never to code.
+  6. a name list    -- a ``*_PLACE_NAMES`` / ``*_LOCATION_NAMES`` /
+                       ``*_BLOCKLIST`` / ``*_DENYLIST`` assignment: names
+                       photographed from one corpus, filtered by name.
 
 Why it exists: on 2026-10-02 ``app/core/rag/retriever.py`` held 43 ``_rescue_*``
 functions, 7 ``_NEEDLES`` lists, 28 per-case knobs, and probe IDs photographed
@@ -81,6 +92,19 @@ BASELINE_PATH = "scripts/hardwiring_baseline.json"
 #: A per-case env switch. ``RAG_<CASE>_RESCUE``, ``RAG_<CASE>_BONUS``,
 #: ``RAG_<CASE>_EXTRA_K`` -- one kill-switch per patched question.
 KNOB_RE = re.compile(r"^RAG_[A-Z0-9_]+_(?:RESCUE|BONUS|EXTRA_K)$")
+
+#: Forms 5 and 6 are checked under these product prefixes (the blocks: the
+#: readers of project documents -- drawings, BOQs, schedules, models).
+BLOCK_TABLE_ROOTS: tuple[str, ...] = ("app/blocks/",)
+#: A code-table key: a short upper-case code ("TM", "EL2", "ARCH").
+CODE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]{1,3}$")
+#: A code table has at least this many entries; a smaller dict is a switch.
+CODE_TABLE_MIN = 4
+#: A name list's variable name.
+NAME_LIST_RE = re.compile(
+    r"(?:PLACE|LOCATION|CITY|SITE|DISTRICT|AREA)_?NAMES|BLOCKLIST|DENYLIST",
+    re.IGNORECASE,
+)
 
 #: Probe / test-case IDs. A production file that names the probe it was
 #: written to pass is a photograph of that probe. Explicit, not a loose regex:
@@ -169,6 +193,57 @@ def _symbol_findings(rel: str, tree: ast.AST) -> list[str]:
             and KNOB_RE.match(node.value)
         ):
             out.append(f"{rel}::knob::{node.value}")
+    if rel.startswith(BLOCK_TABLE_ROOTS):
+        out.extend(_block_table_findings(rel, tree))
+    return out
+
+
+def _assigned_names(node: ast.AST) -> list[str]:
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    out: list[str] = []
+    for t in targets:
+        if isinstance(t, ast.Name):
+            out.append(t.id)
+        elif isinstance(t, ast.Attribute):
+            out.append(t.attr)
+    return out
+
+
+def _is_code_table(value: ast.AST) -> bool:
+    """A dict literal of >= CODE_TABLE_MIN short upper-case code -> name strings."""
+    if not isinstance(value, ast.Dict) or len(value.keys) < CODE_TABLE_MIN:
+        return False
+    for k, v in zip(value.keys, value.values):
+        if not (isinstance(k, ast.Constant) and isinstance(k.value, str)
+                and CODE_KEY_RE.match(k.value)):
+            return False
+        if not (isinstance(v, ast.Constant) and isinstance(v.value, str)
+                and any(ch.isalpha() for ch in v.value)):
+            return False
+    return True
+
+
+def _block_table_findings(rel: str, tree: ast.AST) -> list[str]:
+    """Forms 5 and 6: code tables and name lists in the blocks.
+
+    Keyed by the assigned name (``<line>`` for an anonymous dict literal), so a
+    key follows the table when code above it moves.
+    """
+    out: list[str] = []
+    seen: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            names = _assigned_names(node)
+            if _is_code_table(node.value):
+                seen.add(id(node.value))
+                for n in names or [f"line{node.lineno}"]:
+                    out.append(f"{rel}::code_table::{n}")
+            for n in names:
+                if NAME_LIST_RE.search(n):
+                    out.append(f"{rel}::name_list::{n}")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict) and id(node) not in seen and _is_code_table(node):
+            out.append(f"{rel}::code_table::line{node.lineno}")
     return out
 
 

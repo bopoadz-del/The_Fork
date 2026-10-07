@@ -59,6 +59,49 @@ def test_clean_product_code_passes(tmp_path: Path):
     assert sh.scan(tmp_path) == []
 
 
+def test_code_tables_and_name_lists_in_blocks_are_flagged(tmp_path: Path):
+    """Forms 5 and 6: a code -> name table and a place-name list in app/blocks/."""
+    sh = _load()
+    pkg = tmp_path / "app" / "blocks"
+    pkg.mkdir(parents=True)
+    (pkg / "reader.py").write_text(
+        "DISCIPLINE_NAMES = {'QX': 'Quarry Works', 'VB': 'Vent Ducts',\n"
+        "                    'ZL': 'Zinc Lining', 'KR4': 'Kerb Runs'}\n"
+        "EXCLUDED_PLACE_NAMES = {'FENWICK REACH', 'KESTREL QUAY'}\n"
+        "def lookup(code):\n"
+        "    local = {'AA': 'One', 'BB': 'Two', 'CC': 'Three', 'DD': 'Four'}\n"
+        "    return local.get(code)\n",
+        encoding="utf-8",
+    )
+    findings = sh.scan(tmp_path)
+    joined = "\n".join(findings)
+    assert "app/blocks/reader.py::code_table::DISCIPLINE_NAMES" in joined
+    assert "app/blocks/reader.py::code_table::local" in joined
+    assert "app/blocks/reader.py::name_list::EXCLUDED_PLACE_NAMES" in joined
+
+
+def test_block_table_forms_ignore_small_dicts_and_non_code_keys(tmp_path: Path):
+    """A switch of three entries, a units map keyed by numbers, and a map
+    keyed by words are not code tables; outside app/blocks/ forms 5-6 do not
+    apply."""
+    sh = _load()
+    blocks = tmp_path / "app" / "blocks"
+    blocks.mkdir(parents=True)
+    (blocks / "ok.py").write_text(
+        "MODES = {'ON': 'enabled', 'OFF': 'disabled', 'AUTO': 'automatic'}\n"
+        "UNITS = {1: 'inch', 2: 'foot', 4: 'millimetre', 6: 'metre'}\n"
+        "LABELS = {'Drawing': 'a', 'Title': 'b', 'Scale': 'c', 'Date': 'd'}\n",
+        encoding="utf-8",
+    )
+    core = tmp_path / "app" / "core"
+    core.mkdir(parents=True)
+    (core / "elsewhere.py").write_text(
+        "T = {'AA': 'One', 'BB': 'Two', 'CC': 'Three', 'DD': 'Four'}\n",
+        encoding="utf-8",
+    )
+    assert sh.scan(tmp_path) == []
+
+
 def test_probe_count_growth_is_flagged(tmp_path: Path):
     """A probe ID already baselined may not gain occurrences."""
     sh = _load()
