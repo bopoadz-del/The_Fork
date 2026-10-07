@@ -75,8 +75,10 @@ class _DropWhenFullQueueHandler(logging.handlers.QueueHandler):
     Live 2026-10-07 (15 users): the event loop stalled 1.1 s inside a log
     line's stdout flush while the log driver was behind. Records now go to a
     queue a background thread writes out. When the queue is full a record is
-    dropped (and counted) rather than making the caller wait; the count is
-    logged once there is room again.
+    dropped (and counted, in ``the_fork_log_records_dropped_total``) rather
+    than making the caller wait; the count is logged once there is room again.
+    Diagnostic logs only: audit entries never pass through logging
+    (app.core.audit).
     """
 
     def __init__(self, q: "queue.Queue") -> None:
@@ -97,6 +99,28 @@ class _DropWhenFullQueueHandler(logging.handlers.QueueHandler):
             self.queue.put_nowait(record)
         except queue.Full:
             self.dropped += 1
+            _count_dropped_log_record()
+
+
+_PROM_LOG_DROPPED = None
+#: Records dropped since start (also exported to Prometheus when installed).
+LOG_RECORDS_DROPPED = 0
+
+
+def _count_dropped_log_record() -> None:
+    global _PROM_LOG_DROPPED, LOG_RECORDS_DROPPED
+    LOG_RECORDS_DROPPED += 1
+    if _PROM_LOG_DROPPED is None:
+        try:
+            from prometheus_client import Counter
+            _PROM_LOG_DROPPED = Counter(
+                "the_fork_log_records_dropped_total",
+                "Diagnostic log records dropped because the log queue was full",
+            )
+        except Exception:  # noqa: BLE001 -- prometheus-client is optional
+            _PROM_LOG_DROPPED = False
+    if _PROM_LOG_DROPPED:
+        _PROM_LOG_DROPPED.inc()
 
 
 _LISTENER: "Optional[logging.handlers.QueueListener]" = None
@@ -110,12 +134,21 @@ def _queued(handler: logging.Handler) -> logging.Handler:
     except ValueError:
         size = 10000
     q: "queue.Queue" = queue.Queue(maxsize=size)
-    if _LISTENER is not None:
+    if _LISTENER is None:
+        atexit.register(_stop_listener)
+    else:
         _LISTENER.stop()
     _LISTENER = logging.handlers.QueueListener(q, handler, respect_handler_level=True)
     _LISTENER.start()
-    atexit.register(_LISTENER.stop)
     return _DropWhenFullQueueHandler(q)
+
+
+def _stop_listener() -> None:
+    """At exit: write out what is queued (the current listener, once)."""
+    global _LISTENER
+    if _LISTENER is not None:
+        _LISTENER.stop()
+        _LISTENER = None
 
 
 def configure_structured_logging() -> bool:

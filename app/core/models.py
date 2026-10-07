@@ -636,3 +636,17 @@ class IngestionJob(Base):
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class AuditEvent(Base):
+    """audit_events — where an audit entry goes when the audit file cannot
+    take it (app.core.audit): the entry is kept, never dropped."""
+
+    __tablename__ = "audit_events"
+    __table_args__ = (Index("idx_audit_events_project_ts", "project_id", "ts"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    ts: Mapped[str] = mapped_column(String, nullable=False)
+    event: Mapped[str] = mapped_column(String, nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)

@@ -105,7 +105,7 @@ async def connect_aconex(
     _owned_or_404(project_id, auth["user_id"])
     if not store.set_aconex(project_id, req.connected):
         raise HTTPException(404, f"Project '{project_id}' not found")
-    audit.record(
+    await audit.arecord(
         "connector.aconex",
         project_id=project_id,
         connected=req.connected,
@@ -169,7 +169,7 @@ async def sync_aconex(
             background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc_id)
     if result.get("stored", 0) or result.get("skipped", 0):
         store.set_aconex(project_id, True)
-    audit.record(
+    await audit.arecord(
         "connector.aconex.sync",
         project_id=project_id,
         cde_project_id=cde_project_id,
@@ -199,7 +199,7 @@ async def post_aconex_rfi(
         posted = await post_rfi_draft(cde_project_id, payload)
     except (CdeNotConfiguredError, CdeError) as exc:
         raise _cde_http_error(exc) from exc
-    audit.record(
+    await audit.arecord(
         "connector.aconex.rfi_posted",
         project_id=project_id,
         cde_project_id=cde_project_id,
@@ -252,7 +252,7 @@ async def poll_aconex_events(
             from app.core import doc_index
 
             background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc_id)
-    audit.record(
+    await audit.arecord(
         "connector.aconex.events",
         project_id=project_id,
         cde_project_id=cde_project_id,
