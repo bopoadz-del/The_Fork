@@ -242,3 +242,23 @@ ladder, and the honest answer today is "measured then, not re-measured since."
   2026-08-15 OOMs were code defects, since bounded (pixel cap, page-size
   table gate, geometry skip). Neon database usage is 43 MB of the 512 MB
   free tier. Upgrade compute only when throughput measurably demands it.
+
+## Resolved / measured 2026-10-07
+
+- ~~**One question read the whole chunk table from storage (667 MB read, 2.7 GB of buffers).**~~
+  **RESOLVED.** Bounded BM25, trigram indexes, inline embedding storage
+  (#800, #804, alembic 0023 plus the batched rewrite of older rows). CI now
+  enforces it: `tests/test_answer_path_buffer_budget.py` fails any turn
+  that reads more than 50 MB from storage, touches more than 600 MB of
+  buffers, or has one statement touching more than 25% of the chunk table.
+  Live, the same three questions as before: 34.8 MB read, 425 MB of buffers
+  per question (warm cache).
+- ~~**Memory under concurrent users unproven.**~~ **RESOLVED.** 15 users
+  holding 3-turn conversations at once, on 0f0b294: 45/45 turns answered,
+  0 server errors; the web task's resident memory on the TIMING lines went
+  988 → 1004 MB across the run (2 GB task).
+- **OPEN — the server's event loop still stalls under that load.** In the
+  same run, `/livez` (an I/O-free handler) waited up to 10.9 s, and the
+  first token took 29.5 s at the median (43.7 s p95). Something in the turn
+  still runs on the event loop; until it is found, response time degrades
+  for everyone when many users ask at once.
