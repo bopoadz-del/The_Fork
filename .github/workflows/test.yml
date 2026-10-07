@@ -207,7 +207,11 @@ jobs:
           POSTGRES_DB: thefork
         ports:
           - 5432:5432
+        # Docker gives a container 64 MB of /dev/shm; with several workers
+        # building HNSW indexes at once Postgres ran out of it ("could not
+        # resize shared memory segment ... No space left on device").
         options: >-
+          --shm-size=1g
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
