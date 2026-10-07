@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
+import logging.handlers
 import os
+import queue
 import sys
 import threading
 import uuid
@@ -66,6 +69,55 @@ class JsonLogFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+class _DropWhenFullQueueHandler(logging.handlers.QueueHandler):
+    """Hands records to a bounded queue; never blocks the caller.
+
+    Live 2026-10-07 (15 users): the event loop stalled 1.1 s inside a log
+    line's stdout flush while the log driver was behind. Records now go to a
+    queue a background thread writes out. When the queue is full a record is
+    dropped (and counted) rather than making the caller wait; the count is
+    logged once there is room again.
+    """
+
+    def __init__(self, q: "queue.Queue") -> None:
+        super().__init__(q)
+        self.dropped = 0
+
+    def enqueue(self, record: logging.LogRecord) -> None:
+        if self.dropped:
+            note = logging.LogRecord("app.infra.monitoring", logging.WARNING, __file__, 0,
+                                     "dropped %d log records: the log queue was full", (self.dropped,), None)
+            try:
+                self.queue.put_nowait(self.prepare(note))
+                self.dropped = 0
+            except queue.Full:
+                self.dropped += 1
+                return
+        try:
+            self.queue.put_nowait(record)
+        except queue.Full:
+            self.dropped += 1
+
+
+_LISTENER: "Optional[logging.handlers.QueueListener]" = None
+
+
+def _queued(handler: logging.Handler) -> logging.Handler:
+    """``handler`` behind a bounded queue and a writer thread (LOG_QUEUE_MAX, default 10000)."""
+    global _LISTENER
+    try:
+        size = max(100, int(os.getenv("LOG_QUEUE_MAX") or "10000"))
+    except ValueError:
+        size = 10000
+    q: "queue.Queue" = queue.Queue(maxsize=size)
+    if _LISTENER is not None:
+        _LISTENER.stop()
+    _LISTENER = logging.handlers.QueueListener(q, handler, respect_handler_level=True)
+    _LISTENER.start()
+    atexit.register(_LISTENER.stop)
+    return _DropWhenFullQueueHandler(q)
+
+
 def configure_structured_logging() -> bool:
     """Enable JSON logging in production (or when STRUCTURED_LOGS=true)."""
     global _structured_logging_enabled
@@ -79,7 +131,7 @@ def configure_structured_logging() -> bool:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonLogFormatter())
     root = logging.getLogger()
-    root.handlers = [handler]
+    root.handlers = [_queued(handler)]
     # The old `if root.level == logging.NOTSET` guard never fired — root
     # defaults to WARNING, so the intended INFO level was never applied and
     # every module INFO line was dropped in prod (the whole illumination-table
