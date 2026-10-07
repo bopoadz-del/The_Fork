@@ -1054,10 +1054,10 @@ def _skip_master_fallback_for_formula_ask(
 
 def _project_has_any_chunks(store, project_id: str) -> bool:
     """True iff the project (or any configured GK project) has indexed chunks."""
-    if store.count(project_id) > 0:
+    if store.has_chunks(project_id):
         return True
     for pid in _general_knowledge_project_ids():
-        if pid != project_id and store.count(pid) > 0:
+        if pid != project_id and store.has_chunks(pid):
             return True
     return False
 

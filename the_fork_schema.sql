@@ -230,5 +230,9 @@ CREATE INDEX idx_chunks_knowledge_layer ON chunks (knowledge_layer);
 -- Keep the embedding in the heap row: an exact distance over a project's rows
 -- must not walk the TOAST index per row (alembic 0023).
 ALTER TABLE chunks ALTER COLUMN embedding SET STORAGE MAIN;
+-- Keep the tsvector in the heap row too, so BM25 ranking reads no TOAST: an
+-- ordinary chunk row stays whole below 4080 bytes (alembic 0026).
+ALTER TABLE chunks SET (toast_tuple_target = 4080);
+ALTER TABLE chunks ALTER COLUMN text_search SET STORAGE MAIN;
 CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX chunks_fts_gin ON chunks USING GIN (text_search);

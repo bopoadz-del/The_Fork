@@ -19,8 +19,11 @@ SQLAlchemy-backed via app.core.db — unified The Fork schema.
 
 from __future__ import annotations
 
+import contextvars
+import hashlib
 import logging
 import os
+from contextlib import nullcontext
 import re
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
@@ -591,6 +594,72 @@ def _ensure_sqlite_parent_dir(url: str) -> None:
             os.makedirs(parent, exist_ok=True)
 
 
+# ── One retrieval per question, not one per caller ──────────────────────────
+# Live 2026-10-07: one question issued BM25 eight times. The dual search ran it
+# for the raw question and for its wrapper-stripped variant, which
+# websearch_to_tsquery reduces to the SAME tsquery; and the model's own
+# search_project_documents call then repeated the turn's retrieval. Inside a
+# chat turn (``start_turn_memo``) identical lexical and vector searches are
+# answered from the turn's memo. The memo holds the database rows (immutable),
+# never Chunk objects, which rerankers adjust in place. Outside a turn nothing
+# is memoised.
+_TURN_MEMO: "contextvars.ContextVar[Optional[Dict[tuple, list]]]" = contextvars.ContextVar(
+    "rag_turn_memo", default=None)
+
+
+#: A project with at most this many chunks is ranked exactly from its own rows
+#: rather than through the HNSW graph (see VectorStore._search_pgvector). At
+#: ~4 chunks per heap page that is ~1,000 pages, below a typical filtered HNSW
+#: walk of the table.
+_EXACT_SCAN_MAX_ROWS = 4000
+
+
+def start_turn_memo() -> "contextvars.Token":
+    """Begin a turn's retrieval memo in the current context; returns the reset token."""
+    return _TURN_MEMO.set({})
+
+
+def end_turn_memo(token: "contextvars.Token") -> None:
+    _TURN_MEMO.reset(token)
+
+
+_MISS = object()
+
+
+def _memo_get(key: tuple):
+    """The turn's memoised value for ``key``, or ``_MISS``."""
+    memo = _TURN_MEMO.get()
+    return _MISS if memo is None else memo.get(key, _MISS)
+
+
+def _memo_put(key: tuple, value):
+    memo = _TURN_MEMO.get()
+    if memo is not None:
+        memo[key] = value
+    return value
+
+
+def _memoised(key: tuple, compute):
+    hit = _memo_get(key)
+    return _memo_put(key, compute()) if hit is _MISS else hit
+
+
+def hidden_document_predicate(prefix: str = "", *, postgres: bool = True) -> str:
+    """The condition that hides a document from retrieval.
+
+    ``retrieval_visible`` false, or an ingest status that has no chunks
+    (failed, empty, tombstoned, quarantined ...). One definition: the
+    retrieval filter uses it, and alembic 0025 indexes exactly this condition
+    (``idx_documents_hidden_from_retrieval``) so the filter is an index lookup
+    over the few hidden documents instead of a scan of every documents row.
+    """
+    from app.core.ingest_status import NO_CHUNK_STATUSES
+
+    flag = "IS FALSE" if postgres else "= 0"
+    barred = ", ".join(f"'{s}'" for s in sorted(NO_CHUNK_STATUSES))
+    return f"({prefix}retrieval_visible {flag} OR {prefix}ingest_status IN ({barred}))"
+
+
 def _ensure_hnsw_index(eng, table_name: str) -> None:
     """Ensure the pgvector HNSW ANN index on ``{table}.embedding`` exists.
 
@@ -644,6 +713,52 @@ def _ensure_embedding_inline(eng, table_name: str) -> None:
         logger.warning(
             "could not set inline storage for %s.embedding (exact vector "
             "scans read TOAST until it is set)", table_name, exc_info=True,
+        )
+
+
+#: Rows up to this size stay whole in the heap page instead of being TOASTed.
+#: A chunk row -- text, its tsvector, the embedding -- is ~3-4 KB; the default
+#: target (~2 KB) pushed the tsvector out of line once the embedding stayed in.
+_CHUNK_TOAST_TUPLE_TARGET = 4080
+
+
+def _ensure_tsvector_inline(eng, table_name: str) -> None:
+    """Keep ``text_search`` in the heap row so BM25 ranking reads no TOAST.
+
+    ``ts_rank`` reads each candidate's tsvector. Live 2026-10-07 the tsvector
+    sat in TOAST (moved there once the embedding stayed inline, alembic
+    0023), so ranking ~1,000 candidates cost ~3,800 buffers instead of ~880.
+    The table's ``toast_tuple_target`` is raised so an ordinary chunk row
+    stays whole, and ``text_search`` is ``STORAGE MAIN`` so an oversized row
+    moves its ``text`` out first. Rows written earlier keep their layout until
+    rewritten. Metadata-only; never raises.
+    """
+    try:
+        with eng.begin() as conn:
+            row = conn.execute(text(
+                "SELECT c.reloptions, a.attstorage FROM pg_class c "
+                "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'text_search' "
+                "WHERE c.oid = CAST(:t AS regclass)"
+            ), {"t": table_name}).first()
+            if row is None:
+                return
+            opts, storage = list(row[0] or []), row[1]
+            target_set = f"toast_tuple_target={_CHUNK_TOAST_TUPLE_TARGET}" in opts
+            if target_set and storage == "m":
+                return
+            conn.execute(text("SET LOCAL lock_timeout = '2s'"))
+            if not target_set:
+                conn.execute(text(
+                    f"ALTER TABLE {table_name} SET (toast_tuple_target = {_CHUNK_TOAST_TUPLE_TARGET})"
+                ))
+            if storage != "m":
+                conn.execute(text(
+                    f"ALTER TABLE {table_name} ALTER COLUMN text_search SET STORAGE MAIN"
+                ))
+    except Exception:  # noqa: BLE001 — a storage hint must not block startup
+        logger.warning(
+            "could not keep %s.text_search inline (BM25 ranking reads TOAST "
+            "until it is set)", table_name, exc_info=True,
         )
 
 
@@ -794,6 +909,7 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
                     exc_info=True,
                 )
             _ensure_embedding_inline(eng, table_name)
+            _ensure_tsvector_inline(eng, table_name)
             _ensure_hnsw_index(eng, table_name)
             _ensure_trigram_index(eng, table_name)
         _INITIALIZED_NAMESPACES.add(init_key)
@@ -805,9 +921,9 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
 class VectorStore:
     """SQLAlchemy-backed chunk store with pgvector search on PostgreSQL.
 
-    Thread-safety: one session per operation, guarded by an internal lock.
-    Sufficient for the chat path (one query per request); not designed for
-    massive parallel ingest.
+    Thread-safety: one session per operation. On SQLite operations also take
+    turns behind an internal lock; on PostgreSQL they run concurrently, each on
+    its own pooled connection.
     """
 
     def __init__(
@@ -831,9 +947,13 @@ class VectorStore:
                 "active namespace"
             )
         self.model_name = model_name or os.getenv("RAG_EMBEDDING_MODEL") or "fake"
-        self._lock = Lock()
         self._database_url = _database_url(db_path)
         self._use_pgvector = self._database_url.startswith("postgresql")
+        # SQLite (dev, tests) is one file: operations take turns. PostgreSQL
+        # gives each operation its own pooled connection, so a process-wide
+        # lock only serialised every user's retrieval -- live 2026-10-07, 15
+        # users: one chunk count waited 12 s on it, on the event loop.
+        self._lock = nullcontext() if self._use_pgvector else Lock()
         # Build the namespaced model class. The old ``chunks`` table is
         # retired in place: namespace="" maps to it, but prod defaults to
         # namespace="v2" so new writes never touch the contaminated table.
@@ -899,14 +1019,10 @@ class VectorStore:
         """
         if self._visibility_ready is not True:
             return ""
-        from app.core.ingest_status import NO_CHUNK_STATUSES
-
-        flag = "IS FALSE" if self._use_pgvector else "= 0"
-        barred = ", ".join(f"'{s}'" for s in sorted(NO_CHUNK_STATUSES))
         return (
             f" AND NOT EXISTS (SELECT 1 FROM documents d "
             f"WHERE d.id = {chunk_alias}.doc_id "
-            f"AND (d.retrieval_visible {flag} OR d.ingest_status IN ({barred})))"
+            f"AND {hidden_document_predicate('d.', postgres=self._use_pgvector)})"
         )
 
     def _hidden_doc_ids(self, session: Session, project_id: str) -> Set[str]:
@@ -1184,6 +1300,16 @@ class VectorStore:
                 if project_id is not None:
                     stmt = stmt.where(self._rag_chunk_cls.project_id == project_id)
                 return int(session.scalar(stmt) or 0)
+
+    def has_chunks(self, project_id: str) -> bool:
+        """Whether the project has any chunk: one index probe, not a count."""
+        with self._lock:
+            with self._session_factory()() as session:
+                return session.execute(
+                    select(self._rag_chunk_cls.chunk_id)
+                    .where(self._rag_chunk_cls.project_id == project_id)
+                    .limit(1)
+                ).first() is not None
 
     def count_by_doc(self, project_id: str) -> Dict[str, int]:
         """Return a ``{doc_id: chunk_count}`` map for ``project_id``.
@@ -1759,6 +1885,18 @@ class VectorStore:
             return self._search_pgvector(project_id, q, k)
         return self._search_numpy(project_id, q, k)
 
+    def _project_is_small(self, session: Session, project_id: str) -> bool:
+        """At most ``_EXACT_SCAN_MAX_ROWS`` chunks? A count bounded at that
+        many index entries (a few pages), memoised for the turn."""
+        key = ("project-rows", self._table_name, project_id)
+        n = _memo_get(key)
+        if n is _MISS:
+            n = _memo_put(key, int(session.execute(text(
+                f"SELECT count(*) FROM (SELECT 1 FROM {self._table_name} "
+                "WHERE project_id = :p LIMIT :m) s"
+            ), {"p": project_id, "m": _EXACT_SCAN_MAX_ROWS + 1}).scalar() or 0))
+        return n <= _EXACT_SCAN_MAX_ROWS
+
     def _search_pgvector(
         self, project_id: str, query_vec: np.ndarray, k: int
     ) -> List[Chunk]:
@@ -1782,6 +1920,13 @@ class VectorStore:
         ``_enable_iterative_scan`` is what fixes it: pgvector keeps scanning
         until enough rows survive the filter instead of giving up after the
         first ef_search candidates.
+
+        A SMALL project is searched exactly instead (``_EXACT_SCAN_MAX_ROWS``).
+        For a project holding a few percent of the table, the iterative scan
+        walks much of the graph before enough of its rows turn up -- measured
+        12-29 MB per search, varying with the query -- while ranking the
+        project's own rows reads about one heap page per four chunks (the
+        embedding is inline, alembic 0023) and is exact.
         """
         q_list = query_vec.tolist()
         # EmbeddingVector is a TypeDecorator; cast to Vector for pgvector ops.
@@ -1814,9 +1959,16 @@ class VectorStore:
                         .exists()
                     )
                     stmt = stmt.where(~hidden)
-                stmt = stmt.order_by(distance).limit(k)
-                _enable_iterative_scan(session)
-                rows = session.execute(stmt).all()
+                # ``distance + 0`` is not an expression HNSW can serve, so a
+                # small project is ranked exactly from its own rows.
+                order = distance + 0 if self._project_is_small(session, project_id) else distance
+                stmt = stmt.order_by(order).limit(k)
+                key = ("vector", self._table_name, project_id, k,
+                       hashlib.sha1(np.asarray(query_vec, dtype=np.float32).tobytes()).hexdigest())
+                rows = _memo_get(key)
+                if rows is _MISS:
+                    _enable_iterative_scan(session)
+                    rows = _memo_put(key, session.execute(stmt).all())
         return [
             Chunk(
                 chunk_id=row.chunk_id,
@@ -1980,13 +2132,19 @@ class VectorStore:
             # Every word is a stopword: nothing can match. Asking anyway reads
             # every tsvector in the project to learn that.
             return []
+        # Keyed on the normalised tsquery: query wordings that reduce to the
+        # same tsquery rank the same rows.
+        key = ("bm25", self._table_name, project_id, tsq, k, vis)
+        hit = _memo_get(key)
+        if hit is not _MISS:
+            return hit
         if lexemes and len(lexemes) > 1 and k > 0:
             rows = self._bm25_bounded(session, params, lexemes, vis)
             if rows is not None:
-                return rows
-        return session.execute(
+                return _memo_put(key, rows)
+        return _memo_put(key, session.execute(
             text(self._bm25_select("c.text_search @@ q", vis)), params,
-        ).all()
+        ).all())
 
     def _bm25_bounded(
         self, session: Session, params: Dict[str, Any], lexemes: List[str], vis: str,

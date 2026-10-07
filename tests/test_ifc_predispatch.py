@@ -27,6 +27,14 @@ class _FakeExtractor:
         return self._result
 
 
+
+@pytest.fixture(autouse=True)
+def _names_follow_the_document_list(monkeypatch):
+    """The name matchers read ``list_document_names``; these tests stub
+    ``list_documents``. Route the former through whatever the latter is."""
+    from app.core import projects as _p
+    monkeypatch.setattr(_p, "list_document_names", lambda pid: _p.list_documents(pid))
+
 def _wire(monkeypatch, docs, result, tool="bim_extractor"):
     import app.core.projects as projects_mod
     monkeypatch.setattr(projects_mod, "list_documents", lambda pid: docs,
