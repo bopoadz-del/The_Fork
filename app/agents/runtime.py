@@ -12,6 +12,7 @@ chat block as a fallback; see ``app/blocks/chat.py``.
 
 from __future__ import annotations
 
+from app.core.offload import off_loop as _off_loop
 import asyncio
 import bisect
 import inspect
@@ -1075,7 +1076,7 @@ async def _predispatch_file_tool(
                     target = (name, tool)
                     break
         if text_target and not target:
-            content, doc, err = _fetch_document_content(project_id, "", text_target)
+            content, doc, err = (await _off_loop(_fetch_document_content, project_id, "", text_target))
             if err or not content:
                 return None
             payload = str((content or {}).get("text") or "")[:6000]
@@ -1102,7 +1103,7 @@ async def _predispatch_file_tool(
         if not target:
             return None
         name, tool = target
-        resolved = _resolve_file_path(project_id, name)
+        resolved = (await _off_loop(_resolve_file_path, project_id, name))
         instance = block_instances.get(tool) or _create_block_instance(tool)
         want_clash = message_wants_clash(user_msg)
         result = await instance.execute(
@@ -1310,7 +1311,7 @@ async def _predispatch_resource_histogram(
         return None
     try:
         user_msg, _history = _messages_user_and_history(messages)
-        if not user_msg or not _message_wants_resource_histogram(user_msg):
+        if not user_msg or not (await _off_loop(_message_wants_resource_histogram, user_msg)):
             return None
         schedule_file, picked_name = _resolve_histogram_schedule_file(
             project_id, user_msg,
@@ -1369,7 +1370,7 @@ async def _predispatch_look_ahead(
         return None
     try:
         user_msg, _history = _messages_user_and_history(messages)
-        if not user_msg or not _message_wants_look_ahead(user_msg):
+        if not user_msg or not (await _off_loop(_message_wants_look_ahead, user_msg)):
             return None
         schedule_file, picked_name = _resolve_histogram_schedule_file(
             project_id, user_msg,
@@ -1476,7 +1477,7 @@ async def _predispatch_wir_form(
     try:
         user_msg, _history = _messages_user_and_history(messages)
         detect = (operator_text or user_msg or "").strip()
-        if not detect or not _message_wants_wir_form(detect):
+        if not detect or not (await _off_loop(_message_wants_wir_form, detect)):
             return None
         from app.dependencies import get_block_instance
         container = get_block_instance("construction")
@@ -1881,7 +1882,7 @@ async def _predispatch_remaining_deliverables(
     """First matching non-WIR deliverable draft, so a Groq 413 still has copy."""
     user_msg, _history = _messages_user_and_history(messages)
     detect = (operator_text or user_msg or "").strip()
-    if not detect or _message_wants_wir_form(detect):
+    if not detect or (await _off_loop(_message_wants_wir_form, detect)):
         return None
     if message_wants_answer_report(detect):
         return None
@@ -11022,13 +11023,13 @@ class Agent:
         if (
             project_id
             and not project_is_rag_ready(project_id)
-            and not _project_has_non_rag_context(project_id, user_message)
+            and not (await _off_loop(_project_has_non_rag_context, project_id, user_message))
         ):
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.get_or_create_conversation(conversation_id, self.name, project_id)
-                agent_memory.append_message(conversation_id, "user", user_message)
-                agent_memory.append_message(conversation_id, "assistant", _UNINDEXED_PROJECT_MESSAGE)
+                (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id))
+                (await _off_loop(agent_memory.append_message, conversation_id, "user", user_message))
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", _UNINDEXED_PROJECT_MESSAGE))
             return {
                 "status": "success",
                 "answer": _UNINDEXED_PROJECT_MESSAGE,
@@ -11041,8 +11042,8 @@ class Agent:
         effective_history = list(history or [])
         if conversation_id:
             from app.core import agent_memory
-            agent_memory.get_or_create_conversation(conversation_id, self.name, project_id)
-            prior = agent_memory.get_messages(conversation_id)
+            (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id))
+            prior = (await _off_loop(agent_memory.get_messages, conversation_id))
             prior_turns = [
                 {"role": m["role"], "content": m["content"]}
                 for m in prior
@@ -11052,14 +11053,14 @@ class Agent:
             # Persist the user turn up front so it survives even if the LLM
             # call errors mid-loop — otherwise the conversation history loses
             # the question and ends up inconsistent.
-            agent_memory.append_message(conversation_id, "user", user_message)
+            (await _off_loop(agent_memory.append_message, conversation_id, "user", user_message))
 
         # Strip prior hallucinated WBS/BOQ tables from history before
         # sending. Prevents the model from pattern-matching to a prior
         # (often fabricated) table when it should be calling the tool.
         effective_history = _scrub_history(effective_history)
 
-        messages = self._build_messages(user_message, effective_history, project_id=project_id)
+        messages = (await _off_loop(self._build_messages, user_message, effective_history, project_id=project_id))
         # Pre-iter-0 RAG injection. Runs for any project-scoped turn so that
         # routing to heavy-reasoning (or another agent) does not strip project
         # grounding. Adds a system message AFTER the prompt + project context
@@ -11092,7 +11093,7 @@ class Agent:
             answer = _build_capability_answer(self, project_id)
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             await _emit("final", {"answer": answer})
             return {
                 "status": "success",
@@ -11109,7 +11110,7 @@ class Agent:
         # canned "could not confirm this reference" used to fire in ~1s
         # without ever fetching bytes from disk.
         tool_calls_made: list[dict[str, Any]] = []
-        _locked = _message_wants_locked_deliverable(user_message)
+        _locked = (await _off_loop(_message_wants_locked_deliverable, user_message))
         _pre = None
         if not _locked:
             _pre = await _predispatch_file_tool(self, messages, project_id)
@@ -11161,7 +11162,7 @@ class Agent:
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             await _emit("final", {"answer": answer})
             return {
                 "status": "success",
@@ -11179,16 +11180,15 @@ class Agent:
         # the turn. Other deliverables still keep the LLM.
         _boq_wbs_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
         if _boq_wbs_fast:
-            answer = _postprocess_answer(
-                _boq_wbs_fast, _rag_sys_msg, messages,
+            answer = (await _off_loop(_postprocess_answer, _boq_wbs_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
                 audit_rec=_rag_audit,
-            )
+            ))
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             await _emit("final", {"answer": answer})
             return {
                 "status": "success",
@@ -11209,16 +11209,15 @@ class Agent:
             audit_rec=_rag_audit,
         )
         if _daily_damages_fast:
-            answer = _postprocess_answer(
-                _daily_damages_fast, _rag_sys_msg, messages,
+            answer = (await _off_loop(_postprocess_answer, _daily_damages_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
                 audit_rec=_rag_audit,
-            )
+            ))
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             await _emit("final", {"answer": answer})
             return {
                 "status": "success",
@@ -11226,7 +11225,7 @@ class Agent:
                 "tool_calls": [],
                 "iterations": 0,
                 "messages": messages + [{"role": "assistant", "content": answer}],
-                "sources": _build_sources_from_audit(_rag_audit, answer),
+                "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
                 "provenance": (_rag_audit or {}).get("provenance") or [],
             }
         # WAVE 2 B4: priced D599.5 is already in the excerpts. Skip the
@@ -11237,16 +11236,15 @@ class Agent:
             has_predispatch=_has_pre,
         )
         if _priced_fast:
-            answer = _postprocess_answer(
-                _priced_fast, _rag_sys_msg, messages,
+            answer = (await _off_loop(_postprocess_answer, _priced_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
                 audit_rec=_rag_audit,
-            )
+            ))
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             await _emit("final", {"answer": answer})
             return {
                 "status": "success",
@@ -11254,7 +11252,7 @@ class Agent:
                 "tool_calls": [],
                 "iterations": 0,
                 "messages": messages + [{"role": "assistant", "content": answer}],
-                "sources": _build_sources_from_audit(_rag_audit, answer),
+                "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
                 "provenance": (_rag_audit or {}).get("provenance") or [],
             }
         # BOQ page Part Summary total already in the excerpts.
@@ -11263,16 +11261,15 @@ class Agent:
             has_predispatch=_has_pre,
         )
         if _part_fast:
-            answer = _postprocess_answer(
-                _part_fast, _rag_sys_msg, messages,
+            answer = (await _off_loop(_postprocess_answer, _part_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
                 audit_rec=_rag_audit,
-            )
+            ))
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             await _emit("final", {"answer": answer})
             return {
                 "status": "success",
@@ -11280,7 +11277,7 @@ class Agent:
                 "tool_calls": [],
                 "iterations": 0,
                 "messages": messages + [{"role": "assistant", "content": answer}],
-                "sources": _build_sources_from_audit(_rag_audit, answer),
+                "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
                 "provenance": (_rag_audit or {}).get("provenance") or [],
             }
         # Root fix for the tool-loop (mirrors chat_stream): cap explicit
@@ -11335,19 +11332,17 @@ class Agent:
                     final_text = _sanitize_inline_paths(
                         _sanitize_citation_labels(recovered)
                     )
-                    final_text = _postprocess_answer(
-                        final_text, _rag_sys_msg, messages,
+                    final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
                         project_id=project_id,
                         audit_rec=_rag_audit,
-                    )
+                    ))
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
-                        agent_memory.append_message(
-                            conversation_id, "assistant", final_text,
-                        )
+                        (await _off_loop(agent_memory.append_message, conversation_id, "assistant", final_text,
+                        ))
                     await _emit("final", {"answer": final_text})
                     return {
                         "status": "success",
@@ -11356,12 +11351,11 @@ class Agent:
                         "iterations": iteration + 1,
                         "messages": messages,
                         "recovered_from_llm_error": True,
-                        "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
                         "provenance": (_rag_audit or {}).get("provenance") or [],
-                        "exports": _build_exports_from_audit(
-                            _rag_audit, final_text, tool_calls_made,
+                        "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, tool_calls_made,
                             conversation_id=conversation_id,
-                        ),
+                        )),
                     }
                 return resp
             choice = resp["choice"]
@@ -11449,12 +11443,12 @@ class Agent:
                         final_text, messages, user_message=user_message,
                         project_id=project_id, api_key=api_key, user_id=user_id,
                     )
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
+                    final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit))
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
                         # User turn was already persisted up front.
-                        agent_memory.append_message(conversation_id, "assistant", final_text)
+                        (await _off_loop(agent_memory.append_message, conversation_id, "assistant", final_text))
                     await _emit("final", {"answer": final_text})
                     return {
                         "status": "success",
@@ -11462,9 +11456,9 @@ class Agent:
                         "tool_calls": tool_calls_made,
                         "iterations": iteration + 1,
                         "messages": messages,
-                        "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
                         "provenance": (_rag_audit or {}).get("provenance") or [],
-                        "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made, conversation_id=conversation_id),
+                        "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, tool_calls_made, conversation_id=conversation_id)),
                     }
 
             # Persist the assistant turn that contained the tool calls
@@ -11582,12 +11576,12 @@ class Agent:
             final_text, messages, user_message=user_message,
             project_id=project_id, api_key=api_key, user_id=user_id,
         )
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
+        final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit))
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
             # User turn was already persisted up front.
-            agent_memory.append_message(conversation_id, "assistant", final_text)
+            (await _off_loop(agent_memory.append_message, conversation_id, "assistant", final_text))
         return {
             "status": "success",
             "answer": final_text,
@@ -11595,9 +11589,9 @@ class Agent:
             "iterations": MAX_TOOL_ITERATIONS,
             "messages": messages,
             "forced_final": True,
-            "sources": _build_sources_from_audit(_rag_audit, final_text),
+            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
             "provenance": (_rag_audit or {}).get("provenance") or [],
-            "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made, conversation_id=conversation_id),
+            "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, tool_calls_made, conversation_id=conversation_id)),
         }
 
     async def _fetch_named_missing_input(
@@ -12006,13 +12000,13 @@ class Agent:
         if (
             project_id
             and not project_is_rag_ready(project_id)
-            and not _project_has_non_rag_context(project_id, user_message)
+            and not (await _off_loop(_project_has_non_rag_context, project_id, user_message))
         ):
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.get_or_create_conversation(conversation_id, self.name, project_id)
-                agent_memory.append_message(conversation_id, "user", user_message)
-                agent_memory.append_message(conversation_id, "assistant", _UNINDEXED_PROJECT_MESSAGE)
+                (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id))
+                (await _off_loop(agent_memory.append_message, conversation_id, "user", user_message))
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", _UNINDEXED_PROJECT_MESSAGE))
             for chunk in _chunks(_UNINDEXED_PROJECT_MESSAGE, 80):
                 yield {"type": "token", "content": chunk}
             yield {"type": "end", "iterations": 0, "sources": [],
@@ -12022,8 +12016,8 @@ class Agent:
         effective_history = list(history or [])
         if conversation_id:
             from app.core import agent_memory
-            agent_memory.get_or_create_conversation(conversation_id, self.name, project_id)
-            prior = agent_memory.get_messages(conversation_id)
+            (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id))
+            prior = (await _off_loop(agent_memory.get_messages, conversation_id))
             prior_turns = [
                 {"role": m["role"], "content": m["content"]}
                 for m in prior
@@ -12031,14 +12025,14 @@ class Agent:
             ]
             effective_history = prior_turns + effective_history
             # Persist the user turn up front so it survives a mid-loop error.
-            agent_memory.append_message(conversation_id, "user", user_message)
+            (await _off_loop(agent_memory.append_message, conversation_id, "user", user_message))
 
         # Strip prior hallucinated WBS/BOQ tables from history before
         # sending. Prevents the model from pattern-matching to a prior
         # (often fabricated) table when it should be calling the tool.
         effective_history = _scrub_history(effective_history)
 
-        messages = self._build_messages(user_message, effective_history, project_id=project_id)
+        messages = (await _off_loop(self._build_messages, user_message, effective_history, project_id=project_id))
         # Attachment grounding (S4). The chat router resolves the composer's
         # `[attached: X]` marker to concrete documents and passes them here.
         # A system note pins the reference so "the attached file" is never a
@@ -12082,7 +12076,7 @@ class Agent:
             answer = _build_capability_answer(self, project_id)
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             for chunk in _chunks(answer, 80):
                 yield {"type": "token", "content": chunk}
             yield {"type": "end", "iterations": 0, "sources": [],
@@ -12094,7 +12088,7 @@ class Agent:
         stream_tool_results: list[dict[str, Any]] = []
         # Deterministic file pre-dispatch BEFORE the RAG-miss short-circuit
         # (leftover L1 timestamped .docx looks like an identifier).
-        _locked = _message_wants_locked_deliverable(user_message)
+        _locked = (await _off_loop(_message_wants_locked_deliverable, user_message))
         _pre = None
         if not _locked:
             _pre = await _predispatch_file_tool(self, messages, project_id)
@@ -12306,7 +12300,7 @@ class Agent:
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             for chunk in _chunks(answer, 80):
                 yield {"type": "token", "content": chunk}
             yield {"type": "end", "iterations": 0, "sources": [],
@@ -12320,16 +12314,15 @@ class Agent:
         # the turn. Other deliverables still keep the LLM.
         _boq_wbs_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
         if _boq_wbs_fast:
-            answer = _postprocess_answer(
-                _boq_wbs_fast, _rag_sys_msg, messages,
+            answer = (await _off_loop(_postprocess_answer, _boq_wbs_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
                 audit_rec=_rag_audit,
-            )
+            ))
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             for chunk in _chunks(answer, 80):
                 yield {"type": "token", "content": chunk}
             yield {
@@ -12349,23 +12342,22 @@ class Agent:
             audit_rec=_rag_audit,
         )
         if _daily_damages_fast:
-            answer = _postprocess_answer(
-                _daily_damages_fast, _rag_sys_msg, messages,
+            answer = (await _off_loop(_postprocess_answer, _daily_damages_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
                 audit_rec=_rag_audit,
-            )
+            ))
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             for chunk in _chunks(answer, 80):
                 yield {"type": "token", "content": chunk}
             yield {
                 "type": "end",
                 "content": answer,
                 "iterations": 0,
-                "sources": _build_sources_from_audit(_rag_audit, answer),
+                "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
                 "provenance": (_rag_audit or {}).get("provenance") or [],
                 "tools": list(tools_invoked),
             }
@@ -12377,23 +12369,22 @@ class Agent:
             has_predispatch=_has_pre,
         )
         if _priced_fast:
-            answer = _postprocess_answer(
-                _priced_fast, _rag_sys_msg, messages,
+            answer = (await _off_loop(_postprocess_answer, _priced_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
                 audit_rec=_rag_audit,
-            )
+            ))
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             for chunk in _chunks(answer, 80):
                 yield {"type": "token", "content": chunk}
             yield {
                 "type": "end",
                 "content": answer,
                 "iterations": 0,
-                "sources": _build_sources_from_audit(_rag_audit, answer),
+                "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
                 "provenance": (_rag_audit or {}).get("provenance") or [],
                 "tools": list(tools_invoked),
             }
@@ -12404,23 +12395,22 @@ class Agent:
             has_predispatch=_has_pre,
         )
         if _part_fast:
-            answer = _postprocess_answer(
-                _part_fast, _rag_sys_msg, messages,
+            answer = (await _off_loop(_postprocess_answer, _part_fast, _rag_sys_msg, messages,
                 fallback_used=bool(_rag_audit.get("fallback_used")),
                 agent_name=self.name,
                 project_id=project_id,
                 audit_rec=_rag_audit,
-            )
+            ))
             if conversation_id:
                 from app.core import agent_memory
-                agent_memory.append_message(conversation_id, "assistant", answer)
+                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", answer))
             for chunk in _chunks(answer, 80):
                 yield {"type": "token", "content": chunk}
             yield {
                 "type": "end",
                 "content": answer,
                 "iterations": 0,
-                "sources": _build_sources_from_audit(_rag_audit, answer),
+                "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
                 "provenance": (_rag_audit or {}).get("provenance") or [],
                 "tools": list(tools_invoked),
             }
@@ -12679,13 +12669,12 @@ class Agent:
                     # fill the blank and skip the forced non-streaming retry
                     # that test_empty_stream_triggers_forced_retry pins.
                     if tool_leak and not leak_hold and final_text.strip():
-                        final_text = _postprocess_answer(
-                            final_text, _rag_sys_msg, messages,
+                        final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
                             project_id=project_id,
                             audit_rec=_rag_audit,
-                        )
+                        ))
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     elif not final_text.strip() or promise_hold or leak_hold:
@@ -12709,33 +12698,29 @@ class Agent:
                             final_text = _sanitize_inline_paths(
                                 _sanitize_citation_labels(final_text)
                             )
-                            final_text = _postprocess_answer(
-                                final_text, _rag_sys_msg, messages,
+                            final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages,
                                 fallback_used=bool(_rag_audit.get("fallback_used")),
                                 agent_name=self.name,
                                 project_id=project_id,
                                 audit_rec=_rag_audit,
-                            )
+                            ))
                             for chunk in _chunks(final_text, 80):
                                 yield {"type": "token", "content": chunk}
                             if conversation_id:
                                 from app.core import agent_memory
-                                agent_memory.append_message(
-                                    conversation_id, "assistant", final_text,
-                                )
+                                (await _off_loop(agent_memory.append_message, conversation_id, "assistant", final_text,
+                                ))
                             yield {
                                 "type": "end",
                                 "content": final_text,
                                 "iterations": iteration + 1,
                                 "model": served_model,
                                 "tools": list(tools_invoked),
-                                "sources": _build_sources_from_audit(
-                                    _rag_audit, final_text,
-                                ),
-                                "exports": _build_exports_from_audit(
-                                    _rag_audit, final_text, stream_tool_results,
+                                "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text,
+                                )),
+                                "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results,
                                     conversation_id=conversation_id,
-                                ),
+                                )),
                             }
                             return
                         if leak_hold:
@@ -12774,17 +12759,16 @@ class Agent:
                             ):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
+                        final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit))
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     else:
-                        final_text = _postprocess_answer(
-                            final_text, _rag_sys_msg, messages,
+                        final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
                             project_id=project_id,
                             audit_rec=_rag_audit,
-                        )
+                        ))
                         if cut_off and _SYNTH_CUTOFF_NOTICE not in final_text:
                             suffix = (
                                 ("\n\n" if final_text.strip() else "")
@@ -12801,16 +12785,16 @@ class Agent:
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
                     if conversation_id:
                         from app.core import agent_memory
-                        agent_memory.append_message(conversation_id, "assistant", final_text)
+                        (await _off_loop(agent_memory.append_message, conversation_id, "assistant", final_text))
                     yield {
                         "type": "end",
                         "content": final_text,
                         "iterations": iteration + 1,
                         "model": served_model,
                         "tools": list(tools_invoked),
-                        "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
                         "provenance": (_rag_audit or {}).get("provenance") or [],
-                        "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results, conversation_id=conversation_id),
+                        "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results, conversation_id=conversation_id)),
                     }
                     return
             _call_t0 = time.monotonic()
@@ -12833,13 +12817,12 @@ class Agent:
                     final_text = _sanitize_inline_paths(
                         _sanitize_citation_labels(recovered)
                     )
-                    final_text = _postprocess_answer(
-                        final_text, _rag_sys_msg, messages,
+                    final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
                         project_id=project_id,
                         audit_rec=_rag_audit,
-                    )
+                    ))
                     _LOG.warning(
                         "chat_stream: iter=%d recovered deliverable after LLM error %s",
                         iteration, err[:80],
@@ -12848,9 +12831,8 @@ class Agent:
                         yield {"type": "token", "content": chunk}
                     if conversation_id:
                         from app.core import agent_memory
-                        agent_memory.append_message(
-                            conversation_id, "assistant", final_text,
-                        )
+                        (await _off_loop(agent_memory.append_message, conversation_id, "assistant", final_text,
+                        ))
                     yield {
                         "type": "end",
                         "content": final_text,
@@ -12858,12 +12840,11 @@ class Agent:
                         "model": served_model,
                         "tools": list(tools_invoked),
                         "recovered_from_llm_error": True,
-                        "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
                         "provenance": (_rag_audit or {}).get("provenance") or [],
-                        "exports": _build_exports_from_audit(
-                            _rag_audit, final_text, stream_tool_results,
+                        "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results,
                             conversation_id=conversation_id,
-                        ),
+                        )),
                     }
                     return
                 _LOG.warning("chat_stream: iter=%d LLM error %s", iteration, err)
@@ -12986,7 +12967,7 @@ class Agent:
                                     if _final_text_needs_forced_retry(final_text, user_message=user_message):
                                         final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
+                    final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit))
                     if _timing:
                         _timing_log("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -12997,7 +12978,7 @@ class Agent:
                     if conversation_id:
                         from app.core import agent_memory
                         # User turn was already persisted up front.
-                        agent_memory.append_message(conversation_id, "assistant", final_text)
+                        (await _off_loop(agent_memory.append_message, conversation_id, "assistant", final_text))
                     # rag_debug opt-in: run a second LLM call with the RAG
                     # system message stripped so the caller can compare
                     # on/off responses for the same turn. Audit record is
@@ -13033,9 +13014,9 @@ class Agent:
                         "iterations": iteration + 1,
                         "model": served_model,
                         "tools": list(tools_invoked),
-                        "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
                         "provenance": (_rag_audit or {}).get("provenance") or [],
-                        "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results, conversation_id=conversation_id),
+                        "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results, conversation_id=conversation_id)),
                     }
                     return
 
@@ -13157,13 +13138,13 @@ class Agent:
                 _LOG.warning("chat_stream: forced final unusable, using fallback")
                 final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit)
+        final_text = (await _off_loop(_postprocess_answer, final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, project_id=project_id, audit_rec=_rag_audit))
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:
             from app.core import agent_memory
             # User turn was already persisted up front.
-            agent_memory.append_message(conversation_id, "assistant", final_text)
+            (await _off_loop(agent_memory.append_message, conversation_id, "assistant", final_text))
         _LOG.info("chat_stream: end (forced_final) chars=%d", len(final_text))
         yield {
             "type": "end",
@@ -13172,9 +13153,9 @@ class Agent:
             "forced_final": True,
             "model": served_model,
             "tools": list(tools_invoked),
-            "sources": _build_sources_from_audit(_rag_audit, final_text),
+            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
             "provenance": (_rag_audit or {}).get("provenance") or [],
-            "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results, conversation_id=conversation_id),
+            "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results, conversation_id=conversation_id)),
         }
 
     # ── Internals ─────────────────────────────────────────────────────────
@@ -13942,12 +13923,11 @@ class Agent:
             from app.core import projects as _projects_store
             # The pilot's master-corpus project is an alias with no documents
             # of its own — list the backing corpus, like the chat path does.
-            resolved_pid = (_projects_store._master_corpus_source(project_id)
+            resolved_pid = ((await _off_loop(_projects_store._master_corpus_source, project_id))
                             or project_id)
-            docs = _projects_store.list_documents(
-                resolved_pid, limit=limit, offset=0, newest_first=True,
-            )
-            total = _projects_store.count_documents(resolved_pid)
+            docs = (await _off_loop(_projects_store.list_documents, resolved_pid, limit=limit, offset=0, newest_first=True,
+            ))
+            total = (await _off_loop(_projects_store.count_documents, resolved_pid))
             return {
                 "name": "list_project_documents",
                 "ok": True,
@@ -13989,7 +13969,7 @@ class Agent:
                         "hint": "Pass the id from the attachment note or a search result, or the file's name.",
                     },
                 }
-            content, doc, err = _fetch_document_content(project_id, doc_id, filename)
+            content, doc, err = (await _off_loop(_fetch_document_content, project_id, doc_id, filename))
             if err:
                 return {"name": name, "ok": False, "result": {"status": "error", "error": err}}
             return {
@@ -14222,7 +14202,7 @@ class Agent:
                     "result": {"status": "error", "error": f"construction unavailable: {e}"},
                 }
             raw = args.get("schedule_file") or args.get("file_path") or ""
-            resolved = _resolve_file_path(project_id, raw) if raw else ""
+            resolved = (await _off_loop(_resolve_file_path, project_id, raw)) if raw else ""
             if not resolved or not os.path.exists(str(resolved)):
                 resolved, _picked = _resolve_histogram_schedule_file(
                     project_id, user_message or "",
@@ -14277,7 +14257,7 @@ class Agent:
                     "result": {"status": "error", "error": f"construction unavailable: {e}"},
                 }
             raw = args.get("schedule_file") or args.get("file_path") or ""
-            resolved = _resolve_file_path(project_id, raw) if raw else ""
+            resolved = (await _off_loop(_resolve_file_path, project_id, raw)) if raw else ""
             if not resolved or not os.path.exists(str(resolved)):
                 resolved, _picked = _resolve_histogram_schedule_file(
                     project_id, user_message or "",
@@ -14476,9 +14456,8 @@ class Agent:
             from app.core import agent_memory
             key = args.get("key") or ""
             value = args.get("value") or ""
-            agent_memory.set_agent_fact(
-                self.name, key, value, conversation_id, project_id
-            )
+            (await _off_loop(agent_memory.set_agent_fact, self.name, key, value, conversation_id, project_id
+            ))
             return {
                 "name": "remember_fact",
                 "ok": True,
@@ -14513,9 +14492,8 @@ class Agent:
                 args, user_message, history=history,
             )
             if not calc_name:
-                calc_name = _formula_calculator_name_from_message(
-                    str((args or {}).get("text") or user_message or ""),
-                )
+                calc_name = (await _off_loop(_formula_calculator_name_from_message, str((args or {}).get("text") or user_message or ""),
+                ))
             from app.lib import construction_formulas as _cf
             calc_params = _cf.coerce_calc_params(args.get("params"))
             # SHARED WITH AGENT C / #636 / #639 / #652: models put calculator
@@ -14612,9 +14590,9 @@ class Agent:
                 # F43: container file actions need the same original-name ->
                 # stored-path resolution as file-schema blocks (dicts only).
                 if project_id and isinstance(_alias_input, dict):
-                    _alias_input = _resolve_block_file_input(project_id, _alias_input)
+                    _alias_input = (await _off_loop(_resolve_block_file_input, project_id, _alias_input))
                 if project_id and isinstance(params, dict):
-                    params = _resolve_block_file_input(project_id, params)
+                    params = (await _off_loop(_resolve_block_file_input, project_id, params))
                     params["action"] = route
                 result = await block.process(_alias_input, params)
             except Exception as e:  # noqa: BLE001 — a tool error is a payload, not a crash
@@ -14717,8 +14695,8 @@ class Agent:
         # 'File not found: <name>'. Resolve to the absolute file_path of the
         # uploaded document for this project before dispatch.
         if name in _FILE_CONSUMING_BLOCKS and project_id:
-            block_input = _resolve_block_file_input(project_id, block_input)
-            block_params = _resolve_block_file_input(project_id, block_params)
+            block_input = (await _off_loop(_resolve_block_file_input, project_id, block_input))
+            block_params = (await _off_loop(_resolve_block_file_input, project_id, block_params))
         elif name == "construction" and project_id:
             # F43: the construction container's file actions (bim_extract,
             # boq_process, drawing takeoffs) received the BARE filename and
@@ -14727,9 +14705,9 @@ class Agent:
             # input here is a natural-language request, and the resolver's
             # substring matching must never rewrite prose into a file path.
             if isinstance(block_input, dict):
-                block_input = _resolve_block_file_input(project_id, block_input)
+                block_input = (await _off_loop(_resolve_block_file_input, project_id, block_input))
             if isinstance(block_params, dict):
-                block_params = _resolve_block_file_input(project_id, block_params)
+                block_params = (await _off_loop(_resolve_block_file_input, project_id, block_params))
         if name == "construction" and user_message:
             # Live M14: the model rewrote wir_form scope to "blinding pour"
             # so refuse missed the operator RFP / job-req / claim.
@@ -15384,20 +15362,20 @@ async def _predispatch_formula_calc(
         detect = (operator_text or user_msg or "").strip()
         if not detect:
             return None
-        if _message_wants_rfi_draft(detect) or _message_wants_vo_draft(detect):
+        if (await _off_loop(_message_wants_rfi_draft, detect)) or (await _off_loop(_message_wants_vo_draft, detect)):
             return None
-        if _message_wants_inline_boq(detect):
+        if (await _off_loop(_message_wants_inline_boq, detect)):
             return None
-        if _message_wants_drawing_qto(detect):
+        if (await _off_loop(_message_wants_drawing_qto, detect)):
             return None
-        if _message_is_schedule_or_programme_deliverable(detect):
+        if (await _off_loop(_message_is_schedule_or_programme_deliverable, detect)):
             return None
         if not (
-            _message_is_formula_style_ask(detect)
-            or _message_wants_named_calculator(detect)
+            (await _off_loop(_message_is_formula_style_ask, detect))
+            or (await _off_loop(_message_wants_named_calculator, detect))
         ):
             return None
-        calc_name = _formula_calculator_name_from_message(detect)
+        calc_name = (await _off_loop(_formula_calculator_name_from_message, detect))
         tc = {
             "id": "predispatch-construction_calc",
             "function": {
@@ -15622,7 +15600,7 @@ async def select_agent_for_message(
             exc_info=True,
         )
 
-    if _message_wants_named_calculator(user_message):
+    if (await _off_loop(_message_wants_named_calculator, user_message)):
         info["action"] = None
         info["reason"] = "named_calculator"
         return requested_agent, info

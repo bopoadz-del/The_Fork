@@ -189,6 +189,8 @@ async def lifespan(app: FastAPI):
     _warn_when_the_llm_has_no_fallback()
     from app.core import rss_watchdog
     rss_watchdog.start()
+    from app.core import loop_watchdog
+    loop_watchdog.start()
     from app.blocks.learning_engine import assert_learning_engine_hard_off
     assert_learning_engine_hard_off()
     await init_blocks()
