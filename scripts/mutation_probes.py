@@ -121,17 +121,17 @@ PROBES: tuple[Probe, ...] = (
         name="gk_conversation_acl",
         path="app/routers/agents.py",
         old=(
-            "            if store.get_project(\n"
+            "            if store.can_access_project(\n"
             "                project_id, user_id=auth[\"user_id\"], "
             "include_admin_approved=True\n"
-            "            ) is not None:"
+            "            ):"
         ),
         new=(
             "            include_admin = project_id == store.MASTER_CORPUS_PROJECT_ID\n"
-            "            if store.get_project(\n"
+            "            if store.can_access_project(\n"
             "                project_id, user_id=auth[\"user_id\"], "
             "include_admin_approved=include_admin\n"
-            "            ) is not None:"
+            "            ):"
         ),
         test=(
             "tests/test_chat_open_access_gate.py::"

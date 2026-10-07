@@ -9,6 +9,7 @@ Routes:
 Auth: same Bearer cb_dev_key (or any registered key) as the rest of /v1.
 """
 
+from app.core.offload import off_loop as _off_loop
 import asyncio
 import json
 import logging
@@ -95,9 +96,9 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
             # Same include_admin_approved grant as project GET / documents /
             # rag search (PR #586). Master-corpus-only was the leftover that
             # 404'd New chat on a shared general-knowledge project for every non-owner.
-            if store.get_project(
+            if store.can_access_project(
                 project_id, user_id=auth["user_id"], include_admin_approved=True
-            ) is not None:
+            ):
                 return
         raise HTTPException(404, "Conversation not found")
 
@@ -109,9 +110,9 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
     if stored_pid is None:
         # No ownership binding at all — do not serve it.
         raise HTTPException(404, "Conversation not found")
-    if store.get_project(
+    if not store.can_access_project(
         stored_pid, user_id=auth["user_id"], include_admin_approved=True
-    ) is None:
+    ):
         raise HTTPException(404, "Conversation not found")
 
 
@@ -136,7 +137,7 @@ async def get_conversation_messages(
     would confirm the id format). A non-existent but owned conversation still
     returns 200 with an empty list.
     """
-    _enforce_conversation_access(conversation_id, auth)
+    (await _off_loop(_enforce_conversation_access, conversation_id, auth))
 
     conv = agent_memory.get_conversation(conversation_id)
     if conv is None:
@@ -200,7 +201,7 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     # platform-shared). This runs BEFORE the agent so an attacker cannot
     # create/write a victim's private ws-{pid} conversation.
     if req.conversation_id is not None:
-        _enforce_conversation_access(req.conversation_id, auth)
+        (await _off_loop(_enforce_conversation_access, req.conversation_id, auth))
 
     # Pilot: resolve the master-corpus alias to its backing source corpus so
     # retrieval and storage use the existing full-drive index without
@@ -301,7 +302,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     # platform-shared). Raised here (before StreamingResponse) so an
     # attacker cannot create/write a victim's private ws-{pid} conversation.
     if conversation_id is not None:
-        _enforce_conversation_access(conversation_id, auth)
+        (await _off_loop(_enforce_conversation_access, conversation_id, auth))
     from app.core.privileges import raise_if_inaccessible_document_ids
     raise_if_inaccessible_document_ids(auth, {"document_ids": body.get("document_ids") or []})
 
