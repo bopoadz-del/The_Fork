@@ -8,98 +8,26 @@ from __future__ import annotations
 from app.lib.formula_registry import formula
 
 import logging
+
 import os
+
 import re
 
+# Formulas (and the helpers only they use) live in their owner's package;
+# imported back so existing imports of this module keep working.
+from app.agents.base.formulas.construction_formulas_commercial import (  # noqa: F401 -- moved
+    cost_per_area,
+    productivity_rate,
+    unit_cost_total,
+)
+from app.agents.hats.commercial.formulas.construction_formulas_commercial import (  # noqa: F401 -- moved
+    roi_calculator,
+)
+from app.agents.hats.contracts.formulas.construction_formulas_commercial import (  # noqa: F401 -- moved
+    delay_damages_daily,
+)
+
 logger = logging.getLogger(__name__)
-
-
-@formula(
-    owner='commercial',
-    description='Return on investment as a percentage of cost.',
-    inputs={'gain': '-', 'cost': 'currency'},
-    outputs={'net_profit': '-', 'roi_percent': '%'},
-)
-def roi_calculator(gain: float, cost: float) -> dict:
-    """Return on investment: ROI% = (gain - cost) / cost * 100."""
-    g, c = float(gain), float(cost)
-    if c == 0:
-        return {"error": "cost must be non-zero to compute ROI"}
-    net = g - c
-    roi = net / c * 100.0
-    return {
-        "net_profit": round(net, 2),
-        "roi_percent": round(roi, 2),
-        "standard": "arithmetic",
-        "note": f"ROI = (gain - cost)/cost*100 = ({g} - {c})/{c}*100 = {roi:.2f}%.",
-    }
-
-
-@formula(
-    owner='base',
-    description='Line extension: quantity times unit rate.',
-    inputs={'quantity': '-', 'unit_rate': '-'},
-    outputs={'total_cost': 'currency'},
-)
-def unit_cost_total(quantity: float, unit_rate: float) -> dict:
-    """Total = quantity * unit_rate (a line-item extension)."""
-    q, r = float(quantity), float(unit_rate)
-    total = q * r
-    return {
-        "total_cost": round(total, 2),
-        "standard": "arithmetic (BOQ line item)",
-        "note": f"Total = qty * rate = {q} * {r} = {total:.2f}.",
-    }
-
-
-@formula(
-    owner='base',
-    description='Unit cost per area: a total cost divided by its area.',
-    inputs={'total_cost': 'currency', 'area': '-', 'area_unit': '-'},
-    outputs={'cost_per_area': 'currency', 'area_unit': '-'},
-)
-def cost_per_area(total_cost: float, area: float, area_unit: str = "m2") -> dict:
-    """Unit area cost = total_cost / area (per m2 or per sf, caller's unit)."""
-    t, a = float(total_cost), float(area)
-    if a <= 0:
-        return {"error": "area must be > 0 — cannot compute a unit cost from a zero or negative area."}
-    rate = t / a
-    return {
-        "cost_per_area": round(rate, 2),
-        "area_unit": area_unit,
-        "standard": "arithmetic",
-        "note": f"Cost/{area_unit} = {t}/{a} = {rate:.2f} per {area_unit}.",
-    }
-
-
-@formula(
-    owner='base',
-    description='Output per labour-hour and per worker from an output, the hours worked and the crew size.',
-    inputs={'output_quantity': '-', 'labor_hours': 'h', 'crew_size': '-'},
-    outputs={'rate_per_hour': '-', 'rate_per_worker_hour': '-', 'crew_size': '-', 'unit': '-', 'value': 'currency', 'rate_per_worker_hour_unit': '-'},
-)
-def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int = 1) -> dict:
-    """Output per labour-hour and per worker-hour. rate = output/hours;
-    per-worker = rate/crew_size."""
-    o, h = float(output_quantity), float(labor_hours)
-    if h == 0:
-        return {"error": "labor_hours must be > 0"}
-    rate = o / h
-    per_worker = (rate / crew_size) if crew_size else rate
-    rate_r = round(rate, 3)
-    per_r = round(per_worker, 4)
-    return {
-        "rate_per_hour": rate_r,
-        "rate_per_worker_hour": per_r,
-        "crew_size": crew_size,
-        "unit": "/hr",
-        "value": rate_r,
-        "rate_per_worker_hour_unit": "/worker-hr",
-        "standard": "arithmetic (productivity)",
-        "note": (f"Rate = output/hours = {o}/{h} = {rate:.3f}/hr; "
-                 f"per worker = /{crew_size} = {per_worker:.4f}/worker-hr."),
-    }
-
 
 # A delay-damages daily-amount ask (an amount in SAR per calendar day, not
 # the rate itself). The delay-rate ask already
@@ -110,67 +38,83 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
 # Kill-switch: COMPOSE_DELAY_DAMAGES_DAILY=0 restores the FAIL (rate
 # quoted, no SAR/day). Distinct from the delay-rate rescue (#503).
 _DD_ASK_RE = re.compile(r"(?i)(?:delay|liquidated)\s+damages")
+
 _DD_CAP_KEY_RE = re.compile(
     r"(?i)\b(?:maximum|max(?:imum)?\s+amount|capped?)\b",
 )
+
 _DD_RATE_PCT_RE = re.compile(
     r"(?i)(\d+(?:\.\d+)?)\s*%\s+of\s+(?:the\s+)?"
     r"(?:contract\s+price|accepted\s+contract\s+amount)"
     r"[^.]{0,48}\bper\b",
 )
+
 _DD_RATE_NEAR_LABEL_RE = re.compile(
     r"(?i)(?:delay|liquidated)\s+damages.{0,240}?"
     r"(\d+(?:\.\d+)?)\s*%[^%]{0,80}\bper\b",
 )
+
 _ACA_LABEL_RE = re.compile(
     r"(?i)\b(?:accepted\s+contract\s+amount|contract\s+price)\b",
 )
+
 _EXCL_VAT_RE = re.compile(
     r"(?i)\bexclud(?:ing|es|ed)\b.{0,12}\bvat\b|"
     r"\bexcl\.?\s*vat\b|\bexclusive\s+of\s+vat\b",
 )
+
 _INCL_VAT_RE = re.compile(
     r"(?i)\binclud(?:ing|es|ed)\b.{0,12}\bvat\b|"
     r"\bincl\.?\s*vat\b|\binclusive\s+of\s+vat\b",
 )
+
 _MONEY_RE = re.compile(
     r"(?i)\b(SAR|AED|USD|EUR|GBP|QAR|BHD|KWD|OMR)\s*"
     r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d{2})",
 )
+
 _POINTER_RE = re.compile(
     r"(?i)at\s+the\s+rate\s+stated\s+in\s+the\s+contract\s+data",
 )
+
 _CONTRACT_PRICE_RE = re.compile(r"(?i)\bcontract\s+price\b")
+
 _CONTRACT_DATA_CTX_RE = re.compile(
     r"(?i)\b(?:contract\s+data|particulars|8\.8)\b",
 )
+
 _WHOLE_WORKS_RE = re.compile(r"(?i)\bwhole\s+of\s+the\s+works\b")
+
 _SUBCLAUSE_87_RE = re.compile(r"(?i)\b(?:sub[- ]?clause\s+)?8\.7\b")
+
 # Live daily-amount ask after #535: CoC 8.7/8.8 windows state 0.015% of the
 # excl-VAT ACA (a much smaller SAR/day product). Contract Data 8.8 is 0.1%
 # of the Contract Price (the figure the ask wants). First-match compose elected
 # 0.015% whenever that window led the excerpts; the lookalike is now
 # always rejected.
 _LOOKALIKE_RATE_PERCENT = 0.015
+
 _PREFERRED_WHOLE_WORKS_RATE = 0.1
+
 # Live daily-amount ask on c5c6dfa: Contract Data 8.8 chunks 9–11 carried a
 # FIDIC worked-example ACA of SAR 10,000,000. Compose elected it
 # (0.1% → SAR 10,000/day) instead of the filled excl-VAT row
 # (a billion-scale amount). The worked example is always rejected.
 _TOY_ACA_AMOUNT = 10_000_000.0
+
 _TOY_DAILY_AMOUNT = 10_000.0
+
 _CLAUSE_111_RE = re.compile(r"(?i)\b1\.1\.1\b")
+
 _TOY_EXAMPLE_CUE_RE = re.compile(
     r"(?i)\b(?:for\s+example|worked\s+example|daily\s+amount|"
     r"if\s+the\s+accepted\s+contract\s+amount)\b",
 )
 
-
 def compose_delay_damages_daily_enabled() -> bool:
     """ON by default. ``COMPOSE_DELAY_DAMAGES_DAILY=0`` is the kill-switch."""
     raw = (os.getenv("COMPOSE_DELAY_DAMAGES_DAILY", "1") or "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
-
 
 def delay_damages_rate_is_coc_lookalike(rate: float, ctx: str = "") -> bool:
     """True for CoC 8.7/8.8 0.015%-of-ACA, not Contract Data 0.1% of Price.
@@ -192,9 +136,7 @@ def delay_damages_rate_is_coc_lookalike(rate: float, ctx: str = "") -> bool:
         return True
     return True
 
-
 _MILESTONE_OR_SECTION_ASK_RE = re.compile(r"(?i)\b(?:milestone|section)s?\b")
-
 
 def ask_is_about_a_milestone_or_section(query: str) -> bool:
     """True when the operator asked about one Milestone, or said Section.
@@ -208,7 +150,6 @@ def ask_is_about_a_milestone_or_section(query: str) -> bool:
     Milestone row lost (live milestone delay-damages ask).
     """
     return bool(_MILESTONE_OR_SECTION_ASK_RE.search(query or ""))
-
 
 def delay_damages_rate_preference_score(
     rate: float, ctx: str = "", ask: str = "",
@@ -241,7 +182,6 @@ def delay_damages_rate_preference_score(
         score += 2
     return score
 
-
 def aca_amount_is_toy_example(amount: float, ctx: str = "") -> bool:
     """True for a FIDIC worked-example / placeholder ACA, not a filled row.
 
@@ -266,17 +206,14 @@ def aca_amount_is_toy_example(amount: float, ctx: str = "") -> bool:
         return False
     return True
 
-
 def chunk_has_real_accepted_contract_amount(text: str) -> bool:
     """True when ``text`` states a non-toy ACA money figure."""
     return any(not toy for _amt, _cur, _kind, toy in _iter_aca_candidates(text))
-
 
 def chunk_accepted_contract_amount_is_only_toy(text: str) -> bool:
     """True when every ACA money figure in ``text`` is a toy/example."""
     cands = _iter_aca_candidates(text)
     return bool(cands) and all(toy for _amt, _cur, _kind, toy in cands)
-
 
 def query_asks_delay_damages_daily_amount(query: str) -> bool:
     """True for a daily-amount ask (calculate … delay damages … in SAR), not a rate lookup.
@@ -297,18 +234,14 @@ def query_asks_delay_damages_daily_amount(query: str) -> bool:
             r"(?i)\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b", q,
         ))
 
-
 def _collapse_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
-
-
 
 # A candidate's context must be its OWN row. The fixed 96/48-character window
 # spans neighbours: in a Contract Data block the Milestone rate sits between
 # the whole-of-Works rate and the "Maximum Amount of Delay Damages" cap, so
 # the cap guard disqualified the very row a Milestone ask needs.
 _ROW_SEP_RE = re.compile(r"[|;]|(?<=\.)\s")
-
 
 def _row_around(blob: str, start: int, end: int) -> str:
     """The row containing ``blob[start:end]``, clipped at row separators."""
@@ -317,7 +250,6 @@ def _row_around(blob: str, start: int, end: int) -> str:
     right_match = _ROW_SEP_RE.search(blob, end)
     right = right_match.start() if right_match else min(len(blob), end + 48)
     return blob[left:right]
-
 
 def _iter_delay_rate_candidates(text: str, ask: str = "") -> list[tuple[float, int]]:
     """``(rate_percent, preference)`` whole-of-Works daily rates in ``text``."""
@@ -366,7 +298,6 @@ def _iter_delay_rate_candidates(text: str, ask: str = "") -> list[tuple[float, i
         _add(float(m.group(1)), ctx)
     return out
 
-
 def parse_delay_damages_rate_percent(text: str, ask: str = "") -> float | None:
     """Daily Delay Damages *rate* as a percentage, or None.
 
@@ -387,7 +318,6 @@ def parse_delay_damages_rate_percent(text: str, ask: str = "") -> float | None:
         return None
     pool.sort(key=lambda item: -item[1])
     return pool[0][0]
-
 
 def _iter_aca_candidates(text: str) -> list[tuple[float, str, str, bool]]:
     """``(amount, currency, vat_kind, is_toy)`` ACA figures in ``text``.
@@ -443,7 +373,6 @@ def _iter_aca_candidates(text: str) -> list[tuple[float, str, str, bool]]:
 
     return out
 
-
 def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
     """ACA / Contract Price money amount from client text, or None.
 
@@ -477,56 +406,6 @@ def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
         ordered.append(item)
     return ordered[0]
 
-
-@formula(
-    owner='contracts',
-    description="Daily delay damages from the contract's daily rate and the contract amount it applies to.",
-    inputs={'rate_percent': '%', 'contract_amount': 'currency', 'currency': '-'},
-    outputs={'daily_amount': 'currency', 'rate_percent': '%', 'contract_amount': 'currency', 'currency': '-', 'per': '-'},
-)
-def delay_damages_daily(
-    rate_percent: float = 0.0,
-    contract_amount: float = 0.0,
-    currency: str = "SAR",
-) -> dict:
-    """Daily delay damages = rate% × Accepted Contract Amount / Contract Price.
-
-    FIDIC Sub-Clause 8.8: the Contractor pays the rate stated in the
-    Contract Data for every calendar day of delay. The live daily amount is 0.1% of
-    the net ACA. Operands are parameters — this function does not invent
-    a rate or an amount.
-    """
-    pct = float(rate_percent)
-    base = float(contract_amount)
-    if pct < 0 or base < 0:
-        return {"error": "rate_percent and contract_amount must be >= 0."}
-    # Empty-args / unbound class: defaults are 0, 0. Emitting
-    # "0% of SAR 0.00" looks like a successful rate and poisons the
-    # turn (live per-milestone delay-damages ask). A genuine 0% rate against a real base is
-    # still 0/day — only a missing contract amount is unbound.
-    if base <= 0:
-        return {
-            "error": (
-                "delay_damages_daily needs a contract_amount "
-                "(unbound delay-damages / empty rates)."
-            )
-        }
-    daily = round(base * (pct / 100.0), 2)
-    cur = (currency or "SAR").strip().upper() or "SAR"
-    return {
-        "daily_amount": daily,
-        "rate_percent": pct,
-        "contract_amount": round(base, 2),
-        "currency": cur,
-        "per": "calendar day",
-        "standard": "FIDIC Sub-Clause 8.8 (rate × Accepted Contract Amount)",
-        "note": (
-            f"{pct:g}% of {cur} {base:,.2f} = {cur} {daily:,.2f} "
-            f"per calendar day."
-        ),
-    }
-
-
 def delay_damages_daily_basis(ask: str) -> str:
     """``milestone`` or ``whole``.
 
@@ -538,14 +417,12 @@ def delay_damages_daily_basis(ask: str) -> str:
         return "milestone"
     return "whole"
 
-
 # A Section sum, a change-control "contract value", or a kickoff note is
 # not the Contract Price the 0.015% row is a percentage of.
 _NOT_THE_CONTRACT_PRICE_RE = re.compile(
     r"(?i)\b(?:contract\s+value|change\s+control|kick-?\s*off|"
     r"section\s+(?:amount|price|value|sum)|package\s+value)\b",
 )
-
 
 def _contract_price_row_score(amount: float, row: str, wide: str) -> int:
     """Higher is the Contract Data Contract Price. 0 means do not use it.
@@ -585,7 +462,6 @@ def _contract_price_row_score(amount: float, row: str, wide: str) -> int:
         score += 4
     return score
 
-
 def _best_contract_price_figure(text: str) -> tuple[int, float, str] | None:
     """``(score, amount, currency)`` for the Contract Price in ``text``."""
     blob = _collapse_ws(text)
@@ -605,7 +481,6 @@ def _best_contract_price_figure(text: str) -> tuple[int, float, str] | None:
         ):
             best = cand
     return best
-
 
 def _figure_is_clause_111(text: str, amount: float) -> bool:
     """True when ``amount`` is this text's clause 1.1.1 net Accepted Contract Amount.
@@ -638,7 +513,6 @@ def _figure_is_clause_111(text: str, amount: float) -> bool:
             return True
     return False
 
-
 def delay_damages_base_is_clause_111(excerpts: str, amount: float) -> bool:
     """True when ``amount`` is clause 1.1.1 in its own retrieved segment.
 
@@ -649,7 +523,6 @@ def delay_damages_base_is_clause_111(excerpts: str, amount: float) -> bool:
         if _figure_is_clause_111(seg, amount):
             return True
     return False
-
 
 def text_states_clause_111_aca(text: str) -> bool:
     """True when ``text`` carries a clause 1.1.1 excluding-VAT Accepted
@@ -672,7 +545,6 @@ def text_states_clause_111_aca(text: str) -> bool:
         if _figure_is_clause_111(text, amt):
             return True
     return False
-
 
 def _contract_price_beside_the_rate(
     text: str, rate: float, ask: str,
@@ -728,7 +600,6 @@ def _contract_price_beside_the_rate(
         return None
     return best[1], best[2]
 
-
 def elected_delay_damages_clause(text: str, ask: str) -> str:
     """The Contract Data row that supplied the elected rate, or ""."""
     rate = parse_delay_damages_rate_percent(text, ask)
@@ -752,7 +623,6 @@ def elected_delay_damages_clause(text: str, ask: str) -> str:
             best_row = row
     return best_row
 
-
 def drop_whole_of_works_delay_claims(text: str) -> str:
     """Drop sentences that call delay damages the whole of the Works.
 
@@ -766,12 +636,10 @@ def drop_whole_of_works_delay_claims(text: str) -> str:
     kept = [part.strip() for part in parts if part.strip() and not _WHOLE_WORKS_RE.search(part)]
     return " ".join(kept).strip()
 
-
 def _strip_excerpt_chrome(text: str) -> str:
     """Drop ``[doc_id=…]`` markers and collapse the whitespace they leave."""
     cleaned = re.sub(r"\[[^\]]*\]", " ", text or "")
     return re.sub(r"\s+", " ", cleaned).strip(" ,;.")
-
 
 def _milestone_quote_without_whole_of_works(quote: str, percent: float) -> str:
     """The elected-rate fragment, without the neighbouring whole-of-Works label.
@@ -817,7 +685,6 @@ def _milestone_quote_without_whole_of_works(quote: str, percent: float) -> str:
             return frag
     return ""
 
-
 def format_delay_damages_daily_line(composed: dict) -> str:
     """User-facing one-liner for the composed daily figure."""
     cur = composed.get("currency") or "SAR"
@@ -855,16 +722,14 @@ def format_delay_damages_daily_line(composed: dict) -> str:
         line = f"{line} Source: {source}."
     return line
 
-
-
 # Excerpts arrive as "[doc_id=<id> chunk=<n> ...] <text>" blocks. A rate and a
 # base figure that sit in DIFFERENT documents are two contracts' numbers, and
 # multiplying across them is how #701 produced 0.015% x another project's ACA --
 # an amount belonging to another project entirely.
 # "AB-2002-202", "AB-CDE-001": a contract/document reference shape.
 _CONTRACT_ID_RE = re.compile(r"\b([A-Z]{2,4}-\d{3,4}-\d{2,4})\b")
-_DOC_MARKER_RE = re.compile(r"\[doc_id=([^\s\]]+)[^\]]*\]")
 
+_DOC_MARKER_RE = re.compile(r"\[doc_id=([^\s\]]+)[^\]]*\]")
 
 def _excerpt_segments(text: str) -> list[tuple[str, str]]:
     """``[(doc_id, segment_text), ...]``; one ("", text) when unmarked."""
@@ -877,7 +742,6 @@ def _excerpt_segments(text: str) -> list[tuple[str, str]]:
         end = marks[i + 1].start() if i + 1 < len(marks) else len(blob)
         out.append((m.group(1), blob[m.start():end]))
     return out
-
 
 def rate_and_base_from_one_document(
     text: str, ask: str = "",
@@ -923,7 +787,6 @@ def rate_and_base_from_one_document(
         return None
     return rate, base, segments[0][0]
 
-
 def compose_delay_damages_daily_from_excerpts(
     query: str,
     excerpts: str,
@@ -960,7 +823,6 @@ def compose_delay_damages_daily_from_excerpts(
         out["clause_quote"] = elected_delay_damages_clause(excerpts, query)
     return out
 
-
 def answer_states_daily_amount(text: str, daily_amount: float) -> bool:
     """True when ``text`` already states the composed daily figure."""
     if not text:
@@ -973,15 +835,6 @@ def answer_states_daily_amount(text: str, daily_amount: float) -> bool:
         or compact in text
         or formatted.replace(",", "") in blob
     )
-
-
-# ── Named percentage particulars and % × ACA ───────────────────────────────
-#
-# Live a8498b3: Advance Payment / Limitation of Liability rows were in
-# the excerpts (retrieval scores 54–88) and synthesis hung empty.
-# Delay-damages already have composers; these two are the same class —
-# a filled Contract Data percentage the question named. Kill-switch:
-# COMPOSE_PERCENTAGE_OF_ACA=0 restores the empty-turn FAIL.
 
 _PCT_PARTICULAR_SPECS = (
     (
@@ -1007,8 +860,11 @@ _PCT_PARTICULAR_SPECS = (
         ),
     ),
 )
+
 _PCT_BOND_RE = re.compile(r"(?i)\bbond\b|\bguarantee\b|\bsecurity\b")
+
 _PCT_VALUE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
 # The next particular ends this label's figure. A later copy of the same
 # label ends it too, so an earlier mention cannot reach across Delay
 # Damages and take that row's percent.
@@ -1021,48 +877,54 @@ _COMPETING_PARTICULAR_RES = (
         r"(?i)maximum\s+amount\s+of\s+(?:delay|liquidated)\s+damages"
     ),
 )
+
 _PER_DAY_AFTER_PCT_RE = re.compile(
     r"(?i)per\s+(?:calendar\s+|working\s+)?day\b",
 )
+
 _MONEY_ARITHMETIC_ASK_RE = re.compile(
     r"(?i)\b(?:calculate|compute|work\s+out|how\s+much)\b",
 )
+
 _MONEY_UNIT_ASK_RE = re.compile(
     r"(?i)\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b",
 )
+
 _EACH_DAYS_LATE_RE = re.compile(
     r"(?i)each\s+(\d+)\s*(?:calendar\s+|working\s+)?days?\s+"
     r"(?:late|of\s+delay|delay(?:ed)?|behind|overdue)",
 )
+
 _DAYS_LATE_RE = re.compile(
     r"(?i)(\d+)\s*(?:calendar\s+|working\s+)?days?\s+"
     r"(?:late|of\s+delay|delay(?:ed)?|behind|overdue)",
 )
+
 _MILESTONE_LIST_RE = re.compile(
     r"(?i)milestones?\s+(\d+(?:\s*(?:,|and|&)\s*\d+)+)",
 )
+
 _MILESTONE_ONE_RE = re.compile(r"(?i)milestone\s+(\d+)")
+
 _MILESTONE_RATE_RE = re.compile(
     r"(?i)milestone\s+(\d+)\s*[|:]\s*"
     r"(\d+(?:\.\d+)?)\s*%\s+of\s+(?:the\s+)?"
     r"(?:contract\s+price|accepted\s+contract\s+amount)"
     r"[^.]{0,64}\bper\b",
 )
+
 _UNBOUND_DD_NOTE_RE = re.compile(
     r"(?i)0\s*%\s+of\s+(?:SAR|AED|USD|EUR|GBP|QAR|BHD|KWD|OMR)"
     r"\s+0(?:\.00)?",
 )
 
-
 def compose_percentage_of_aca_enabled() -> bool:
     raw = (os.getenv("COMPOSE_PERCENTAGE_OF_ACA", "1") or "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
 
-
 def compose_delay_damages_period_enabled() -> bool:
     raw = (os.getenv("COMPOSE_DELAY_DAMAGES_PERIOD", "1") or "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
-
 
 def _asked_percentage_spec(query: str):
     q = query or ""
@@ -1070,7 +932,6 @@ def _asked_percentage_spec(query: str):
         if rx.search(q):
             return key, display, rx
     return None
-
 
 def query_names_delay_damages_cap(query: str) -> bool:
     """True for the Maximum Amount of Delay Damages cap, not SAR/day.
@@ -1089,7 +950,6 @@ def query_names_delay_damages_cap(query: str) -> bool:
         return False
     return True
 
-
 def query_asks_named_percentage_particular(query: str) -> bool:
     """True for a named percentage of the Accepted Contract Amount.
 
@@ -1107,14 +967,12 @@ def query_asks_named_percentage_particular(query: str) -> bool:
         return False
     return _asked_percentage_spec(q) is not None
 
-
 def query_asks_percentage_particular_in_money(query: str) -> bool:
     """True for a %-of-ACA ask like "Calculate the Advance Payment in SAR"."""
     if not query_asks_named_percentage_particular(query):
         return False
     q = query or ""
     return bool(_MONEY_ARITHMETIC_ASK_RE.search(q) and _MONEY_UNIT_ASK_RE.search(q))
-
 
 def _percent_owned_by_label(
     text: str,
@@ -1156,7 +1014,6 @@ def _percent_owned_by_label(
         snippet = blob[match.start(): match.end() + pct.end()].strip()
         return float(pct.group(1)), snippet
     return None
-
 
 def extract_named_percentage_particular(
     query: str,
@@ -1215,14 +1072,12 @@ def extract_named_percentage_particular(
         "key": display,
     }
 
-
 def format_named_percentage_line(parsed: dict) -> str:
     pct = float(parsed["percent"])
     label = parsed.get("label") or "particular"
     return (
         f"The {label} is {pct:g}% of the Accepted Contract Amount."
     )
-
 
 def text_states_percent(text: str, percent: float) -> bool:
     """True when ``text`` states ``percent`` as its own percentage.
@@ -1235,7 +1090,6 @@ def text_states_percent(text: str, percent: float) -> bool:
         rf"(?i)(?<![\d.]){re.escape(token)}\s*(?:%|percent\b)",
         text or "",
     ))
-
 
 def strip_conflicting_named_percentage(
     text: str, label: str, percent: float,
@@ -1266,7 +1120,6 @@ def strip_conflicting_named_percentage(
     cleaned = re.sub(r" {2,}", " ", cleaned)
     return cleaned.strip()
 
-
 def compose_percentage_of_aca_from_excerpts(
     query: str,
     excerpts: str,
@@ -1290,7 +1143,6 @@ def compose_percentage_of_aca_from_excerpts(
         "label": parsed.get("label") or "particular",
     }
 
-
 def format_percentage_of_aca_line(composed: dict) -> str:
     cur = composed.get("currency") or "SAR"
     amt = float(composed["amount"])
@@ -1301,7 +1153,6 @@ def format_percentage_of_aca_line(composed: dict) -> str:
         f"The {label} is {cur} {amt:,.2f} "
         f"({pct:g}% of Accepted Contract Amount {cur} {base:,.2f})."
     )
-
 
 def answer_states_money_amount(text: str, amount: float) -> bool:
     """True when ``text`` already states ``amount`` as written money."""
@@ -1317,7 +1168,6 @@ def answer_states_money_amount(text: str, amount: float) -> bool:
         or f"{amount:,.1f}" in text
     )
 
-
 # A percentage of the Accepted Contract Amount is one figure, on the
 # excluding-VAT base. "If calculated on the VAT-inclusive figure…" is a
 # second amount the Contract Data does not authorise.
@@ -1327,8 +1177,8 @@ _VAT_ALT_RE = re.compile(
     r"letter\s+of\s+award|"
     r"(?:does|do)\s+not\s+state\s+which\s+base"
 )
-_VAT_ALT_SPLIT_RE = re.compile(r"(?<=[.!;])\s+|\n+|\s+[—–]\s+")
 
+_VAT_ALT_SPLIT_RE = re.compile(r"(?<=[.!;])\s+|\n+|\s+[—–]\s+")
 
 def vat_inclusive_alternative_amounts(
     excerpts: str, percent: float,
@@ -1351,7 +1201,6 @@ def vat_inclusive_alternative_amounts(
             seen.add(value)
             out.append(value)
     return out
-
 
 def strip_vat_inclusive_percentage_alternative(
     text: str,
@@ -1386,14 +1235,9 @@ def strip_vat_inclusive_percentage_alternative(
         kept.append(part)
     return " ".join(kept).strip()
 
-
-# ── Delay damages over a period ───────────────────────────────────────────
-
-
 def query_applies_a_delay_duration(query: str) -> bool:
     q = query or ""
     return bool(_EACH_DAYS_LATE_RE.search(q) or _DAYS_LATE_RE.search(q))
-
 
 def query_asks_delay_damages_over_a_period(query: str) -> bool:
     """True for "Milestone 3 and 4 are each 20 days late … delay damages".
@@ -1405,7 +1249,6 @@ def query_asks_delay_damages_over_a_period(query: str) -> bool:
     if not q or not _DD_ASK_RE.search(q):
         return False
     return query_applies_a_delay_duration(q)
-
 
 def parse_asked_milestones(query: str) -> list[int]:
     """Milestone numbers the question names, in order, de-duplicated."""
@@ -1424,14 +1267,12 @@ def parse_asked_milestones(query: str) -> list[int]:
             out.append(n)
     return out
 
-
 def parse_delay_period_days(query: str) -> int | None:
     m = _EACH_DAYS_LATE_RE.search(query or "") or _DAYS_LATE_RE.search(query or "")
     if not m:
         return None
     days = int(m.group(1))
     return days if days > 0 else None
-
 
 def _window_is_whole_of_works_rate(blob: str) -> bool:
     """True when the window is the whole-of-Works daily rate, not a Milestone.
@@ -1442,7 +1283,6 @@ def _window_is_whole_of_works_rate(blob: str) -> bool:
     The Contract Data milestone rate is a different, smaller percentage.
     """
     return bool(_WHOLE_WORKS_RE.search(blob or ""))
-
 
 def parse_milestone_delay_rate_percent(
     excerpts: str,
@@ -1482,7 +1322,6 @@ def parse_milestone_delay_rate_percent(
         logger.debug("milestone rate particulars parse failed", exc_info=True)
     return None
 
-
 def _shared_milestone_delay_rate(excerpts: str) -> float | None:
     """The per-Milestone rate when every listed row carries the same %."""
     rates: list[float] = []
@@ -1498,7 +1337,6 @@ def _shared_milestone_delay_rate(excerpts: str) -> float | None:
     if all(abs(r - first) < 1e-9 for r in rates):
         return first
     return None
-
 
 def compose_delay_damages_over_period_from_excerpts(
     query: str,
@@ -1560,7 +1398,6 @@ def compose_delay_damages_over_period_from_excerpts(
         "currency": (currency or "SAR").upper(),
     }
 
-
 def format_delay_damages_period_line(composed: dict) -> str:
     cur = composed.get("currency") or "SAR"
     amt = float(composed["amount"])
@@ -1583,31 +1420,27 @@ def format_delay_damages_period_line(composed: dict) -> str:
         f"× {days} days)."
     )
 
-
 def answer_is_unbound_delay_damages(text: str) -> bool:
     """True for the empty-args '0% of SAR 0.00' poison."""
     return bool(_UNBOUND_DD_NOTE_RE.search(text or ""))
 
-
-# ── User-priced concrete take-off (cost gate) ─────────────────────────────
-# Live SO probe: construction_calc succeeded, force_synthesis emitted 0
-# tokens, and the bubble stayed blank. Volume-only recover also fails
-# the gate because the operator asked for SAR 410 + waste + contingency.
-# Kill-switch: COMPOSE_USER_PRICED_TAKEOFF=0. Never invent a rate.
-
 _PRICED_TAKEOFF_MATERIAL_RE = re.compile(
     r"(?i)\b(concrete|footing|pad\s+footing|raft|slab)\b",
 )
+
 _PRICED_TAKEOFF_VERB_RE = re.compile(
     r"(?i)\b(take\s*off|volume|price|priced|cost)\b",
 )
+
 _USER_UNIT_RATE_RE = re.compile(
     r"(?i)\b(SAR|USD|AED|QAR|EUR|GBP)\s*([\d,]+(?:\.\d+)?)\s*"
     r"(?:per|/)\s*(?:(?:cubic\s+)?m(?:³|3)|cubic\s+m(?:etre|eter)s?)\b",
 )
+
 _FOOTING_COUNT_RE = re.compile(
     r"(?i)(\d+)\s+(?:pad\s+)?footings?\b",
 )
+
 _LWT_CHAIN_RE = re.compile(
     r"(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
     r"(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
@@ -1615,14 +1448,14 @@ _LWT_CHAIN_RE = re.compile(
     r"(?:\s*(?:mm|cm|m)\b)?",
     re.IGNORECASE,
 )
-_WASTE_PCT_RE = re.compile(r"(?i)(\d+(?:\.\d+)?)\s*%\s*waste")
-_CONTINGENCY_PCT_RE = re.compile(r"(?i)(\d+(?:\.\d+)?)\s*%\s*contingenc")
 
+_WASTE_PCT_RE = re.compile(r"(?i)(\d+(?:\.\d+)?)\s*%\s*waste")
+
+_CONTINGENCY_PCT_RE = re.compile(r"(?i)(\d+(?:\.\d+)?)\s*%\s*contingenc")
 
 def compose_user_priced_takeoff_enabled() -> bool:
     raw = (os.getenv("COMPOSE_USER_PRICED_TAKEOFF", "1") or "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
-
 
 def query_asks_user_priced_takeoff(query: str) -> bool:
     """True for concrete take-off + an operator-instructed unit rate."""
@@ -1635,13 +1468,11 @@ def query_asks_user_priced_takeoff(query: str) -> bool:
         return False
     return bool(_USER_UNIT_RATE_RE.search(q))
 
-
 def _parse_lwt_metres(text: str) -> tuple[float, float, float] | None:
     match = _LWT_CHAIN_RE.search(text or "")
     if not match:
         return None
     return tuple(float(g.replace(",", "")) for g in match.groups())  # type: ignore[return-value]
-
 
 def _parse_footing_count(text: str) -> int:
     match = _FOOTING_COUNT_RE.search(text or "")
@@ -1650,20 +1481,17 @@ def _parse_footing_count(text: str) -> int:
     n = int(match.group(1))
     return n if n > 0 else 1
 
-
 def _parse_user_unit_rate(text: str) -> tuple[float, str] | None:
     match = _USER_UNIT_RATE_RE.search(text or "")
     if not match:
         return None
     return float(match.group(2).replace(",", "")), match.group(1).upper()
 
-
 def _format_qty(value: float) -> str:
     number = float(value)
     if abs(number - round(number)) < 1e-9:
         return str(int(round(number)))
     return f"{number:.4f}".rstrip("0").rstrip(".")
-
 
 def compose_user_priced_takeoff_from_ask(text: str) -> dict | None:
     """Volume × user rate × stated waste/contingency, or None.
@@ -1709,7 +1537,6 @@ def compose_user_priced_takeoff_from_ask(text: str) -> dict | None:
         "total_cost": total_cost,
     }
 
-
 def _stated_total_figure_present(text: str, value: float) -> bool:
     compact = (text or "").replace(",", "").replace(" ", "")
     shown = {f"{value:.2f}", f"{value:.3f}".rstrip("0").rstrip(".")}
@@ -1719,7 +1546,6 @@ def _stated_total_figure_present(text: str, value: float) -> bool:
     if abs(value - round(value)) < 1e-6:
         shown.add(str(int(round(value))))
     return any(token and token in compact for token in shown)
-
 
 def compose_stated_total_follow_up(current: str, prior: str) -> dict | None:
     """Price a "that total" follow-up from the earlier element's count.
@@ -1768,14 +1594,12 @@ def compose_stated_total_follow_up(current: str, prior: str) -> dict | None:
         "total_cost": total_cost,
     }
 
-
 def answer_states_stated_total(text: str, composed: dict) -> bool:
     """True when ``text`` already states the with-waste volume and the price."""
     return (
         _stated_total_figure_present(text, float(composed["volume_with_waste_m3"]))
         and _stated_total_figure_present(text, float(composed["total_cost"]))
     )
-
 
 def format_stated_total_follow_up_line(composed: dict) -> str:
     """User-facing line for a follow-up that continues from the stated total."""
@@ -1809,7 +1633,6 @@ def format_stated_total_follow_up_line(composed: dict) -> str:
     )
     return " ".join(parts)
 
-
 def format_user_priced_takeoff_line(composed: dict) -> str:
     """User-facing take-off line from ``compose_user_priced_takeoff_from_ask``."""
     cur = composed.get("currency") or "SAR"
@@ -1840,7 +1663,6 @@ def format_user_priced_takeoff_line(composed: dict) -> str:
             f"Plus {contingency_pct:g}% contingency: {cur} {total:,.2f}."
         )
     return " ".join(parts)
-
 
 ADDITIONAL_CALCULATORS = {
     "roi_calculator": roi_calculator,
