@@ -45,14 +45,21 @@ def since_arrival() -> Optional[float]:
 
 
 def _rss_mb() -> int:
+    """Resident memory in MB (Linux /proc; psutil elsewhere; -1 if neither)."""
     try:
-        from app.core.rss_watchdog import current_rss_mb
+        with open("/proc/self/status", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    try:
+        import psutil
 
-        rss = current_rss_mb()
+        return int(psutil.Process().memory_info().rss // (1024 * 1024))
     except Exception:  # noqa: BLE001 — a missing reading is reported as -1
         _LOG.debug("rss unreadable", exc_info=True)
         return -1
-    return int(rss) if rss is not None else -1
 
 
 def log_stage(name: str, dur: float) -> None:
