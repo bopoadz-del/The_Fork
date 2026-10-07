@@ -1143,6 +1143,19 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
             } else if (evtType === 'heartbeat') {
               // Server is alive but the LLM hasn't produced a token yet.
               // Deadline already reset above; render nothing.
+            } else if (evtType === 'status') {
+              // Turn progress (accepted, searching, writing): shown in the
+              // bubble until the first token, so it is never blank.
+              const label = typeof evt['label'] === 'string' ? evt['label'] : ''
+              if (label) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantMsgId && !m.content
+                      ? { ...m, toolStatus: label }
+                      : m
+                  )
+                )
+              }
             } else if (evtType === 'tool_call') {
               // Show ephemeral status inside the assistant bubble while tools run.
               const toolName = typeof evt['tool'] === 'string' ? evt['tool'] : 'tool'

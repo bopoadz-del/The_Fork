@@ -895,15 +895,15 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
     # answer, no error and HTTP 200. This wraps the whole turn instead.
     # with_hat_signals sits INSIDE the terminal guard, so hat activation is on
     # the stream whichever of the three paths above answered the turn.
-    from app.core import turn_gate
+    from app.core import turn_gate, turn_progress
     with turn_timing.stage("queue"):
         _release_turn = await turn_gate.acquire()
     return StreamingResponse(
-        turn_gate.hold_until_done(
+        turn_gate.hold_until_done(turn_progress.opened(
         guarantee_terminal(
             with_hat_signals(event_stream(), request.message),
             request_id=get_request_id(),
-        ), _release_turn),
+        )), _release_turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1095,15 +1095,15 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
 
     # Same guard on the v1 path -- B6 was measured here. And the same hat
     # wrapper: the predefined-dispatch zero was measured here too.
-    from app.core import turn_gate
+    from app.core import turn_gate, turn_progress
     with turn_timing.stage("queue"):
         _release_turn = await turn_gate.acquire()
     return StreamingResponse(
-        turn_gate.hold_until_done(
+        turn_gate.hold_until_done(turn_progress.opened(
         guarantee_terminal(
             with_hat_signals(event_stream(), prompt),
             request_id=get_request_id(),
-        ), _release_turn),
+        )), _release_turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

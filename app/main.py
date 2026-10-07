@@ -308,10 +308,10 @@ def _warm_embedder() -> None:
     from app.core.rag import retrieval_worker
 
     if retrieval_worker.enabled():
-        # Retrieval -- and so the model -- lives in the worker process; warm
-        # it there, and leave this process without a second copy.
-        retrieval_worker.call_sync(retrieval_worker.warm_job)
-        logger.info("RAG embedder warm-loaded in the retrieval worker process")
+        # Retrieval runs in the worker processes and the model in the model
+        # server they share; start them all now, not inside the first turns.
+        n = retrieval_worker.warm_all()
+        logger.info("RAG embedder warm-loaded in the model server; %d retrieval workers ready", n)
         return
 
     from app.core.rag.embeddings import embedder_health, get_embedder
