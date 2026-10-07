@@ -906,3 +906,11 @@ class SmartOrchestratorBlock(UniversalBlock):
             "parallel_groups": PARALLEL_GROUPS,
             "file_type_routing": FILE_TYPE_MAP,
         }
+
+
+# Compile every keyword pattern once, at import: compiled lazily, the first
+# requests after a deploy compiled hundreds of patterns on the event loop
+# (live: a 627 ms stall at 15 users).
+for _action, _keywords in ACTION_PATTERNS:
+    for _kw in _keywords:
+        _kw_pattern(_kw)

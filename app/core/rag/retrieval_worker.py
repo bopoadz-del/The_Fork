@@ -18,7 +18,9 @@ the task's available vCPUs (its CPU quota, not the host's cores) times
 time waiting on the database, when another can use the CPU). Callers beyond
 them wait in the pool's queue, which the chat endpoint's turn gate bounds
 (``app.core.turn_gate``). Workers run at a lower CPU priority
-(``RAG_RETRIEVAL_WORKER_NICE``, default 5) so the web process answers first.
+(``RAG_RETRIEVAL_WORKER_NICE``, default 0: same priority as the web
+process -- live, a lowered priority starved retrieval, which every turn
+waits on, on a saturated vCPU).
 
 The models are loaded once, in the model server (app.core.rag.model_server),
 and shared by every worker, so memory does not grow with the worker count.
@@ -119,9 +121,9 @@ def _workers() -> int:
 def _worker_start(model_server: Optional[tuple]) -> None:
     """Runs once in each new worker."""
     try:
-        nice = int(os.getenv("RAG_RETRIEVAL_WORKER_NICE") or "5")
+        nice = int(os.getenv("RAG_RETRIEVAL_WORKER_NICE") or "0")
     except ValueError:
-        nice = 5
+        nice = 0
     if nice and hasattr(os, "nice"):
         try:
             os.nice(nice)
