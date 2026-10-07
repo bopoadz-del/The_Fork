@@ -7,6 +7,8 @@ time, so this module does not import runtime when it is imported.
 """
 from __future__ import annotations
 
+from typing import Any
+
 
 def tool_definitions(self, project_id: str | None = None) -> list[dict[str, Any]]:
     """Build DeepSeek-style tool definitions.

@@ -153,15 +153,55 @@ def build(src: str, targets: Dict[str, str]) -> tuple:
     j = new_src.rfind("\n\n", 0, i)
     new_src = new_src[:j + 2] + imports + "\n" + new_src[j + 2:]
     texts = {}
+    annotation_names = _annotation_names(methods, targets)
     for mod, funcs in modules.items():
         head = (f'"""{DOCS.get(mod, mod)}\n\n'
                 "Moved from the Agent class in app/agents/runtime.py by\n"
                 "scripts/move_agent_methods.py (F-DRIVER Phase A). Each function is still\n"
                 "an Agent method (the class binds it); runtime names are read at call\n"
                 'time, so this module does not import runtime when it is imported.\n"""\n'
-                "from __future__ import annotations\n\n\n")
-        texts[mod] = head + "\n\n".join(funcs)
+                "from __future__ import annotations\n")
+        typing_names, runtime_names = annotation_names.get(mod, (set(), set()))
+        stdlib = sorted(n for n in runtime_names if n in sys.stdlib_module_names)
+        runtime_names = runtime_names - set(stdlib)
+        if not runtime_names:
+            typing_names = typing_names - {"TYPE_CHECKING"}
+        if stdlib:
+            head += "\n" + "".join(f"import {n}  # noqa: F401 -- annotations\n" for n in stdlib)
+        if typing_names:
+            head += "\nfrom typing import " + ", ".join(sorted(typing_names)) + "\n"
+        if runtime_names:
+            head += ("\nif TYPE_CHECKING:  # annotations only; runtime names are read at call time\n"
+                     "    from app.agents.runtime import " + ", ".join(sorted(runtime_names)) + "\n")
+        texts[mod] = head + "\n\n" + "\n\n".join(funcs)
     return texts, new_src
+
+
+def _annotation_names(methods: Dict[str, ast.AST], targets: Dict[str, str]) -> Dict[str, tuple]:
+    """Per module: (typing names, runtime names) its moved functions' annotations use.
+
+    Annotations are strings here (``from __future__ import annotations``), so
+    these imports serve readers and checkers: typing names at module level,
+    runtime names only under ``TYPE_CHECKING`` (no import cycle)."""
+    import typing
+
+    out: Dict[str, tuple] = {}
+    for name, mod in targets.items():
+        node = methods[name]
+        args = node.args
+        params = args.posonlyargs + args.args + args.kwonlyargs + [a for a in (args.vararg, args.kwarg) if a]
+        anns = [a.annotation for a in params if a.annotation is not None]
+        if node.returns is not None:
+            anns.append(node.returns)
+        anns += [n.annotation for n in ast.walk(node) if isinstance(n, ast.AnnAssign)]
+        used = {x.id for a in anns for x in ast.walk(a) if isinstance(x, ast.Name)}
+        typing_names, runtime_names = out.setdefault(mod, (set(), set()))
+        for u in used - set(dir(builtins)):
+            (typing_names if hasattr(typing, u) else runtime_names).add(u)
+    for typing_names, runtime_names in out.values():
+        if runtime_names:
+            typing_names.add("TYPE_CHECKING")
+    return out
 
 
 def main(argv: Optional[List[str]] = None) -> int:

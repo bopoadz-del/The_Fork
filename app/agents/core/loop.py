@@ -7,6 +7,10 @@ time, so this module does not import runtime when it is imported.
 """
 from __future__ import annotations
 
+import asyncio  # noqa: F401 -- annotations
+
+from typing import Any, AsyncIterator, Awaitable, Callable
+
 
 # ── Public chat API ───────────────────────────────────────────────────
 async def chat(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
