@@ -902,7 +902,7 @@ def _resolve_histogram_schedule_file(
         return None, ""
     try:
         from app.core import projects as _projects
-        docs = _projects.list_documents(project_id) or []
+        docs = _projects.list_document_names(project_id) or []
     except Exception:  # noqa: BLE001
         return None, ""
     xers = [
@@ -962,7 +962,7 @@ def _file_tool_hint(messages: list, project_id: str | None,
     low = user_msg.lower()
     try:
         from app.core import projects as _projects
-        docs = _projects.list_documents(project_id) or []
+        docs = _projects.list_document_names(project_id) or []
     except Exception:  # noqa: BLE001
         return ""
     for d in docs:
@@ -1049,7 +1049,7 @@ async def _predispatch_file_tool(
         contract_lookup = message_is_contract_data_lookup(user_msg)
         low = user_msg.lower()
         from app.core import projects as _projects
-        docs = _projects.list_documents(project_id) or []
+        docs = _projects.list_document_names(project_id) or []
         target = None
         text_target = None
         for d in docs:
@@ -1313,9 +1313,8 @@ async def _predispatch_resource_histogram(
         user_msg, _history = _messages_user_and_history(messages)
         if not user_msg or not (await _off_loop(_message_wants_resource_histogram, user_msg)):
             return None
-        schedule_file, picked_name = _resolve_histogram_schedule_file(
-            project_id, user_msg,
-        )
+        schedule_file, picked_name = (await _off_loop(_resolve_histogram_schedule_file, project_id, user_msg,
+        ))
         if not schedule_file:
             return None
         from app.dependencies import get_block_instance
@@ -1372,9 +1371,8 @@ async def _predispatch_look_ahead(
         user_msg, _history = _messages_user_and_history(messages)
         if not user_msg or not (await _off_loop(_message_wants_look_ahead, user_msg)):
             return None
-        schedule_file, picked_name = _resolve_histogram_schedule_file(
-            project_id, user_msg,
-        )
+        schedule_file, picked_name = (await _off_loop(_resolve_histogram_schedule_file, project_id, user_msg,
+        ))
         if not schedule_file:
             return None
         from app.dependencies import get_block_instance
@@ -3415,7 +3413,7 @@ def _resolve_file_path(project_id: str, raw: Any) -> Any:
         return raw
     try:
         from app.core import projects as _projects
-        docs = _projects.list_documents(project_id) or []
+        docs = _projects.list_document_names(project_id) or []
     except Exception:
         return raw
 
@@ -11022,7 +11020,7 @@ class Agent:
         # unless the project has other (non-RAG) context such as facts.
         if (
             project_id
-            and not project_is_rag_ready(project_id)
+            and not (await _off_loop(project_is_rag_ready, project_id))
             and not (await _off_loop(_project_has_non_rag_context, project_id, user_message))
         ):
             if conversation_id:
@@ -11539,8 +11537,7 @@ class Agent:
                       and error_nudges < _TOOL_ERROR_NUDGE_CAP):
                     error_nudges += 1
                     pending_nudges.append({"role": "user", "content": _nudge_for_failed_tool(
-                        tool_result, self) + _file_tool_hint(
-                            messages, project_id, self.allowed_blocks)})
+                        tool_result, self) + (await _off_loop(_file_tool_hint, messages, project_id, self.allowed_blocks))})
             messages.extend(pending_nudges)
 
         # Hit the cap without a final answer — force one more call with tools disabled
@@ -11999,7 +11996,7 @@ class Agent:
         # unless the project has other (non-RAG) context such as facts.
         if (
             project_id
-            and not project_is_rag_ready(project_id)
+            and not (await _off_loop(project_is_rag_ready, project_id))
             and not (await _off_loop(_project_has_non_rag_context, project_id, user_message))
         ):
             if conversation_id:
@@ -13100,8 +13097,8 @@ class Agent:
                         pending_nudges.append({"role": "user",
                                          "content": _nudge_for_failed_tool(
                                              tool_result, self)
-                                         + _file_tool_hint(messages, project_id,
-                                                           self.allowed_blocks)})
+                                         + (await _off_loop(_file_tool_hint, messages, project_id,
+                                                           self.allowed_blocks))})
             messages.extend(pending_nudges)
 
         # Hit the cap without a final answer — force one more call with tools disabled.
@@ -14204,9 +14201,8 @@ class Agent:
             raw = args.get("schedule_file") or args.get("file_path") or ""
             resolved = (await _off_loop(_resolve_file_path, project_id, raw)) if raw else ""
             if not resolved or not os.path.exists(str(resolved)):
-                resolved, _picked = _resolve_histogram_schedule_file(
-                    project_id, user_message or "",
-                )
+                resolved, _picked = (await _off_loop(_resolve_histogram_schedule_file, project_id, user_message or "",
+                ))
             if not resolved:
                 return {
                     "name": name, "ok": False,
@@ -14259,9 +14255,8 @@ class Agent:
             raw = args.get("schedule_file") or args.get("file_path") or ""
             resolved = (await _off_loop(_resolve_file_path, project_id, raw)) if raw else ""
             if not resolved or not os.path.exists(str(resolved)):
-                resolved, _picked = _resolve_histogram_schedule_file(
-                    project_id, user_message or "",
-                )
+                resolved, _picked = (await _off_loop(_resolve_histogram_schedule_file, project_id, user_message or "",
+                ))
             if not resolved and not args.get("activities"):
                 return {
                     "name": name, "ok": False,

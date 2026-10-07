@@ -1,4 +1,5 @@
 import asyncio
+from app.core.offload import off_loop as _off_loop
 import json
 import logging
 import os
@@ -977,7 +978,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     # Authoritative conversation-access gate (raises 404) BEFORE streaming, so a
     # caller cannot stream into a victim's ws-{pid} conversation.
     if conversation_id is not None:
-        _enforce_conversation_access(conversation_id, auth)
+        (await _off_loop(_enforce_conversation_access, conversation_id, auth))
 
     # ── S4: resolve the composer's `[attached: X]` marker(s) server-side.
     # Gated on project OWNERSHIP first — marker resolution lists the project's
