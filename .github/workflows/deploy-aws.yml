@@ -23,10 +23,12 @@ env:
   AWS_REGION: us-west-2
   ECR_REPOSITORY: the-fork
   ECS_CLUSTER: cerebrum
-  # The last image built while opendesign.com still served the ODA File
-  # Converter .deb (2026-09-29, main 0d6163d). The Dockerfile's oda-donor
-  # stage copies the converter out of it; see the Dockerfile for the story.
-  ODA_DONOR_TAG: 0d6163dea1c9a6afad2ed95d6ebabae092797c43
+  # The image the Dockerfile's oda-donor stage copies the ODA File Converter
+  # out of (the vendor's .deb downloads are gated; see the Dockerfile). The
+  # original donor (main 0d6163d, 2026-09-29) was deleted in the 2026-10 image
+  # purge; c66dcc8's image carries the same 157 converter files and passed the
+  # ODA_REQUIRED=1 check. The ECR lifecycle policy never expires `oda-donor*`.
+  ODA_DONOR_TAG: oda-donor-c66dcc8
 
 jobs:
   deploy:
