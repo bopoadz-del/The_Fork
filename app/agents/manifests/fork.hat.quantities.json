@@ -120,6 +120,7 @@
   "construction_calc:interior_finishes_takeoff",
   "construction_calc:resource_line_cost"
  ],
+ "available_tools": [],
  "handoffs": [
   {
    "to": "commercial",

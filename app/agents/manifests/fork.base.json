@@ -34,6 +34,7 @@
   "construction_calc",
   "standards_lookup"
  ],
+ "available_tools": ["construction_calc", "delegate_to_agent", "fetch_document", "list_project_documents", "remember_fact", "search_project_documents"],
  "memory": {
   "save_on_turn_end": [
    "user_intent",
@@ -62,20 +63,6 @@
  },
  "playbook": {
   "formulas": [
-   {
-    "id": "unit_weight_concrete",
-    "description": "Unit weight of plain and reinforced concrete",
-    "implemented_by": "app.lib.construction_formulas.unit_weight_concrete",
-    "domain": "materials",
-    "tier": "foundational"
-   },
-   {
-    "id": "modulus_of_elasticity_concrete",
-    "description": "Ec = 15000 * sqrt(f'c) \u00e2\u20ac\u201d concrete elastic modulus",
-    "implemented_by": "app.lib.construction_formulas.modulus_of_elasticity_concrete",
-    "domain": "materials",
-    "tier": "foundational"
-   },
    {
     "id": "guardrail_top_rail_height",
     "description": "OSHA guardrail top-rail height for fall protection (OSHA 29 CFR 1926.502(b))",

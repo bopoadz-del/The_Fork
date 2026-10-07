@@ -612,6 +612,9 @@ _TURN_MEMO: "contextvars.ContextVar[Optional[Dict[tuple, list]]]" = contextvars.
 #: ~4 chunks per heap page that is ~1,000 pages, below a typical filtered HNSW
 #: walk of the table.
 _EXACT_SCAN_MAX_ROWS = 4000
+#: The planner's estimate of a project's chunk rows (planning only: reads
+#: no table page); see ``_project_is_small``.
+_PROJECT_ROWS_ESTIMATE_SQL = "EXPLAIN (FORMAT JSON) SELECT 1 FROM {table} WHERE project_id = :p"
 
 
 def start_turn_memo() -> "contextvars.Token":
@@ -1886,15 +1889,25 @@ class VectorStore:
         return self._search_numpy(project_id, q, k)
 
     def _project_is_small(self, session: Session, project_id: str) -> bool:
-        """At most ``_EXACT_SCAN_MAX_ROWS`` chunks? A count bounded at that
-        many index entries (a few pages), memoised for the turn."""
+        """About ``_EXACT_SCAN_MAX_ROWS`` chunks or fewer? Decided from the
+        planner's row estimate for the project filter, memoised for the turn.
+
+        Any real count had a cost the answer path cannot pay. Bounded by
+        LIMIT, the planner may scan the table hoping to meet enough of the
+        project's rows early (CI caught that sequential scan); forced onto
+        the index, each row is a heap visit wherever pages are not yet marked
+        all-visible (CI measured 43 MB of an 82 MB table). The estimate is
+        planning only -- it reads statistics, not the table -- and choosing
+        between an exact scan and the HNSW index needs only the size class."""
         key = ("project-rows", self._table_name, project_id)
         n = _memo_get(key)
         if n is _MISS:
-            n = _memo_put(key, int(session.execute(text(
-                f"SELECT count(*) FROM (SELECT 1 FROM {self._table_name} "
-                "WHERE project_id = :p LIMIT :m) s"
-            ), {"p": project_id, "m": _EXACT_SCAN_MAX_ROWS + 1}).scalar() or 0))
+            plan = session.execute(text(
+                _PROJECT_ROWS_ESTIMATE_SQL.format(table=self._table_name)
+            ), {"p": project_id}).scalar()
+            if isinstance(plan, str):
+                plan = json_lib.loads(plan)
+            n = _memo_put(key, int(plan[0]["Plan"]["Plan Rows"]))
         return n <= _EXACT_SCAN_MAX_ROWS
 
     def _search_pgvector(

@@ -141,6 +141,7 @@
   "construction_calc:material_consumption",
   "construction_calc:concrete_mix_proportions"
  ],
+ "available_tools": ["generate_wbs", "look_ahead", "resource_histogram"],
  "handoffs": [
   {
    "to": "commercial",
@@ -215,27 +216,6 @@
     "implemented_by": "app.lib.construction_formulas.concrete_mix_proportions",
     "domain": "planning",
     "tier": "operational"
-   },
-   {
-    "id": "beam_deflection_ss_udl",
-    "description": "Simply supported beam deflection under UDL",
-    "implemented_by": "app.lib.construction_formulas.beam_deflection_ss_udl",
-    "domain": "structural",
-    "tier": "operational"
-   },
-   {
-    "id": "beam_deflection_cantilever_udl",
-    "description": "Cantilever beam deflection under UDL",
-    "implemented_by": "app.lib.construction_formulas.beam_deflection_cantilever_udl",
-    "domain": "structural",
-    "tier": "operational"
-   },
-   {
-    "id": "modulus_of_elasticity_concrete",
-    "description": "Concrete modulus of elasticity",
-    "implemented_by": "app.lib.construction_formulas.modulus_of_elasticity_concrete",
-    "domain": "materials",
-    "tier": "foundational"
    }
   ],
   "flows": [
