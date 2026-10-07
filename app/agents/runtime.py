@@ -10911,7 +10911,18 @@ class Agent:
         return tools
 
     # ── Public chat API ───────────────────────────────────────────────────
-    async def chat(
+    async def chat(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """One turn. Identical retrievals within it are answered once
+        (vector_store turn memo); see ``_chat_impl``."""
+        from app.core.rag.vector_store import end_turn_memo, start_turn_memo
+
+        token = start_turn_memo()
+        try:
+            return await self._chat_impl(*args, **kwargs)
+        finally:
+            end_turn_memo(token)
+
+    async def _chat_impl(
         self,
         user_message: str,
         history: list[dict[str, str]] | None = None,
@@ -11758,6 +11769,10 @@ class Agent:
             phase: dict[str, Any] = {"name": "starting", "since": time.monotonic()}
 
             async def producer() -> None:
+                # This task's own context: the turn's retrieval memo lives
+                # and dies with it (vector_store._TURN_MEMO).
+                from app.core.rag.vector_store import start_turn_memo
+                start_turn_memo()
                 try:
                     async for event in self._chat_stream_impl(
                         user_message=user_message,
