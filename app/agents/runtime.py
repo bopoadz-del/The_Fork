@@ -766,10 +766,8 @@ async def _rag_inject_off_process(**kwargs: Any):
 
 
 async def _project_is_rag_ready_off_process(project_id: Any) -> bool:
-    from app.core.rag import retrieval_worker
-
-    if retrieval_worker.enabled():
-        return await retrieval_worker.call(retrieval_worker.project_is_rag_ready_job, project_id)
+    # A database check, not CPU work: a thread, so it never waits in the
+    # retrieval workers' queue behind other turns' retrieval.
     return await _off_loop(project_is_rag_ready, project_id)
 
 

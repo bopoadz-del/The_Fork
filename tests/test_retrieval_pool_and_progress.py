@@ -37,6 +37,8 @@ def test_workers_share_one_model_server(monkeypatch):
     monkeypatch.setenv("RAG_RETRIEVAL_WORKERS", "2")
     monkeypatch.setenv("RAG_RETRIEVAL_WORKER_NICE", "0")
     monkeypatch.setattr(retrieval_worker, "_POOL", None)
+    # A server an earlier test started has that test's environment; start ours.
+    model_server.stop()
     try:
         assert retrieval_worker.warm_all() == 2
         from app.core.rag import embeddings

@@ -600,7 +600,11 @@ async def rate_limit_middleware(request: Request, call_next):
         or any(path.startswith(p) for p in _RATE_LIMIT_EXEMPT_PREFIXES)
     ):
         return await call_next(request)
-    if not _rate_limit.check_and_record(_rate_limit_identity(request)):
+    # In a thread: with Redis this is a network round trip, and on the event
+    # loop it held every request (live: a 1.7 s stall at 15 users).
+    from app.core.offload import off_loop
+
+    if not await off_loop(_rate_limit.check_and_record, _rate_limit_identity(request)):
         return JSONResponse(
             status_code=429,
             content={"status": "error",
