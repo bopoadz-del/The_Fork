@@ -15648,3 +15648,10 @@ async def _dispatch_payment_certificate(
         "ok": isinstance(result, dict) and result.get("status") == "success",
         "result": result,
     }
+
+
+# Import every tool package now, at app start, not on a turn's first tool
+# call -- importing modules there held the event loop for ~1 s under load.
+from app.agents.core import tool_registry as _tool_registry_at_start  # noqa: E402
+
+_tool_registry_at_start.load()

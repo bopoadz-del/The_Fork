@@ -116,3 +116,15 @@ def test_the_agent_dispatches_registered_tools_through_the_registry(monkeypatch)
     call = seen["call"]
     assert call.agent is agent and call.args == {"key": "k", "value": "v"}
     assert call.project_id == "synthetic-p" and call.conversation_id == "c1"
+
+
+def test_tool_packages_are_loaded_when_the_runtime_is_imported():
+    """No tool package is imported on a turn's first tool call (that import
+    ran on the event loop and stalled it ~1 s under 15 users)."""
+    import subprocess
+    import sys
+
+    code = ("import app.agents.runtime, app.agents.core.tool_registry as r, sys; "
+            "assert r._loaded; "
+            "assert 'app.agents.base.tools' in sys.modules")
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=300)
