@@ -65,10 +65,20 @@ def _container_route_keys() -> set[str]:
     return set(re.findall(r'"([a-z0-9_]+)":\s*self\.', block))
 
 
+def _registered_tool_names() -> set[str]:
+    """Tools owned by a package (app.agents.base / app.agents.hats.<hat>) and
+    dispatched through app.agents.core.tool_registry (F-DRIVER Phase A)."""
+    from app.agents.core import tool_registry
+
+    tool_registry.load()
+    return set(tool_registry._TOOLS)
+
+
 def _dispatchable() -> set[str]:
     from app.blocks import BLOCK_REGISTRY
 
-    return set(BLOCK_REGISTRY) | _container_route_keys() | _synthetic_tool_names()
+    return (set(BLOCK_REGISTRY) | _container_route_keys() | _synthetic_tool_names()
+            | _registered_tool_names())
 
 
 def test_the_synthetic_tool_set_was_actually_parsed():
