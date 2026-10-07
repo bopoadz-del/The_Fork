@@ -45,12 +45,14 @@ class ToolSpec:
     name: str
     owner: str
     handler: Handler
+    #: The tool's function schema, when it declares one where it is defined.
+    schema: Optional[Dict[str, Any]] = None
 
 
 _TOOLS: Dict[str, ToolSpec] = {}
 
 
-def tool(name: str, *, owner: str) -> Callable[[Handler], Handler]:
+def tool(name: str, *, owner: str, schema: Optional[Dict[str, Any]] = None) -> Callable[[Handler], Handler]:
     if owner not in OWNERS:
         raise ValueError(f"unknown tool owner {owner!r}; one of {OWNERS}")
 
@@ -58,7 +60,7 @@ def tool(name: str, *, owner: str) -> Callable[[Handler], Handler]:
         existing = _TOOLS.get(name)
         if existing is not None and existing.handler is not fn:
             raise ValueError(f"tool {name!r} is registered twice")
-        _TOOLS[name] = ToolSpec(name, owner, fn)
+        _TOOLS[name] = ToolSpec(name, owner, fn, schema)
         return fn
     return register
 
@@ -113,10 +115,10 @@ _loaded = False
 
 
 def tool_modules() -> List[str]:
-    """``tools`` and ``blocks`` modules of ``app.agents.base`` and of every
-    ``app.agents.hats.<hat>`` that has them -- discovered, so a new hat is a
-    new package and no core edit."""
-    import importlib.util
+    """Every module of ``app.agents.base`` and of each ``app.agents.hats.<hat>``
+    (sub-packages such as ``formulas`` excepted) -- discovered, so a new hat
+    is a new package and no core edit."""
+    import importlib
     import pkgutil
 
     import app.agents.hats as hats
@@ -128,13 +130,13 @@ def tool_modules() -> List[str]:
     ]
     mods = []
     for pkg in packages:
-        for leaf in ("tools", "blocks"):
-            try:
-                spec = importlib.util.find_spec(f"{pkg}.{leaf}")
-            except ModuleNotFoundError:
-                spec = None
-            if spec is not None:
-                mods.append(f"{pkg}.{leaf}")
+        try:
+            package = importlib.import_module(pkg)
+        except ModuleNotFoundError:
+            continue
+        mods.extend(f"{pkg}.{info.name}"
+                    for info in sorted(pkgutil.iter_modules(package.__path__), key=lambda i: i.name)
+                    if not info.ispkg)
     return mods
 
 
