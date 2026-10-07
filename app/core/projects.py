@@ -648,27 +648,12 @@ def list_projects(
     return out
 
 
-def get_project(
-    project_id: str,
-    user_id: Optional[str] = None,
-    *,
-    include_admin_approved: bool = False,
-    doc_limit: Optional[int] = None,
-    doc_offset: int = 0,
-) -> Optional[Dict[str, Any]]:
-    """Load a project the caller can access.
+def _accessible_project(project_id: str, user_id: Optional[str],
+                        include_admin_approved: bool) -> Optional[tuple]:
+    """``(Project row, source id)`` when the caller may read the project, else None.
 
-    PR D — non-owners may also read approved platform-shared projects
-    when ``include_admin_approved=True`` (Drive-approved origin,
-    boot-seeded ``system_seed``, or a configured GK id).
-    ``is_approved=False`` rows stay owner-only regardless of origin
-    (defensive — admins shouldn't leak detected-but-pending candidates
-    to users). The physical master-corpus source id stays owner-only
-    here; ``get_project_accessible`` remaps that path.
-
-    Pilot: a virtual master-corpus project (default ``master_corpus``)
-    is backed by the existing full-drive corpus (default ``projects_folder``).
-    It appears as a first-class project without duplicating chunks.
+    The access rule of ``get_project``, without loading its documents or
+    readiness -- an access check needs the row only.
     """
     _ensure_db()
     source_id = _master_corpus_source(project_id) or project_id
@@ -694,6 +679,46 @@ def get_project(
             allowed = include_admin_approved and _is_shared_platform_grant(project)
         if not allowed:
             return None
+    return project, source_id
+
+
+def can_access_project(project_id: str, user_id: Optional[str] = None,
+                       include_admin_approved: bool = False) -> bool:
+    """Whether ``get_project`` would return the project, at the cost of one row.
+
+    Live 2026-10-07: chat's access gate called ``get_project``, which lists
+    every document and checks each one's file on disk (6,585 on the master
+    corpus) -- 1-2 s on the event loop per message, just to say yes.
+    """
+    return _accessible_project(project_id, user_id, include_admin_approved) is not None
+
+
+def get_project(
+    project_id: str,
+    user_id: Optional[str] = None,
+    *,
+    include_admin_approved: bool = False,
+    doc_limit: Optional[int] = None,
+    doc_offset: int = 0,
+) -> Optional[Dict[str, Any]]:
+    """Load a project the caller can access.
+
+    PR D — non-owners may also read approved platform-shared projects
+    when ``include_admin_approved=True`` (Drive-approved origin,
+    boot-seeded ``system_seed``, or a configured GK id).
+    ``is_approved=False`` rows stay owner-only regardless of origin
+    (defensive — admins shouldn't leak detected-but-pending candidates
+    to users). The physical master-corpus source id stays owner-only
+    here; ``get_project_accessible`` remaps that path.
+
+    Pilot: a virtual master-corpus project (default ``master_corpus``)
+    is backed by the existing full-drive corpus (default ``projects_folder``).
+    It appears as a first-class project without duplicating chunks.
+    """
+    found = _accessible_project(project_id, user_id, include_admin_approved)
+    if found is None:
+        return None
+    project, source_id = found
     proj = _project_as_dict(project)
     # Virtual master-corpus project: expose alias id/name but keep the source
     # corpus behind it.
@@ -1902,6 +1927,25 @@ def list_documents(
             stmt = stmt.limit(limit).offset(offset)
         rows = session.scalars(stmt).all()
     return [_document_as_dict(document) for document in rows]
+
+
+def list_document_names(project_id: str) -> List[Dict[str, Any]]:
+    """``id``, ``original_name``, ``doc_type`` and ``file_path`` of a project's documents.
+
+    For callers that match names (which file did the user mean?): one narrow
+    query, no per-document file check -- unlike ``list_documents``, which
+    stats every stored file.
+    """
+    _ensure_db()
+    source_id = _master_corpus_source(project_id) or project_id
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(Document.id, Document.original_name, Document.doc_type, Document.file_path)
+            .where(Document.project_id == source_id)
+            .order_by(Document.uploaded_at)
+        ).all()
+    return [{"id": r.id, "original_name": r.original_name, "doc_type": r.doc_type,
+             "file_path": r.file_path} for r in rows]
 
 
 def count_documents(project_id: str) -> int:

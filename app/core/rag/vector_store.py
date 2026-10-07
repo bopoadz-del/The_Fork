@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import nullcontext
 import re
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
@@ -805,9 +806,9 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
 class VectorStore:
     """SQLAlchemy-backed chunk store with pgvector search on PostgreSQL.
 
-    Thread-safety: one session per operation, guarded by an internal lock.
-    Sufficient for the chat path (one query per request); not designed for
-    massive parallel ingest.
+    Thread-safety: one session per operation. On SQLite operations also take
+    turns behind an internal lock; on PostgreSQL they run concurrently, each on
+    its own pooled connection.
     """
 
     def __init__(
@@ -831,9 +832,13 @@ class VectorStore:
                 "active namespace"
             )
         self.model_name = model_name or os.getenv("RAG_EMBEDDING_MODEL") or "fake"
-        self._lock = Lock()
         self._database_url = _database_url(db_path)
         self._use_pgvector = self._database_url.startswith("postgresql")
+        # SQLite (dev, tests) is one file: operations take turns. PostgreSQL
+        # gives each operation its own pooled connection, so a process-wide
+        # lock only serialised every user's retrieval -- live 2026-10-07, 15
+        # users: one chunk count waited 12 s on it, on the event loop.
+        self._lock = nullcontext() if self._use_pgvector else Lock()
         # Build the namespaced model class. The old ``chunks`` table is
         # retired in place: namespace="" maps to it, but prod defaults to
         # namespace="v2" so new writes never touch the contaminated table.
@@ -1184,6 +1189,16 @@ class VectorStore:
                 if project_id is not None:
                     stmt = stmt.where(self._rag_chunk_cls.project_id == project_id)
                 return int(session.scalar(stmt) or 0)
+
+    def has_chunks(self, project_id: str) -> bool:
+        """Whether the project has any chunk: one index probe, not a count."""
+        with self._lock:
+            with self._session_factory()() as session:
+                return session.execute(
+                    select(self._rag_chunk_cls.chunk_id)
+                    .where(self._rag_chunk_cls.project_id == project_id)
+                    .limit(1)
+                ).first() is not None
 
     def count_by_doc(self, project_id: str) -> Dict[str, int]:
         """Return a ``{doc_id: chunk_count}`` map for ``project_id``.
