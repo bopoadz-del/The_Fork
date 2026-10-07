@@ -165,6 +165,7 @@
   "construction_calc:crane_planning",
   "construction_calc:evaluate_tender"
  ],
+ "available_tools": ["procurement_list_generator"],
  "handoffs": [
   {
    "to": "commercial",
