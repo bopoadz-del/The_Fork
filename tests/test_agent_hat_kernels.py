@@ -30,12 +30,12 @@ def agents():
     return load_agents()
 
 
-def test_the_catalog_carries_all_seven_discipline_hats():
+def test_the_catalog_carries_all_eight_discipline_hats():
     hats = {m.id for m in hat_catalog.list_hats()}
     assert hats == {
         "fork.hat.commercial", "fork.hat.contracts", "fork.hat.planning",
         "fork.hat.procurement", "fork.hat.qaqc",
-        "fork.hat.quantities", "fork.hat.safety",
+        "fork.hat.quantities", "fork.hat.safety", "fork.hat.design",
     }
 
 

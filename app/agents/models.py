@@ -22,6 +22,7 @@ class Discipline(str, Enum):
     PROCUREMENT = "procurement"
     QUANTITIES = "quantities"
     SAFETY = "safety"
+    DESIGN = "design"
 
 
 class ManifestKind(str, Enum):
@@ -150,6 +151,9 @@ class AgentManifest(BaseModel):
     activation: ActivationConfig
     context_sources: List[ContextSource]
     allowed_actions: List[str] = Field(default_factory=list)
+    #: The tools this hat's package registers (app.agents.base / hats.<hat>);
+    #: tests/test_manifest_tools_match_packages.py keeps the two equal.
+    available_tools: List[str] = Field(default_factory=list)
     handoffs: Optional[List[HandoffRule]] = None
     memory: Optional[MemoryConfig] = None
     verification: Verification

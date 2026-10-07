@@ -56,6 +56,7 @@
     "construction_calc:fineness_modulus",
     "construction_calc:shear_stress_check"
   ],
+  "available_tools": ["commissioning_checklist"],
   "handoffs": [
     {
       "to": "contracts",
@@ -81,20 +82,6 @@
   },
   "playbook": {
     "formulas": [
-      {
-        "id": "concrete_mix_design_sg",
-        "description": "Mix design by specific gravity (absolute volume method)",
-        "implemented_by": "app.lib.construction_formulas.concrete_mix_design_sg",
-        "domain": "qaqc",
-        "tier": "operational"
-      },
-      {
-        "id": "concrete_mix_slip_form",
-        "description": "Slip-forming mix proportions and workability",
-        "implemented_by": "app.lib.construction_formulas.concrete_mix_slip_form",
-        "domain": "qaqc",
-        "tier": "operational"
-      },
       {
         "id": "formwork_striking_time",
         "description": "Safe formwork striking time per BS 8110 + CIRIA + cube test data",
@@ -136,13 +123,6 @@
         "implemented_by": "app.lib.construction_formulas.fineness_modulus",
         "domain": "qaqc",
         "tier": "foundational"
-      },
-      {
-        "id": "shear_stress_check",
-        "description": "Shear stress check: v = V/(b x d)",
-        "implemented_by": "app.lib.construction_formulas.shear_stress_check",
-        "domain": "qaqc",
-        "tier": "operational"
       },
       {
         "id": "validate_design_status",

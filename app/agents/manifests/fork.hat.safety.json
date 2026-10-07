@@ -106,6 +106,7 @@
   "construction_calc:slope_fos_simple",
   "construction_calc:dewatering_uplift_check"
  ],
+ "available_tools": [],
  "handoffs": [
   {
    "to": "planning",
@@ -179,20 +180,6 @@
     "id": "wind_load_on_formwork",
     "description": "Wind load on formwork/temporary works",
     "implemented_by": "app.lib.construction_formulas.wind_load_on_formwork",
-    "domain": "safety",
-    "tier": "operational"
-   },
-   {
-    "id": "slope_fos_simple",
-    "description": "Slope factor of safety (simple method)",
-    "implemented_by": "app.lib.construction_formulas.slope_fos_simple",
-    "domain": "safety",
-    "tier": "operational"
-   },
-   {
-    "id": "dewatering_uplift_check",
-    "description": "Basement uplift check under dewatering",
-    "implemented_by": "app.lib.construction_formulas.dewatering_uplift_check",
     "domain": "safety",
     "tier": "operational"
    }

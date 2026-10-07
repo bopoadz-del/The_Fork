@@ -44,6 +44,7 @@
     "construction_calc:enforce_critical_rules",
     "construction_calc:next_ncr_status"
   ],
+  "available_tools": ["rfi_generator"],
   "handoffs": [
     {
       "to": "planning",
