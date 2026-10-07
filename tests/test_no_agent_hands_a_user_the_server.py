@@ -34,10 +34,9 @@ from app.core.privileges import (
 BLOCKS_DIR = pathlib.Path(__file__).resolve().parent.parent / "app" / "blocks"
 
 # A block that starts a process is privileged, or it is listed here with the
-# reason its command cannot come from a user.
-_REVIEWED_PROCESS_BLOCKS = {
-    "drawing_qto": "fixed ODA converter argv on its own temp dirs; nothing from the caller",
-}
+# reason its command cannot come from a user. (None today: drawing_qto's DWG
+# converter, the one reviewed entry, is removed.)
+_REVIEWED_PROCESS_BLOCKS: dict[str, str] = {}
 _STARTS_A_PROCESS_RE = re.compile(
     r"subprocess\.(?:run|Popen|call|check_output|check_call)|os\.system\(|"
     r"os\.popen\(|StdioServerParameters\(|create_subprocess_(?:exec|shell)\("

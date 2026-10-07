@@ -50,7 +50,7 @@ Full ledger: `docs/EGRESS_LEDGER.md`. Every outbound call catalogued with call
 site, trigger, and on-prem disposition. Air-gap headlines:
 1. **RAG embedder auto-downloads from HuggingFace on every boot** (no offline flags anywhere) — the #1 blocker, closed in STEP 4's baked image.
 2. **Cloud LLM ladder** (Groq/OpenAI/DeepSeek/Kimi) — closed by forcing Ollama in STEP 2.
-Other egress (Sentry, Open-Meteo, Drive/OneDrive/R2, web/search/translate/webhook, MCP, Google Fonts, build-time PyPI/pytorch/ODA) each has a disposition.
+Other egress (Sentry, Open-Meteo, Drive/OneDrive/R2, web/search/translate/webhook, MCP, Google Fonts, build-time PyPI/pytorch) each has a disposition.
 
 ## STEP 2 — DEPLOYMENT_PROFILE=onprem (SHIPPED)
 

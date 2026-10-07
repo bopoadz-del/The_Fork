@@ -56,6 +56,15 @@ async def execute(request: ExecuteRequest, auth: dict = Depends(require_user)):
         
         result = await block.execute(adapted_input, request.params or {})
 
+        # A block that refuses its input as a client error (a format the
+        # platform does not read) says so with ``client_error_status``; the
+        # caller gets that 4xx and the block's message, not a 200.
+        inner = result.get("result") if isinstance(result, dict) else None
+        if isinstance(inner, dict):
+            code = inner.get("client_error_status")
+            if isinstance(code, int) and 400 <= code < 500:
+                raise HTTPException(code, inner.get("error") or "Unsupported input")
+
         # Attach artifacts for the side panel (Roadmap V2 · Epic 4).
         try:
             from app.core.artifacts import result_to_artifacts

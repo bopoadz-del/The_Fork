@@ -59,13 +59,33 @@ def test_process_pdf_missing_file_returns_status_error():
     assert r["status"] == "error"
 
 
-def test_extract_dwg_metadata_returns_status_error_with_conversion_hint():
-    """DWG is binary AutoCAD — honest error directing to DXF, not a silent
-    'extracted: False'."""
+@pytest.mark.parametrize("action", ["parse_ifc", "get_elements", "process_pdf"])
+def test_a_dwg_is_refused_whatever_the_action(action):
+    """DWG is not read (owner ruling): every action answers a DWG with the
+    one export message and a 415, never a conversion attempt."""
+    from app.core.cad_formats import DWG_NOT_SUPPORTED
+
+    r = _run({"file_path": "/tmp/Fenwick Reach site plan.DWG"}, {"action": action})
+    assert r["status"] == "error"
+    assert r["error"] == DWG_NOT_SUPPORTED
+    assert r["client_error_status"] == 415
+
+
+def test_extract_dwg_metadata_is_no_longer_an_action():
     r = _run({}, {"action": "extract_dwg_metadata"})
     assert r["status"] == "error"
-    assert "DXF" in r["error"]
-    assert r["requires_conversion_to"] == "dxf"
+    assert "extract_dwg_metadata" not in r["valid_actions"]
+
+
+def test_index_folder_lists_a_dwg_as_not_supported(tmp_path):
+    from app.core.cad_formats import DWG_NOT_SUPPORTED
+
+    (tmp_path / "level_02.dwg").write_bytes(b"AC1032")
+    (tmp_path / "level_02.dxf").write_text("0\nEOF\n")
+    r = _run({"folder_path": str(tmp_path), "project_id": "p1"}, {"action": "index_folder"})
+    assert r["status"] == "success"
+    assert r["indexed"] == 1
+    assert r["not_supported"] == [{"name": "level_02.dwg", "error": DWG_NOT_SUPPORTED}]
 
 
 def test_compare_versions_missing_paths_returns_status_error():
