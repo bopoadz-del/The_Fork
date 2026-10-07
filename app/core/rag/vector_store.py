@@ -622,13 +622,25 @@ def end_turn_memo(token: "contextvars.Token") -> None:
     _TURN_MEMO.reset(token)
 
 
-def _memoised(key: tuple, compute):
+_MISS = object()
+
+
+def _memo_get(key: tuple):
+    """The turn's memoised value for ``key``, or ``_MISS``."""
     memo = _TURN_MEMO.get()
-    if memo is None:
-        return compute()
-    if key not in memo:
-        memo[key] = compute()
-    return memo[key]
+    return _MISS if memo is None else memo.get(key, _MISS)
+
+
+def _memo_put(key: tuple, value):
+    memo = _TURN_MEMO.get()
+    if memo is not None:
+        memo[key] = value
+    return value
+
+
+def _memoised(key: tuple, compute):
+    hit = _memo_get(key)
+    return _memo_put(key, compute()) if hit is _MISS else hit
 
 
 def hidden_document_predicate(prefix: str = "", *, postgres: bool = True) -> str:
@@ -1814,14 +1826,14 @@ class VectorStore:
     def _project_is_small(self, session: Session, project_id: str) -> bool:
         """At most ``_EXACT_SCAN_MAX_ROWS`` chunks? A count bounded at that
         many index entries (a few pages), memoised for the turn."""
-        def compute():
-            n = session.execute(text(
+        key = ("project-rows", self._table_name, project_id)
+        n = _memo_get(key)
+        if n is _MISS:
+            n = _memo_put(key, int(session.execute(text(
                 f"SELECT count(*) FROM (SELECT 1 FROM {self._table_name} "
                 "WHERE project_id = :p LIMIT :m) s"
-            ), {"p": project_id, "m": _EXACT_SCAN_MAX_ROWS + 1}).scalar()
-            return [int(n or 0)]
-
-        return _memoised(("project-rows", self._table_name, project_id), compute)[0] <= _EXACT_SCAN_MAX_ROWS
+            ), {"p": project_id, "m": _EXACT_SCAN_MAX_ROWS + 1}).scalar() or 0))
+        return n <= _EXACT_SCAN_MAX_ROWS
 
     def _search_pgvector(
         self, project_id: str, query_vec: np.ndarray, k: int
@@ -1891,12 +1903,10 @@ class VectorStore:
                 stmt = stmt.order_by(order).limit(k)
                 key = ("vector", self._table_name, project_id, k,
                        hashlib.sha1(np.asarray(query_vec, dtype=np.float32).tobytes()).hexdigest())
-
-                def compute():
+                rows = _memo_get(key)
+                if rows is _MISS:
                     _enable_iterative_scan(session)
-                    return session.execute(stmt).all()
-
-                rows = _memoised(key, compute)
+                    rows = _memo_put(key, session.execute(stmt).all())
         return [
             Chunk(
                 chunk_id=row.chunk_id,
@@ -2063,17 +2073,16 @@ class VectorStore:
         # Keyed on the normalised tsquery: query wordings that reduce to the
         # same tsquery rank the same rows.
         key = ("bm25", self._table_name, project_id, tsq, k, vis)
-
-        def compute():
-            if lexemes and len(lexemes) > 1 and k > 0:
-                rows = self._bm25_bounded(session, params, lexemes, vis)
-                if rows is not None:
-                    return rows
-            return session.execute(
-                text(self._bm25_select("c.text_search @@ q", vis)), params,
-            ).all()
-
-        return _memoised(key, compute)
+        hit = _memo_get(key)
+        if hit is not _MISS:
+            return hit
+        if lexemes and len(lexemes) > 1 and k > 0:
+            rows = self._bm25_bounded(session, params, lexemes, vis)
+            if rows is not None:
+                return _memo_put(key, rows)
+        return _memo_put(key, session.execute(
+            text(self._bm25_select("c.text_search @@ q", vis)), params,
+        ).all())
 
     def _bm25_bounded(
         self, session: Session, params: Dict[str, Any], lexemes: List[str], vis: str,
