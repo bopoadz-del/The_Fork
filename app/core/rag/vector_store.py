@@ -715,6 +715,52 @@ def _ensure_embedding_inline(eng, table_name: str) -> None:
         )
 
 
+#: Rows up to this size stay whole in the heap page instead of being TOASTed.
+#: A chunk row -- text, its tsvector, the embedding -- is ~3-4 KB; the default
+#: target (~2 KB) pushed the tsvector out of line once the embedding stayed in.
+_CHUNK_TOAST_TUPLE_TARGET = 4080
+
+
+def _ensure_tsvector_inline(eng, table_name: str) -> None:
+    """Keep ``text_search`` in the heap row so BM25 ranking reads no TOAST.
+
+    ``ts_rank`` reads each candidate's tsvector. Live 2026-10-07 the tsvector
+    sat in TOAST (moved there once the embedding stayed inline, alembic
+    0023), so ranking ~1,000 candidates cost ~3,800 buffers instead of ~880.
+    The table's ``toast_tuple_target`` is raised so an ordinary chunk row
+    stays whole, and ``text_search`` is ``STORAGE MAIN`` so an oversized row
+    moves its ``text`` out first. Rows written earlier keep their layout until
+    rewritten. Metadata-only; never raises.
+    """
+    try:
+        with eng.begin() as conn:
+            row = conn.execute(text(
+                "SELECT c.reloptions, a.attstorage FROM pg_class c "
+                "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'text_search' "
+                "WHERE c.oid = CAST(:t AS regclass)"
+            ), {"t": table_name}).first()
+            if row is None:
+                return
+            opts, storage = list(row[0] or []), row[1]
+            target_set = f"toast_tuple_target={_CHUNK_TOAST_TUPLE_TARGET}" in opts
+            if target_set and storage == "m":
+                return
+            conn.execute(text("SET LOCAL lock_timeout = '2s'"))
+            if not target_set:
+                conn.execute(text(
+                    f"ALTER TABLE {table_name} SET (toast_tuple_target = {_CHUNK_TOAST_TUPLE_TARGET})"
+                ))
+            if storage != "m":
+                conn.execute(text(
+                    f"ALTER TABLE {table_name} ALTER COLUMN text_search SET STORAGE MAIN"
+                ))
+    except Exception:  # noqa: BLE001 — a storage hint must not block startup
+        logger.warning(
+            "could not keep %s.text_search inline (BM25 ranking reads TOAST "
+            "until it is set)", table_name, exc_info=True,
+        )
+
+
 def _ensure_trigram_index(eng, table_name: str) -> None:
     """Ensure the ``pg_trgm`` GIN index on ``lower(text)`` exists.
 
@@ -862,6 +908,7 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
                     exc_info=True,
                 )
             _ensure_embedding_inline(eng, table_name)
+            _ensure_tsvector_inline(eng, table_name)
             _ensure_hnsw_index(eng, table_name)
             _ensure_trigram_index(eng, table_name)
         _INITIALIZED_NAMESPACES.add(init_key)
