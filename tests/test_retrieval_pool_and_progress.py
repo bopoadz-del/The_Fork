@@ -84,3 +84,36 @@ def test_every_stream_opens_with_an_accepted_status():
 def test_every_stage_has_a_label():
     for stage in ("accepted", "searching", "calculating", "writing"):
         assert turn_progress.event(stage)["label"]
+
+
+@pytest.mark.parametrize("limits,expected", [({"CPU": 1.0}, 1.0), ({"CPU": 1024}, 1.0),
+                                              ({"CPU": 0.5}, 0.5), ({}, None)])
+def test_the_task_cpu_limit_comes_from_ecs_metadata(monkeypatch, limits, expected):
+    import http.server
+    import threading
+
+    body = json.dumps({"Limits": limits}).encode()
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        monkeypatch.setenv("ECS_CONTAINER_METADATA_URI_V4", f"http://127.0.0.1:{srv.server_port}/v4/x")
+        assert retrieval_worker._ecs_task_cpu_limit() == expected
+        if expected:
+            assert retrieval_worker.available_vcpus() == expected
+    finally:
+        srv.shutdown()
+
+
+def test_no_ecs_metadata_means_no_task_limit(monkeypatch):
+    monkeypatch.delenv("ECS_CONTAINER_METADATA_URI_V4", raising=False)
+    assert retrieval_worker._ecs_task_cpu_limit() is None

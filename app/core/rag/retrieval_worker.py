@@ -54,9 +54,13 @@ def enabled() -> bool:
 
 
 def available_vcpus() -> float:
-    """CPUs this task may use: the cgroup CPU quota when there is one (a
-    1-vCPU Fargate task on a bigger host has a quota of 1), else the CPUs
-    this process may run on."""
+    """CPUs this task may use: the task's own CPU limit from the ECS task
+    metadata endpoint (live: a 1-vCPU task whose VM shows 2 CPUs and sets no
+    cgroup quota), else the cgroup CPU quota, else the CPUs this process may
+    run on."""
+    limit = _ecs_task_cpu_limit()
+    if limit:
+        return limit
     try:
         with open("/sys/fs/cgroup/cpu.max", encoding="ascii") as fh:  # cgroup v2
             quota, period = fh.read().split()[:2]
@@ -77,6 +81,25 @@ def available_vcpus() -> float:
         return float(len(os.sched_getaffinity(0)))
     except (AttributeError, OSError):
         return float(os.cpu_count() or 1)
+
+
+def _ecs_task_cpu_limit() -> Optional[float]:
+    """``Limits.CPU`` of this ECS task (vCPUs), or None outside ECS."""
+    base = (os.getenv("ECS_CONTAINER_METADATA_URI_V4") or "").strip()
+    if not base:
+        return None
+    try:
+        import json
+        import urllib.request
+
+        with urllib.request.urlopen(base.rstrip("/") + "/task", timeout=2) as resp:
+            cpu = (json.load(resp).get("Limits") or {}).get("CPU")
+        cpu = float(cpu) if cpu is not None else 0.0
+        # Some agents report CPU units (1024 per vCPU) rather than vCPUs.
+        return cpu / 1024 if cpu >= 64 else (cpu or None)
+    except Exception:  # noqa: BLE001 -- fall back to the cgroup / CPU count
+        _LOG.warning("ECS task metadata unreadable; sizing workers from the cgroup", exc_info=True)
+        return None
 
 
 def _workers() -> int:
