@@ -183,11 +183,21 @@ jobs:
             diff-cover.md
           retention-days: 14
 
-  test-postgres:
+  test-postgres-shard:
+    # The PostgreSQL suite, split four ways by recorded test durations
+    # (.test_durations, pytest-split) and run with one pytest-xdist worker per
+    # core. Every worker gets its own migrated database (tests/conftest.py),
+    # because the suite TRUNCATEs between tests. Same tests as the single job
+    # this replaces -- none skipped, none optional.
+    name: test-postgres (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     # Same hard cap as the matrix job. This job was the 6h0m zombie in every
     # stuck run on 2026-07-05 (hung inside "Run tests (PostgreSQL)").
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -197,7 +207,11 @@ jobs:
           POSTGRES_DB: thefork
         ports:
           - 5432:5432
+        # Docker gives a container 64 MB of /dev/shm; with several workers
+        # building HNSW indexes at once Postgres ran out of it ("could not
+        # resize shared memory segment ... No space left on device").
         options: >-
+          --shm-size=1g
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
@@ -219,8 +233,7 @@ jobs:
             # Some GitHub-hosted 24.04 images ship a Microsoft prod repo that
             # 403s and is unsigned. That aborts this step before tesseract
             # and poppler install. Drop that list and retry once.
-            sudo grep -l packages.microsoft.com /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null \
-              | xargs -r sudo rm -f
+            sudo grep -l packages.microsoft.com /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null               | xargs -r sudo rm -f
             sudo apt-get update -qq
           fi
           sudo apt-get install -y -qq tesseract-ocr poppler-utils antiword catdoc
@@ -229,21 +242,76 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov pytest-timeout
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout pytest-xdist pytest-split
 
       - name: Apply Alembic schema
         run: alembic upgrade head
 
-      - name: Run tests (PostgreSQL)
+      - name: Run tests (PostgreSQL, shard ${{ matrix.shard }}/4)
         # --timeout: see the matrix job note — a hung test must fail loudly,
-        # not park the job at GitHub's 6-hour cap.
-        run: >
-          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120
-          --cov=app --cov-report=term-missing --cov-fail-under=25
+        # not park the job at GitHub's 6-hour cap. --dist loadfile keeps each
+        # test file on one worker (module-scoped fixtures). The durations
+        # file is copied first: pytest-split reads it to split and writes
+        # this shard's measured times back into the copy.
+        run: |
+          if [ -f .test_durations ]; then cp .test_durations durations-${{ matrix.shard }}.json; else echo '{}' > durations-${{ matrix.shard }}.json; fi
+          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120             -n auto --dist loadfile             --splits 4 --group ${{ matrix.shard }}             --durations-path durations-${{ matrix.shard }}.json --store-durations             --cov=app --cov-report=
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data
           CEREBRUM_VIRGIN: "true"
           CEREBRUM_DOMAIN_KITS: ""
           RAG_EMBEDDING_MODEL: fake
+          COVERAGE_FILE: .coverage.shard${{ matrix.shard }}
 
+      - name: Keep this shard's coverage and durations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-postgres-shard-${{ matrix.shard }}
+          path: |
+            .coverage.shard${{ matrix.shard }}
+            durations-${{ matrix.shard }}.json
+          include-hidden-files: true
+          retention-days: 3
+
+  test-postgres:
+    # The required check. Passes only when every shard passed; then the four
+    # shards' coverage is combined and held to the same floor the single job
+    # enforced (--cov-fail-under=25).
+    name: test-postgres
+    runs-on: ubuntu-latest
+    needs: test-postgres-shard
+    if: always()
+    timeout-minutes: 10
+    steps:
+      - name: Every shard passed
+        run: |
+          echo "shards: ${{ needs.test-postgres-shard.result }}"
+          test "${{ needs.test-postgres-shard.result }}" = "success"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: test-postgres-shard-*
+          merge-multiple: true
+
+      - name: Coverage floor across all shards
+        run: |
+          pip install -q coverage
+          coverage combine .coverage.shard*
+          coverage report --fail-under=25 | tail -3
+
+      - name: Measured test durations (commit as .test_durations to rebalance)
+        run: python scripts/merge_test_durations.py durations-*.json > test_durations.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-durations
+          path: test_durations.json
+          retention-days: 7

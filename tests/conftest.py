@@ -48,6 +48,52 @@ else:
     # Fake embedder is 256-dim, aligned with pgvector schema (model2vec default).
     os.environ.setdefault("RAG_EMBEDDING_MODEL", "fake")
 
+
+def _per_worker_postgres_database() -> None:
+    """Under pytest-xdist, give each worker its own migrated database.
+
+    The suite TRUNCATEs its tables between tests, so two workers sharing one
+    database would wipe each other's rows mid-test. Each worker ``gwN`` gets
+    ``<database>_gwN``: created if missing, extensions added, migrated to
+    head, and DATABASE_URL pointed at it -- before any app module builds its
+    engine. Without xdist (or on SQLite) nothing changes.
+    """
+    worker = os.getenv("PYTEST_XDIST_WORKER")
+    url = os.getenv("DATABASE_URL", "")
+    if not worker or not url:
+        return
+    import subprocess
+    import sys
+
+    import psycopg
+    from sqlalchemy.engine import make_url
+
+    base = make_url(url)
+    name = f"{base.database}_{worker}"
+
+    def plain(u):
+        return u.set(drivername="postgresql").render_as_string(hide_password=False)
+
+    with psycopg.connect(plain(base), autocommit=True) as conn:
+        if conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,)).fetchone() is None:
+            conn.execute(f'CREATE DATABASE "{name}"')
+    target = base.set(database=name)
+    with psycopg.connect(plain(target), autocommit=True) as conn:
+        conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    os.environ["DATABASE_URL"] = target.render_as_string(hide_password=False)
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"],
+                   cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   env=os.environ.copy(), check=True, capture_output=True)
+
+
+if os.getenv("PYTEST_XDIST_WORKER"):
+    # Each xdist worker writes its own uploads, indexes and SQLite files.
+    os.environ["DATA_DIR"] = os.path.join(os.environ["DATA_DIR"], os.environ["PYTEST_XDIST_WORKER"])
+    os.makedirs(os.environ["DATA_DIR"], exist_ok=True)
+if os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() in ("1", "true", "yes"):
+    _per_worker_postgres_database()
+
 def is_extended_boot() -> bool:
     """Legacy platform boot — extended blocks (drives, MCP, etc.) are loaded."""
     return os.getenv("CEREBRUM_VIRGIN", "true").strip().lower() in ("0", "false", "no")
