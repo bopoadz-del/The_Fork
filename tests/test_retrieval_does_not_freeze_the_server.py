@@ -14,6 +14,10 @@ import pytest
 
 from app.agents import runtime as rt
 
+# Measures the event loop under its own simulated load: CI runs it alone, not
+# beside xdist workers competing for the runner's cores (pytest.ini: serial).
+pytestmark = pytest.mark.serial
+
 BLOCK_S = 0.6
 
 
