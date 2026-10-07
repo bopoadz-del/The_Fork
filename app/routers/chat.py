@@ -840,6 +840,8 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
     grounding wired in, so it is not a grounded cost-answer path; a client that
     needs grounded, gated cost answers must use ``/chat`` (non-streaming) or the
     agent path. Documented rather than gated to preserve streaming behaviour."""
+    from app.core import turn_timing
+    turn_timing.mark_arrival()
     if "chat" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Chat block not available")
 
@@ -893,11 +895,15 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
     # answer, no error and HTTP 200. This wraps the whole turn instead.
     # with_hat_signals sits INSIDE the terminal guard, so hat activation is on
     # the stream whichever of the three paths above answered the turn.
+    from app.core import turn_gate
+    with turn_timing.stage("queue"):
+        _release_turn = await turn_gate.acquire()
     return StreamingResponse(
+        turn_gate.hold_until_done(
         guarantee_terminal(
             with_hat_signals(event_stream(), request.message),
             request_id=get_request_id(),
-        ),
+        ), _release_turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -916,6 +922,8 @@ async def chat_v1(request: ChatRequest, auth: dict = Depends(require_user)):
 @router.post("/v1/chat/stream")
 async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     """Streaming chat endpoint (v1 API) with flexible JSON body."""
+    from app.core import turn_timing
+    turn_timing.mark_arrival()
     if "chat" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Chat block not available")
 
@@ -1076,6 +1084,8 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
                 conversation_id=conversation_id, user_id=user_id,
                 attached_documents=attached_docs,
             ):
+                if evt.get("type") == "token":
+                    turn_timing.first_token()
                 yield f"data: {json.dumps(evt, default=str)}\n\n"
                 await asyncio.sleep(0)
         except Exception as e:  # noqa: BLE001
@@ -1085,11 +1095,15 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
 
     # Same guard on the v1 path -- B6 was measured here. And the same hat
     # wrapper: the predefined-dispatch zero was measured here too.
+    from app.core import turn_gate
+    with turn_timing.stage("queue"):
+        _release_turn = await turn_gate.acquire()
     return StreamingResponse(
+        turn_gate.hold_until_done(
         guarantee_terminal(
             with_hat_signals(event_stream(), prompt),
             request_id=get_request_id(),
-        ),
+        ), _release_turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

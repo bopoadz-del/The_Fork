@@ -732,32 +732,43 @@ _EXT_TOOL_HINTS = {
 
 # Distinctive filename tokens in the user message (≥12 chars so ``spec``
 # never hijacks every specification file).
-_FILE_NAME_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_.\-]{11,}")
+from app.core.file_mentions import (  # noqa: E402 -- pure, worker-importable
+    FILE_NAME_TOKEN_RE as _FILE_NAME_TOKEN_RE,
+    user_names_project_file as _user_names_project_file,
+)
 
 
-def _user_names_project_file(user_low: str, original_name: str) -> bool:
-    """True when the user message names this project file.
+def _names_mentioned(user_low: str, names: list) -> list:
+    """``names`` that the message mentions -- in the retrieval worker process
+    when it is enabled (thousands of comparisons must not hold this
+    process's GIL), else here."""
+    from app.core.file_mentions import names_mentioned
+    from app.core.rag import retrieval_worker
 
-    Full ``original_name`` match first. A distinctive stem (≥12 chars) also
-    matches so a user can say ``site_waterproofing_spec`` without the
-    upload timestamp suffix. The user token is the *shorter* string when
-    the stored name has a timestamp; match both directions.
-    """
-    name = (original_name or "").strip().lower()
-    if not name or not user_low:
-        return False
-    if name in user_low:
-        return True
-    stem = os.path.splitext(name)[0]
-    if len(stem) >= 12 and stem in user_low:
-        return True
-    if len(stem) < 12:
-        return False
-    for m in _FILE_NAME_TOKEN_RE.finditer(user_low):
-        token_stem = os.path.splitext(m.group(0).rstrip(".,;:)"))[0]
-        if len(token_stem) >= 12 and token_stem in stem:
-            return True
-    return False
+    if retrieval_worker.enabled():
+        return retrieval_worker.call_sync(retrieval_worker.names_mentioned_job, user_low, list(names))
+    return names_mentioned(user_low, names)
+
+
+async def _rag_inject_off_process(**kwargs: Any):
+    """``rag_inject`` in the retrieval worker process when enabled, else a thread."""
+    from app.core import turn_timing
+    from app.core.rag import retrieval_worker
+
+    with turn_timing.stage("retrieval"):
+        if retrieval_worker.enabled():
+            from app.core.privileges import caller_role
+
+            return await retrieval_worker.call(retrieval_worker.rag_inject_job, kwargs, caller_role())
+        return await asyncio.to_thread(rag_inject, **kwargs)
+
+
+async def _project_is_rag_ready_off_process(project_id: Any) -> bool:
+    from app.core.rag import retrieval_worker
+
+    if retrieval_worker.enabled():
+        return await retrieval_worker.call(retrieval_worker.project_is_rag_ready_job, project_id)
+    return await _off_loop(project_is_rag_ready, project_id)
 
 
 _HISTOGRAM_PHRASES = (
@@ -941,12 +952,8 @@ def _project_files_named_in(project_id: str, user_low: str) -> list[str]:
     """Names of the project's documents that ``user_low`` mentions, in upload order."""
     from app.core import projects as _projects
 
-    out = []
-    for d in _projects.list_document_names(project_id) or []:
-        name = (d.get("original_name") or "").strip()
-        if name and _user_names_project_file(user_low, name):
-            out.append(name)
-    return out
+    names = [d.get("original_name") or "" for d in _projects.list_document_names(project_id) or []]
+    return _names_mentioned(user_low, names)
 
 
 def _file_tool_hint(messages: list, project_id: str | None,
@@ -977,9 +984,8 @@ def _file_tool_hint(messages: list, project_id: str | None,
         docs = _projects.list_document_names(project_id) or []
     except Exception:  # noqa: BLE001
         return ""
-    for d in docs:
-        name = (d.get("original_name") or "").strip()
-        if name and _user_names_project_file(low, name):
+    for name in _names_mentioned(low, [d.get("original_name") or "" for d in docs]):
+        if name:
             ext = os.path.splitext(name)[1].lower()
             if (
                 ext == ".xer"
@@ -8171,7 +8177,16 @@ def _timing_log(fmt: str, *args: Any) -> None:
     _LOG.warning(fmt + " rss=%dMB", *args, _rss_mb())
 
 
-def _postprocess_answer(
+
+def _postprocess_answer(*args: Any, **kwargs: Any) -> str:
+    """The answer's post-processing, timed as one stage (see ``_postprocess_answer_impl``)."""
+    from app.core import turn_timing
+
+    with turn_timing.stage("postprocess"):
+        return _postprocess_answer_impl(*args, **kwargs)
+
+
+def _postprocess_answer_impl(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]],
@@ -11033,7 +11048,7 @@ class Agent:
         # unless the project has other (non-RAG) context such as facts.
         if (
             project_id
-            and not (await _off_loop(project_is_rag_ready, project_id))
+            and not (await _project_is_rag_ready_off_process(project_id))
             and not (await _off_loop(_project_has_non_rag_context, project_id, user_message))
         ):
             if conversation_id:
@@ -11080,8 +11095,7 @@ class Agent:
         # rerank) and froze the single worker's event loop for its whole
         # duration -- live, one turn stalled /livez for 4.2 s. to_thread
         # copies contextvars, so the caller-role gate still applies.
-        _rag_sys_msg, _rag_audit = await asyncio.to_thread(
-            rag_inject,
+        _rag_sys_msg, _rag_audit = await _rag_inject_off_process(
             user_message=user_message,
             project_id=project_id,
             conversation_id=conversation_id,
@@ -11641,8 +11655,7 @@ class Agent:
         if not missing:
             return final_text, None
         try:
-            sys_msg, _ = await asyncio.to_thread(
-                rag_inject,
+            sys_msg, _ = await _rag_inject_off_process(
                 user_message=_mi_query(missing, user_message),
                 project_id=project_id,
                 # No conversation_id: this is a targeted lookup, not a turn,
@@ -12009,7 +12022,7 @@ class Agent:
         # unless the project has other (non-RAG) context such as facts.
         if (
             project_id
-            and not (await _off_loop(project_is_rag_ready, project_id))
+            and not (await _project_is_rag_ready_off_process(project_id))
             and not (await _off_loop(_project_has_non_rag_context, project_id, user_message))
         ):
             if conversation_id:
@@ -12060,8 +12073,7 @@ class Agent:
         # rerank) and froze the single worker's event loop for its whole
         # duration -- live, one turn stalled /livez for 4.2 s. to_thread
         # copies contextvars, so the caller-role gate still applies.
-        _rag_sys_msg, _rag_audit = await asyncio.to_thread(
-            rag_inject,
+        _rag_sys_msg, _rag_audit = await _rag_inject_off_process(
             user_message=user_message,
             project_id=project_id,
             conversation_id=conversation_id,
@@ -12497,7 +12509,11 @@ class Agent:
         # service, so the deliverable-hang call-count/latency was invisible.
         # Gate behind AGENT_TIMING_LOG=1 so it's off by default.
         _timing = os.getenv("AGENT_TIMING_LOG") == "1"
-        _turn_t0 = time.monotonic()
+        # The clock counts from the request's arrival (app.core.turn_timing),
+        # so cum= covers retrieval and pre-dispatch too.
+        from app.core import turn_timing as _turn_timing
+        _turn_timing.mark("predispatch")
+        _turn_t0 = _turn_timing.arrived_at() or time.monotonic()
 
         # `_deadline` is the caller's wall-clock cap for the WHOLE turn (a
         # time.monotonic() instant), or None when nothing is capping us.
