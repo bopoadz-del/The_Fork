@@ -60,6 +60,11 @@ def test_legacy_import_skips_master_corpus_alias():
     alias = projects_mod.MASTER_CORPUS_PROJECT_ID
     if alias == projects_mod.MASTER_CORPUS_SOURCE_PROJECT_ID:
         return  # aliasing disabled — the id IS a real project
+    # Start from no such row: another test sharing this worker's database may
+    # have left one, and the claim is that the IMPORT does not create it.
+    doc_index._purge_spurious_master_corpus_row()
+    with SessionLocal() as s:
+        assert s.get(Project, alias) is None
     _write_legacy_json(alias)
     with SessionLocal() as s:
         doc_index._import_legacy_json_indexes(s)
