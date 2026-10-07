@@ -1,5 +1,6 @@
 """Shared dependencies and block instance management for FastAPI app."""
 
+from app.core.offload import off_loop as _off_loop
 import asyncio
 import inspect
 import logging
@@ -173,7 +174,7 @@ async def require_api_key(
             payload = None
 
         if payload is not None:
-            user = users_store.get_user_by_id(payload.get("user_id"))
+            user = (await _off_loop(users_store.get_user_by_id, payload.get("user_id")))
             if not user:
                 raise HTTPException(status_code=401, detail="Token user no longer exists")
             principal = {
@@ -264,7 +265,7 @@ async def require_user(
         payload = None
 
     if payload is not None:
-        user = users_store.get_user_by_id(payload.get("user_id"))
+        user = (await _off_loop(users_store.get_user_by_id, payload.get("user_id")))
         if not user:
             raise HTTPException(status_code=401, detail="Token user no longer exists")
         principal = {
@@ -281,7 +282,7 @@ async def require_user(
     # with role=admin). NEVER copy `role` from the system user row — that row
     # IS admin, and copying it would promote every standard API key.
     principal = auth_manager.validate_key(credentials)  # raises 401/429 on bad key
-    sys_user = users_store.get_user_by_id(users_store.SYSTEM_USER_ID)
+    sys_user = (await _off_loop(users_store.get_user_by_id, users_store.SYSTEM_USER_ID))
     resolved = {
         "user_id": users_store.SYSTEM_USER_ID,
         "role": principal.get("role") or "user",

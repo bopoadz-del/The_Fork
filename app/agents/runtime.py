@@ -937,6 +937,18 @@ def _resolve_histogram_schedule_file(
     return fp, pick.get("original_name") or os.path.basename(fp)
 
 
+def _project_files_named_in(project_id: str, user_low: str) -> list[str]:
+    """Names of the project's documents that ``user_low`` mentions, in upload order."""
+    from app.core import projects as _projects
+
+    out = []
+    for d in _projects.list_document_names(project_id) or []:
+        name = (d.get("original_name") or "").strip()
+        if name and _user_names_project_file(user_low, name):
+            out.append(name)
+    return out
+
+
 def _file_tool_hint(messages: list, project_id: str | None,
                     allowed_blocks: list[str]) -> str:
     """When the user's request names a REAL project file and the agent has
@@ -1048,13 +1060,14 @@ async def _predispatch_file_tool(
         # "the whole of the Works.dxf" ⊂ "…for the whole of the Works?").
         contract_lookup = message_is_contract_data_lookup(user_msg)
         low = user_msg.lower()
-        from app.core import projects as _projects
-        docs = _projects.list_document_names(project_id) or []
+        # Listing the corpus's names and matching each one against the
+        # message is thousands of comparisons: done in the turn pool, it
+        # returns only the names the user mentioned, in upload order.
+        named = (await _off_loop(_project_files_named_in, project_id, low))
         target = None
         text_target = None
-        for d in docs:
-            name = (d.get("original_name") or "").strip()
-            if name and _user_names_project_file(low, name):
+        for name in named:
+            if name:
                 ext = os.path.splitext(name)[1].lower()
                 if ext in _TEXT_PREDISPATCH_EXTS and text_target is None:
                     text_target = name
