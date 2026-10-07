@@ -1311,7 +1311,7 @@ async def _predispatch_resource_histogram(
         return None
     try:
         user_msg, _history = _messages_user_and_history(messages)
-        if not user_msg or not _message_wants_resource_histogram(user_msg):
+        if not user_msg or not (await _off_loop(_message_wants_resource_histogram, user_msg)):
             return None
         schedule_file, picked_name = _resolve_histogram_schedule_file(
             project_id, user_msg,
@@ -1370,7 +1370,7 @@ async def _predispatch_look_ahead(
         return None
     try:
         user_msg, _history = _messages_user_and_history(messages)
-        if not user_msg or not _message_wants_look_ahead(user_msg):
+        if not user_msg or not (await _off_loop(_message_wants_look_ahead, user_msg)):
             return None
         schedule_file, picked_name = _resolve_histogram_schedule_file(
             project_id, user_msg,
@@ -1477,7 +1477,7 @@ async def _predispatch_wir_form(
     try:
         user_msg, _history = _messages_user_and_history(messages)
         detect = (operator_text or user_msg or "").strip()
-        if not detect or not _message_wants_wir_form(detect):
+        if not detect or not (await _off_loop(_message_wants_wir_form, detect)):
             return None
         from app.dependencies import get_block_instance
         container = get_block_instance("construction")
@@ -1882,7 +1882,7 @@ async def _predispatch_remaining_deliverables(
     """First matching non-WIR deliverable draft, so a Groq 413 still has copy."""
     user_msg, _history = _messages_user_and_history(messages)
     detect = (operator_text or user_msg or "").strip()
-    if not detect or _message_wants_wir_form(detect):
+    if not detect or (await _off_loop(_message_wants_wir_form, detect)):
         return None
     if message_wants_answer_report(detect):
         return None
@@ -11098,7 +11098,7 @@ class Agent:
         # canned "could not confirm this reference" used to fire in ~1s
         # without ever fetching bytes from disk.
         tool_calls_made: list[dict[str, Any]] = []
-        _locked = _message_wants_locked_deliverable(user_message)
+        _locked = (await _off_loop(_message_wants_locked_deliverable, user_message))
         _pre = None
         if not _locked:
             _pre = await _predispatch_file_tool(self, messages, project_id)
@@ -12072,7 +12072,7 @@ class Agent:
         stream_tool_results: list[dict[str, Any]] = []
         # Deterministic file pre-dispatch BEFORE the RAG-miss short-circuit
         # (leftover L1 timestamped .docx looks like an identifier).
-        _locked = _message_wants_locked_deliverable(user_message)
+        _locked = (await _off_loop(_message_wants_locked_deliverable, user_message))
         _pre = None
         if not _locked:
             _pre = await _predispatch_file_tool(self, messages, project_id)
@@ -14476,9 +14476,8 @@ class Agent:
                 args, user_message, history=history,
             )
             if not calc_name:
-                calc_name = _formula_calculator_name_from_message(
-                    str((args or {}).get("text") or user_message or ""),
-                )
+                calc_name = (await _off_loop(_formula_calculator_name_from_message, str((args or {}).get("text") or user_message or ""),
+                ))
             from app.lib import construction_formulas as _cf
             calc_params = _cf.coerce_calc_params(args.get("params"))
             # SHARED WITH AGENT C / #636 / #639 / #652: models put calculator
@@ -15347,20 +15346,20 @@ async def _predispatch_formula_calc(
         detect = (operator_text or user_msg or "").strip()
         if not detect:
             return None
-        if _message_wants_rfi_draft(detect) or _message_wants_vo_draft(detect):
+        if (await _off_loop(_message_wants_rfi_draft, detect)) or (await _off_loop(_message_wants_vo_draft, detect)):
             return None
-        if _message_wants_inline_boq(detect):
+        if (await _off_loop(_message_wants_inline_boq, detect)):
             return None
-        if _message_wants_drawing_qto(detect):
+        if (await _off_loop(_message_wants_drawing_qto, detect)):
             return None
-        if _message_is_schedule_or_programme_deliverable(detect):
+        if (await _off_loop(_message_is_schedule_or_programme_deliverable, detect)):
             return None
         if not (
-            _message_is_formula_style_ask(detect)
-            or _message_wants_named_calculator(detect)
+            (await _off_loop(_message_is_formula_style_ask, detect))
+            or (await _off_loop(_message_wants_named_calculator, detect))
         ):
             return None
-        calc_name = _formula_calculator_name_from_message(detect)
+        calc_name = (await _off_loop(_formula_calculator_name_from_message, detect))
         tc = {
             "id": "predispatch-construction_calc",
             "function": {
@@ -15585,7 +15584,7 @@ async def select_agent_for_message(
             exc_info=True,
         )
 
-    if _message_wants_named_calculator(user_message):
+    if (await _off_loop(_message_wants_named_calculator, user_message)):
         info["action"] = None
         info["reason"] = "named_calculator"
         return requested_agent, info
