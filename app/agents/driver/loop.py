@@ -27,11 +27,19 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]]) -> tuple:
     figure is credited to the user's words, a tool run or a retrieved
     passage -- one that matches none is removed (figure_provenance). The
     evidence is this turn's own messages: the user's words and the tool
-    runs. Returns (answer, provenance trail)."""
-    from app.agents import citation_provenance
+    runs. Returns (answer, provenance trail, report): the report names the
+    figures removed and counts the passages read, for the end event."""
+    from app.agents import citation_provenance as cp
 
-    checked = citation_provenance.gate(answer, None, msgs, tool_passages=True)
-    return citation_provenance.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
+    checked = cp.gate(answer, None, msgs, tool_passages=True)
+    _, every = cp.figure_provenance(checked, None, msgs, enforce=False, tool_passages=True)
+    out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
+    report = {
+        "figures_removed": [e["figure"] for e in every if not e.get("source")],
+        "passages_read": sum(1 for r in cp.build_evidence(None, msgs, tool_passages=True).records
+                             if r.kind == "retrieval"),
+    }
+    return out, trail, report
 
 
 def _args(tool_call: Dict[str, Any]) -> Dict[str, Any]:
@@ -103,9 +111,9 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         answer = _STOP
     whole = iter(evidence)  # same order as the tool messages in msgs
     trail = [next(whole) if m.get("role") == "tool" else m for m in msgs]
-    answer, provenance = exit_check(answer, trail)
+    answer, provenance, check = exit_check(answer, trail)
     for word in answer.split(" "):
         yield {"type": "token", "content": word + " "}
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
-           "provenance": provenance,
+           "provenance": provenance, "exit_check": check,
            "steps": step + 1, "elapsed_s": round(time.monotonic() - t0, 2)}
