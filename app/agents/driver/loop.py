@@ -10,7 +10,7 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.agents import driver
-from app.agents.driver import context, llm, routes, tools
+from app.agents.driver import context, llm, routes, sources, tools
 from app.core import turn_progress
 from app.core.offload import off_loop
 
@@ -71,6 +71,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     msgs: List[Dict[str, Any]] = await off_loop(context.messages, user_message, history,
                                                  project_id, user_id, hat)
     used: List[str] = []
+    ran: List[tuple] = []  # (tool, arguments) of every tool run, for the credit lines
     evidence: List[Dict[str, Any]] = []  # tool results, whole, for the exit check
     exports: List[Dict[str, Any]] = []
     yield {"type": "start", "mode": "driver", "agent": agent.name}
@@ -158,6 +159,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 exports.extend(result_of_call.get("exports") or [])
             else:
                 used.append(name)
+                ran.append((name, args))
                 result_of_call = await agent._run_tool_call(call, api_key, project_id, conversation_id,
                                                             user_message=user_message, history=history)
             yield {"type": "tool_result", "tool": name, "name": name, "ok": bool(result_of_call.get("ok", True))}
@@ -178,8 +180,12 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     # the note if any piece lost an unbacked attribution.
     notes = cp.closing_notes("".join(sent), _trail(), tool_passages=True,
                              removed=cp._REMOVED_IN_PIECE.get())
+    credit = sources.tool_credit_lines(ran)
+    if credit and credit not in "".join(sent):
+        notes = "\n\n" + credit + notes
     if notes.strip():
         yield {"type": "token", "content": notes}
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "provenance": provenance, "exit_check": check,
+           "sources": sources.panel(_trail(), provenance),
            "steps": step + 1, "elapsed_s": round(time.monotonic() - t0, 2)}

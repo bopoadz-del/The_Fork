@@ -561,6 +561,51 @@ def test_a_streamed_answer_carries_the_calculator_credit_once(monkeypatch):
     assert "m3.With" not in text and "m3.Check" not in text
 
 
+def test_the_end_event_lists_sources_and_the_calculation_credit(monkeypatch):
+    _no_retrieval(monkeypatch)
+    search = {"name": "search_project_documents", "ok": True, "result": {"results": [
+        {"document_id": "d-9", "filename": "Conditions of Contract.pdf", "score": 0.81, "origin": "own",
+         "snippet": "Percentage of Retention: 10% of each Interim Payment Certificate."},
+        {"document_id": "d-4", "filename": "Spec.pdf", "score": 0.42, "origin": "own", "snippet": "General."}]}}
+    ipc = {"name": "payment_certificate", "ok": True,
+           "result": {"status": "success", "net_due": 2160000, "retention": 240000, "gross": 2400000}}
+    replies = [
+        {"content": "", "tool_calls": [_call("search_project_documents", {"query": "retention"}, "s1"),
+                                       _call("payment_certificate", {"gross_valuation": 2400000,
+                                                                     "retention_percent": 10,
+                                                                     "message": "the ask"}, "p1")]},
+        {"content": "Net due is 2,160,000 after 10% retention."},
+    ]
+    monkeypatch.setattr(llm, "call", _scripted(replies, []))
+    agent = _agent()
+
+    async def fake_tool(call, *a, **k):
+        return search if call["function"]["name"] == "search_project_documents" else ipc
+
+    monkeypatch.setattr(agent, "_run_tool_call", fake_tool)
+    events = _run(agent, user_message="gross 2,400,000, retention 10%, net payment?", project_id="p")
+    end = events[-1]
+    assert [s["doc_name"] for s in end["sources"]][0] == "Conditions of Contract.pdf"
+    assert end["sources"][0]["confidence"] == "High" and end["sources"][1]["confidence"] == "Low"
+    text = "".join(e["content"] for e in events if e["type"] == "token")
+    assert "Calculated with: payment_certificate (gross_valuation 2400000, retention_percent 10)" in text
+    assert "the ask" not in text
+
+
+def test_a_foreign_documents_name_is_scrubbed_in_sources(monkeypatch):
+    """Names outside the user's own project go through the configured
+    identifier scrub, as in the old path's panel."""
+    from app.agents.driver import sources
+    from app.core import identifier_scrub
+
+    monkeypatch.setattr(identifier_scrub, "scrub_identifiers_filename", lambda n: "[scrubbed]")
+    trail = [{"role": "tool", "name": "search_general_knowledge", "content": json.dumps(
+        {"ok": True, "result": {"results": [{"document_id": "g1", "filename": "AB-2021-777 Spec.pdf",
+                                              "score": 0.9, "origin": "master_corpus", "snippet": "x"}]}})}]
+    out = sources.panel(trail, [])
+    assert out and out[0]["doc_name"] == "[scrubbed]" and out[0]["layer"] == "master_corpus"
+
+
 def test_streamed_pieces_keep_their_line_breaks(monkeypatch):
     _no_retrieval(monkeypatch)
     answer = "Summary line.\n\n- First point.\n- Second point.\n\nClosing note."
