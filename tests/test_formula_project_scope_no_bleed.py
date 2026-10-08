@@ -619,4 +619,9 @@ def test_calc_already_fired_strips_mc_banner_even_without_ask():
         audit_rec={"project_id": FIXTURE_PID, "user_message_preview": ""},
     )
     assert "Master Corpus" not in out
-    assert "pe_unit_convert calculator failed" in out
+    # The failure sentence stays; the registry id is the display name.
+    from app.lib.source_labels import formula_display_name
+    shown = formula_display_name("pe_unit_convert")
+    assert shown and shown in out
+    assert "calculator failed" in out
+    assert "pe_unit_convert" not in out

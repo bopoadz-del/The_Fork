@@ -376,7 +376,11 @@ def test_a_tool_that_failed_is_offered_again_not_disarmed(deepseek_streaming):
     assert len(seen) >= 2 and seen[1] is not False, (
         f"tools were disarmed after a FAILED call: with_tools={seen}"
     )
-    assert "re-ran it as delay_damages_daily" in _tokens(events)
+    from app.lib.source_labels import formula_display_name
+    shown = formula_display_name("delay_damages_daily")
+    tokens = _tokens(events)
+    assert shown and f"re-ran it as {shown}" in tokens
+    assert "delay_damages_daily" not in tokens
 
 
 def test_streamed_json_tool_leak_is_not_flushed(deepseek_streaming):
