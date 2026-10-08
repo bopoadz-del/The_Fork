@@ -394,9 +394,11 @@ def _tool_passage_records(messages: Iterable[dict[str, Any]] | None) -> list[Evi
         for hit in hits if isinstance(hits, list) else []:
             if not isinstance(hit, dict):
                 continue
-            # The document search returns {document_id, filename, chunk,
-            # score, origin}; other tools may say text / doc_name / doc_id.
-            body = str(hit.get("chunk") or hit.get("text") or hit.get("content") or "")
+            # The document search returns {document_id, filename, snippet,
+            # score, origin} (live; ``chunk`` on the direct path); other tools
+            # may say text / content / doc_name / doc_id.
+            body = str(hit.get("snippet") or hit.get("chunk") or hit.get("text")
+                       or hit.get("content") or "")
             if not body.strip():
                 continue
             page = hit.get("page")
