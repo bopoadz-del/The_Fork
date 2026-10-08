@@ -273,11 +273,12 @@ def test_the_exit_check_keeps_backed_figures_and_removes_unbacked_ones():
         {"role": "tool", "name": "search_project_documents", "tool_call_id": "c1",
          "content": json.dumps({"ok": True, "result": {"results": [{"text": "Slump shall be 75 mm."}]}})},
     ]
-    kept, trail = loop.exit_check("The specified slump is 75 mm.", msgs)
+    kept, trail, _report = loop.exit_check("The specified slump is 75 mm.", msgs)
     assert "75 mm" in kept
     assert isinstance(trail, list)
-    gone, _ = loop.exit_check("The specified slump is 75 mm. The cube strength is 913 MPa.", msgs)
+    gone, _, report = loop.exit_check("The specified slump is 75 mm. The cube strength is 913 MPa.", msgs)
     assert "75 mm" in gone and "913" not in gone
+    assert report["figures_removed"] == ["913 MPa"] and report["passages_read"] == 1
 
 
 def test_a_driver_answer_passes_the_exit_check_before_it_streams(monkeypatch):
@@ -357,7 +358,7 @@ def test_the_exit_check_reads_the_document_searchs_real_result_shape():
         {"role": "assistant", "content": "", "tool_calls": [_call("search_project_documents", {"query": "cover"}, "c1")]},
         {"role": "tool", "name": "search_project_documents", "tool_call_id": "c1", "content": json.dumps(real)},
     ]
-    kept, trail = loop.exit_check("Footings cast against earth need 75 mm cover (structural spec).", msgs)
+    kept, trail, _report = loop.exit_check("Footings cast against earth need 75 mm cover (structural spec).", msgs)
     assert "75 mm" in kept
     assert any(e.get("figure") == "75 mm" for e in trail)
 
