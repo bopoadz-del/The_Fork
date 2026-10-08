@@ -19,6 +19,7 @@ import ChatList from '../chat/ChatList'
 import ChatComposer, { type AgentOption } from '../chat/ChatComposer'
 import SourcesList from '../chat/SourcesList'
 import { sanitizeAssistantContent } from '../chat/toolJsonGuard'
+import { INTERRUPTED_MESSAGE, isInterruptedStream } from '../lib/streamOutcome'
 import DocumentGraph from '../documents/DocumentGraph'
 import './pages.css'
 import './workspace.css'
@@ -229,6 +230,7 @@ function msgId(): string {
  * traces, or "HTTP 502" verbatim — the operator sees that in logs; users see
  * the friendly version.
  */
+
 function friendlyErrorMessage(raw: string): string {
   const r = raw.toLowerCase()
   // OpenRouter in-flight 402 is transient — not a dead account.
@@ -1252,14 +1254,21 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
         }
       }
 
-      // If no explicit 'end' event arrived, finalise anyway
+      // If no explicit 'end' event arrived, finalise anyway. A stream that
+      // closed with nothing in it (the server restarted mid-turn, the
+      // connection dropped) would otherwise leave an empty answer with no
+      // word to the user -- say what happened so they can send it again.
+      const interrupted = isInterruptedStream(streamEnded, accumulatedContent)
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsgId && m.streaming
-            ? { ...m, streaming: false, toolStatus: undefined }
+            ? interrupted
+              ? { ...m, content: INTERRUPTED_MESSAGE, streaming: false, error: true, toolStatus: undefined }
+              : { ...m, streaming: false, toolStatus: undefined }
             : m
         )
       )
+      if (interrupted) setLlmAvailable(true)
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         if (didTimeout) {
