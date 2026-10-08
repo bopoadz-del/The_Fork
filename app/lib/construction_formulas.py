@@ -19,7 +19,7 @@ import math
 
 from dataclasses import dataclass, field
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import dataclasses as _dc
 
@@ -995,18 +995,26 @@ def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
         out[key] = val
     return out
 
-def _declared_units(fn: Any) -> Dict[str, str]:
-    """Input units the formula declares where it is defined (@formula
-    inputs), when it is a registered formula; '-' means unitless."""
+def _formula_spec(fn: Any) -> Any:
+    """The registry spec for this calculator, when it is registered."""
     try:
         from app.lib import formula_registry
 
         for spec in formula_registry.all_specs():
             if spec.fn is fn or getattr(fn, "__wrapped__", None) is spec.fn:
-                return {k: v for k, v in (spec.inputs or {}).items() if v and v != "-"}
+                return spec
     except Exception:  # noqa: BLE001 -- the name suffix is the fallback
         logger.debug("formula registry unavailable for unit lookup", exc_info=True)
-    return {}
+    return None
+
+
+def _declared_units(fn: Any) -> Dict[str, str]:
+    """Input units the formula declares where it is defined (@formula
+    inputs), when it is a registered formula; '-' means unitless."""
+    spec = _formula_spec(fn)
+    if spec is None:
+        return {}
+    return {k: v for k, v in (spec.inputs or {}).items() if v and v != "-"}
 
 
 def describe_calculation_params(
@@ -1580,6 +1588,41 @@ def _norm_unit_token(raw: Any) -> str:
     s = s.replace(" ", "").replace(".", "")
     return _UNIT_EQ.get(s, s)
 
+
+# A declared unit that is not written next to the figure. A bare number
+# can bind to one of these, and only when it is the only one still missing.
+_BARE_KINDS = frozenset({"", "-", "currency", "ratio", "count", "no", "nr"})
+
+
+def binding_kind(unit: str) -> str:
+    """How a figure has to be written to identify this declared unit.
+
+    Empty means the unit has no token of its own, so the figure is a bare
+    number. Callers that see two inputs of one kind bind neither.
+    """
+    norm = _norm_unit_token(unit)
+    if norm in _BARE_KINDS:
+        return ""
+    return norm
+
+
+def _figure_unit_pattern(extra: Iterable[str] = ()) -> str:
+    """Unit tokens a figure may carry, longest first, plus this formula's own."""
+    tokens = [
+        "kN/m2", "kN/m²", "kN/m", "N/mm2", "N/mm²", "mm4", "mm⁴",
+        "cm4", "m4", "m⁴", "mm2", "mm²", "m2", "m²", "m3", "m³",
+        "GPa", "MPa", "kPa", "kN", "mm", "cm", "km", "m/s", "m", "%", "deg",
+    ]
+    seen = {token.casefold() for token in tokens}
+    for token in extra:
+        text = str(token or "").strip()
+        if not text or not binding_kind(text) or text.casefold() in seen:
+            continue
+        tokens.append(text)
+        seen.add(text.casefold())
+    tokens.sort(key=len, reverse=True)
+    return "(?:" + "|".join(re.escape(token) for token in tokens) + ")"
+
 def _parse_text_number(raw: str) -> Optional[float]:
     text = str(raw).replace(",", "").strip()
     sci = re.fullmatch(r"([+-]?\d+(?:\.\d+)?)\s*[x×*]\s*10\s*\^\s*([+-]?\d+)", text)
@@ -1678,9 +1721,10 @@ def extract_calculation_params_from_text(
 ) -> Dict[str, Any]:
     """Pull labeled engineering numbers out of ask text. Never invents.
 
-    Matches As1500 / fy=420 / span 8m / W=10000 kN against this calculator's
-    signature + aliases. A leftover number+unit binds only when exactly one
-    still-missing required param has that unit (D7).
+    A labeled figure binds to that input. A figure written only as a unit
+    binds when exactly one still-missing required input declares that unit.
+    A bare number binds when exactly one still-missing required input
+    declares no unit of its own. Two figures of one kind bind to neither.
     """
     raw = str(text or "").strip()
     if not raw or fn is None:
@@ -1765,20 +1809,31 @@ def extract_calculation_params_from_text(
             found["code"] = "eurocode"
 
     declared_units = _declared_units(fn)
-    required_by_unit: Dict[str, List[str]] = {}
-    for row in describe_calculation_params(fn):
+    spec = _formula_spec(fn)
+    rows = describe_calculation_params(fn, name=spec.name if spec else None)
+    required_by_kind: Dict[str, List[str]] = {}
+    extra_units: List[str] = []
+    for row in rows:
+        token = str(
+            declared_units.get(row["name"]) or row.get("unit") or _unit_from_name(row["name"])
+            or ""
+        ).strip()
+        if token:
+            extra_units.append(token)
         if not row.get("required") or row["name"] in found:
             continue
-        # Match a figure's unit against the formula's own declaration first
+        # The formula's own declaration wins over a name suffix
         # (w_kn_m is declared kN/m; its name suffix reads as kN.m).
-        unit = _norm_unit_token(declared_units.get(row["name"]) or row.get("unit")
-                                or _unit_from_name(row["name"]))
-        if not unit:
-            continue
-        required_by_unit.setdefault(unit, []).append(row["name"])
+        kind = binding_kind(token)
+        required_by_kind.setdefault(kind, []).append(row["name"])
 
+    unit_pat = _figure_unit_pattern(extra_units)
+    boundary = r"(?![A-Za-z0-9])"
+    # A period or a comma-space is punctuation. A comma that is followed by
+    # a digit is still this number (a thousands group).
+    number = rf"(?<![\d,])({_TEXT_NUM_RE})(?!\d)(?!,\d)"
     leftover_rx = re.compile(
-        rf"({_TEXT_NUM_RE})\s*({_TEXT_UNIT_RE})\b",
+        rf"{number}\s*({unit_pat}){boundary}",
         re.IGNORECASE,
     )
     leftovers: Dict[str, List[float]] = {}
@@ -1792,9 +1847,26 @@ def extract_calculation_params_from_text(
         leftovers.setdefault(unit, []).append(num)
         consumed.append(match.span())
     for unit, nums in leftovers.items():
-        dests = required_by_unit.get(unit) or []
+        dests = [name for name in (required_by_kind.get(unit) or []) if name not in found]
         if len(nums) == 1 and len(dests) == 1:
             found[dests[0]] = nums[0]
+
+    bare_rx = re.compile(
+        rf"{number}(?!\s*(?:{unit_pat}){boundary})",
+        re.IGNORECASE,
+    )
+    bare_nums: List[float] = []
+    for match in bare_rx.finditer(raw):
+        if _overlaps(match.span()):
+            continue
+        num = _parse_text_number(match.group(1))
+        if num is None:
+            continue
+        bare_nums.append(num)
+        consumed.append(match.span())
+    bare_dests = [name for name in (required_by_kind.get("") or []) if name not in found]
+    if len(bare_nums) == 1 and len(bare_dests) == 1:
+        found[bare_dests[0]] = bare_nums[0]
     return found
 
 def _missing_required(fn: Any, bound: Dict[str, Any], name: Optional[str] = None) -> List[str]:
@@ -1898,6 +1970,7 @@ def format_user_calculation_answer(
     name: str,
     supplied: Dict[str, Any],
     envelope: Dict[str, Any],
+    user_text: str = "",
 ) -> str:
     """The calculator's result, its note, and a credit for the user's inputs.
 
@@ -1906,7 +1979,11 @@ def format_user_calculation_answer(
     a figure from the project documents.
     """
     from app.lib.formula_registry import get
-    from app.lib.source_labels import calculator_label, input_phrase
+    from app.lib.source_labels import (
+        calculator_default_lines,
+        calculator_label,
+        input_phrase,
+    )
 
     spec = get(name)
     result = envelope.get("result") if isinstance(envelope, dict) else None
@@ -1928,31 +2005,9 @@ def format_user_calculation_answer(
         for item in notes:
             if str(item).strip():
                 lines.append(str(item).strip())
-    supplied_keys = set(supplied or {})
-    try:
-        sig = _inspect.signature(spec.fn)
-    except (TypeError, ValueError):
-        sig = None
-    if sig is not None:
-        for key, param in sig.parameters.items():
-            if param.default is _inspect.Parameter.empty or key in supplied_keys:
-                continue
-            default = param.default
-            if isinstance(default, bool) or not isinstance(default, (int, float)):
-                continue
-            if float(default) == 0.0:
-                continue
-            echoed = result.get(key)
-            if isinstance(echoed, bool) or not isinstance(echoed, (int, float)):
-                continue
-            if abs(float(echoed) - float(default)) > 1e-9:
-                continue
-            unit = (spec.inputs or {}).get(key, "")
-            phrase = input_phrase(key, echoed, unit)
-            lines.append(
-                f"{phrase} is the platform calculator's default, "
-                "not a figure from the project documents."
-            )
+    lines.extend(calculator_default_lines(
+        name, result, user_text, stated_keys=set(supplied or {}),
+    ))
     lines.append("Source: " + calculator_label(name, supplied))
     return "\n".join(lines)
 

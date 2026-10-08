@@ -8337,7 +8337,7 @@ def _graft_supplied_input_calculation(
     invented = _invented_project_assumption(text or "", user, retrieval)
     if not missing and not invented:
         return text
-    replacement = format_user_calculation_answer(name, bound, env)
+    replacement = format_user_calculation_answer(name, bound, env, user_text=user)
     return replacement if replacement.strip() else text
 
 
@@ -8730,18 +8730,18 @@ def _platform_calculator_source(final_text: str) -> dict[str, Any] | None:
     raw = final_text or ""
     if CALCULATOR_SUFFIX.lower() not in raw.lower():
         return None
+    # The title is the registry label only: display name, the suffix, and
+    # the inputs in parentheses. Model prose that merely contains the
+    # suffix is not a title.
     match = re.search(
-        rf"(?im)^\s*Source:\s*(.+?{re.escape(CALCULATOR_SUFFIX)}\b.*)$",
+        rf"(?im)^[ \t]*Source:\s*"
+        rf"(?P<label>[^\n]+?{re.escape('— ' + CALCULATOR_SUFFIX)}"
+        rf"(?:\s*\([^)\n]*\))?)",
         raw,
     )
     if match is None:
-        match = re.search(
-            rf"(?i)Source:\s*(.+?{re.escape(CALCULATOR_SUFFIX)}\b[^\n]*)",
-            raw,
-        )
-    if match is None:
         return None
-    label = match.group(1).strip().rstrip(".")
+    label = match.group("label").strip().rstrip(".")
     return {
         "doc_id": "",
         "doc_name": label,
@@ -8985,11 +8985,6 @@ def _build_sources_from_audit(
             rows = ([calc_row] + matched) if calc_row else matched
             return _sources_one_contract(rows)
 
-    # A calculator credit is the source of the figure. Do not fill the
-    # panel with a filename mention or the top retrieved chunks.
-    if calc_row:
-        return [calc_row]
-
     # 2) Filename-mention fallback: the model may have named a source in
     #    prose without a formal citation marker. If any injected filename
     #    appears in the answer, surface the highest-scoring chunk of that
@@ -9014,8 +9009,16 @@ def _build_sources_from_audit(
             if mentioned and doc_id not in seen_mentions:
                 seen_mentions.add(doc_id)
                 mention_hits.append(_format(c, name))
+        if calc_row:
+            # The calculator is the source of the figure. A document the
+            # answer actually names stays beside it. Unnamed retrieval
+            # does not fill the panel.
+            return _sources_one_contract([calc_row] + mention_hits[:3])
         if mention_hits:
             return _sources_one_contract(mention_hits[:3])
+
+    if calc_row:
+        return [calc_row]
 
     # 3) Final fallback: top-3 retrieved chunks by score.
     # Deterministic total order: score desc, then chunk_id asc so two chunks
