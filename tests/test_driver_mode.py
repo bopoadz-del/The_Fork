@@ -343,3 +343,20 @@ def test_a_request_that_does_not_ask_keeps_the_old_path(monkeypatch):
         text = client.post("/v1/chat/stream", json={"message": "hello", "history": []},
                            headers={"Authorization": "Bearer cb_dev_key"}).text
     assert '"mode": "driver"' not in text
+
+
+def test_the_exit_check_reads_the_document_searchs_real_result_shape():
+    """search_project_documents returns {document_id, filename, chunk, score,
+    origin}; figures backed by such a passage stay (live 2026-10-08: they were
+    all stripped while the reader looked for 'text')."""
+    real = {"ok": True, "result": {"results": [
+        {"document_id": "d-17", "filename": "structural spec.pdf", "score": 0.82, "origin": "own",
+         "chunk": "Minimum cover to reinforcement in footings cast against earth: 75 mm."}]}}
+    msgs = [
+        {"role": "user", "content": "What cover does a footing need?"},
+        {"role": "assistant", "content": "", "tool_calls": [_call("search_project_documents", {"query": "cover"}, "c1")]},
+        {"role": "tool", "name": "search_project_documents", "tool_call_id": "c1", "content": json.dumps(real)},
+    ]
+    kept, trail = loop.exit_check("Footings cast against earth need 75 mm cover (structural spec).", msgs)
+    assert "75 mm" in kept
+    assert any(e.get("figure") == "75 mm" for e in trail)

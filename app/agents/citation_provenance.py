@@ -392,17 +392,24 @@ def _tool_passage_records(messages: Iterable[dict[str, Any]] | None) -> list[Evi
         result = payload.get("result") if isinstance(payload, dict) else None
         hits = result.get("results") if isinstance(result, dict) else None
         for hit in hits if isinstance(hits, list) else []:
-            if not isinstance(hit, dict) or not str(hit.get("text") or "").strip():
+            if not isinstance(hit, dict):
+                continue
+            # The document search returns {document_id, filename, chunk,
+            # score, origin}; other tools may say text / doc_name / doc_id.
+            body = str(hit.get("chunk") or hit.get("text") or hit.get("content") or "")
+            if not body.strip():
                 continue
             page = hit.get("page")
-            layer = str(hit.get("layer") or "") or None
+            layer = str(hit.get("layer") or hit.get("origin") or "") or None
+            doc_id = hit.get("document_id") or hit.get("doc_id")
             records.append(EvidenceRecord(
                 kind="retrieval",
-                text=str(hit["text"]),
-                source_name=str(hit.get("doc_name") or hit.get("original_name") or hit.get("doc_id") or ""),
+                text=body,
+                source_name=str(hit.get("filename") or hit.get("doc_name") or hit.get("original_name")
+                                or doc_id or ""),
                 source_class="general_knowledge" if layer == "general_knowledge" else "project_corpus",
                 chunk_index=hit.get("chunk_index") if isinstance(hit.get("chunk_index"), int) else None,
-                doc_id=str(hit.get("doc_id")) if hit.get("doc_id") else None,
+                doc_id=str(doc_id) if doc_id else None,
                 page=page if isinstance(page, int) else None,
                 layer=layer,
             ))
