@@ -261,4 +261,4 @@ jobs:
 
       - name: Frontend unit tests (node --test, no framework)
         working-directory: frontend
-        run: node --test src/lib/reconnect.test.mjs src/lib/streamOutcome.test.mjs
+        run: node --test src/lib/reconnect.test.mjs src/lib/streamOutcome.test.mjs src/chat/SourcesList.visible.test.mjs

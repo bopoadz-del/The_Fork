@@ -137,9 +137,3 @@
   color: var(--text-primary);
   font-weight: 600;
 }
-
-.sources-list__class-code {
-  color: var(--text-secondary);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 10px;
-}

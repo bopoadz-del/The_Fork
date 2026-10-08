@@ -13,7 +13,8 @@
  * template). Clicking a row opens that document in the preview pane.
  */
 import { FileText } from 'lucide-react'
-import { sourceClassLabel } from './sourceClassLabels'
+import { visibleSourceClassLabel } from './sourceClassLabels'
+import { plainMetadata, textLeaksInternalCode } from './userFacingText'
 import './SourcesList.css'
 
 export interface CitedSource {
@@ -71,7 +72,7 @@ export default function SourcesList({ sources, streaming, activeDocId, onOpenSou
                     }
                     onClick={() => onOpenSource?.(s)}
                     aria-pressed={isActive}
-                    aria-label={`Preview ${s.doc_name || s.doc_id}`}
+                    aria-label={`Preview ${visibleDocumentName(s)}`}
                   >
                     <SourceRow source={s} />
                   </button>
@@ -89,30 +90,40 @@ export default function SourcesList({ sources, streaming, activeDocId, onOpenSou
   )
 }
 
+function visibleDocumentName(s: CitedSource): string {
+  const name = (s.doc_name || '').trim()
+  if (name) return name
+  const id = (s.doc_id || '').trim()
+  if (id && !textLeaksInternalCode(id)) return id
+  return 'Document'
+}
+
 function SourceRow({ source: s }: { source: CitedSource }) {
   const sourceClass = (s.source_class || '').trim()
-  const classLabel = s.source_class_label || sourceClassLabel(sourceClass)
+  const classLabel = visibleSourceClassLabel(sourceClass, s.source_class_label)
+  const docName = visibleDocumentName(s)
+  const page = plainMetadata(s.page_or_section || '')
+  const layer = s.layer_label ? plainMetadata(s.layer_label) : ''
   return (
     <>
       <span className={`sources-list__chip sources-list__chip--${s.confidence.toLowerCase()}`}>
         {s.confidence}
       </span>
       <div className="sources-list__body">
-        <div className="sources-list__doc" title={s.doc_name}>
-          {s.doc_name || s.doc_id}
+        <div className="sources-list__doc" title={docName}>
+          {docName}
         </div>
         <div className="sources-list__ref">
-          {s.page_or_section}
-          {s.layer_label ? ` · ${s.layer_label}` : ''}
+          {page}
+          {layer ? ` · ${layer}` : ''}
         </div>
-        {sourceClass ? (
+        {sourceClass && classLabel ? (
           <div
             className="sources-list__class"
             data-source-class={sourceClass}
             data-testid="source-class"
           >
             <span className="sources-list__class-label">{classLabel}</span>
-            <span className="sources-list__class-code">{`class=${sourceClass}`}</span>
           </div>
         ) : null}
       </div>

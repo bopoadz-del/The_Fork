@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 
 from app.agents.runtime import _build_sources_from_audit
-from app.core.rag.source_class import SOURCE_CLASS_LABELS, classify, label_for
+from app.core.rag.source_class import SOURCE_CLASS_LABELS, classify, label_for, visible_label
 from app.routers.exports import _render_message_docx
 
 CATALOG = json.loads(
@@ -47,13 +47,15 @@ def test_frontend_label_map_matches_the_backend():
 
 
 def test_sources_list_renders_class_in_the_dom_contract():
-    """Component-level: the Sources DOM must carry class= and the label."""
+    """The machine id stays on a data attribute. The visible row is the label."""
     src = SOURCES_LIST.read_text(encoding="utf-8")
     assert "data-source-class" in src
     assert "data-testid=\"source-class\"" in src
-    assert "class=${sourceClass}" in src or "class={sourceClass}" in src
+    assert "class=${sourceClass}" not in src
+    assert "sources-list__class-code" not in src
+    assert "data-source-class={sourceClass}" in src
     assert "source_class_label" in src
-    assert "sourceClassLabel" in src
+    assert "visibleSourceClassLabel" in src
 
 
 def _audit(chunks):
@@ -92,17 +94,23 @@ def _a5_chunk():
     }
 
 
+def _visible(html: str) -> str:
+    """Text a person reads. Attribute values are not text."""
+    import re
+
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
+
+
 def _sources_dom(sources: list[dict]) -> str:
     """The Sources row markup the React component emits (string-equivalent)."""
     parts = ['<div class="sources-list" data-testid="sources-block">']
     for s in sources:
         cls = s.get("source_class") or ""
-        label = s.get("source_class_label") or label_for(cls)
+        label = visible_label(cls, s.get("source_class_label"))
         parts.append(
             f'<div class="sources-list__class" data-source-class="{cls}" '
             f'data-testid="source-class">'
             f'<span class="sources-list__class-label">{label}</span>'
-            f'<span class="sources-list__class-code">class={cls}</span>'
             f"</div>"
         )
     parts.append("</div>")
@@ -119,9 +127,11 @@ def test_g1_shaped_turn_renders_class_template_in_sources_dom(monkeypatch):
     assert sources[0]["source_class"] == "template"
     assert sources[0]["source_class_label"] == "template"
     dom = _sources_dom(sources)
+    visible = _visible(dom)
     assert 'data-source-class="template"' in dom
-    assert "class=template" in dom
     assert ">template<" in dom
+    assert "class=template" not in visible
+    assert "class=" not in visible
 
 
 def test_a5_shaped_turn_renders_class_knowledge_base_in_sources_dom(monkeypatch):
@@ -134,9 +144,11 @@ def test_a5_shaped_turn_renders_class_knowledge_base_in_sources_dom(monkeypatch)
     assert sources[0]["source_class"] == "knowledge_base"
     assert sources[0]["source_class_label"] == "knowledge base"
     dom = _sources_dom(sources)
+    visible = _visible(dom)
     assert 'data-source-class="knowledge_base"' in dom
-    assert "class=knowledge_base" in dom
-    assert "knowledge base" in dom
+    assert "class=knowledge_base" not in visible
+    assert "knowledge_base" not in visible
+    assert "knowledge base" in visible
 
 
 def test_g1_and_a5_class_strings_reach_the_docx_footer_xml(monkeypatch):
@@ -158,12 +170,15 @@ def test_g1_and_a5_class_strings_reach_the_docx_footer_xml(monkeypatch):
         part = next(n for n in z.namelist() if n.startswith("word/footer") and n.endswith(".xml"))
         footer = z.read(part).decode()
         body = z.read("word/document.xml").decode()
-    assert "class=template" in footer
+    assert "class=template" not in footer
     assert "template" in footer
-    assert "class=knowledge_base" in footer
+    assert "class=knowledge_base" not in footer
+    assert "knowledge_base" not in footer
     assert "knowledge base" in footer
-    assert "class=template" in body
-    assert "class=knowledge_base" in body
+    assert "class=template" not in body
+    assert "class=knowledge_base" not in body
+    assert "knowledge_base" not in body
+    assert "knowledge base" in body
 
 
 def test_glass_consumes_classify_it_does_not_retarget_a_class():
@@ -171,3 +186,10 @@ def test_glass_consumes_classify_it_does_not_retarget_a_class():
     assert classify("own", "S1_contract_data.md", "Schedule 10: Not Used") == "project_corpus"
     assert label_for("project_corpus") == "this contract"
     assert label_for("master_corpus") == "master corpus"
+
+
+def test_an_unseen_class_is_words_not_an_id():
+    assert label_for("alpha_beta") == "alpha beta"
+    assert visible_label("alpha_beta", "alpha_beta") == "alpha beta"
+    assert visible_label("project_corpus", "project_corpus") == "this contract"
+    assert "class=" not in label_for("alpha_beta")

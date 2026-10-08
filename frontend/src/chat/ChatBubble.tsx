@@ -19,6 +19,7 @@ import { AlertTriangle, Download } from 'lucide-react'
 import './ChatBubble.css'
 
 import type { ChatMessage, ExportDescriptor } from './types'
+import { plainMetadata } from './userFacingText'
 
 interface Props {
   message: ChatMessage
@@ -37,6 +38,7 @@ interface Props {
 function ChatBubble({ message, onDownload, onExport }: Props) {
   const isUser = message.role === 'user'
   const exports = message.exports ?? []
+  const toolStatus = message.toolStatus ? plainMetadata(message.toolStatus) : ''
 
   if (message.error) {
     return (
@@ -52,9 +54,9 @@ function ChatBubble({ message, onDownload, onExport }: Props) {
       {!isUser && <div className="chat-bubble__avatar" aria-hidden="true" title="The SHovel">TSH</div>}
 
       <div className="chat-bubble__body">
-        {message.toolStatus && (
+        {toolStatus && (
           <div className="chat-bubble__tool-status" aria-live="polite">
-            {message.toolStatus}
+            {toolStatus}
           </div>
         )}
 
