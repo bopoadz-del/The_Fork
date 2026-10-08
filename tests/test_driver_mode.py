@@ -400,3 +400,25 @@ def test_the_exit_check_reads_a_snippet_result():
     ]
     kept, _trail, report = loop.exit_check("Footings need 75 mm cover.", msgs)
     assert "75 mm" in kept and report["passages_read"] == 1
+
+
+def test_the_driver_reads_the_project_profile_off_the_event_loop(monkeypatch):
+    import threading
+
+    _no_retrieval(monkeypatch)
+    seen_threads = []
+
+    def spy_profile(project_id, user_id):
+        seen_threads.append(threading.current_thread())
+        return "Project profile\nname: synthetic"
+
+    monkeypatch.setattr(context, "project_profile", spy_profile)
+    monkeypatch.setattr(llm, "call", _scripted([{"content": "ok"}], []))
+
+    async def go():
+        loop_thread = threading.current_thread()
+        events = [e async for e in loop.stream(_agent(), user_message="hi", project_id="p")]
+        return loop_thread, events
+
+    loop_thread, _events = asyncio.run(go())
+    assert seen_threads and all(t is not loop_thread for t in seen_threads)
