@@ -559,3 +559,11 @@ def test_a_streamed_answer_carries_the_calculator_credit_once(monkeypatch):
     assert "19.2 m3" in text and "20.16 m3" in text
     assert text.count("construction_calc") <= 1  # the credit, at most once, never per sentence
     assert "m3.With" not in text and "m3.Check" not in text
+
+
+def test_streamed_pieces_keep_their_line_breaks(monkeypatch):
+    _no_retrieval(monkeypatch)
+    answer = "Summary line.\n\n- First point.\n- Second point.\n\nClosing note."
+    monkeypatch.setattr(llm, "call", _scripted([{"content": answer}], []))
+    events = _run(_agent(), user_message="list it")
+    assert "".join(e["content"] for e in events if e["type"] == "token") == answer

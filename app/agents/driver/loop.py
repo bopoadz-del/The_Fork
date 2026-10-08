@@ -87,7 +87,15 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
 
     def _release(piece: str) -> Optional[Dict[str, Any]]:
         """Exit-check one finished piece of the answer and hand it out."""
+        if not piece.strip():  # layout only (a blank line): nothing to check
+            sent.append(piece)
+            return {"type": "token", "content": piece}
         checked, trail, report = exit_check(piece, _trail())
+        # The checks tidy whitespace; the piece's own ending (a line break
+        # between list items or paragraphs) belongs to the answer's layout.
+        ending = piece[len(piece.rstrip()):]
+        if checked.strip():
+            checked = checked.rstrip() + ending
         sent.append(checked)
         provenance.extend(trail)
         check["figures_removed"].extend(report["figures_removed"])
