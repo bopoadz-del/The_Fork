@@ -360,3 +360,27 @@ def test_the_exit_check_reads_the_document_searchs_real_result_shape():
     kept, trail = loop.exit_check("Footings cast against earth need 75 mm cover (structural spec).", msgs)
     assert "75 mm" in kept
     assert any(e.get("figure") == "75 mm" for e in trail)
+
+
+def test_the_exit_check_reads_a_tool_result_whole_even_when_the_model_got_it_cut(monkeypatch):
+    _no_retrieval(monkeypatch)
+    filler = "x" * (loop._TOOL_RESULT_CHARS + 5000)
+    big = {"ok": True, "result": {"results": [
+        {"document_id": "d-1", "filename": "a.pdf", "chunk": filler, "score": 0.9},
+        {"document_id": "d-2", "filename": "b.pdf", "chunk": "Retention is 5 % of each certificate.", "score": 0.8}]}}
+    seen = []
+    replies = [
+        {"content": "", "tool_calls": [_call("search_project_documents", {"query": "retention"}, "c1")]},
+        {"content": "Retention is 5 % of each certificate."},
+    ]
+    monkeypatch.setattr(llm, "call", _scripted(replies, seen))
+    agent = _agent()
+
+    async def fake_tool(call, *a, **k):
+        return big
+
+    monkeypatch.setattr(agent, "_run_tool_call", fake_tool)
+    events = _run(agent, user_message="What is the retention?", project_id="synthetic-proj")
+    assert len(seen[1]["messages"][-1]["content"]) == loop._TOOL_RESULT_CHARS  # the model's copy is cut
+    text = "".join(e["content"] for e in events if e["type"] == "token")
+    assert "5 %" in text  # the exit check saw the whole result
