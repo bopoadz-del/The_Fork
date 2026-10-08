@@ -166,11 +166,32 @@ def classify_chunk(chunk: Any) -> str:
     )
 
 
+_SNAKE = re.compile(r"\b[a-z]+_[a-z_]+\b")
+_KEY_VALUE = re.compile(r"\b\w+=\w+")
+
+
+def _words(token: str) -> str:
+    """``alpha_beta`` → "alpha beta". The machine id is not a label."""
+    return " ".join(part for part in (token or "").replace("_", " ").split() if part)
+
+
 def label_for(source_class: str | None) -> str:
     """Human wording for a class already decided by ``classify``.
 
-    Does not re-tag. Unknown classes fall back to the machine token so a
-    new class still appears at the glass instead of going blank.
+    Does not re-tag. A class this map does not name yet is still shown,
+    as words (underscores become spaces), never as the machine token.
     """
     key = (source_class or DEFAULT_CLASS).strip().lower()
-    return SOURCE_CLASS_LABELS.get(key, key or SOURCE_CLASS_LABELS[DEFAULT_CLASS])
+    mapped = SOURCE_CLASS_LABELS.get(key)
+    if mapped:
+        return mapped
+    return _words(key) or SOURCE_CLASS_LABELS[DEFAULT_CLASS]
+
+
+def visible_label(source_class: str | None, provided: str | None = None) -> str:
+    """The words a person reads. A provided label that is itself an id
+    (snake_case or key=value) is not shown; the plain label is."""
+    label = (provided or "").strip()
+    if label and not _SNAKE.search(label) and not _KEY_VALUE.search(label):
+        return label
+    return label_for(source_class)

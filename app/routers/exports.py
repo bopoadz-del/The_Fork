@@ -93,10 +93,11 @@ def _public_base_url_for(request: Any = None) -> str:
 
 
 def _footer_source_class_text(sources: list | None) -> str:
-    """``class=template (template)`` tokens for the page footer XML."""
+    """Plain source-class words for the page footer. The machine id stays
+    off the page; ``class=project_corpus`` is not a label a reader sees."""
     if not sources:
         return ""
-    from app.core.rag.source_class import label_for
+    from app.core.rag.source_class import visible_label
 
     seen: list[str] = []
     for s in sources:
@@ -105,10 +106,9 @@ def _footer_source_class_text(sources: list | None) -> str:
         cls = (s.get("source_class") or "").strip()
         if not cls:
             continue
-        label = (s.get("source_class_label") or label_for(cls)).strip()
-        token = f"class={cls} ({label})"
-        if token not in seen:
-            seen.append(token)
+        label = visible_label(cls, s.get("source_class_label"))
+        if label and label not in seen:
+            seen.append(label)
     return "; ".join(seen)
 
 
@@ -1132,17 +1132,16 @@ def _render_message_docx(
     doc.add_paragraph()
     doc.add_heading("Sources", level=2)
     if sources:
-        from app.core.rag.source_class import label_for
+        from app.core.rag.source_class import visible_label
 
         for s in sources:
             if not isinstance(s, dict):
                 continue
             name = s.get("doc_name") or s.get("doc_id") or "source"
             cls = (s.get("source_class") or "").strip()
-            label = (s.get("source_class_label") or label_for(cls)).strip()
             bit = f"{name}"
             if cls:
-                bit += f" — {label} (class={cls})"
+                bit += f" — {visible_label(cls, s.get('source_class_label'))}"
             doc.add_paragraph(bit)
     else:
         doc.add_paragraph(

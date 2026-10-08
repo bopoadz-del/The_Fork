@@ -4,7 +4,10 @@
  *
  * Do not re-classify here. The backend already tagged the chunk (#468);
  * this file only turns the machine class into the operator-facing label.
+ * An unseen class is read as words (underscores become spaces). The
+ * machine id is never the label.
  */
+import { textLeaksInternalCode, wordsForIdentifier } from './userFacingText'
 
 export const SOURCE_CLASS_LABELS: Record<string, string> = {
   project_corpus: 'this contract',
@@ -15,5 +18,17 @@ export const SOURCE_CLASS_LABELS: Record<string, string> = {
 
 export function sourceClassLabel(sourceClass?: string | null): string {
   const key = (sourceClass || 'project_corpus').trim().toLowerCase()
-  return SOURCE_CLASS_LABELS[key] || key
+  const mapped = SOURCE_CLASS_LABELS[key]
+  if (mapped) return mapped
+  return wordsForIdentifier(key) || SOURCE_CLASS_LABELS.project_corpus
+}
+
+/** The words on the Sources card. A label that is itself an id is not shown. */
+export function visibleSourceClassLabel(
+  sourceClass?: string | null,
+  provided?: string | null,
+): string {
+  const given = (provided || '').trim()
+  if (given && !textLeaksInternalCode(given)) return given
+  return sourceClassLabel(sourceClass)
 }

@@ -19,6 +19,7 @@ import ChatList from '../chat/ChatList'
 import ChatComposer, { type AgentOption } from '../chat/ChatComposer'
 import SourcesList from '../chat/SourcesList'
 import { sanitizeAssistantContent } from '../chat/toolJsonGuard'
+import { activityForTool, plainMetadata } from '../chat/userFacingText'
 import { INTERRUPTED_MESSAGE, isInterruptedStream } from '../lib/streamOutcome'
 import DocumentGraph from '../documents/DocumentGraph'
 import './pages.css'
@@ -1025,12 +1026,13 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
         }
         case 'delegate_to_agent': {
           const agent = typeof args['agent_name'] === 'string' ? args['agent_name'] : ''
-          return agent ? `Delegating to ${agent}…` : 'Delegating to specialist…'
+          const shown = plainMetadata(agent)
+          return shown ? `Delegating to ${shown}…` : 'Delegating to specialist…'
         }
         case 'remember_fact':
           return 'Saving fact to memory…'
         default:
-          return `Running ${toolName}…`
+          return activityForTool(toolName)
       }
     }
 
