@@ -31,7 +31,7 @@
  *   POST /v1/admin/debug/project-reindex          → re-index a project
  *   DELETE /v1/projects/{id}                      → delete a project
  */
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   RefreshCw, FolderTree, Search, Plug, LogOut, ArrowLeft,
@@ -138,6 +138,8 @@ export default function AdminPage() {
           refreshKey={refreshKey}
           onPickProject={(pid) => navigate(`/projects/${pid}`)}
         />
+
+        <DriverModeSection />
 
         <footer className="admin-main__footer">
           <button
@@ -893,6 +895,88 @@ function ApprovedProjectsSection({
             })}
           </tbody>
         </table>
+      )}
+    </section>
+  )
+}
+
+
+// ─── Driver mode (per-user switch) ───────────────────────────────────────
+// Lets an admin try F-DRIVER's driver mode for one account from the real
+// UI. Honoured only when the server runs DRIVER_MODE=request.
+
+interface DriverModeStatus {
+  mode: string
+  users: Array<{ email: string; id: string }>
+}
+
+function DriverModeSection() {
+  const [status, setStatus] = useState<DriverModeStatus | null>(null)
+  const [email, setEmail] = useState('')
+  const [message, setMessage] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await apiGet<DriverModeStatus>('/v1/admin/driver-mode'))
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : 'Could not load driver mode status.')
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const setFor = async (target: string, on: boolean) => {
+    if (!target.trim()) return
+    setBusy(true)
+    setMessage(null)
+    try {
+      await apiPost('/v1/admin/driver-mode', { email: target.trim(), on })
+      setMessage(`Driver mode ${on ? 'on' : 'off'} for ${target.trim()}.`)
+      await load()
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : 'Could not change driver mode.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="admin-section">
+      <header className="admin-section__head">
+        <h2 className="admin-section__title">Driver mode</h2>
+      </header>
+      {status && status.mode !== 'request' && (
+        <p className="admin-empty">
+          The server runs DRIVER_MODE={status.mode}; the per-user switch takes effect only with DRIVER_MODE=request.
+        </p>
+      )}
+      <div className="admin-cta">
+        <label htmlFor="driver-mode-email">User email</label>
+        <input
+          id="driver-mode-email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="user@example.com"
+        />
+        <button type="button" className="admin-btn admin-btn--primary" disabled={busy}
+                onClick={() => void setFor(email, true)}>Turn on</button>
+        <button type="button" className="admin-btn" disabled={busy}
+                onClick={() => void setFor(email, false)}>Turn off</button>
+      </div>
+      {message && <p className="admin-alert">{message}</p>}
+      {status && (
+        <ul className="admin-list">
+          {status.users.length === 0 && <li>No user has driver mode on.</li>}
+          {status.users.map((u) => (
+            <li key={u.id}>
+              {u.email}{' '}
+              <button type="button" className="admin-btn" disabled={busy}
+                      onClick={() => void setFor(u.email, false)}>Turn off</button>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   )
