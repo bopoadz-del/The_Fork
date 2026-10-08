@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -14,6 +15,10 @@ from app.core import turn_progress
 from app.core.offload import off_loop
 
 _LOG = logging.getLogger(__name__)
+
+#: Where a streamed answer may be cut into checkable pieces: after a
+#: sentence's closing mark, or at a line break (list items, table rows).
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n")
 
 #: How much of one tool result the model is given.
 _TOOL_RESULT_CHARS = 20000
@@ -70,17 +75,57 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     exports: List[Dict[str, Any]] = []
     yield {"type": "start", "mode": "driver", "agent": agent.name}
     yield turn_progress.event("writing")
-    answer: Optional[str] = None
+    answer_done = False
+    provenance: List[Dict[str, Any]] = []
+    check: Dict[str, Any] = {"figures_removed": [], "passages_read": 0}
+
+    def _trail() -> List[Dict[str, Any]]:
+        whole = iter(evidence)  # same order as the tool messages in msgs
+        return [next(whole) if m.get("role") == "tool" else m for m in msgs]
+
+    def _release(piece: str) -> Optional[Dict[str, Any]]:
+        """Exit-check one finished piece of the answer and hand it out."""
+        checked, trail, report = exit_check(piece, _trail())
+        provenance.extend(trail)
+        check["figures_removed"].extend(report["figures_removed"])
+        check["passages_read"] = report["passages_read"]
+        return {"type": "token", "content": checked} if checked.strip() else None
+
+    step = 0
     for step in range(driver.max_steps()):
         offered = tools.offered(agent, project_id, hat, disciplines)
-        reply = await llm.call(agent, msgs, offered, model=driver.model())
-        if reply["status"] != "success":
-            yield {"type": "error", "message": reply["error"]}
+        # Streamed: each finished sentence is checked and sent while the model
+        # is still writing. One sentence is held back, so a short preamble
+        # ("Let me look that up.") is dropped when the reply turns out to be
+        # tool calls.
+        buffer, held, result = "", None, None
+        async for kind, value in llm.stream(agent, msgs, offered, model=driver.model()):
+            if kind == "done":
+                result = value
+                break
+            buffer += value
+            while True:
+                cut = _SENTENCE_END.search(buffer)
+                if cut is None:
+                    break
+                sentence, buffer = buffer[:cut.end()], buffer[cut.end():]
+                if held is not None:
+                    event = _release(held)
+                    if event:
+                        yield event
+                held = sentence
+        if result is None or result["status"] != "success":
+            yield {"type": "error", "message": (result or {}).get("error") or "The language model did not answer."}
             return
-        message = reply["message"]
+        message = result["message"]
         calls = message.get("tool_calls") or []
         if not calls:
-            answer = (message.get("content") or "").strip()
+            for piece in (held, buffer):
+                if piece:
+                    event = _release(piece)
+                    if event:
+                        yield event
+            answer_done = True
             break
         msgs.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
         for call in calls:
@@ -92,32 +137,30 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 if chosen in disciplines:
                     hat = chosen
                     msgs[0] = await off_loop(context.system_message, project_id, user_id, hat)
-                    result: Dict[str, Any] = {"ok": True, "hat": hat}
+                    result_of_call: Dict[str, Any] = {"ok": True, "hat": hat}
                 else:
-                    result = {"ok": False, "error": f"No hat named {chosen!r}; choose one of {sorted(disciplines)}."}
+                    result_of_call = {"ok": False,
+                                      "error": f"No hat named {chosen!r}; choose one of {sorted(disciplines)}."}
             elif name == routes.RUN_WORKFLOW:
                 used.append(f"{name}:{args.get('workflow')}")
-                result = await routes.run(args, user_message, project_id, user_id, conversation_id)
-                exports.extend(result.get("exports") or [])
+                result_of_call = await routes.run(args, user_message, project_id, user_id, conversation_id)
+                exports.extend(result_of_call.get("exports") or [])
             else:
                 used.append(name)
-                result = await agent._run_tool_call(call, api_key, project_id, conversation_id,
-                                                    user_message=user_message, history=history)
-            yield {"type": "tool_result", "tool": name, "name": name, "ok": bool(result.get("ok", True))}
-            full = json.dumps(result, default=str)
+                result_of_call = await agent._run_tool_call(call, api_key, project_id, conversation_id,
+                                                            user_message=user_message, history=history)
+            yield {"type": "tool_result", "tool": name, "name": name, "ok": bool(result_of_call.get("ok", True))}
+            full = json.dumps(result_of_call, default=str)
             tool_msg = {"role": "tool", "name": name, "tool_call_id": call.get("id") or name}
             # The model gets at most _TOOL_RESULT_CHARS of a result; the exit
             # check reads it whole -- cut, the JSON no longer parses and every
             # figure it backs looks unsourced (live: 23 figures removed).
             msgs.append({**tool_msg, "content": full[:_TOOL_RESULT_CHARS]})
             evidence.append({**tool_msg, "content": full})
-    if answer is None:
-        answer = _STOP
-    whole = iter(evidence)  # same order as the tool messages in msgs
-    trail = [next(whole) if m.get("role") == "tool" else m for m in msgs]
-    answer, provenance, check = exit_check(answer, trail)
-    for word in answer.split(" "):
-        yield {"type": "token", "content": word + " "}
+    if not answer_done:
+        event = _release(_STOP)
+        if event:
+            yield event
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "provenance": provenance, "exit_check": check,
            "steps": step + 1, "elapsed_s": round(time.monotonic() - t0, 2)}
