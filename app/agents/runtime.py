@@ -1840,7 +1840,9 @@ async def _predispatch_construction_draft(
     try:
         user_msg, _history = _messages_user_and_history(messages)
         detect = (operator_text or user_msg or "").strip()
-        if not detect or not want_fn(detect):
+        # The deliverable checks scan the message with many patterns: off the
+        # event loop, like the other detectors (CI: a 251-309 ms loop stall here).
+        if not detect or not (await _off_loop(want_fn, detect)):
             return None
         user_msg = detect
         from app.dependencies import get_block_instance
