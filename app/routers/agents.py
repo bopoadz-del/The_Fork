@@ -278,8 +278,10 @@ def _bound_history(history: object) -> list:
 
 @router.post("/v1/agents/{name}/chat/stream")
 async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(require_user)):
+    from app.agents import driver
     from app.core import turn_timing
     turn_timing.mark_arrival()
+    driver.mark_request(request.headers)
     agent = get_agent(name)
     if not agent or not caller_may_use_agent(agent, auth.get("role")):
         raise HTTPException(404, f"Agent '{name}' not found")

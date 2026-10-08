@@ -922,8 +922,10 @@ async def chat_v1(request: ChatRequest, auth: dict = Depends(require_user)):
 @router.post("/v1/chat/stream")
 async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     """Streaming chat endpoint (v1 API) with flexible JSON body."""
+    from app.agents import driver
     from app.core import turn_timing
     turn_timing.mark_arrival()
+    driver.mark_request(request.headers)
     if "chat" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Chat block not available")
 

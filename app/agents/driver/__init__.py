@@ -8,13 +8,36 @@ is reached through tools. Steps and model are configuration.
 """
 from __future__ import annotations
 
+import contextvars
 import os
+from typing import Any, Mapping
 
 _TRUTHY = ("1", "true", "yes", "on")
+#: The header a request carries to ask for driver mode when DRIVER_MODE=request.
+REQUEST_HEADER = "x-fork-driver"
+_REQUESTED: "contextvars.ContextVar[bool]" = contextvars.ContextVar("driver_requested", default=False)
+
+
+def mode() -> str:
+    """``off`` (default), ``on`` (every turn) or ``request`` (only turns that
+    ask with the ``X-Fork-Driver: on`` header -- driver mode measured on live
+    without changing anyone else's turn)."""
+    raw = (os.getenv("DRIVER_MODE") or "").strip().lower()
+    if raw in _TRUTHY:
+        return "on"
+    return "request" if raw == "request" else "off"
+
+
+def mark_request(headers: Mapping[str, Any]) -> None:
+    """Call at a turn's arrival: remember whether this request asked for
+    driver mode (honoured only when DRIVER_MODE=request)."""
+    asked = str(headers.get(REQUEST_HEADER) or "").strip().lower() in _TRUTHY
+    _REQUESTED.set(mode() == "request" and asked)
 
 
 def enabled() -> bool:
-    return (os.getenv("DRIVER_MODE") or "").strip().lower() in _TRUTHY
+    m = mode()
+    return m == "on" or (m == "request" and _REQUESTED.get())
 
 
 def max_steps() -> int:

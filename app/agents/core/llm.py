@@ -581,7 +581,10 @@ async def _stream_synthesis(
     if usage is not None:
         try:
             from app.core import usage_tracker
-            usage_tracker.record(
+            from app.core.offload import off_loop
+            # A database write: off the event loop (live: 628 ms stall at 10 users).
+            await off_loop(
+                usage_tracker.record,
                 user_id=user_id,
                 agent_name=self.name,
                 provider=cfg.get("provider", ""),

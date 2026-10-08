@@ -295,3 +295,51 @@ def test_a_driver_answer_passes_the_exit_check_before_it_streams(monkeypatch):
     events = _run(_agent(), user_message="How many bags of cement?")
     assert calls == ["It needs 4,217 bags."]
     assert "provenance" in events[-1]
+
+
+@pytest.mark.parametrize("mode,header,expected", [
+    ("", "on", False), ("request", "", False), ("request", "on", True),
+    ("1", "", True), ("request", "nope", False),
+])
+def test_driver_mode_can_be_asked_for_per_request(monkeypatch, mode, header, expected):
+    monkeypatch.setenv("DRIVER_MODE", mode)
+    driver.mark_request({driver.REQUEST_HEADER: header} if header else {})
+    assert driver.enabled() is expected
+    driver.mark_request({})
+
+
+def test_only_the_request_that_asks_takes_the_driver(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    _no_retrieval(monkeypatch)
+    monkeypatch.setenv("DRIVER_MODE", "request")
+    seen = []
+    monkeypatch.setattr(llm, "call", _scripted([{"content": "From the driver."}], seen))
+    body = {"message": "hello", "project_id": None, "history": []}
+    h = {"Authorization": "Bearer cb_dev_key"}
+    with TestClient(app) as client:
+        asked = client.post("/v1/chat/stream", json=body, headers={**h, "X-Fork-Driver": "on"}).text
+    events = [json.loads(line[len("data: "):]) for line in asked.split("\n") if line.startswith("data: ")]
+    assert any(e.get("type") == "start" and e.get("mode") == "driver" for e in events)
+    assert "From the driver." in "".join(e.get("content", "") for e in events if e.get("type") == "token")
+    assert len(seen) == 1
+
+
+def test_a_request_that_does_not_ask_keeps_the_old_path(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setenv("DRIVER_MODE", "request")
+
+    async def no_driver(*a, **k):
+        raise AssertionError("the driver ran for a request that did not ask")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(loop, "stream", no_driver)
+    with TestClient(app) as client:
+        text = client.post("/v1/chat/stream", json={"message": "hello", "history": []},
+                           headers={"Authorization": "Bearer cb_dev_key"}).text
+    assert '"mode": "driver"' not in text
