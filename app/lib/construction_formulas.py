@@ -1810,6 +1810,152 @@ def _missing_required(fn: Any, bound: Dict[str, Any], name: Optional[str] = None
             missing.append(row["name"])
     return missing
 
+
+# Words that do not identify a formula. A display name's remaining words
+# must all appear in the ask, so two formulas that share a noun are not
+# the same match.
+_DISPLAY_WORD_STOP = frozenset({
+    "the", "for", "per", "and", "from", "with", "under", "of", "a", "an",
+    "to", "on", "in", "by", "or", "as", "at", "into", "over", "than", "via",
+    "its", "this", "that",
+})
+_CALC_SELECT_VERB_RE = re.compile(
+    r"\b(?:calculate|compute|work out|how many|how much)\b",
+    re.IGNORECASE,
+)
+
+
+def _display_content_words(display: str) -> List[str]:
+    words = re.findall(r"[a-z0-9]+", (display or "").lower())
+    return [w for w in words if len(w) >= 3 and w not in _DISPLAY_WORD_STOP]
+
+
+def _words_all_present(text: str, words: List[str]) -> bool:
+    low = (text or "").lower()
+    return all(re.search(rf"\b{re.escape(word)}\b", low) for word in words)
+
+
+def formula_completed_by_user_text(
+    text: str,
+) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """The one registered formula this ask both names and supplies.
+
+    The display name's content words must all be in the ask, and every
+    required input must already be bound from the ask by the same extractor
+    the calculator uses. Several formulas at the same strength is no
+    selection: the turn is not guessed. A formula the ask does not name
+    is not selected, even when its inputs would bind.
+    """
+    raw = text or ""
+    if not raw.strip() or _CALC_SELECT_VERB_RE.search(raw) is None:
+        return None
+    from app.lib.formula_registry import all_specs
+
+    candidates: List[Tuple[str, Dict[str, Any], int, int]] = []
+    for spec in all_specs():
+        words = _display_content_words(spec.display_name)
+        if not words or not _words_all_present(raw, words):
+            continue
+        bound = extract_calculation_params_from_text(spec.fn, raw)
+        if _missing_required(spec.fn, bound, spec.name):
+            continue
+        numeric = {
+            key: val for key, val in bound.items()
+            if isinstance(val, (int, float)) and not isinstance(val, bool)
+        }
+        if not numeric:
+            continue
+        candidates.append((spec.name, bound, len(words), len(numeric)))
+    if not candidates:
+        return None
+    best = max((row[2], row[3]) for row in candidates)
+    tied = [row for row in candidates if (row[2], row[3]) == best]
+    if len(tied) != 1:
+        return None
+    name, bound, _words, _count = tied[0]
+    return name, bound
+
+
+def calculation_headline(name: str, result: Any) -> Optional[Tuple[str, float]]:
+    """First numeric declared output that is not also an input."""
+    from app.lib.formula_registry import get
+
+    spec = get(name)
+    if spec is None or not isinstance(result, dict):
+        return None
+    declared_inputs = set(spec.inputs or {})
+    for key in spec.outputs or {}:
+        if key in declared_inputs:
+            continue
+        val = result.get(key)
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            continue
+        return key, float(val)
+    return None
+
+
+def format_user_calculation_answer(
+    name: str,
+    supplied: Dict[str, Any],
+    envelope: Dict[str, Any],
+) -> str:
+    """The calculator's result, its note, and a credit for the user's inputs.
+
+    A non-zero signature default the user did not supply, echoed in the
+    result, is named as the calculator's default. It is not described as
+    a figure from the project documents.
+    """
+    from app.lib.formula_registry import get
+    from app.lib.source_labels import calculator_label, input_phrase
+
+    spec = get(name)
+    result = envelope.get("result") if isinstance(envelope, dict) else None
+    if spec is None or not isinstance(result, dict):
+        return ""
+    lines: List[str] = []
+    headline = calculation_headline(name, result)
+    if headline:
+        key, val = headline
+        unit = (spec.outputs or {}).get(key, "")
+        lines.append(f"{spec.display_name}: {input_phrase(key, val, unit)}.")
+    else:
+        lines.append(f"{spec.display_name}.")
+    note = result.get("note")
+    if isinstance(note, str) and note.strip():
+        lines.append(note.strip())
+    notes = result.get("notes")
+    if isinstance(notes, list):
+        for item in notes:
+            if str(item).strip():
+                lines.append(str(item).strip())
+    supplied_keys = set(supplied or {})
+    try:
+        sig = _inspect.signature(spec.fn)
+    except (TypeError, ValueError):
+        sig = None
+    if sig is not None:
+        for key, param in sig.parameters.items():
+            if param.default is _inspect.Parameter.empty or key in supplied_keys:
+                continue
+            default = param.default
+            if isinstance(default, bool) or not isinstance(default, (int, float)):
+                continue
+            if float(default) == 0.0:
+                continue
+            echoed = result.get(key)
+            if isinstance(echoed, bool) or not isinstance(echoed, (int, float)):
+                continue
+            if abs(float(echoed) - float(default)) > 1e-9:
+                continue
+            unit = (spec.inputs or {}).get(key, "")
+            phrase = input_phrase(key, echoed, unit)
+            lines.append(
+                f"{phrase} is the platform calculator's default, "
+                "not a figure from the project documents."
+            )
+    lines.append("Source: " + calculator_label(name, supplied))
+    return "\n".join(lines)
+
 def _format_param_label(row: Dict[str, Any]) -> str:
     name = row["name"]
     unit = row.get("unit") or ""
