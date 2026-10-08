@@ -28,11 +28,12 @@ def mode() -> str:
     return "request" if raw == "request" else "off"
 
 
-def mark_request(headers: Mapping[str, Any]) -> None:
-    """Call at a turn's arrival: remember whether this request asked for
-    driver mode (honoured only when DRIVER_MODE=request)."""
+def mark_request(headers: Mapping[str, Any], user_switched_on: bool = False) -> None:
+    """Call at a turn's arrival: remember whether this turn takes driver mode
+    -- the request asked for it, or an admin switched it on for the user.
+    Honoured only when DRIVER_MODE=request."""
     asked = str(headers.get(REQUEST_HEADER) or "").strip().lower() in _TRUTHY
-    _REQUESTED.set(mode() == "request" and asked)
+    _REQUESTED.set(mode() == "request" and (asked or bool(user_switched_on)))
 
 
 def enabled() -> bool:

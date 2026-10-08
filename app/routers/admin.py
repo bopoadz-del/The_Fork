@@ -360,6 +360,31 @@ def admin_doc_reindex_job(job_id: str, auth: dict = Depends(require_api_key)):
     return job
 
 
+@router.get("/v1/admin/driver-mode")
+def admin_driver_mode_status(auth: dict = Depends(require_api_key)):
+    """Whether the platform honours the per-user switch (DRIVER_MODE=request),
+    and which users have driver mode on."""
+    _require_admin(auth)
+    from app.agents import driver
+    from app.core import users as _users
+    return {"mode": driver.mode(),
+            "users": [{"email": u["email"], "id": u["id"]} for u in _users.driver_mode_users()]}
+
+
+@router.post("/v1/admin/driver-mode")
+def admin_set_driver_mode(body: Dict[str, Any] = Body(...), auth: dict = Depends(require_api_key)):
+    """Switch driver mode on or off for one user, by email."""
+    _require_admin(auth)
+    from app.core import users as _users
+    email = str((body or {}).get("email") or "").strip()
+    if not email:
+        raise HTTPException(422, "Give the user's email.")
+    user = _users.set_driver_mode(email, bool((body or {}).get("on")))
+    if user is None:
+        raise HTTPException(404, f"No user with email {email!r}.")
+    return {"email": user["email"], "driver_mode": user["driver_mode"]}
+
+
 @router.put("/v1/admin/projects/{project_id}/profile")
 def admin_set_project_profile(project_id: str, profile: Dict[str, Any] = Body(...),
                               auth: dict = Depends(require_api_key)):

@@ -925,7 +925,13 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     from app.agents import driver
     from app.core import turn_timing
     turn_timing.mark_arrival()
-    driver.mark_request(request.headers)
+    if driver.mode() == "request":
+        from app.core import users as _users
+        from app.core.offload import off_loop as _driver_off_loop
+
+        driver.mark_request(request.headers, await _driver_off_loop(_users.driver_mode_for, auth.get("user_id")))
+    else:
+        driver.mark_request(request.headers)
     if "chat" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Chat block not available")
 

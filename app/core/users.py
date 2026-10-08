@@ -56,6 +56,7 @@ def _as_dict(user: User) -> Dict[str, Any]:
         "role": user.role,
         "created_at": user.created_at,
         "email_verified": bool(user.email_verified),
+        "driver_mode": bool(getattr(user, "driver_mode", False)),
     }
 
 
@@ -82,9 +83,54 @@ def init_db() -> None:
             return
         _ensure_sqlite_parent_dir()
         User.__table__.create(bind=engine, checkfirst=True)
+        _add_missing_sqlite_columns(url)
         ensure_system_user()
         _initialized = True
         _initialized_for_url = url
+
+
+def _add_missing_sqlite_columns(url: str) -> None:
+    """SQLite dev/test databases made before a column existed (Postgres is
+    migration-managed)."""
+    if not url.startswith("sqlite"):
+        return
+    from sqlalchemy import text as sqla_text
+
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.execute(sqla_text("PRAGMA table_info(users)"))}
+        if "driver_mode" not in cols:  # 0029
+            conn.execute(sqla_text("ALTER TABLE users ADD COLUMN driver_mode BOOLEAN NOT NULL DEFAULT 0"))
+            conn.commit()
+
+
+def set_driver_mode(email: str, on: bool) -> Optional[Dict[str, Any]]:
+    """Admin switch: this user's turns take driver mode (honoured when
+    DRIVER_MODE=request). Returns the public user, or None if unknown."""
+    _ensure_db()
+    with _lock:
+        session = SessionLocal()
+        try:
+            user = session.query(User).filter(User.email == (email or "").strip().lower()).one_or_none()
+            if user is None:
+                return None
+            user.driver_mode = bool(on)
+            session.commit()
+            return _public(_as_dict(user))
+        finally:
+            session.close()
+
+
+def driver_mode_users() -> List[Dict[str, Any]]:
+    _ensure_db()
+    with SessionLocal() as session:
+        return [_public(_as_dict(u)) for u in session.query(User).filter(User.driver_mode.is_(True)).all()]
+
+
+def driver_mode_for(user_id: Optional[str]) -> bool:
+    if not user_id:
+        return False
+    row = get_user_by_id(user_id)
+    return bool(row and row.get("driver_mode"))
 
 
 def ensure_system_user() -> None:

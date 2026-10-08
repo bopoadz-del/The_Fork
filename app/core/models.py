@@ -255,6 +255,11 @@ class User(Base):
     email_verified: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
+    # Admin-set: this user's turns take driver mode (F-DRIVER Phase B) when
+    # the platform runs DRIVER_MODE=request. Off for everyone by default.
+    driver_mode: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_text("FALSE"),
+    )
 
 
 class Project(Base):
