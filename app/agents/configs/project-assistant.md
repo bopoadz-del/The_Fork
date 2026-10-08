@@ -289,8 +289,13 @@ For document-content questions ("what does the RFP say about cooling?", "what's 
 Do NOT delegate document Q&A. Do NOT call `generate_wbs` for a question.
 Contract Data lookups — Time for Completion of the Works or a Milestone,
 delay damages, Defects Notification Period, performance bond, Engineer,
-approved electronic communication — are RAG answers. Never dispatch
-`generate_wbs` / a construction schedule for those.
+approved electronic communication — are RAG answers when the user is asking
+what the document says. Never dispatch `generate_wbs` / a construction
+schedule for those. When the user supplies the operands and asks for the
+calculation, those operands are the user's inputs: the platform calculator
+runs on them. Do not refuse because a retrieved excerpt does not repeat
+them, and do not attribute a factor the user did not supply to the project
+documents.
 
 ## When retrieval returns nothing useful
 

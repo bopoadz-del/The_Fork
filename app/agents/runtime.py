@@ -291,15 +291,18 @@ def _apply_rag_context(
             directive = (
                 "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
                 "The request below is a CALCULATION whose inputs are supplied "
-                "IN THE REQUEST ITSELF. Compute it using standard construction "
-                "and engineering formulas. Do NOT refuse because the "
-                "dimensions, loads or quantities are absent from the reference "
-                "context — they are not supposed to be there; they came from "
-                "the user. Treat the context as background only.\n\n"
-                "Show the formula, the substitution with the user's numbers, "
-                "and the result with correct units. Round sensibly and state "
-                "any assumption you make. You may still cite the context for "
-                "project-specific rates, specified thicknesses or standards "
+                "IN THE REQUEST ITSELF. Compute it with the platform calculator "
+                "for the registered formula those inputs complete. Do NOT refuse "
+                "because the dimensions, loads, rates or quantities are absent "
+                "from the reference context — they are not supposed to be there; "
+                "they came from the user. Label them as the user's inputs. "
+                "Treat the context as background only.\n\n"
+                "The figure you state is the platform calculator's result. Do "
+                "not state a final figure the calculator did not produce, and "
+                "do not attribute a factor the user did not supply to the "
+                "project documents or the retrieved excerpts. If the calculator "
+                "applied its own default, say so. You may still cite the context "
+                "for project-specific rates, specified thicknesses or standards "
                 "where it genuinely applies — but never invent "
                 "project-specific facts (names, drawing or clause references) "
                 "that are not in the context.\n\nCALCULATION REQUEST: "
@@ -4005,6 +4008,13 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     # generate_wbs — those questions belong to RAG.
     if message_wants_answer_report(text):
         return None
+    # Operands the user just typed complete one registered formula. That
+    # is a calculation even when the same nouns are also a document lookup.
+    if (
+        "construction_calc" in available
+        and _user_supplied_registered_calculation(text)
+    ):
+        return "construction_calc"
     if message_is_contract_data_lookup(text):
         try:
             from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
@@ -7795,7 +7805,10 @@ def _compose_user_priced_takeoff_instead_of_retry(
 # is not compared with the neighbouring addend or with the total.
 #
 # Kill-switch: DERIVATION_CHECK=0.
-_DERIVATION_NUM = r"\d[\d,]*(?:\.\d+)?"
+# A trailing percent sign is part of the number and means hundredths.
+# Without it, "0.1% × base" is either unread (the sign sits between the
+# factor and the operator) or read as 0.1, a hundred times too large.
+_DERIVATION_NUM = r"\d[\d,]*(?:\.\d+)?(?:\s*%)?"
 _DERIVATION_OP = r"[x×*/÷]"
 _DERIVATION_START_RE = re.compile(rf"(?<![\w.]){_DERIVATION_NUM}")
 _DERIVATION_TERM_RE = re.compile(
@@ -7815,13 +7828,20 @@ def _derivation_enabled() -> bool:
 
 
 def _derivation_number(token: str) -> float | None:
+    raw = token.replace(",", "").strip()
+    percent = raw.endswith("%")
+    if percent:
+        raw = raw[:-1].strip()
     try:
-        return float(token.replace(",", "").strip())
+        value = float(raw)
     except (TypeError, ValueError):
         # The token came from a numeric pattern, so this is a surprise worth
         # seeing rather than a routine miss.
         _LOG.debug("derivation: unparsed numeric token %r", token, exc_info=True)
         return None
+    if percent:
+        value /= 100.0
+    return value
 
 
 def _derivation_bound_to_previous(text: str, start: int) -> bool:
@@ -7963,9 +7983,10 @@ def derivation_mismatches(text: str) -> list[tuple[str, float, float]]:
 
     Each side of a chained equality is checked against the side on its left.
     A sum is one side (``0.4 + 420/700``), so a quotient inside it is not
-    paired with the next addend or with the total. A term is still a single
+    paired with the next addend or with the total.     A term is still a single
     operator (``4700 x 5.9161``, ``4800 / 20``); a mixed ``2 x 3 / 4`` is
-    skipped. Tolerance is 0.5% or 0.01, whichever is larger, so a rounded
+    skipped. A trailing ``%`` on a factor is hundredths (``0.1%`` is
+    ``0.001``). Tolerance is 0.5% or 0.01, whichever is larger, so a rounded
     result (12.345 shown as 12.35) agrees.
     """
     raw = text or ""
@@ -8186,6 +8207,133 @@ _turn_timing_mod.set_writer(lambda fmt, *args: _timing_log(fmt, *args))
 
 
 
+_PROJECT_ASSUMPTION_RE = re.compile(
+    r"project(?:['’]s)?\s+documented"
+    r"|documented\s+(?:waste|allowance|factor)"
+    r"|according to (?:the )?(?:project documents|retrieved excerpts|excerpts)"
+    r"|(?:the )?retrieved excerpts"
+    r"|from the project documents",
+    re.IGNORECASE,
+)
+
+
+def _answer_has_close_number(text: str, value: float) -> bool:
+    for tok in re.findall(r"\d[\d,]*(?:\.\d+)?", text or ""):
+        try:
+            found = float(tok.replace(",", ""))
+        except ValueError:
+            continue
+        tol = max(0.01, abs(value) * 0.005)
+        if abs(found - value) <= tol:
+            return True
+    return False
+
+
+def _invented_project_assumption(text: str, user: str, retrieval: str) -> bool:
+    """A sentence attributes a number to the project that neither the user nor the excerpts contain."""
+    for part in re.split(r"[\n.;]+", text or ""):
+        if _PROJECT_ASSUMPTION_RE.search(part) is None:
+            continue
+        for tok in re.findall(r"\d[\d,]*(?:\.\d+)?", part):
+            try:
+                number = float(tok.replace(",", ""))
+            except ValueError:
+                continue
+            if (
+                not _answer_has_close_number(user, number)
+                and not _answer_has_close_number(retrieval, number)
+            ):
+                return True
+    return False
+
+
+def _calculator_success_recorded(messages: list[dict[str, Any]] | None, name: str) -> bool:
+    needle = f'"calculation": "{name}"'
+    for msg in messages or []:
+        if not isinstance(msg, dict) or msg.get("role") != "tool":
+            continue
+        content = str(msg.get("content") or "")
+        if needle in content and '"status": "success"' in content:
+            return True
+    return False
+
+
+def _record_calculator_tool_turn(
+    messages: list[dict[str, Any]],
+    name: str,
+    bound: dict[str, Any],
+    envelope: dict[str, Any],
+) -> None:
+    if _calculator_success_recorded(messages, name):
+        return
+    tid = "supplied-input-construction_calc"
+    args = {
+        "calculation": name,
+        "params": {key: val for key, val in (bound or {}).items()},
+    }
+    messages.append({
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": tid,
+            "type": "function",
+            "function": {
+                "name": "construction_calc",
+                "arguments": json.dumps(args),
+            },
+        }],
+    })
+    messages.append({
+        "role": "tool",
+        "name": "construction_calc",
+        "tool_call_id": tid,
+        "content": json.dumps(envelope, default=str),
+    })
+
+
+def _graft_supplied_input_calculation(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+    rag_sys_msg: dict[str, Any] | None,
+) -> str:
+    """State the registered calculator's result for inputs the user supplied.
+
+    Replaces the answer when it does not state that result, or when it
+    attributes a number the user did not give to the project documents.
+    The run is a tool message so the existing credit path can name the
+    calculator and those inputs.
+    """
+    user = _latest_operator_ask(messages)
+    selected = _user_supplied_registered_calculation(user)
+    if not selected:
+        return text
+    name, bound = selected
+    try:
+        from app.lib.construction_formulas import (
+            calculation_headline,
+            format_user_calculation_answer,
+            run_calculation,
+        )
+        env = run_calculation(name, {**bound, "text": user})
+    except Exception:  # noqa: BLE001 — a graft must never break a turn
+        _LOG.exception("supplied-input calculation failed")
+        return text
+    if not isinstance(env, dict) or env.get("status") != "success":
+        return text
+    _record_calculator_tool_turn(messages or [], name, bound, env)
+    headline = calculation_headline(name, env.get("result"))
+    retrieval = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+    missing = (
+        headline is not None
+        and not _answer_has_close_number(text or "", headline[1])
+    )
+    invented = _invented_project_assumption(text or "", user, retrieval)
+    if not missing and not invented:
+        return text
+    replacement = format_user_calculation_answer(name, bound, env)
+    return replacement if replacement.strip() else text
+
+
 @_turn_timing_stage("postprocess")
 def _postprocess_answer(
     text: str,
@@ -8281,6 +8429,11 @@ def _postprocess_answer(
     # Default-rate cost build-up: the calculator result is the total.
     # A project-document figure and the no-rate refusal are not.
     text = _graft_deterministic_cost_calc(text, messages)
+    # User-supplied operands that complete a registered formula: the
+    # calculator's result is the answer, recorded as a tool run so the
+    # credit path can name it. Runs before the cost gate so that result
+    # is what the gate sees.
+    text = _graft_supplied_input_calculation(text, messages, rag_sys_msg)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     text = _calc_figure_grounding_gate(text, messages)
     # Citation provenance: an attribution no evidence record backs is removed
@@ -8504,6 +8657,44 @@ def page_or_section_label(chunk_meta: dict[str, Any]) -> str:
     return f"chunk #{chunk_meta.get('chunk_index')}"
 
 
+def _platform_calculator_source(final_text: str) -> dict[str, Any] | None:
+    """The Sources row for a platform-calculator credit, or None.
+
+    The row is the calculator's plain-words label, including the inputs
+    the credit names. It is not a retrieved document, so it carries no
+    source class and no document id.
+    """
+    from app.lib.source_labels import CALCULATOR_SUFFIX
+
+    raw = final_text or ""
+    if CALCULATOR_SUFFIX.lower() not in raw.lower():
+        return None
+    match = re.search(
+        rf"(?im)^\s*Source:\s*(.+?{re.escape(CALCULATOR_SUFFIX)}\b.*)$",
+        raw,
+    )
+    if match is None:
+        match = re.search(
+            rf"(?i)Source:\s*(.+?{re.escape(CALCULATOR_SUFFIX)}\b[^\n]*)",
+            raw,
+        )
+    if match is None:
+        return None
+    label = match.group(1).strip().rstrip(".")
+    return {
+        "doc_id": "",
+        "doc_name": label,
+        "page_or_section": "Calculated",
+        "page": None,
+        "chunk_index": None,
+        "chunk_id": "",
+        "score": 1.0,
+        "confidence": "High",
+        "layer": "general_knowledge",
+        "layer_label": "Platform calculator",
+    }
+
+
 def _build_sources_from_audit(
     audit_rec: dict[str, Any],
     final_text: str = "",
@@ -8521,8 +8712,10 @@ def _build_sources_from_audit(
          the pre-PR-110 behaviour. Preserves the old contract for the
          qwen-style agents that don't emit ``[source: ...]`` markers.
 
-    Empty list when ``audit_rec`` has no chunks (fallback turn).
+    Empty list when ``audit_rec`` has no chunks (fallback turn), unless
+    the answer credits a platform calculator — that row is the source.
     """
+    calc_row = _platform_calculator_source(final_text)
     chunks = (audit_rec or {}).get("chunks") or []
     ask = str((audit_rec or {}).get("user_message_preview") or "")
     pid = (audit_rec or {}).get("project_id")
@@ -8532,17 +8725,17 @@ def _build_sources_from_audit(
             if (c.get("layer") or "own") != "master_corpus"
         ]
     if not chunks:
-        return []
+        return [calc_row] if calc_row else []
 
     # If the retrieval trust gate fired (identifier miss or confidence
     # threshold), don't fabricate a sources panel from fallback chunks.
     if audit_rec.get("identifier_miss") or audit_rec.get("threshold_fired"):
-        return []
+        return [calc_row] if calc_row else []
 
     # If the assistant explicitly declined to answer, don't fabricate a
     # sources panel from low-score fallback chunks.
     if _answer_is_caveat(final_text):
-        return []
+        return [calc_row] if calc_row else []
 
     try:
         from app.core import projects as _projects
@@ -8584,7 +8777,7 @@ def _build_sources_from_audit(
             )
         ]
         if not scoped:
-            return []
+            return [calc_row] if calc_row else []
         chunks = scoped
 
     def _sources_one_contract(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -8728,7 +8921,13 @@ def _build_sources_from_audit(
             matched.sort(
                 key=lambda s: (-(s.get("score") or 0), s.get("chunk_id") or "")
             )
-            return _sources_one_contract(matched)
+            rows = ([calc_row] + matched) if calc_row else matched
+            return _sources_one_contract(rows)
+
+    # A calculator credit is the source of the figure. Do not fill the
+    # panel with a filename mention or the top retrieved chunks.
+    if calc_row:
+        return [calc_row]
 
     # 2) Filename-mention fallback: the model may have named a source in
     #    prose without a formal citation marker. If any injected filename
@@ -10710,6 +10909,33 @@ def _states_formula_with_input(text: str) -> bool:
     return _count_dimensions(raw) >= 1
 
 
+def _user_supplied_registered_calculation(
+    text: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Registered formula whose name and required inputs are in ``text``.
+
+    A bill, a schedule, a drawing take-off, an RFI or a variation is not
+    this, even when the same sentence also contains numbers.
+    """
+    raw = text or ""
+    if not raw.strip():
+        return None
+    if _message_wants_inline_boq(raw) or _message_is_schedule_or_programme_deliverable(raw):
+        return None
+    if (
+        _message_wants_drawing_qto(raw)
+        or _message_wants_rfi_draft(raw)
+        or _message_wants_vo_draft(raw)
+    ):
+        return None
+    try:
+        from app.lib.construction_formulas import formula_completed_by_user_text
+        return formula_completed_by_user_text(raw)
+    except Exception:  # noqa: BLE001 — routing must still classify
+        _LOG.exception("supplied-input formula selection failed")
+        return None
+
+
 def _message_is_formula_style_ask(text: str) -> bool:
     """True when the turn is a formula / calculator ask, not a doc lookup.
 
@@ -10717,14 +10943,19 @@ def _message_is_formula_style_ask(text: str) -> bool:
     says the turn must go through construction_calc and must not fall
     back to Master Corpus RAG on another project_id.
     """
-    if not _formula_ask_force_enabled():
-        return False
     raw = text or ""
     if not raw.strip():
         return False
     if _message_wants_inline_boq(raw):
         return False
     if _message_is_schedule_or_programme_deliverable(raw):
+        return False
+    # User-supplied operands complete a registered formula before any
+    # document-lookup veto. The numbers are the inputs; the excerpts
+    # are not required to repeat them.
+    if _user_supplied_registered_calculation(raw):
+        return True
+    if not _formula_ask_force_enabled():
         return False
     try:
         if message_is_contract_data_lookup(raw):
@@ -10974,20 +11205,46 @@ async def _predispatch_formula_calc(
             or (await _off_loop(_message_wants_named_calculator, detect))
         ):
             return None
-        calc_name = (await _off_loop(_formula_calculator_name_from_message, detect))
+        completed = await _off_loop(_user_supplied_registered_calculation, detect)
+        bound: dict[str, Any] = {}
+        if completed:
+            calc_name, bound = completed
+        else:
+            calc_name = await _off_loop(_formula_calculator_name_from_message, detect)
+        params = {"text": detect, **bound}
         tc = {
             "id": "predispatch-construction_calc",
+            "type": "function",
             "function": {
                 "name": "construction_calc",
                 "arguments": json.dumps({
                     "calculation": calc_name,
-                    "params": {"text": detect},
+                    "params": params,
                     "text": detect,
                 }),
             },
         }
         result = await agent._run_tool_call(tc)
         inner = result.get("result") if isinstance(result, dict) else result
+        if (
+            isinstance(inner, dict)
+            and inner.get("status") == "success"
+            and inner.get("calculation")
+        ):
+            # A user-bubble alone is not a tool run, so the credit path
+            # never sees the calculator. Record the same envelope as a
+            # tool result. The arguments carry the user's inputs.
+            messages.append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [tc],
+            })
+            messages.append({
+                "role": "tool",
+                "name": "construction_calc",
+                "tool_call_id": tc["id"],
+                "content": json.dumps(inner, default=str),
+            })
         rendered = json.dumps(inner, default=str)[:4000]
         _inject_predispatch(
             messages,
