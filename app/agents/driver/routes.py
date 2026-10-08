@@ -53,7 +53,9 @@ async def run(args: Dict[str, Any], user_message: str, project_id: Optional[str]
         return {"ok": False, "error": f"No workflow named {action!r}."}
     safe_project_id, project_name = project_id, None
     if project_id:
-        proj = projects.get_project_accessible(project_id, user_id)
+        from app.core.offload import off_loop
+
+        proj = await off_loop(projects.get_project_accessible, project_id, user_id)
         safe_project_id = project_id if proj else None
         project_name = (proj or {}).get("name")
     params = {k: v for k, v in (args.get("params") or {}).items() if v is not None} \

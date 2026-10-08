@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from app.agents import driver
 from app.agents.driver import context, llm, routes, tools
 from app.core import turn_progress
+from app.core.offload import off_loop
 
 _LOG = logging.getLogger(__name__)
 
@@ -60,7 +61,10 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     t0 = time.monotonic()
     disciplines = [h["discipline"] for h in context.hats()]
     hat: Optional[str] = None
-    msgs: List[Dict[str, Any]] = context.messages(user_message, history, project_id, user_id, hat)
+    # The profile lookup reads the database: in a thread, never on the event
+    # loop (live: 0.4-1.1 s stalls at 5 driver users).
+    msgs: List[Dict[str, Any]] = await off_loop(context.messages, user_message, history,
+                                                 project_id, user_id, hat)
     used: List[str] = []
     evidence: List[Dict[str, Any]] = []  # tool results, whole, for the exit check
     exports: List[Dict[str, Any]] = []
@@ -87,7 +91,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 chosen = str(args.get("hat") or "")
                 if chosen in disciplines:
                     hat = chosen
-                    msgs[0] = context.system_message(project_id, user_id, hat)
+                    msgs[0] = await off_loop(context.system_message, project_id, user_id, hat)
                     result: Dict[str, Any] = {"ok": True, "hat": hat}
                 else:
                     result = {"ok": False, "error": f"No hat named {chosen!r}; choose one of {sorted(disciplines)}."}
