@@ -37,7 +37,7 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]]) -> tuple:
     figures removed and counts the passages read, for the end event."""
     from app.agents import citation_provenance as cp
 
-    checked = cp.gate(answer, None, msgs, tool_passages=True)
+    checked = cp.gate(answer, None, msgs, tool_passages=True, annotate=False)
     _, every = cp.figure_provenance(checked, None, msgs, enforce=False, tool_passages=True)
     out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
     report = {
@@ -83,9 +83,12 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         whole = iter(evidence)  # same order as the tool messages in msgs
         return [next(whole) if m.get("role") == "tool" else m for m in msgs]
 
+    sent: List[str] = []
+
     def _release(piece: str) -> Optional[Dict[str, Any]]:
         """Exit-check one finished piece of the answer and hand it out."""
         checked, trail, report = exit_check(piece, _trail())
+        sent.append(checked)
         provenance.extend(trail)
         check["figures_removed"].extend(report["figures_removed"])
         check["passages_read"] = report["passages_read"]
@@ -161,6 +164,14 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         event = _release(_STOP)
         if event:
             yield event
+    from app.agents import citation_provenance as cp
+
+    # Once, at the end: the calculator credit the answer does not carry, and
+    # the note if any piece lost an unbacked attribution.
+    notes = cp.closing_notes("".join(sent), _trail(), tool_passages=True,
+                             removed=cp._REMOVED_IN_PIECE.get())
+    if notes.strip():
+        yield {"type": "token", "content": notes}
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "provenance": provenance, "exit_check": check,
            "steps": step + 1, "elapsed_s": round(time.monotonic() - t0, 2)}

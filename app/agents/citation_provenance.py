@@ -893,9 +893,11 @@ def gate(
     messages: list[dict[str, Any]] | None,
     *,
     tool_passages: bool = False,
+    annotate: bool = True,
 ) -> str:
     """Strip attributions no evidence record backs; flag the answer when any
-    were removed. Content is never rewritten. Never raises -- a gate that can
+    were removed. ``annotate=False`` strips only (one piece of a streamed
+    answer; see ``closing_notes``). Content is never rewritten. Never raises -- a gate that can
     break an answer is a gate that gets switched off."""
     try:
         if not _enabled() or not text or not text.strip():
@@ -925,6 +927,16 @@ def gate(
 
         if removed:
             out = _tidy(out)
+        if not annotate:
+            # A piece of a streamed answer: strip only; the stream adds the
+            # calculator credit and the note once, at its end (closing_notes).
+            if removed:
+                _LOG.warning(
+                    "citation_provenance: removed %d unbacked attribution(s): %s",
+                    len(removed), removed[:5],
+                )
+                _REMOVED_IN_PIECE.set(True)
+            return out if removed else text
         credit = _missing_calculator_credit(out, credits, text)
         if not removed and not credit:
             return text
@@ -941,6 +953,29 @@ def gate(
     except Exception:  # noqa: BLE001 -- a gate must never break an answer
         _LOG.exception("citation_provenance failed; passing answer through")
         return text
+
+
+import contextvars as _contextvars
+
+#: Set when a piece checked with annotate=False had an attribution removed.
+_REMOVED_IN_PIECE: "_contextvars.ContextVar[bool]" = _contextvars.ContextVar(
+    "citation_removed_in_piece", default=False)
+
+
+def closing_notes(answer: str, messages: list[dict[str, Any]] | None, *,
+                  tool_passages: bool = False, removed: bool = False) -> str:
+    """What a streamed answer gets once, at its end: the calculator credit it
+    does not already carry, and the note when any piece lost an attribution."""
+    try:
+        ev = build_evidence(None, messages, tool_passages=tool_passages)
+        credit = _missing_calculator_credit(answer, _calculator_credits(ev), answer)
+    except Exception:  # noqa: BLE001 -- a gate must never break an answer
+        _LOG.exception("closing_notes failed; no credit appended")
+        credit = ""
+    out = ("\n\n" + credit) if credit else ""
+    if removed:
+        out += UNVERIFIED_NOTE
+    return out
 
 
 # ── Figure provenance ────────────────────────────────────────────────────────
