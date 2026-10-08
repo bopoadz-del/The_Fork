@@ -14,6 +14,9 @@ from app.core import turn_progress
 
 _LOG = logging.getLogger(__name__)
 
+#: How much of one tool result the model is given.
+_TOOL_RESULT_CHARS = 20000
+
 _STOP = ("I could not finish this answer within the steps a turn may take. "
          "Please narrow the question or split it into parts.")
 
@@ -51,6 +54,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     hat: Optional[str] = None
     msgs: List[Dict[str, Any]] = context.messages(user_message, history, project_id, user_id, hat)
     used: List[str] = []
+    evidence: List[Dict[str, Any]] = []  # tool results, whole, for the exit check
     exports: List[Dict[str, Any]] = []
     yield {"type": "start", "mode": "driver", "agent": agent.name}
     yield turn_progress.event("writing")
@@ -88,11 +92,18 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 result = await agent._run_tool_call(call, api_key, project_id, conversation_id,
                                                     user_message=user_message, history=history)
             yield {"type": "tool_result", "tool": name, "name": name, "ok": bool(result.get("ok", True))}
-            msgs.append({"role": "tool", "name": name, "tool_call_id": call.get("id") or name,
-                         "content": json.dumps(result, default=str)[:20000]})
+            full = json.dumps(result, default=str)
+            tool_msg = {"role": "tool", "name": name, "tool_call_id": call.get("id") or name}
+            # The model gets at most _TOOL_RESULT_CHARS of a result; the exit
+            # check reads it whole -- cut, the JSON no longer parses and every
+            # figure it backs looks unsourced (live: 23 figures removed).
+            msgs.append({**tool_msg, "content": full[:_TOOL_RESULT_CHARS]})
+            evidence.append({**tool_msg, "content": full})
     if answer is None:
         answer = _STOP
-    answer, provenance = exit_check(answer, msgs)
+    whole = iter(evidence)  # same order as the tool messages in msgs
+    trail = [next(whole) if m.get("role") == "tool" else m for m in msgs]
+    answer, provenance = exit_check(answer, trail)
     for word in answer.split(" "):
         yield {"type": "token", "content": word + " "}
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
