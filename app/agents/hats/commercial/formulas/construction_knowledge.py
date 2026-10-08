@@ -9,6 +9,7 @@ from typing import Dict, Optional
 
 @formula(
     owner='commercial',
+    display_name='Payment due on a claim',
     description='Payment due on a claim: certified amount less retention and previous certificates.',
     inputs={'claimed_amount': 'currency', 'certified_amount': 'currency', 'retention_rate': '-', 'cumulative_previous_certified': 'currency', 'contract_value': 'currency'},
     outputs={'claimed_amount': 'currency', 'certified_amount': 'currency', 'retention_held': 'currency', 'net_payment_due': 'currency', 'cumulative_certified': 'currency', 'percent_complete': '%', 'disputed_amount': 'currency', 'retention_rate_pct': '%'},
@@ -47,6 +48,7 @@ def calculate_payment(
 
 @formula(
     owner='commercial',
+    display_name='Earned value measures',
     description='Earned value measures (cost and schedule variance, CPI, SPI, estimate at completion) from PV, EV, AC and BAC.',
     inputs={'bac': 'currency', 'bcwp': 'currency', 'bcws': 'currency', 'acwp': 'currency', 'pv': 'currency', 'ev': 'currency', 'ac': 'currency'},
     outputs={'cost': 'currency (CV, CPI, EAC)', 'schedule': 'currency (SV, SPI)', 'cpi_health': '-'},

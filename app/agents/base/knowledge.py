@@ -24,7 +24,7 @@ SCHEMA = {
 }
 
 
-@tool("search_general_knowledge", owner="base", schema=SCHEMA)
+@tool("search_general_knowledge", owner="base", display_name='Knowledge base search', schema=SCHEMA)
 async def handle_search_general_knowledge(call: ToolCall) -> dict:
     """Search every configured general-knowledge project; best passages first."""
     from app.core.doc_index import search_project_documents

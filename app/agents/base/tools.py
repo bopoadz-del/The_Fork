@@ -8,7 +8,7 @@ from __future__ import annotations
 from app.agents.core.tool_registry import ToolCall, tool
 
 
-@tool("delegate_to_agent", owner="base")
+@tool("delegate_to_agent", owner="base", display_name='Specialist hand-off')
 async def handle_delegate_to_agent(call: ToolCall) -> dict:
     """The ``delegate_to_agent`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
@@ -76,7 +76,7 @@ async def handle_delegate_to_agent(call: ToolCall) -> dict:
     }
 
 
-@tool("search_project_documents", owner="base")
+@tool("search_project_documents", owner="base", display_name='Project document search')
 async def handle_search_project_documents(call: ToolCall) -> dict:
     """The ``search_project_documents`` tool."""
     args = call.args
@@ -120,7 +120,7 @@ async def handle_search_project_documents(call: ToolCall) -> dict:
     }
 
 
-@tool("list_project_documents", owner="base")
+@tool("list_project_documents", owner="base", display_name='Project document list')
 async def handle_list_project_documents(call: ToolCall) -> dict:
     """The ``list_project_documents`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
@@ -170,7 +170,7 @@ async def handle_list_project_documents(call: ToolCall) -> dict:
     }
 
 
-@tool("fetch_document", owner="base")
+@tool("fetch_document", owner="base", display_name='Document reader')
 async def handle_fetch_document(call: ToolCall) -> dict:
     """The ``fetch_document`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
@@ -219,7 +219,7 @@ async def handle_fetch_document(call: ToolCall) -> dict:
     }
 
 
-@tool("remember_fact", owner="base")
+@tool("remember_fact", owner="base", display_name='Project memory')
 async def handle_remember_fact(call: ToolCall) -> dict:
     """The ``remember_fact`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
@@ -244,7 +244,7 @@ async def handle_remember_fact(call: ToolCall) -> dict:
     }
 
 
-@tool("construction_calc", owner="base")
+@tool("construction_calc", owner="base", display_name='Platform calculator')
 async def handle_construction_calc(call: ToolCall) -> dict:
     """construction_calc (deterministic formula library)"""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time

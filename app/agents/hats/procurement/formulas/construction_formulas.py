@@ -10,6 +10,7 @@ from typing import Any, Dict
 
 @formula(
     owner='procurement',
+    display_name='Number of cranes needed',
     description='Number of cranes needed for a lifting demand and crane cycle capacity.',
     inputs={'total_lift_demand_tons': '-', 'crane_capacity_tons': '-', 'utilization_pct': '%', 'shifts_per_day': '-', 'hours_per_shift': '-', 'cycle_time_minutes': '-', 'working_days': 'days'},
     outputs={'total_lift_demand_tons': '-', 'crane_capacity_tons': '-', 'utilization_pct': '%', 'shifts_per_day': '-', 'hours_per_shift': '-', 'cycle_time_minutes': '-', 'lifts_per_hour_per_crane': '-', 'daily_tonnage_per_crane': '-', 'cranes_required': '-', 'monthly_rate_sar': 'currency', 'total_monthly_cost_sar': 'currency'},

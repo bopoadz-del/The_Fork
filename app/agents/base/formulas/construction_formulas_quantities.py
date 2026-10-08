@@ -31,6 +31,7 @@ def _concrete_quantity(quantity: float) -> float | None:
 
 @formula(
     owner='base',
+    display_name='Concrete volume',
     description='Concrete volume of a rectangular element, a cylinder or a trapezoidal section, with an optional waste factor and element count.',
     inputs={'length_m': 'm', 'width_m': 'm', 'thickness_m': 'm', 'shape': '-', 'diameter_m': 'm', 'height_m': 'm', 'top_width_m': 'm', 'bottom_width_m': 'm', 'depth_m': 'm', 'waste_factor': '-', 'quantity': '-'},
     outputs={'shape': '-', 'quantity': '-', 'volume_m3': 'm3', 'net_volume_m3': 'm3', 'volume_with_waste_m3': 'm3', 'value': 'currency', 'waste_factor': '-'},

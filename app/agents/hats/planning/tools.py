@@ -8,7 +8,7 @@ from __future__ import annotations
 from app.agents.core.tool_registry import ToolCall, tool
 
 
-@tool("generate_wbs", owner="planning")
+@tool("generate_wbs", owner="planning", display_name='Work breakdown structure')
 async def handle_generate_wbs(call: ToolCall) -> dict:
     """generate_wbs (direct construction shortcut) Bypasses the generic "construction" tool's input/params ambiguity by giving the model a typed call: brief, target_count, project_type, start_date. Maps straight to ConstructionContainer.generate_wbs()"""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
@@ -110,7 +110,7 @@ async def handle_generate_wbs(call: ToolCall) -> dict:
     }
 
 
-@tool("resource_histogram", owner="planning")
+@tool("resource_histogram", owner="planning", display_name='Resource histogram')
 async def handle_resource_histogram(call: ToolCall) -> dict:
     """The ``resource_histogram`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
@@ -177,7 +177,7 @@ async def handle_resource_histogram(call: ToolCall) -> dict:
     }
 
 
-@tool("look_ahead", owner="planning")
+@tool("look_ahead", owner="planning", display_name='Look-ahead programme')
 async def handle_look_ahead(call: ToolCall) -> dict:
     """The ``look_ahead`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time

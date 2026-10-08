@@ -8,7 +8,7 @@ from __future__ import annotations
 from app.agents.core.tool_registry import ToolCall, tool
 
 
-@tool("procurement_list_generator", owner="procurement")
+@tool("procurement_list_generator", owner="procurement", display_name='Procurement list')
 async def handle_procurement_list_generator(call: ToolCall) -> dict:
     """The ``procurement_list_generator`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time

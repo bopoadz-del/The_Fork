@@ -41,6 +41,7 @@ def _rebar_mass_kg(
 
 @formula(
     owner='quantities',
+    display_name='Reinforcement weight',
     description='Mass of reinforcing bars from diameter and length, or the length from a mass.',
     inputs={'bar_diameter_mm': 'mm', 'total_length_m': 'm', 'quantity': '-', 'density_kg_m3': 'kg/m3', 'total_weight_kg': 'kg', 'total_mass_kg': 'kg', 'total_mass_t': 't', 'mode': '-'},
     outputs={'unit_mass_kg_m': 'kg/m', 'total_mass_kg': 'kg', 'total_mass_t': 't', 'total_length_m': 'm', 'quantity': '-', 'metres_run': '-', 'mode': '-'},
@@ -138,6 +139,7 @@ def rebar_weight(
 
 @formula(
     owner='quantities',
+    display_name='Reinforcement mass by area',
     description='Reinforcement mass for a slab or wall area from bar diameter and spacing.',
     inputs={'area_m2': 'm2', 'spacing_mm': 'mm', 'bar_diameter_mm': 'mm', 'both_ways': '-', 'density_kg_m3': 'kg/m3'},
     outputs={'bars_per_m': 'm', 'total_bar_length_m': 'm', 'total_mass_kg': 'kg', 'both_ways': '-'},
@@ -170,6 +172,7 @@ def rebar_by_area(
 
 @formula(
     owner='quantities',
+    display_name='Interior finishes take-off',
     description='Interior finish quantities (wall, ceiling, skirting) from a room take-off and the floor-to-ceiling height.',
     inputs={'floor_area_m2': 'm2', 'perimeter_m': 'm', 'room_count': '-', 'floor_to_ceiling_m': 'm', 'door_width_m': 'm', 'door_height_m': 'm', 'doors_per_room': '-', 'shared_wall_fraction': '-', 'window_deduction_m2': 'm2'},
     outputs={'floor_screed_m2': 'm2', 'floor_tiling_m2': 'm2', 'ceiling_finish_m2': 'm2', 'skirting_m': 'm', 'wall_paint_m2': 'm2', 'blockwork_m2': 'm2', 'gross_wall_face_m2': 'm2', 'door_deduction_m2': 'm2'},
@@ -248,6 +251,7 @@ def interior_finishes_takeoff(
 
 @formula(
     owner='quantities',
+    display_name='Estimate line cost split',
     description='Material, labour and plant split of one estimate line.',
     inputs={'quantity': '-', 'daily_output': '-', 'day_rate': '-', 'material_rate_per_unit': '-', 'plant_fraction_of_labour': '-'},
     outputs={'quantity': '-', 'crew_days': 'days', 'labour_cost': 'currency', 'plant_cost': 'currency', 'material_cost': 'currency', 'total_cost': 'currency', 'total_is_partial': '-'},

@@ -8,7 +8,7 @@ from __future__ import annotations
 from app.agents.core.tool_registry import ToolCall, tool
 
 
-@tool("commissioning_checklist", owner="qaqc")
+@tool("commissioning_checklist", owner="qaqc", display_name='Commissioning checklist')
 async def handle_commissioning_checklist(call: ToolCall) -> dict:
     """The ``commissioning_checklist`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time

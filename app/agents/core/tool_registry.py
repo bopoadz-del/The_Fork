@@ -1,10 +1,11 @@
 """Tools register themselves where they are defined, under the package that owns them.
 
-A tool is ``@tool("name", owner="base" | "<hat>")`` on an
+A tool is ``@tool("name", owner="base" | "<hat>", display_name="...")`` on an
 ``async def handle(call: ToolCall) -> dict`` in its owner's package
 (``app.agents.base`` or ``app.agents.hats.<hat>``). The agent's tool loop
 looks the name up here; a hat's manifest lists exactly the tools its package
-registers. Adding a hat is a new package -- no core edit.
+registers. Adding a hat is a new package -- no core edit. ``display_name`` is
+what a user reads when an answer credits the tool; the name is internal.
 
 A block that needs its arguments shaped before it runs registers an adapter
 the same way, in its owner's ``blocks`` module: ``@block_args("name",
@@ -45,6 +46,8 @@ class ToolSpec:
     name: str
     owner: str
     handler: Handler
+    #: What a user reads when an answer credits this tool.
+    display_name: str = ""
     #: The tool's function schema, when it declares one where it is defined.
     schema: Optional[Dict[str, Any]] = None
 
@@ -52,15 +55,18 @@ class ToolSpec:
 _TOOLS: Dict[str, ToolSpec] = {}
 
 
-def tool(name: str, *, owner: str, schema: Optional[Dict[str, Any]] = None) -> Callable[[Handler], Handler]:
+def tool(name: str, *, owner: str, display_name: str,
+         schema: Optional[Dict[str, Any]] = None) -> Callable[[Handler], Handler]:
     if owner not in OWNERS:
         raise ValueError(f"unknown tool owner {owner!r}; one of {OWNERS}")
+    if not (display_name or "").strip():
+        raise ValueError(f"tool {name!r} needs a display_name")
 
     def register(fn: Handler) -> Handler:
         existing = _TOOLS.get(name)
         if existing is not None and existing.handler is not fn:
             raise ValueError(f"tool {name!r} is registered twice")
-        _TOOLS[name] = ToolSpec(name, owner, fn, schema)
+        _TOOLS[name] = ToolSpec(name, owner, fn, display_name.strip(), schema)
         return fn
     return register
 

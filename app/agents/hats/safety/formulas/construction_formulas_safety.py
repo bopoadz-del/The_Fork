@@ -13,6 +13,7 @@ _OSHA_MAF_KN = 8.0  # OSHA 1926.502 maximum arresting force (body harness)
 
 @formula(
     owner='safety',
+    display_name='Scaffold load capacity',
     description='Intended scaffold load and the capacity it must be built to support.',
     inputs={'platform_area_m2': 'm2', 'duty': '-', 'safety_factor': '-'},
     outputs={'duty': '-', 'duty_load_kpa': 'kPa', 'intended_load_kn': 'kN', 'required_capacity_kn': 'kN', 'safety_factor': '-'},
@@ -42,6 +43,7 @@ def scaffold_load_capacity(
 
 @formula(
     owner='safety',
+    display_name='Fall arrest force',
     description='Peak arrest force on a falling worker from mass, free-fall distance and deceleration distance.',
     inputs={'worker_mass_kg': 'kg', 'free_fall_m': 'm', 'deceleration_distance_m': 'm', 'g': '-'},
     outputs={'max_arrest_force_kn': 'kN', 'within_osha_limit': '-', 'osha_limit_kn': 'kN'},
@@ -78,6 +80,7 @@ def fall_arrest_force(
 
 @formula(
     owner='safety',
+    display_name='Crane lift capacity and utilisation',
     description="Net crane capacity after rigging deductions, and the lift's utilisation.",
     inputs={'chart_capacity_t': 't', 'deductions_t': 't', 'load_t': 't', 'max_utilization': '-'},
     outputs={'net_capacity_t': 't', 'utilization_percent': '%', 'passed': '-', 'max_utilization_percent': '%'},

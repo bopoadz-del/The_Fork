@@ -9,6 +9,7 @@ from typing import Optional
 
 @formula(
     owner='quantities',
+    display_name='Material consumption',
     description='Material required for a quantity of work from the output per unit and an optional waste factor.',
     inputs={'quantity_of_work': '-', 'output_per_unit': '-', 'waste_factor': '-', 'waste_percent': '%'},
     outputs={'material_required': '-', 'base_without_waste': '-', 'waste_factor': '-'},
@@ -59,6 +60,7 @@ def material_consumption(
 
 @formula(
     owner='quantities',
+    display_name='Concrete mix material quantities',
     description='Material volumes for a concrete volume from cement, sand and aggregate proportions.',
     inputs={'wet_volume': '-', 'cement_parts': '-', 'sand_parts': '-', 'aggregate_parts': '-', 'dry_volume_factor': '-', 'waste_factor': '-'},
     outputs={'wet_volume': '-', 'dry_volume': '-', 'dry_volume_factor': '-', 'proportions': '-', 'cement_volume': '-', 'sand_volume': '-', 'aggregate_volume': '-'},

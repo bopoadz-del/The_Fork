@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 @formula(
     owner='planning',
+    display_name='Total float and criticality',
     description='Total float of an activity from its early and late dates, and whether it is critical.',
     inputs={'early_start': '-', 'early_finish': '-', 'late_start': '-', 'late_finish': '-'},
     outputs={'total_float': '-', 'is_critical': '-', 'consistency_check_lf_minus_ef': '-'},
@@ -53,6 +54,7 @@ def critical_path_float(
 
 @formula(
     owner='planning',
+    display_name='Progress and remaining quantity',
     description='Planned and actual percent complete, remaining quantity and progress variance.',
     inputs={'total_qty': '-', 'planned_qty': '-', 'actual_qty': '-'},
     outputs={'planned_percent': '%', 'actual_percent': '%', 'planned_qty': '-', 'actual_qty': '-', 'remaining_qty': '-', 'progress_variance_percent': '%'},
@@ -163,6 +165,7 @@ def _daily_production_from_rate_alias(
 
 @formula(
     owner='planning',
+    display_name='Quantity, productivity, manpower and duration',
     description='Links quantity, productivity, manpower and duration: any one from the others.',
     inputs={'quantity_executed': '-', 'man_hours': 'h', 'quantity': '-', 'productivity': '-', 'manpower': '-', 'working_hours': 'h', 'remaining_manhours': '-', 'available_hours': 'h', 'daily_production': '-', 'remaining_qty': '-', 'remaining_days': 'days', 'productivity_rate': '-', 'rate_unit': '-', 'crew_cost_per_day': 'currency', 'day_rate': '-', 'gang_cost_per_day': 'currency'},
     outputs={'productivity': 'per productivity_units', 'required_manpower': '-', 'manhours_required': 'h', 'daily_required_production': '-', 'duration': 'duration_units', 'total_cost': 'currency'},

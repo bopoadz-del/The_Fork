@@ -24,6 +24,7 @@ class FormworkStrikingResult:
 
 @formula(
     owner='qaqc',
+    display_name='Formwork striking time',
     description='Earliest formwork striking time from element type, temperature and test strength.',
     inputs={'concrete_strength_7h': '-', 'design_required_strength': '-', 'ciria_surface_strength': '-', 'bs8110_minimum_hours': 'h', 'proposed_hours': 'h'},
     outputs={'recommended_hours': 'h', 'bs8110_minimum_hours': 'h', 'ciria_minimum_strength_n_mm2': 'N/mm2', 'design_required_strength_n_mm2': 'N/mm2', 'actual_early_strength_n_mm2': 'N/mm2'},
@@ -67,6 +68,7 @@ def formwork_striking_time(
 
 @formula(
     owner='qaqc',
+    display_name='Aggregate fineness modulus',
     description='Fineness modulus of an aggregate from its cumulative sieve retentions.',
     inputs={'sieve_retained_percentages': '%'},
     outputs={'fineness_modulus': '-'},
@@ -79,6 +81,7 @@ def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
 
 @formula(
     owner='qaqc',
+    display_name='Concrete modulus of rupture',
     description='Flexural tensile strength (modulus of rupture) of concrete, to the selected code.',
     inputs={'fck_n_mm2': 'N/mm2', 'code': '-'},
     outputs={'fck_n_mm2': 'N/mm2', 'value': 'currency', 'unit': '-', 'modulus_of_rupture_n_mm2': 'N/mm2', 'split_cylinder_aci_n_mm2': 'N/mm2', 'tensile_pct_of_compressive': '-'},
@@ -124,6 +127,7 @@ def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict
 
 @formula(
     owner='qaqc',
+    display_name='Mass concrete thermal check',
     description='Mass-concrete thermal check: core temperature and core-to-surface difference against limits.',
     inputs={'core_temp_c': 'degC', 'surface_temp_c': 'degC'},
     outputs={'core_temp_c': 'degC', 'surface_temp_c': 'degC', 'delta_t_c': 'degC', 'core_ok': '-', 'delta_ok': '-', 'thermal_cracking_risk': '-'},
@@ -145,6 +149,7 @@ def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -
 
 @formula(
     owner='qaqc',
+    display_name='Post-tensioning grout checks',
     description='Grouting pressure and strength checks for post-tensioning ducts.',
     inputs={'tendon_duct_diameter_mm': 'mm', 'required_pressure_n_mm2': 'N/mm2', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_minutes': '-'},
     outputs={'duct_area_mm2': 'mm2', 'grout_volume_l_m': 'm', 'pressure_n_mm2': 'N/mm2', 'pressure_kg_cm2': '-', 'pressure_psi': '-', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_min': '-'},
@@ -173,6 +178,7 @@ def grout_pressure_calc(
 
 @formula(
     owner='qaqc',
+    display_name='Concrete strength by maturity',
     description='Concrete strength from its temperature history by the maturity method.',
     inputs={'temperature_history_c': 'degC', 'time_intervals_hours': 'h', 'datum_temperature': '-', 'strength_28d_n_mm2': 'N/mm2', 'reference_temperature_c': 'degC', 'gain_a': '-', 'gain_b': '-'},
     outputs={'maturity_index_c_hrs': 'degC.h', 'equivalent_age_days': 'days', 'predicted_strength_n_mm2': 'N/mm2', 'percent_of_28d': '%'},

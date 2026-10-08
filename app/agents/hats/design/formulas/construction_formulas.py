@@ -24,6 +24,7 @@ class DewateringResult:
 
 @formula(
     owner='design',
+    display_name='Uplift check for stopping dewatering',
     description="Whether dewatering can stop: factor of safety of the structure's weight against groundwater uplift.",
     inputs={'water_depth': '-', 'raft_thickness': '-', 'floor_count': '-', 'floor_thickness': '-', 'concrete_unit_weight': '-', 'water_unit_weight': '-', 'required_fos': '-'},
     outputs={'uplift_force_t_m2': 't/m2', 'counter_weight_t_m2': 't/m2', 'fos': '-', 'can_stop': '-', 'needs_tension_piles': '-', 'min_floors_for_stop': '-'},
@@ -79,6 +80,7 @@ def dewatering_uplift_check(
 
 @formula(
     owner='design',
+    display_name='Well-point spacing for dewatering',
     description='Well-point spacing and number of stages for a dewatering depth and soil type.',
     inputs={'soil_permeability_m_s': 'm/s', 'required_drawdown_m': 'm', 'well_point_diameter_m': 'm'},
     outputs={'soil_type': '-', 'permeability_m_s': 'm/s', 'required_drawdown_m': 'm', 'stages_needed': '-', 'max_depth_capacity_m': 'm', 'well_point_spacing_m': 'm', 'well_point_diameter_m': 'm'},
@@ -120,6 +122,7 @@ def dewatering_well_point_spacing(
 
 @formula(
     owner='design',
+    display_name='Concrete mix design',
     description='Concrete mix design by the absolute-volume method from specific gravities and the water/cement ratio.',
     inputs={'w_c_ratio': '-', 'cement_sg': '-', 'fine_agg_sg': '-', 'coarse_agg_sg': '-', 'fine_agg_ratio': '-', 'coarse_agg_ratio': '-', 'dune_sand_pct': '%'},
     outputs={'w_c_ratio': '-', 'cement_kg_m3': 'kg/m3', 'water_litres_m3': 'L/m3', 'fine_aggregate_kg_m3': 'kg/m3', 'coarse_aggregate_kg_m3': 'kg/m3', 'total_weight_kg_m3': 'kg/m3', 'proportions': '-'},
@@ -163,6 +166,7 @@ def concrete_mix_design_sg(
 
 @formula(
     owner='design',
+    display_name='Slip-form concrete mix',
     description='Mix proportions for slip-formed concrete, flagged as indicative defaults when not supplied.',
     inputs={},
     outputs={'cube_strength_n_mm2': 'N/mm2', 'slump_mm': 'mm', 'max_concrete_temp_c': 'degC', 'retarder_10c_lit_m3': 'L/m3', 'retarder_20c_lit_m3': 'L/m3'},
@@ -184,6 +188,7 @@ def concrete_mix_slip_form(**_kwargs: Any) -> Dict[str, Any]:
 
 @formula(
     owner='design',
+    display_name='Concrete modulus of elasticity',
     description='Modulus of elasticity of concrete from its compressive strength, to the selected code.',
     inputs={'fck_n_mm2': 'N/mm2', 'code': '-'},
     outputs={'value': 'currency', 'unit': '-', 'value_mpa': 'MPa'},
@@ -244,6 +249,7 @@ def _second_moment_mm4(i_mm4: float) -> float:
 
 @formula(
     owner='design',
+    display_name='Beam deflection under a uniform load',
     description='Midspan deflection of a simply supported beam under a uniformly distributed load.',
     inputs={'w_kn_m': 'kN/m', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
     outputs={'deflection': 'mm'},
@@ -261,6 +267,7 @@ def beam_deflection_ss_udl(w_kn_m: float, span_m: float, ec_mpa: float, i_mm4: f
 
 @formula(
     owner='design',
+    display_name='Cantilever deflection under a uniform load',
     description='Tip deflection of a cantilever under a uniformly distributed load.',
     inputs={'w_kn_m': 'kN/m', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
     outputs={'deflection': 'mm'},
@@ -278,6 +285,7 @@ def beam_deflection_cantilever_udl(w_kn_m: float, span_m: float, ec_mpa: float, 
 
 @formula(
     owner='design',
+    display_name='Cantilever deflection under a point load',
     description='Tip deflection of a cantilever under a point load at its free end.',
     inputs={'p_kn': 'kN', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
     outputs={'deflection': 'mm'},
@@ -299,6 +307,7 @@ def beam_deflection_cantilever_point_load(p_kn: float, span_m: float, ec_mpa: fl
 
 @formula(
     owner='design',
+    display_name='Beam deflection under a central point load',
     description='Midspan deflection of a simply supported beam under a central point load.',
     inputs={'p_kn': 'kN', 'span_m': 'm', 'ec_mpa': 'MPa', 'i_mm4': 'mm4'},
     outputs={'deflection': 'mm'},
@@ -316,6 +325,7 @@ def beam_deflection_ss_point_load_midspan(p_kn: float, span_m: float, ec_mpa: fl
 
 @formula(
     owner='design',
+    display_name='Shrinkage as an equivalent temperature drop',
     description='Converts a shrinkage strain to the equivalent temperature drop.',
     inputs={'shrinkage_strain': '-', 'alpha_c': 'degC'},
     outputs={'shrinkage_strain': '-', 'equivalent_temp_drop_c': 'degC'},
@@ -329,6 +339,7 @@ def thermal_shrinkage_equivalence(shrinkage_strain: float = 0.0002, alpha_c: flo
 
 @formula(
     owner='design',
+    display_name='Concrete unit weight',
     description='Unit weight of plain or reinforced concrete, flagged as an indicative default when not supplied.',
     inputs={'reinforced': '-'},
     outputs={'unit_weight_kg_m3': 'kg/m3', 'type': '-', 'range_kg_m3': 'kg/m3'},
@@ -341,6 +352,7 @@ def unit_weight_concrete(reinforced: bool = True) -> Dict[str, float]:
 
 @formula(
     owner='design',
+    display_name='Shear stress check',
     description='Nominal shear stress on a section from shear force, width and effective depth.',
     inputs={'v_kn': 'kN', 'b_mm': 'mm', 'd_mm': 'mm'},
     outputs={'shear_force_kn': 'kN', 'width_mm': 'mm', 'effective_depth_mm': 'mm', 'shear_stress_n_mm2': 'N/mm2'},
@@ -354,6 +366,7 @@ def shear_stress_check(v_kn: float, b_mm: float, d_mm: float) -> Dict[str, float
 
 @formula(
     owner='design',
+    display_name='Post-tensioning force',
     description='Post-tensioning force needed to balance a share of the distributed load, from span and tendon drape.',
     inputs={'span_m': 'm', 'slab_thickness_m': 'm', 'live_load_kn_m2': 'kN/m2', 'dead_load_kn_m2': 'kN/m2', 'tendon_stress_n_mm2': 'N/mm2', 'tendon_diameter_mm': 'mm', 'eccentricity_ratio': '-'},
     outputs={'tendon_force_kn': 'kN', 'tendon_area_mm2': 'mm2', 'num_strands': '-', 'balanced_load_kn_m': 'kN/m', 'eccentricity_mm': 'mm', 'cable_profile': '-'},
@@ -386,6 +399,7 @@ def post_tensioning_force(
 
 @formula(
     owner='design',
+    display_name='Composite column comparison',
     description='Compares a composite column with an embedded steel section against a reinforced concrete column for a given axial load.',
     inputs={'axial_load_kn': 'kN', 'column_diameter_mm': 'mm', 'concrete_grade_n_mm2': 'N/mm2', 'use_i_beam': '-', 'i_beam_weight_t': 't'},
     outputs={'option_a': '-', 'option_b': '-', 'recommended': '-'},
@@ -415,6 +429,7 @@ def composite_column_design(
 
 @formula(
     owner='design',
+    display_name='Foundation bearing pressure',
     description='Bearing pressure under a foundation from load and area, and its factor of safety against the soil capacity.',
     inputs={'foundation_width_m': 'm', 'foundation_length_m': 'm', 'column_load_kn': 'kN', 'soil_bearing_capacity_kn_m2': 'kN/m2', 'foundation_depth_m': 'm'},
     outputs={'bearing_pressure_kn_m2': 'kN/m2', 'net_pressure_kn_m2': 'kN/m2', 'fos_against_bearing': '-', 'bearing_ok': '-'},
@@ -440,6 +455,7 @@ def foundation_bearing_pressure(
 
 @formula(
     owner='design',
+    display_name='Precast beam lifting check',
     description='Crane load for lifting a precast beam: beam plus rigging with a dynamic factor, against crane capacity.',
     inputs={'beam_weight_t': 't', 'beam_length_m': 'm', 'crane_capacity_t': 't', 'lift_radius_m': 'm', 'rigging_weight_t': 't', 'dynamic_factor': '-'},
     outputs={'effective_lift_weight_t': 't', 'utilization_pct': '%', 'is_safe': '-'},

@@ -20,6 +20,7 @@ def _norm_code(code: str) -> str:
 
 @formula(
     owner='design',
+    display_name='Steel member tension capacity',
     description='Design tensile strength of a steel member: the lesser of gross-section yielding and net-section rupture.',
     inputs={'gross_area_mm2': 'mm2', 'net_area_mm2': 'mm2', 'fy_mpa': 'MPa', 'fu_mpa': 'MPa', 'code': '-'},
     outputs={'capacity_kn': 'kN', 'governing_limit_state': '-', 'yield_capacity_kn': 'kN', 'rupture_capacity_kn': 'kN'},
@@ -73,6 +74,7 @@ def steel_tension_capacity(
 
 @formula(
     owner='design',
+    display_name='Bolt shear capacity',
     description='Design shear capacity of a bolt over its shear planes, to the selected code.',
     inputs={'bolt_area_mm2': 'mm2', 'shear_strength_mpa': 'MPa', 'n_shear_planes': '-', 'code': '-', 'alpha_v': '-'},
     outputs={'capacity_kn': 'kN', 'n_shear_planes': '-'},
@@ -120,6 +122,7 @@ def bolt_shear_capacity(
 
 @formula(
     owner='design',
+    display_name='Fillet weld capacity',
     description='Design strength of a fillet weld over its length.',
     inputs={'leg_size_mm': 'mm', 'length_mm': 'mm', 'electrode_strength_mpa': 'MPa', 'code': '-', 'beta_w': '-'},
     outputs={'capacity_kn': 'kN', 'capacity_per_mm_kn': 'kN', 'effective_throat_mm': 'mm'},

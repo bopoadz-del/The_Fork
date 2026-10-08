@@ -8,6 +8,7 @@ from app.lib.formula_registry import formula
 
 @formula(
     owner='commercial',
+    display_name='Interim payment',
     description='Net interim payment from a gross valuation and a retention percentage.',
     inputs={'gross_valuation': 'currency', 'retention_percent': '%'},
     outputs={'gross_valuation': 'currency', 'retention_percent': '%', 'retention_amount': 'currency', 'net_payment': 'currency'},

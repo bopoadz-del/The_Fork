@@ -2,7 +2,8 @@
 
 A formula is registered by declaring it where it is defined::
 
-    @formula(owner="base", description="Volume of a rectangular prism.",
+    @formula(owner="base", display_name="Rectangular volume",
+             description="Volume of a rectangular prism.",
              inputs={"length_m": "m", "width_m": "m", "depth_m": "m"},
              outputs={"volume_m3": "m3"})
     def some_volume(length_m, width_m, depth_m): ...
@@ -14,7 +15,9 @@ conversion, geometry, areas, volumes, percentages, simple rates) or one hat
 base formulas plus that hat's own.
 
 The declaration holds descriptions only -- never a project's value, rate or
-worked example. Built-in factors a formula falls back to are returned flagged
+worked example. ``display_name`` is what a user reads when an answer credits
+the formula ("Delay damages per day -- platform calculator"); the function
+name is an internal identifier and never shown. Built-in factors a formula falls back to are returned flagged
 as indicative defaults by the formula itself.
 """
 from __future__ import annotations
@@ -34,6 +37,7 @@ class FormulaSpec:
     fn: Callable[..., Any]
     owner: str
     description: str
+    display_name: str = ""
     inputs: Dict[str, str] = field(default_factory=dict)
     outputs: Dict[str, str] = field(default_factory=dict)
 
@@ -45,17 +49,21 @@ def formula(
     *,
     owner: str,
     description: str,
+    display_name: str,
     inputs: Dict[str, str],
     outputs: Dict[str, str],
     name: Optional[str] = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Declare a formula. Raises at import on an unknown owner, an empty
-    description or a duplicate name -- a formula without an owner or a
-    description cannot be registered at all."""
+    description, an empty display name or a duplicate name -- a formula
+    without an owner, a description or a name a user can read cannot be
+    registered at all."""
     if owner not in OWNERS:
         raise ValueError(f"unknown formula owner {owner!r}; one of {OWNERS}")
     if not (description or "").strip():
         raise ValueError("a formula needs a description")
+    if not (display_name or "").strip():
+        raise ValueError("a formula needs a display_name")
 
     def _register(fn: Callable[..., Any]) -> Callable[..., Any]:
         key = name or fn.__name__
@@ -63,7 +71,7 @@ def formula(
         if existing is not None and existing.fn is not fn:
             raise ValueError(f"formula {key!r} is declared twice")
         _REGISTRY[key] = FormulaSpec(key, fn, owner, description.strip(),
-                                     dict(inputs), dict(outputs))
+                                     display_name.strip(), dict(inputs), dict(outputs))
         fn.__formula__ = _REGISTRY[key]  # type: ignore[attr-defined]
         return fn
 

@@ -588,7 +588,8 @@ def test_the_end_event_lists_sources_and_the_calculation_credit(monkeypatch):
     assert [s["doc_name"] for s in end["sources"]][0] == "Conditions of Contract.pdf"
     assert end["sources"][0]["confidence"] == "High" and end["sources"][1]["confidence"] == "Low"
     text = "".join(e["content"] for e in events if e["type"] == "token")
-    assert "Calculated with: payment_certificate (gross_valuation 2400000, retention_percent 10)" in text
+    assert "Calculated with: Payment certificate (gross valuation 2,400,000, retention percent 10)" in text
+    assert "payment_certificate" not in text
     assert "the ask" not in text
 
 

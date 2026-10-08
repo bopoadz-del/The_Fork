@@ -19,6 +19,7 @@ def _norm_code(code: str) -> str:
 
 @formula(
     owner='design',
+    display_name='Concrete column axial capacity',
     description='Axial load capacity of a reinforced concrete column, with a slenderness check, to the selected code.',
     inputs={'gross_area_mm2': 'mm2', 'steel_area_mm2': 'mm2', 'fc_mpa': 'MPa', 'fy_mpa': 'MPa', 'unsupported_length_mm': 'mm', 'radius_gyration_mm': 'mm', 'code': '-', 'tie_type': '-', 'k_factor': '-', 'applied_load_kn': 'kN', 'cm': '-', 'slenderness_limit': '-'},
     outputs={'axial_capacity_kn': 'kN', 'slenderness_ratio': '-', 'slenderness_limit': '-', 'is_slender': '-', 'euler_critical_load_kn': 'kN', 'moment_magnifier_delta_ns': '-'},

@@ -20,6 +20,7 @@ def _norm_code(code: str) -> str:
 
 @formula(
     owner='design',
+    display_name='Concrete beam bending capacity',
     description='Design flexural capacity of a singly reinforced rectangular concrete beam.',
     inputs={'steel_area_mm2': 'mm2', 'fy_mpa': 'MPa', 'width_mm': 'mm', 'eff_depth_mm': 'mm', 'fc_mpa': 'MPa', 'code': '-'},
     outputs={'moment_capacity_kn_m': 'kN.m'},
@@ -65,6 +66,7 @@ def rc_beam_moment_capacity(
 
 @formula(
     owner='design',
+    display_name='Concrete section shear capacity',
     description='Shear capacity of a concrete section without shear reinforcement.',
     inputs={'width_mm': 'mm', 'eff_depth_mm': 'mm', 'fc_mpa': 'MPa', 'code': '-', 'rho_l': '-'},
     outputs={'shear_capacity_kn': 'kN'},
@@ -116,6 +118,7 @@ _EC_RATIOS = {"simply_supported": 20.0, "one_end_continuous": 26.0,
 
 @formula(
     owner='design',
+    display_name='Minimum slab thickness',
     description='Minimum one-way slab thickness for deflection control, from span and support condition.',
     inputs={'span_mm': 'mm', 'support_condition': '-', 'code': '-', 'fy_mpa': 'MPa'},
     outputs={'min_thickness_mm': 'mm', 'support_condition': '-'},
@@ -337,6 +340,7 @@ def answer_states_slab_thickness_result(ask: str, answer: str) -> bool:
 
 @formula(
     owner='design',
+    display_name='Reinforcement lap length',
     description='Tension lap-splice length of a deformed reinforcing bar.',
     inputs={'bar_diameter_mm': 'mm', 'fy_mpa': 'MPa', 'fc_mpa': 'MPa', 'code': '-', 'confinement_ratio': '-'},
     outputs={'lap_length_mm': 'mm'},

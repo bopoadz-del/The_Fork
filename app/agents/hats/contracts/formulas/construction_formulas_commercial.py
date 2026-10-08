@@ -8,6 +8,7 @@ from app.lib.formula_registry import formula
 
 @formula(
     owner='contracts',
+    display_name='Delay damages per day',
     description="Daily delay damages from the contract's daily rate and the contract amount it applies to.",
     inputs={'rate_percent': '%', 'contract_amount': 'currency', 'currency': '-'},
     outputs={'daily_amount': 'currency', 'rate_percent': '%', 'contract_amount': 'currency', 'currency': '-', 'per': '-'},

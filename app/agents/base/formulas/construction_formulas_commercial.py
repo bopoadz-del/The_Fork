@@ -8,6 +8,7 @@ from app.lib.formula_registry import formula
 
 @formula(
     owner='base',
+    display_name='Quantity times unit rate',
     description='Line extension: quantity times unit rate.',
     inputs={'quantity': '-', 'unit_rate': '-'},
     outputs={'total_cost': 'currency'},
@@ -24,6 +25,7 @@ def unit_cost_total(quantity: float, unit_rate: float) -> dict:
 
 @formula(
     owner='base',
+    display_name='Cost per area',
     description='Unit cost per area: a total cost divided by its area.',
     inputs={'total_cost': 'currency', 'area': '-', 'area_unit': '-'},
     outputs={'cost_per_area': 'currency', 'area_unit': '-'},
@@ -43,6 +45,7 @@ def cost_per_area(total_cost: float, area: float, area_unit: str = "m2") -> dict
 
 @formula(
     owner='base',
+    display_name='Productivity rate',
     description='Output per labour-hour and per worker from an output, the hours worked and the crew size.',
     inputs={'output_quantity': '-', 'labor_hours': 'h', 'crew_size': '-'},
     outputs={'rate_per_hour': '-', 'rate_per_worker_hour': '-', 'crew_size': '-', 'unit': '-', 'value': 'currency', 'rate_per_worker_hour_unit': '-'},

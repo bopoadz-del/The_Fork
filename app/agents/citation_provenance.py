@@ -678,14 +678,6 @@ def _answer_commits(answer: str, credit: _CalculatorCredit) -> bool:
     return _has_number(answer, credit.result_numbers)
 
 
-def _fmt_input(val: Any) -> str:
-    if isinstance(val, float) and val.is_integer():
-        return str(int(val))
-    if isinstance(val, float):
-        return format(val, "g")
-    return str(val)
-
-
 def _record_supplies_input(text: str, inputs: dict[str, Any]) -> bool:
     """True when this chunk's words carry a value the calculator was given."""
     low = (text or "").lower()
@@ -760,29 +752,18 @@ def _citation_is_false_chunk_credit(
 
 
 def _fmt_credit(credit: _CalculatorCredit) -> str:
-    rendered = ", ".join(
-        f"{key}={_fmt_input(val)}" for key, val in credit.inputs.items()
-    )
-    head = f"Source: {credit.tool} {credit.calculation}"
-    if rendered:
-        head += f" ({rendered})"
+    """The credit a user reads: the formula's declared display name, never
+    the tool or function name (app.lib.source_labels)."""
+    from app.lib.source_labels import calculator_label
+
+    head = "Source: " + calculator_label(credit.calculation, credit.inputs)
     if credit.notes:
         head += " — " + "; ".join(credit.notes)
     return head
 
 
 def _credit_already_present(answer: str, credit: _CalculatorCredit) -> bool:
-    if credit.calculation not in (answer or ""):
-        return False
-    if credit.tool and credit.tool not in answer:
-        return False
-    for note in credit.notes:
-        if note not in answer:
-            return False
-    for key, val in credit.inputs.items():
-        if f"{key}={_fmt_input(val)}" not in answer:
-            return False
-    return True
+    return _fmt_credit(credit) in (answer or "")
 
 
 def _missing_calculator_credit(
@@ -873,8 +854,13 @@ def _strip_source_lines(
             return m.group(0)
         # A line naming the TOOL that ran is a RENDERED citation, not an
         # invention -- and R3 requires exactly that self-declaration from the
-        # template scheduler. Never strip it.
-        for t in tools:
+        # template scheduler. Never strip it. The name a user reads (the
+        # tool's or the formula's declared display name) is the same citation.
+        from app.lib.source_labels import formula_display_name, tool_display_name
+
+        shown = [*tools, *(tool_display_name(t) for t in tools),
+                 *(formula_display_name(c.calculation) for c in credits)]
+        for t in shown:
             if t and t.lower() in low:
                 return m.group(0)
         if ev.any_corpus_read() and not ev.source_names() and not ids:
