@@ -927,9 +927,9 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     turn_timing.mark_arrival()
     if driver.mode() == "request":
         from app.core import users as _users
-        from app.core.offload import off_loop as _off_loop
+        from app.core.offload import off_loop as _driver_off_loop
 
-        driver.mark_request(request.headers, await _off_loop(_users.driver_mode_for, auth.get("user_id")))
+        driver.mark_request(request.headers, await _driver_off_loop(_users.driver_mode_for, auth.get("user_id")))
     else:
         driver.mark_request(request.headers)
     if "chat" not in BLOCK_REGISTRY:

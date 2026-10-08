@@ -283,9 +283,9 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     turn_timing.mark_arrival()
     if driver.mode() == "request":
         from app.core import users as _users
-        from app.core.offload import off_loop as _off_loop
+        from app.core.offload import off_loop as _driver_off_loop
 
-        driver.mark_request(request.headers, await _off_loop(_users.driver_mode_for, auth.get("user_id")))
+        driver.mark_request(request.headers, await _driver_off_loop(_users.driver_mode_for, auth.get("user_id")))
     else:
         driver.mark_request(request.headers)
     agent = get_agent(name)
