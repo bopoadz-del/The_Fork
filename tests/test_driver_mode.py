@@ -385,3 +385,18 @@ def test_the_exit_check_reads_a_tool_result_whole_even_when_the_model_got_it_cut
     assert len(seen[1]["messages"][-1]["content"]) == loop._TOOL_RESULT_CHARS  # the model's copy is cut
     text = "".join(e["content"] for e in events if e["type"] == "token")
     assert "5 %" in text  # the exit check saw the whole result
+
+
+def test_the_exit_check_reads_a_snippet_result():
+    """Live 2026-10-08, the document search's results are
+    {document_id, filename, snippet, score, origin}."""
+    live = {"ok": True, "result": {"results": [
+        {"document_id": "d-3", "filename": "spec.pdf", "score": 0.7, "origin": "own",
+         "snippet": "Concrete cover to reinforcement in footings: 75 mm."}]}}
+    msgs = [
+        {"role": "user", "content": "What cover does a footing need?"},
+        {"role": "assistant", "content": "", "tool_calls": [_call("search_project_documents", {"query": "cover"}, "c1")]},
+        {"role": "tool", "name": "search_project_documents", "tool_call_id": "c1", "content": json.dumps(live)},
+    ]
+    kept, _trail, report = loop.exit_check("Footings need 75 mm cover.", msgs)
+    assert "75 mm" in kept and report["passages_read"] == 1
