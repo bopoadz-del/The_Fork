@@ -305,7 +305,14 @@ def _apply_rag_context(
                 "for project-specific rates, specified thicknesses or standards "
                 "where it genuinely applies — but never invent "
                 "project-specific facts (names, drawing or clause references) "
-                "that are not in the context.\n\nCALCULATION REQUEST: "
+                "that are not in the context. Do not attach a currency or a "
+                "unit that the request, the calculator result and the excerpts "
+                "do not already state. "
+                "Do not cite a clause or a standard as the basis of the "
+                "calculation unless the excerpts state it. Do not compare the "
+                "result with a limit the request and the excerpts never state. "
+                "Never write an internal id; the reader sees the display name."
+                "\n\nCALCULATION REQUEST: "
             )
         elif _message_wants_boq_scope_wbs_ask(question):
             # A "client documents only" prefix on a BOQ-scope WBS ask: the
@@ -4311,7 +4318,7 @@ def _sanitize_citation_labels(text: str) -> str:
 # soup; this gate does not, because that chunk is not rate-semantic and 450 does
 # not sit next to a currency/rate-unit. Flag-controlled (COST_GROUNDING_GATE,
 # default on); never raises (a gate must never break an answer).
-_CG_CURRENCY = r"(?:SAR|SR|USD|US\$|AED|EUR|GBP|QAR|KWD|OMR|BHD|﷼|\$|€|£)"
+from app.lib.source_labels import CURRENCY_TOKEN as _CG_CURRENCY
 # Pricing DENOMINATORS only (per-unit rate units), never bare dimensions like
 # mm/cm — a "450 mm" dimension must never read as a rate.
 _CG_RATE_UNIT = (
@@ -8334,6 +8341,55 @@ def _graft_supplied_input_calculation(
     return replacement if replacement.strip() else text
 
 
+def _scrub_supplied_input_wording(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+    rag_sys_msg: dict[str, Any] | None,
+) -> str:
+    """Currency, clause and comparison text on a user-supplied calculation.
+
+    Runs for every formula the user completed, from the request, the
+    excerpts and that formula's result. A turn that did not supply the
+    inputs is left to the document answer.
+    """
+    user = _latest_operator_ask(messages)
+    selected = _user_supplied_registered_calculation(user)
+    if not selected or not text:
+        return text
+    name, bound = selected
+    retrieval = ""
+    if isinstance(rag_sys_msg, dict):
+        retrieval = str(rag_sys_msg.get("content") or "")
+    result = None
+    try:
+        from app.lib.construction_formulas import run_calculation
+        env = run_calculation(name, {**bound, "text": user})
+        if isinstance(env, dict) and env.get("status") == "success":
+            result = env.get("result")
+    except Exception:  # noqa: BLE001 — the wording guard must not break a turn
+        _LOG.exception("supplied-input wording guard could not read the result")
+    try:
+        from app.lib.source_labels import guard_supplied_input_wording
+        return guard_supplied_input_wording(
+            text, user, retrieval, name, bound, result,
+        )
+    except Exception:  # noqa: BLE001 — the wording guard must not break a turn
+        _LOG.exception("supplied-input wording guard failed")
+        return text
+
+
+def _scrub_registry_ids(text: str) -> str:
+    """Registered formula and tool ids in the answer read as display names."""
+    if not text:
+        return text
+    try:
+        from app.lib.source_labels import plain_registry_text
+        return plain_registry_text(text)
+    except Exception:  # noqa: BLE001 — the id scrub must not break a turn
+        _LOG.exception("registry id scrub failed")
+        return text
+
+
 @_turn_timing_stage("postprocess")
 def _postprocess_answer(
     text: str,
@@ -8502,6 +8558,11 @@ def _postprocess_answer(
     # operator scores, from the excerpts already on the turn.
     from app.agents.first_line_hard_rule import apply_first_line_hard_rule
     text = apply_first_line_hard_rule(text, rag_sys_msg, messages)
+    # Supplied-input wording, then registered ids. Both run after every
+    # graft so the text the user reads is what they are applied to. The
+    # derivation check then sees that text.
+    text = _scrub_supplied_input_wording(text, messages, rag_sys_msg)
+    text = _scrub_registry_ids(text)
     # Last: the answer's own working must agree with its own result. Checked
     # after every graft, so a grafted figure is checked too.
     text = _annotate_derivation_mismatches(text)
