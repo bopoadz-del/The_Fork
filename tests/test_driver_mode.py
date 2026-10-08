@@ -19,6 +19,24 @@ def test_driver_mode_is_off_unless_switched_on(monkeypatch, value, expected):
     assert driver.enabled() is expected
 
 
+_REAL_STREAM = llm.stream  # the streaming call itself, before any fixture replaces it
+
+
+@pytest.fixture(autouse=True)
+def _stream_through_call(monkeypatch):
+    """The loop streams (llm.stream); these tests script the model through
+    llm.call. Stream whatever llm.call answers, in small chunks."""
+    async def fake_stream(agent, messages, offered, model="", timeout=120.0):
+        reply = await llm.call(agent, messages, offered, model=model)
+        if reply.get("status") == "success":
+            text = reply["message"].get("content") or ""
+            for i in range(0, len(text), 7):
+                yield "content", text[i:i + 7]
+        yield "done", reply
+
+    monkeypatch.setattr(llm, "stream", fake_stream)
+
+
 def _agent():
     from app.agents.runtime import Agent
 
@@ -422,3 +440,96 @@ def test_the_driver_reads_the_project_profile_off_the_event_loop(monkeypatch):
 
     loop_thread, _events = asyncio.run(go())
     assert seen_threads and all(t is not loop_thread for t in seen_threads)
+
+
+
+def test_the_answer_streams_before_the_model_has_finished(monkeypatch):
+    _no_retrieval(monkeypatch)
+    order = []
+
+    async def slow_stream(agent, messages, offered, model="", timeout=120.0):
+        for piece in ("The first point stands. ", "The second point too. ", "And a third."):
+            order.append(("model", piece))
+            yield "content", piece
+            await asyncio.sleep(0)
+        order.append(("model", "done"))
+        yield "done", {"status": "success", "message": {"content": "".join(p for k, p in order if k == "model" and p != "done")}}
+
+    monkeypatch.setattr(llm, "stream", slow_stream)
+
+    async def go():
+        async for e in loop.stream(_agent(), user_message="explain"):
+            if e["type"] == "token":
+                order.append(("token", e["content"]))
+    asyncio.run(go())
+    first_token = next(i for i, (k, _v) in enumerate(order) if k == "token")
+    done = order.index(("model", "done"))
+    assert first_token < done  # a sentence reached the user while the model was still writing
+    assert "".join(v for k, v in order if k == "token") == "The first point stands. The second point too. And a third."
+
+
+def test_a_one_sentence_preamble_before_tool_calls_is_not_shown(monkeypatch):
+    _no_retrieval(monkeypatch)
+    replies = [
+        {"content": "Let me look that up. ", "tool_calls": [_call("select_hat", {"hat": "qaqc"}, "c1")]},
+        {"content": "Here it is."},
+    ]
+    monkeypatch.setattr(llm, "call", _scripted(replies, []))
+    events = _run(_agent(), user_message="look it up")
+    text = "".join(e["content"] for e in events if e["type"] == "token")
+    assert text == "Here it is."
+
+
+def test_the_streamed_call_assembles_content_and_tool_calls(monkeypatch):
+    lines = [
+        'data: {"choices":[{"delta":{"content":"Hel"}}]}',
+        'data: {"choices":[{"delta":{"content":"lo."}}]}',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"t1","function":{"name":"search_","arguments":"{\\"q\\":"}}]}}]}',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"project_documents","arguments":"\\"x\\"}"}}]}}]}',
+        "data: [DONE]",
+    ]
+
+    class FakeResp:
+        status_code = 200
+
+        async def aiter_lines(self):
+            for line in lines:
+                yield line
+
+    class FakeStreamCtx:
+        async def __aenter__(self):
+            return FakeResp()
+
+        async def __aexit__(self, *a):
+            return False
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def stream(self, method, url, json=None, headers=None):
+            assert json["stream"] is True and json.get("tool_choice") == "auto"
+            return FakeStreamCtx()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-test-key")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    async def go():
+        return [x async for x in _REAL_STREAM(_agent(), [{"role": "user", "content": "hi"}],
+                                            [tools.select_hat_schema(["qaqc"])])]
+    out = asyncio.run(go())
+    assert out[:2] == [("content", "Hel"), ("content", "lo.")]
+    kind, result = out[-1]
+    assert kind == "done" and result["status"] == "success"
+    call = result["message"]["tool_calls"][0]
+    assert call["id"] == "t1" and call["function"]["name"] == "search_project_documents"
+    assert json.loads(call["function"]["arguments"]) == {"q": "x"}
