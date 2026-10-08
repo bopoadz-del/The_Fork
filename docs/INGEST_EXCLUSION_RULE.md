@@ -8,9 +8,9 @@
 2. **No archive** ([below](#no-archive)): the platform keeps no copy of an
    original file. Google Drive is the source of truth for admin-added
    project documents; the extracted chunks are what the RAG needs.
-3. **Only the admin path adds to the knowledge base**
-   ([below](#who-adds-to-the-knowledge-base)): a user's upload is not indexed
-   into the project RAG.
+3. **Who may pull a corpus in**
+   ([below](#who-adds-to-the-knowledge-base)): attaching a file to a project
+   indexes it. Drive folder import, Aconex and priced-BOQ ingest stay admin-only.
 
 Both follow [`RAG_GAPS_REVIEW_2026-09-12.md` §E](RAG_GAPS_REVIEW_2026-09-12.md).
 
@@ -79,20 +79,26 @@ The platform does not archive original files (owner ruling, 2026-10-04).
 
 ## Who adds to the knowledge base
 
-One rule, `app/core/privileges.caller_may_add_to_project_rag` (admin only),
-decides every path into a project's RAG (owner ruling, 2026-10-04):
+A file accepted onto a project (`POST /v1/projects/{id}/documents`, and
+`/upload` with a project) is stored and indexed for whoever was allowed to
+attach it. Skipping that ingest left the file previewable and downloadable
+with `chunk_count` 0.
+
+`app/core/privileges.caller_may_add_to_project_rag` (admin only) still decides
+the paths that pull a corpus in:
 
 | path | admin | anyone else |
 |---|---|---|
 | Drive ingest (ECS RunTask) | adds | — (operator-run) |
-| `POST /v1/projects/{id}/documents`, `/upload` with a project | stored and indexed | stored, **not indexed** (`indexing.status = not_indexed`) |
+| `POST /v1/projects/{id}/documents`, `/upload` with a project | stored and indexed | stored and indexed |
 | Drive folder index, Drive import, Aconex sync / event ingest | adds | 403 |
 | Aconex via `/v1/execute` | rows cached and indexed | rows cached, not indexed |
 | Cost / priced BOQ export with `ingest` | download + added | download only |
 | Nightly hydration | reads conversations only — never documents | same |
 
-The user layer of the RAG is written only when the user explicitly asks
-through the LLM; no upload writes it.
+Layer classification is unchanged: with `RAG_LAYERED` on, an interactive
+upload's `provenance=user_upload` is `user_session`. With the flag off (the
+default) the chunks are ordinary project chunks.
 
 ## Why this page exists
 

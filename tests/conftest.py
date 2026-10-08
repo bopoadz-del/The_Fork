@@ -353,10 +353,11 @@ def data_dir():
 def dev_key_is_admin(monkeypatch):
     """Give ``cb_dev_key`` the admin role for one test.
 
-    Only the admin path adds to a project's knowledge base
-    (``app/core/privileges.caller_may_add_to_project_rag``); the dev key has no
-    role, so a test of an indexing route runs as an admin caller. The non-admin
-    side of that rule is tested in tests/test_project_rag_admin_only.py.
+    Drive folder import, Aconex and priced-BOQ ingest stay admin-only
+    (``app/core/privileges.caller_may_add_to_project_rag``). The dev key has
+    no role, so a test of one of those routes runs as an admin caller.
+    Project-document upload indexes for any caller who may attach the file;
+    that side is tests/test_project_upload_is_indexed.py.
     """
     from app.core.auth import auth as auth_manager
 

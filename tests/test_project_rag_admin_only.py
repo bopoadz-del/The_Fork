@@ -1,15 +1,16 @@
-"""Only the admin path adds to a project's knowledge base (owner ruling R2).
+"""Who may add to a project's knowledge base.
 
-1. A user's upload is not indexed into the project RAG: it is stored (the
-   user keeps the file) but never indexed.
-2. The admin path is the one that adds to the project RAG.
-3. The user layer is written only on explicit request through the LLM: no
-   upload writes it implicitly, layered retrieval on or off.
+1. A project upload (the Documents panel, and ``/upload`` with a project)
+   is stored and indexed for the caller who was allowed to attach it.
+2. The admin path still adds, the same way.
+3. Layer classification is unchanged: an interactive upload carries
+   ``provenance=user_upload``, which becomes ``user_session`` only when
+   ``RAG_LAYERED`` is on.
 
-One rule decides it: ``privileges.caller_may_add_to_project_rag``. Routes
-whose only job is adding to a project's RAG (Drive folder index, Drive
-import, Aconex sync / event ingest) answer 403 to a non-admin; routes that
-also do something else (upload, BOQ export) still do that and skip the index.
+``privileges.caller_may_add_to_project_rag`` still gates the routes whose
+only job is pulling a corpus in (Drive folder index, Drive import, Aconex
+sync / event ingest): those answer 403 to a non-admin. A priced-BOQ export
+still downloads for everyone and adds the file to the RAG only for an admin.
 """
 from __future__ import annotations
 
@@ -91,10 +92,10 @@ def test_only_an_admin_may_add_to_project_rag():
     assert privileges.caller_may_add_to_project_rag() is False
 
 
-# ── rule 1: a user's upload is stored, never indexed into the project ─────
+# ── rule 1: a user's upload is stored and indexed ─────────────────────────
 
 
-def test_user_project_upload_is_stored_not_indexed(client, as_caller, indexed):
+def test_user_project_upload_is_stored_and_indexed(client, as_caller, indexed):
     as_caller(USER)
     pid = _project_owned_by(USER)
 
@@ -102,19 +103,19 @@ def test_user_project_upload_is_stored_not_indexed(client, as_caller, indexed):
 
     assert r.status_code == 201, r.text
     doc = r.json()["document"]
-    assert indexed == []
+    assert indexed == [(store.storage_project_id(pid), doc["id"])]
     row = store.get_document(doc["id"])
     assert os.path.exists(row["file_path"])  # the user keeps the file
-    assert (row.get("metadata") or {})["indexing"]["status"] == "not_indexed"
+    assert (row.get("metadata") or {}).get("indexing", {}).get("status") != "not_indexed"
 
 
-def test_user_upload_with_a_project_is_stored_not_indexed(client, as_caller, indexed, monkeypatch):
+def test_user_upload_with_a_project_is_queued_for_indexing(client, as_caller, indexed, monkeypatch):
     import app.routers.upload as upload_router
 
     queued: List[tuple] = []
 
-    async def _enqueue(*a, **k):
-        queued.append(a)
+    async def _enqueue(pid, did, job_id):
+        queued.append((pid, did))
         return True
 
     monkeypatch.setattr(upload_router, "enqueue_ingest", _enqueue)
@@ -131,9 +132,10 @@ def test_user_upload_with_a_project_is_stored_not_indexed(client, as_caller, ind
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["document_id"]
-    assert body["indexed"] is False
-    assert body["indexing_status"] == "not_indexed"
-    assert queued == [] and indexed == []
+    assert body["indexed"] is True
+    assert body["indexing_status"] == "queued"
+    assert queued == [(store.storage_project_id(pid), body["document_id"])]
+    assert indexed == []
 
 
 # ── rule 2: the admin path adds to the project RAG ────────────────────────
@@ -177,9 +179,10 @@ def test_admin_upload_with_a_project_is_queued_for_indexing(client, as_caller, m
 # ── rule 3: no upload writes the user layer implicitly ────────────────────
 
 
-def test_layered_retrieval_on_still_indexes_no_user_upload(client, as_caller, indexed, monkeypatch):
-    """With RAG_LAYERED on, an upload used to be indexed into the user_session
-    layer. Nothing writes that layer unless the user asks through the LLM."""
+def test_layered_retrieval_on_still_indexes_a_user_upload(client, as_caller, indexed, monkeypatch):
+    """With RAG_LAYERED on, the upload is still scheduled. Classification
+    (user_session vs an ordinary project chunk) happens inside the indexer
+    and is not a reason to skip it."""
     monkeypatch.setenv("RAG_LAYERED", "1")
     as_caller(USER)
     pid = _project_owned_by(USER)
@@ -187,7 +190,7 @@ def test_layered_retrieval_on_still_indexes_no_user_upload(client, as_caller, in
     r = _post_document(client, pid)
 
     assert r.status_code == 201, r.text
-    assert indexed == []
+    assert indexed == [(store.storage_project_id(pid), r.json()["document"]["id"])]
 
 
 # ── routes whose only job is adding to a project's RAG ────────────────────

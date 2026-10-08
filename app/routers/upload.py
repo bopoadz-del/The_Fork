@@ -145,16 +145,10 @@ async def upload_v1(
                     response["document_id"] = doc.get("id") if isinstance(doc, dict) else None
                     response["indexed"] = True
                     response["indexing_status"] = "scheduled"
-                    # Only the admin path adds to the project's knowledge base
-                    # (owner ruling, app/core/privileges.py): a user's upload
-                    # is stored, not indexed.
-                    from app.core import privileges
-
-                    if not privileges.caller_may_add_to_project_rag(auth.get("role")):
-                        response["indexed"] = False
-                        response["indexing_status"] = "not_indexed"
-                        response["indexing_detail"] = privileges.PROJECT_RAG_ADMIN_ONLY_DETAIL
-                    elif response["document_id"]:
+                    # Same rule as POST /v1/projects/{id}/documents: a file
+                    # accepted onto a project is indexed. The caller's role
+                    # already passed the route's access check.
+                    if response["document_id"]:
                         # Queue and index under the id the document was STORED
                         # under. For the master-corpus alias that is the backing
                         # corpus — the alias has no project row, so anything

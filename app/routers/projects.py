@@ -983,23 +983,17 @@ async def add_document(
     )
     await audit.arecord("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])
-    # Only the admin path adds to the project's knowledge base (owner ruling,
-    # app/core/privileges.py). A user's upload is stored, not indexed.
-    from app.core import privileges
-
-    if privileges.caller_may_add_to_project_rag(auth.get("role")):
-        # Index under the id the document was actually STORED under. For the
-        # master-corpus alias that is the backing corpus, not the virtual id —
-        # indexing under the alias would put the chunks in a different project
-        # from the document row they describe.
-        background_tasks.add_task(
-            doc_index.maybe_eager_index, store.storage_project_id(project_id), doc["id"],
-        )
-    else:
-        doc = store.update_document_metadata(doc["id"], {"indexing": {
-            "status": "not_indexed",
-            "detail": privileges.PROJECT_RAG_ADMIN_ONLY_DETAIL,
-        }}) or doc
+    # Whoever was allowed to attach the file gets it indexed. Preview reads
+    # the stored bytes on its own, so a skipped ingest leaves a file that
+    # previews and downloads while chunk_count stays 0 ("Not indexed").
+    # Index under the id the document was actually STORED under. For the
+    # master-corpus alias that is the backing corpus, not the virtual id —
+    # indexing under the alias would put the chunks in a different project
+    # from the document row they describe. Drive folder import, Aconex and
+    # priced-BOQ ingest stay on privileges.caller_may_add_to_project_rag.
+    background_tasks.add_task(
+        doc_index.maybe_eager_index, store.storage_project_id(project_id), doc["id"],
+    )
 
     # V2 inline safety + QA/QC detection for image uploads — runs PIL +
     # COCO YOLO + the fine-tuned safety_qaqc detector and surfaces a

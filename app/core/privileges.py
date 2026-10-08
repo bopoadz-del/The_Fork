@@ -41,11 +41,10 @@ def caller_role() -> Optional[str]:
     return _caller_role.get()
 
 
-# Owner ruling (docs/INGEST_EXCLUSION_RULE.md "Who adds to the knowledge
-# base"): only the admin path adds to a project's knowledge base. A user's
-# upload is stored and stays usable as a file, but is never indexed into the
-# project RAG; the user layer is written only when the user explicitly asks
-# through the LLM. Every route that would index into a project asks this.
+# Drive folder index, Drive import, Aconex sync and a priced-BOQ export's
+# ingest stay admin-only (docs/INGEST_EXCLUSION_RULE.md). A file attached
+# through the project document routes is indexed for the caller who was
+# allowed to attach it; this function is not that gate.
 PROJECT_RAG_ADMIN_ONLY_DETAIL = (
     "Only an admin adds documents to a project's knowledge base. "
     "The file was not indexed."
