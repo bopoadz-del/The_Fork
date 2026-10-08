@@ -533,3 +533,29 @@ def test_the_streamed_call_assembles_content_and_tool_calls(monkeypatch):
     call = result["message"]["tool_calls"][0]
     assert call["id"] == "t1" and call["function"]["name"] == "search_project_documents"
     assert json.loads(call["function"]["arguments"]) == {"q": "x"}
+
+
+def test_a_streamed_answer_carries_the_calculator_credit_once(monkeypatch):
+    _no_retrieval(monkeypatch)
+    from app.lib import construction_formulas as cf
+
+    calc = {"name": "construction_calc", "ok": True,  # the calculator's real envelope
+            "result": cf.run_calculation("concrete_volume", {"length_m": 12, "width_m": 8, "thickness_m": 0.2})}
+    replies = [
+        {"content": "", "tool_calls": [_call("construction_calc",
+                                             {"calculation": "concrete_volume", "length_m": 12, "width_m": 8,
+                                              "thickness_m": 0.2}, "k1")]},
+        {"content": "Net volume is 19.2 m3. With 5% waste it is 20.16 m3. Check openings before ordering."},
+    ]
+    monkeypatch.setattr(llm, "call", _scripted(replies, []))
+    agent = _agent()
+
+    async def fake_tool(call, *a, **k):
+        return calc
+
+    monkeypatch.setattr(agent, "_run_tool_call", fake_tool)
+    events = _run(agent, user_message="slab 12 m long, 8 m wide, 200 mm thick", project_id="p")
+    text = "".join(e["content"] for e in events if e["type"] == "token")
+    assert "19.2 m3" in text and "20.16 m3" in text
+    assert text.count("construction_calc") <= 1  # the credit, at most once, never per sentence
+    assert "m3.With" not in text and "m3.Check" not in text
