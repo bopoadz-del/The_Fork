@@ -439,6 +439,7 @@ _BIND_UNIT_SUFFIXES: Tuple[Tuple[str, str], ...] = (
     ("_kn_m3", "kN/m3"),
     ("_kn_m2", "kN/m2"),
     ("_kn_m", "kN.m"),
+    ("_mm4", "mm4"),
     ("_mm2", "mm2"),
     ("_m2", "m2"),
     ("_m3", "m3"),
@@ -668,6 +669,11 @@ _REQUIRED_GROUPS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
     "beam_shear_simple": (
         ("udl_w_kn_m", "central_point_load_kn"),
         ("span_m",),
+    ),
+    # A volume needs a plan dimension of some shape; with none it asks
+    # rather than reporting 0 m3.
+    "concrete_volume": (
+        ("length_m", "diameter_m", "top_width_m"),
     ),
 }
 
@@ -989,12 +995,27 @@ def _flatten_calc_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
         out[key] = val
     return out
 
+def _declared_units(fn: Any) -> Dict[str, str]:
+    """Input units the formula declares where it is defined (@formula
+    inputs), when it is a registered formula; '-' means unitless."""
+    try:
+        from app.lib import formula_registry
+
+        for spec in formula_registry.all_specs():
+            if spec.fn is fn or getattr(fn, "__wrapped__", None) is spec.fn:
+                return {k: v for k, v in (spec.inputs or {}).items() if v and v != "-"}
+    except Exception:  # noqa: BLE001 -- the name suffix is the fallback
+        logger.debug("formula registry unavailable for unit lookup", exc_info=True)
+    return {}
+
+
 def describe_calculation_params(
     fn: Any,
     name: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Signature-derived expected params with units (name suffix / override)."""
     sig = _inspect.signature(fn)
+    declared = _declared_units(fn)  # for parameters whose name carries no unit
     required_names: set[str] = set()
     if name:
         for group in _REQUIRED_GROUPS.get(str(name).strip().lower(), ()):
@@ -1006,7 +1027,7 @@ def describe_calculation_params(
         if key.startswith("_"):
             continue
         required = param.default is param.empty or key in required_names
-        unit = _unit_from_name(key)
+        unit = _unit_from_name(key) or declared.get(key, "")
         row: Dict[str, Any] = {
             "name": key,
             "required": required,
@@ -1521,11 +1542,14 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
 
 # Thousand separators must be interior (1,000) — a trailing comma is list
 # punctuation ("100, man_hours 50") and must not be eaten as part of the number.
-_TEXT_NUM_RE = r"[+-]?\d+(?:,\d{3})*(?:\.\d+)?"
+# A figure: 1,250 / 0.2 / 5.4e9 / 5.4 x 10^9 / 5.4×10^9 (scientific forms
+# as engineers write them).
+_TEXT_NUM_RE = (r"[+-]?\d+(?:,\d{3})*(?:\.\d+)?"
+                r"(?:\s*[x×*]\s*10\s*\^\s*[+-]?\d+|[eE][+-]?\d+)?")
 
 _TEXT_UNIT_RE = (
-    r"(?:kN/m2|kN/m²|N/mm2|N/mm²|mm2|mm²|m2|m²|m3|m³|"
-    r"MPa|kPa|kN|mm|m/s|m|%|deg)"
+    r"(?:kN/m2|kN/m²|kN/m|N/mm2|N/mm²|mm4|mm⁴|cm4|m4|m⁴|mm2|mm²|m2|m²|m3|m³|"
+    r"GPa|MPa|kPa|kN|mm|cm|km|m/s|m|%|deg)"
 )
 
 _CODE_ACI_RE = re.compile(r"\b(?:aci|asce|aisc|tms)\b", re.IGNORECASE)
@@ -1557,8 +1581,12 @@ def _norm_unit_token(raw: Any) -> str:
     return _UNIT_EQ.get(s, s)
 
 def _parse_text_number(raw: str) -> Optional[float]:
+    text = str(raw).replace(",", "").strip()
+    sci = re.fullmatch(r"([+-]?\d+(?:\.\d+)?)\s*[x×*]\s*10\s*\^\s*([+-]?\d+)", text)
+    if sci:
+        return float(sci.group(1)) * 10 ** int(sci.group(2))
     try:
-        return float(str(raw).replace(",", ""))
+        return float(text)
     except (TypeError, ValueError):
         logger.debug("engineer-ask token %r is not numeric", raw)
         return None
@@ -1605,6 +1633,45 @@ def _text_label_map(fn: Any) -> Dict[str, str]:
             add(incoming, dest)
     return out
 
+# Unit families: a figure written in one unit is converted to the unit its
+# parameter's name declares, within the same family; across families (or
+# with no unit written) the figure is left as written.
+_UNIT_FAMILIES: Tuple[Dict[str, float], ...] = (
+    {"mm": 1e-3, "cm": 1e-2, "m": 1.0, "km": 1e3},                         # length, in m
+    {"mm4": 1e-12, "mm⁴": 1e-12, "cm4": 1e-8, "m4": 1.0, "m⁴": 1.0},      # second moment, in m4
+    {"pa": 1.0, "kpa": 1e3, "mpa": 1e6, "n/mm2": 1e6, "n/mm²": 1e6, "gpa": 1e9},  # stress, in Pa
+)
+_PARAM_SUFFIX_UNIT: Tuple[Tuple[str, str], ...] = (
+    ("_mm4", "mm4"), ("_n_mm2", "n/mm2"), ("_mpa", "mpa"), ("_kpa", "kpa"),
+    ("_gpa", "gpa"), ("_mm", "mm"), ("_m", "m"),
+)
+_LENGTH_IN_M: Dict[str, float] = _UNIT_FAMILIES[0]
+
+
+# English dimension adjectives written after the figure ("12 m long",
+# "200 mm thick") and the dimension noun each names.
+_DIMENSION_ADJECTIVES: Dict[str, str] = {
+    "long": "length", "in length": "length",
+    "wide": "width", "in width": "width", "broad": "width",
+    "thick": "thickness", "in thickness": "thickness",
+    "deep": "depth", "in depth": "depth",
+    "high": "height", "tall": "height", "in height": "height",
+    "in diameter": "diameter", "diameter": "diameter",
+}
+
+
+def _to_param_unit(num: float, unit: Optional[str], dest: str) -> float:
+    """``num`` written in ``unit``, in the unit ``dest`` declares."""
+    unit = (unit or "").strip().lower()
+    target = next((u for suf, u in _PARAM_SUFFIX_UNIT if dest.lower().endswith(suf)), None)
+    if not unit or target is None:
+        return num
+    for family in _UNIT_FAMILIES:
+        if unit in family and target in family:
+            return num * family[unit] / family[target]
+    return num
+
+
 def extract_calculation_params_from_text(
     fn: Any,
     text: str,
@@ -1635,7 +1702,7 @@ def extract_calculation_params_from_text(
         match = None
         if len(compact) == 1:
             rx = re.compile(
-                rf"(?<![A-Za-z0-9]){pat}\s*[=:]\s*({_TEXT_NUM_RE})"
+                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+(?:is|of|equals|=)\s+)({_TEXT_NUM_RE})"
                 rf"(?:\s*({_TEXT_UNIT_RE}))?",
                 re.IGNORECASE,
             )
@@ -1647,7 +1714,7 @@ def extract_calculation_params_from_text(
             match = rx.search(raw) or glued.search(raw)
         else:
             rx = re.compile(
-                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+)({_TEXT_NUM_RE})"
+                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+(?:is|of|equals)\s+|\s+)({_TEXT_NUM_RE})"
                 rf"(?:\s*({_TEXT_UNIT_RE}))?",
                 re.IGNORECASE,
             )
@@ -1664,7 +1731,26 @@ def extract_calculation_params_from_text(
         num = _parse_text_number(match.group(1))
         if num is None:
             continue
-        found[dest] = num
+        found[dest] = _to_param_unit(num, match.group(2) if match.lastindex and match.lastindex >= 2 else None, dest)
+        consumed.append(match.span())
+
+    # Figure first, dimension after: "12 m long, 8 m wide and 200 mm thick".
+    adjectives = "|".join(sorted((re.escape(a) for a in _DIMENSION_ADJECTIVES), key=len, reverse=True))
+    trailing = re.compile(
+        rf"({_TEXT_NUM_RE})\s*({_TEXT_UNIT_RE})?\s+({adjectives})(?![A-Za-z])",
+        re.IGNORECASE,
+    )
+    for match in trailing.finditer(raw):
+        if _overlaps(match.span()):
+            continue
+        noun = _DIMENSION_ADJECTIVES[match.group(3).lower()]
+        dest = labels.get(_norm_label(noun))
+        if not dest or dest in found:
+            continue
+        num = _parse_text_number(match.group(1))
+        if num is None:
+            continue
+        found[dest] = _to_param_unit(num, match.group(2), dest)
         consumed.append(match.span())
 
     accepted = {
@@ -1678,11 +1764,15 @@ def extract_calculation_params_from_text(
         elif euro and not aci:
             found["code"] = "eurocode"
 
+    declared_units = _declared_units(fn)
     required_by_unit: Dict[str, List[str]] = {}
     for row in describe_calculation_params(fn):
         if not row.get("required") or row["name"] in found:
             continue
-        unit = _norm_unit_token(_unit_from_name(row["name"]))
+        # Match a figure's unit against the formula's own declaration first
+        # (w_kn_m is declared kN/m; its name suffix reads as kN.m).
+        unit = _norm_unit_token(declared_units.get(row["name"]) or row.get("unit")
+                                or _unit_from_name(row["name"]))
         if not unit:
             continue
         required_by_unit.setdefault(unit, []).append(row["name"])
