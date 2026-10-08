@@ -8,7 +8,7 @@ from __future__ import annotations
 from app.agents.core.tool_registry import ToolCall, tool
 
 
-@tool("cash_flow_forecast", owner="commercial")
+@tool("cash_flow_forecast", owner="commercial", display_name='Cash flow forecast')
 async def handle_cash_flow_forecast(call: ToolCall) -> dict:
     """cash_flow_forecast (direct construction shortcut)"""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
@@ -69,7 +69,7 @@ async def handle_cash_flow_forecast(call: ToolCall) -> dict:
     }
 
 
-@tool("payment_certificate", owner="commercial")
+@tool("payment_certificate", owner="commercial", display_name='Payment certificate')
 async def handle_payment_certificate(call: ToolCall) -> dict:
     """payment_certificate (IPC from the ask)"""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
@@ -91,7 +91,7 @@ async def handle_payment_certificate(call: ToolCall) -> dict:
     return await _dispatch_payment_certificate(args, user_message=user_message)
 
 
-@tool("evm_calculate", owner="commercial")
+@tool("evm_calculate", owner="commercial", display_name='Earned value analysis')
 async def handle_evm_calculate(call: ToolCall) -> dict:
     """The ``evm_calculate`` tool."""
     args = call.args

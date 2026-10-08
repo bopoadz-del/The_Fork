@@ -8,7 +8,7 @@ from __future__ import annotations
 from app.agents.core.tool_registry import ToolCall, tool
 
 
-@tool("rfi_generator", owner="contracts")
+@tool("rfi_generator", owner="contracts", display_name='RFI drafter')
 async def handle_rfi_generator(call: ToolCall) -> dict:
     """The ``rfi_generator`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time

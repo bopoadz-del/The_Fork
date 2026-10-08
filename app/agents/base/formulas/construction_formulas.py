@@ -9,6 +9,7 @@ from typing import Dict
 
 @formula(
     owner='base',
+    display_name='Diaphragm wall panel volume',
     description='Concrete volume of diaphragm wall panels, with an allowance for tremie overbreak.',
     inputs={'panel_length': '-', 'wall_thickness': '-', 'excavation_depth': '-', 'panel_count': '-'},
     outputs={'panel_count': '-', 'volume_per_panel_m3': 'm3', 'total_volume_m3': 'm3', 'volume_with_waste_m3': 'm3', 'waste_factor': '-'},

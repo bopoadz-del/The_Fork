@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 
 @formula(
     owner='procurement',
+    display_name='Tender evaluation',
     description='Scores and ranks tender submissions on weighted technical and commercial criteria.',
     inputs={'tenderers': '-', 'weights': '-'},
     outputs={'ranked_tenderers': '-', 'recommended': '-', 'weights_applied': '-', 'procedure': '-'},

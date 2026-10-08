@@ -10,6 +10,7 @@ from typing import Any, Dict
 
 @formula(
     owner='planning',
+    display_name='Supervision manpower',
     description='Supervision manpower for given quantities, from supervision ratios flagged as indicative defaults.',
     inputs={'concrete_m3': 'm3', 'structural_steel_t': 't', 'piping_dia_inch': '-', 'electrical_cable_km': '-', 'area_m2': 'm2'},
     outputs={'civil_supervisors': '-', 'structural_supervisors': '-', 'piping_supervisors': '-', 'electrical_supervisors': '-', 'general_supervisors': '-', 'total_supervisors': '-', 'hse_officers': '-', 'document_controllers': '-', 'total_supervision_staff': '-'},
@@ -60,6 +61,7 @@ def supervision_ratio(
 
 @formula(
     owner='planning',
+    display_name='Electrical installation programme',
     description='Electrical installation programme: stage durations from first fix to handover.',
     inputs={'floor_area_m2': 'm2', 'num_floors': '-'},
     outputs={'total_area_m2': 'm2', 'stages': '-', 'total_days': 'days'},
@@ -80,6 +82,7 @@ def electrical_installation_sequence(
 
 @formula(
     owner='planning',
+    display_name='Plumbing installation programme',
     description='Plumbing installation programme: stage durations from submittal to handover.',
     inputs={'floor_area_m2': 'm2', 'num_floors': '-'},
     outputs={'stages': '-', 'cumulative_days': 'days', 'total_days': 'days'},

@@ -8,6 +8,7 @@ from app.lib.formula_registry import formula
 
 @formula(
     owner='safety',
+    display_name='Guardrail top-rail height',
     description='Required guardrail top-rail height for fall protection.',
     inputs={},
     outputs={'top_rail_height_in': '-', 'top_rail_height_mm': 'mm', 'top_rail_height_m': 'm', 'mid_rail_height_in': '-', 'mid_rail_height_mm': 'mm', 'mid_rail_height_m': 'm', 'tolerance_in': '-', 'tolerance_mm': 'mm', 'scope': '-'},

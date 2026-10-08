@@ -11,6 +11,7 @@ _LOD_CLASH_MM = {100: None, 200: 50.0, 300: 25.0, 350: 12.0, 400: 6.0, 500: 3.0}
 
 @formula(
     owner='qaqc',
+    display_name='BIM clash tolerance',
     description="Clash tolerance for a model's level of development.",
     inputs={'lod': '-'},
     outputs={'lod': '-', 'clash_tolerance_mm': 'mm'},
@@ -35,6 +36,7 @@ def bim_clash_tolerance(lod: int = 350) -> dict:
 
 @formula(
     owner='qaqc',
+    display_name='Laser scan accuracy at range',
     description="A scanner's stated ranging accuracy scaled to a working range, for comparison with the tolerance.",
     inputs={'range_m': 'm', 'accuracy_at_10m_mm': 'mm'},
     outputs={'range_m': 'm', 'estimated_accuracy_mm': 'mm'},

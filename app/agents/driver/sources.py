@@ -79,14 +79,16 @@ def panel(trail: List[Dict[str, Any]], provenance: List[Dict[str, Any]]) -> List
 
 
 def tool_credit_lines(calls: List[Dict[str, Any]]) -> str:
-    """'Calculated with: <tool> (<inputs>)' for each calculation tool run."""
+    """'Calculated with: <tool's display name> (<inputs>)' for each
+    calculation tool run -- the name the tool declares, never its id."""
+    from app.lib.source_labels import tool_label
+
     lines = []
     for name, args in calls:
         if name in RETRIEVAL_TOOLS or name in _NO_CREDIT_LINE or name.startswith("run_workflow"):
             continue
-        shown = ", ".join(f"{k} {v}" for k, v in args.items()
-                          if k not in ("message", "user_message", "text", "brief") and v not in (None, ""))
-        line = f"Calculated with: {name}" + (f" ({shown})" if shown else "")
+        shown = {k: v for k, v in args.items() if k not in ("message", "user_message", "text", "brief")}
+        line = "Calculated with: " + tool_label(name, shown)
         if line not in lines:
             lines.append(line)
     return "\n".join(lines)

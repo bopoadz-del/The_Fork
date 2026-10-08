@@ -8,6 +8,7 @@ from app.lib.formula_registry import formula
 
 @formula(
     owner='base',
+    display_name='Excavation volume',
     description='Bank (in-situ) excavation volume of a rectangular pit or trench, and the loose volume after bulking.',
     inputs={'length_m': 'm', 'width_m': 'm', 'depth_m': 'm', 'bulking_factor': '-'},
     outputs={'bank_volume_m3': 'm3', 'loose_volume_m3': 'm3', 'bulked_volume_m3': 'm3', 'bulking_factor': '-'},
@@ -40,6 +41,7 @@ def excavation_volume(
 
 @formula(
     owner='base',
+    display_name='Backfill volume',
     description='Backfill needed around a structure: the void left after the structure, and the loose volume to import allowing for swell.',
     inputs={'excavation_bank_m3': 'm3', 'structure_volume_m3': 'm3', 'swell_factor': '-'},
     outputs={'void_volume_m3': 'm3', 'loose_backfill_needed_m3': 'm3', 'swell_factor': '-'},

@@ -84,6 +84,7 @@ _PRESSURE_TO_KPA = {
 
 @formula(
     owner='base',
+    display_name='Unit conversion',
     description='Converts a value between common engineering units (length, area, volume, time, pressure and stress).',
     inputs={'value': 'currency', 'from_unit': '-', 'to_unit': '-'},
     outputs={'value_in': '-', 'from_unit': '-', 'to_unit': '-', 'value_out': '-', 'dimension': '-', 'formula_used': '-'},

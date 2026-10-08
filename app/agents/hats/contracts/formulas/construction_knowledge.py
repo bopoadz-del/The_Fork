@@ -9,6 +9,7 @@ from typing import Dict
 
 @formula(
     owner='contracts',
+    display_name='Risk score',
     description='Risk score and band from probability and impact ratings.',
     inputs={'probability': '-', 'impact': '-'},
     outputs={'probability': '-', 'impact': '-', 'score': '-', 'band': '-', 'requires_action': '-', 'description': '-'},

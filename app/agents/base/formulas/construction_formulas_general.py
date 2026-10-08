@@ -8,6 +8,7 @@ from app.lib.formula_registry import formula
 
 @formula(
     owner="base",
+    display_name='Tolerance check',
     description=("Checks a measured value against a specified value and tolerance: whether it is "
                  "within tolerance, its deviation, and the margin left. The specified value and "
                  "the tolerance come from the user or the project documents."),

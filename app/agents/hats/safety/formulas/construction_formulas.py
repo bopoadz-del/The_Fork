@@ -9,6 +9,7 @@ from typing import Dict
 
 @formula(
     owner='safety',
+    display_name='Wind load on formwork',
     description='Wind force and overturning moment on climbing formwork from wind speed and exposed area.',
     inputs={'wind_velocity_m_s': 'm/s', 'formwork_area_m2': 'm2', 'formwork_height_m': 'm', 'formwork_width_m': 'm', 'shape_factor': '-'},
     outputs={'wind_pressure_kpa': 'kPa', 'wind_force_kn': 'kN', 'overturning_moment_kn_m': 'kN.m', 'bending_stress_n_m2': 'N/m2'},

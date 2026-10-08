@@ -8,6 +8,7 @@ from app.lib.formula_registry import formula
 
 @formula(
     owner='qaqc',
+    display_name='Field compaction check',
     description='Field compaction as a percentage of the laboratory maximum dry density, against the specified minimum.',
     inputs={'field_dry_density': '-', 'max_dry_density': '-', 'required_compaction_percent': '%'},
     outputs={'compaction_percent': '%', 'required_percent': '%', 'passed': '-'},

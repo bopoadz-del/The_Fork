@@ -88,12 +88,19 @@ def _assert_no_chunk(out: str, filename: str, chunk_no: int) -> None:
     assert re.search(rf"\bchunks?\s*{chunk_no}\b", out, re.IGNORECASE) is None
 
 
+def _assert_plain_credit(out: str, calculation: str, inputs: dict) -> None:
+    """The credit names the formula as a user reads it, with its inputs; the
+    tool and function names are internal and never shown."""
+    from app.lib.source_labels import calculator_label
+
+    assert "Source: " + calculator_label(calculation, inputs) in out
+    assert "construction_calc" not in out
+    assert calculation not in out
+
+
 def _assert_dewater_credit(out: str) -> None:
-    assert "construction_calc" in out
-    assert "dewatering_uplift_check" in out
-    assert "water_depth=23" in out
-    assert "raft_thickness=2" in out
-    assert "floor_count=5" in out
+    _assert_plain_credit(out, "dewatering_uplift_check",
+                         {"water_depth": 23, "raft_thickness": 2, "floor_count": 5})
     notes = _DEWATER_ENV["result"]["notes"]
     assert notes, notes
     for note in notes:
@@ -103,9 +110,7 @@ def _assert_dewater_credit(out: str) -> None:
 
 
 def _assert_formwork_credit(out: str) -> None:
-    assert "construction_calc" in out
-    assert "formwork_striking_time" in out
-    assert "concrete_strength_7h=2" in out
+    _assert_plain_credit(out, "formwork_striking_time", {"concrete_strength_7h": 2})
     notes = _FORMWORK_ENV["result"]["notes"]
     assert notes, notes
     for note in notes:
@@ -244,8 +249,8 @@ def test_answer_that_already_credits_the_calculation_is_unchanged():
     notes = "; ".join(_DEWATER_ENV["result"]["notes"])
     answer = (
         "Dewatering cannot stop. The factor of safety is 0.380.\n"
-        "Source: construction_calc dewatering_uplift_check "
-        "(water_depth=23, raft_thickness=2, floor_count=5) — "
+        "Source: Uplift check for stopping dewatering — platform calculator "
+        "(water depth 23, raft thickness 2, floor count 5) — "
         f"{notes}\n"
     )
     assert gate(answer, _dewater_rag(), _dewater_messages()) is answer

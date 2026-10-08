@@ -19,6 +19,7 @@ def _norm_code(code: str) -> str:
 
 @formula(
     owner='design',
+    display_name='Wind pressure',
     description="Wind velocity pressure from a wind speed and the selected code's coefficients.",
     inputs={'wind_speed_m_s': 'm/s', 'code': '-', 'kz': '-', 'kzt': '-', 'kd': '-', 'air_density_kg_m3': 'kg/m3'},
     outputs={'velocity_pressure_pa': 'Pa', 'velocity_pressure_kn_m2': 'kN/m2'},
@@ -62,6 +63,7 @@ def wind_pressure(
 
 @formula(
     owner='design',
+    display_name='Seismic base shear',
     description='Equivalent lateral-force base shear from the seismic coefficient and the seismic weight.',
     inputs={'seismic_weight_kn': 'kN', 'code': '-', 'sds': '-', 'r': '-', 'ie': '-', 'ag_g': '-', 'soil_factor_s': '-', 'behaviour_factor_q': '-', 'lambda_factor': '-'},
     outputs={'base_shear_kn': 'kN', 'seismic_response_coefficient_cs': '-'},
@@ -105,6 +107,7 @@ def seismic_base_shear(
 
 @formula(
     owner='design',
+    display_name='Live load reduction',
     description='Reduced design live load on a member with a large tributary area.',
     inputs={'base_live_load_kn_m2': 'kN/m2', 'tributary_area_m2': 'm2', 'code': '-', 'kll': '-', 'psi0': '-', 'min_factor': '-'},
     outputs={'reduced_live_load_kn_m2': 'kN/m2', 'reduction_factor': '-'},

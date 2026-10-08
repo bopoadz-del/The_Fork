@@ -9,6 +9,7 @@ import math
 
 @formula(
     owner='design',
+    display_name='Slope factor of safety',
     description='Factor of safety of an infinite slope, with and without cohesion.',
     inputs={'friction_angle_deg': 'deg', 'slope_angle_deg': 'deg', 'cohesion_kpa': 'kPa', 'unit_weight_kn_m3': 'm3', 'depth_m': 'm'},
     outputs={'factor_of_safety': '-', 'frictional_term': '-', 'cohesive_term': '-'},

@@ -9,6 +9,7 @@ import math
 
 @formula(
     owner='qaqc',
+    display_name='Concrete cylinder strength',
     description='Compressive strength from a cylinder test load and diameter.',
     inputs={'failure_load_kn': 'kN', 'cylinder_diameter_mm': 'mm'},
     outputs={'compressive_strength_mpa': 'MPa', 'cylinder_area_mm2': 'mm2'},
@@ -33,6 +34,7 @@ def concrete_cylinders(failure_load_kn: float, cylinder_diameter_mm: float = 150
 
 @formula(
     owner='qaqc',
+    display_name='Concrete drying shrinkage',
     description='Drying shrinkage strain of concrete at a given age.',
     inputs={'time_days': 'days', 'ultimate_shrinkage_microstrain': '-', 'time_constant_days': 'days'},
     outputs={'shrinkage_microstrain': '-', 'shrinkage_strain': '-', 'fraction_of_ultimate': '-'},
@@ -63,6 +65,7 @@ def concrete_shrinkage(
 
 @formula(
     owner='qaqc',
+    display_name='Concrete curing time',
     description='Days of curing for concrete to reach a fraction of its 28-day strength.',
     inputs={'target_strength_fraction': '-', 'gain_a': '-', 'gain_b': '-'},
     outputs={'days_to_target': 'days', 'target_fraction': '-'},

@@ -8,6 +8,7 @@ from app.lib.formula_registry import formula
 
 @formula(
     owner='quantities',
+    display_name='Cut and fill balance',
     description='Site earthwork balance: surplus to export or deficit to import, from cut and fill volumes.',
     inputs={'cut_volume_m3': 'm3', 'fill_volume_m3': 'm3', 'bulking_factor': '-'},
     outputs={'balance_bank_m3': 'm3', 'haul_loose_m3': 'm3'},

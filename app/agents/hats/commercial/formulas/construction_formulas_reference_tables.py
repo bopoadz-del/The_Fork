@@ -11,6 +11,7 @@ _LEED_LEVELS = [(80, "Platinum"), (60, "Gold"), (50, "Silver"), (40, "Certified"
 
 @formula(
     owner='commercial',
+    display_name='LEED certification level',
     description='Maps a LEED point total to its certification level.',
     inputs={'points': '-'},
     outputs={'points': '-', 'certification_level': '-'},

@@ -59,7 +59,7 @@ def test_a_new_hat_package_registers_its_tools_with_no_core_edit(tmp_path, monke
     (pkg / "__init__.py").write_text('"""synthetic test hat."""\n', encoding="utf-8")
     (pkg / "tools.py").write_text(
         "from app.agents.core.tool_registry import ToolCall, tool\n\n"
-        "@tool('zeta_echo', owner='qaqc')\n"
+        "@tool('zeta_echo', owner='qaqc', display_name='Zeta echo')\n"
         "async def handle(call: ToolCall) -> dict:\n"
         "    return {'name': call.name, 'ok': True, 'result': {'echo': call.args.get('x')}}\n",
         encoding="utf-8")
@@ -80,17 +80,19 @@ def test_a_new_hat_package_registers_its_tools_with_no_core_edit(tmp_path, monke
 
 def test_a_tool_cannot_be_registered_twice_or_by_an_unknown_owner():
     with pytest.raises(ValueError):
-        reg.tool("x", owner="marketing")
+        reg.tool("x", owner="marketing", display_name="X")
+    with pytest.raises(ValueError):
+        reg.tool("x", owner="base", display_name=" ")
 
     async def a(call):
         return {}
 
     async def b(call):
         return {}
-    reg.tool("dup_probe", owner="base")(a)
+    reg.tool("dup_probe", owner="base", display_name="Probe")(a)
     try:
         with pytest.raises(ValueError):
-            reg.tool("dup_probe", owner="base")(b)
+            reg.tool("dup_probe", owner="base", display_name="Probe")(b)
     finally:
         reg._TOOLS.pop("dup_probe", None)
 

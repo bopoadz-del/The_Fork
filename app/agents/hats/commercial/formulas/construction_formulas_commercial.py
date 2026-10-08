@@ -8,6 +8,7 @@ from app.lib.formula_registry import formula
 
 @formula(
     owner='commercial',
+    display_name='Return on investment',
     description='Return on investment as a percentage of cost.',
     inputs={'gain': '-', 'cost': 'currency'},
     outputs={'net_profit': '-', 'roi_percent': '%'},
