@@ -58,3 +58,30 @@ Read the order first: it is in the owner's message ("TASK F-UI-PASS (continue)")
 - Owner-side files are never committed.
 - No env changes on live during a test run.
 - No resource changes.
+
+---
+
+# Update — cloud agent, 2026-10-08 evening
+
+## Landed (each: green → merge → deploy → /health)
+| PR | What | main sha | deploy | health |
+|---|---|---|---|---|
+| #852 | Plain display names for every formula/tool credit (`app/lib/source_labels.py`) | `0eb0d9f9` | deploy-aws 37777036093 | health-watch 37778329577 |
+| #854 | Failure 1 fixed: preview falls back to the indexed text (`indexed_only` + note) when no original is stored; new `GET /v1/projects/{pid}/documents/{doc_id}/download` (original bytes, else `"<name> (indexed text).txt"`; other-layer filenames scrubbed as in Sources); Download button in every DocumentPreview state; 7 tests | `3b8187c` | deploy-aws 37793977845 | health-watch 37795091988 |
+
+Live: main `3b8187c`, healthy.
+
+## NOT verified in the UI (owed — the cloud sandbox cannot reach theshovel.ai)
+Nothing below may be called passed until seen in the UI, one user:
+- **UI check owed: #852** — answers and the Sources panel name each calculation in plain words with its inputs; no internal id (`construction_calc`, `key=value`) shown.
+- **UI check owed: #854** — every cited source opens (indexed-only note when no original); Download works in every state; own-project file keeps its real name, other-layer file is scrubbed.
+- **UI check owed: RAG_SCRUB_RULES live coverage** — no other project's identifying names in answers, Sources, previews or download filenames.
+
+## Failure 2 (RAG_SCRUB_RULES) — status
+NOT done. The rules are still the secret: `app/core/identifier_scrub.py:34` reads `RAG_SCRUB_RULES` on main `3b8187c`; nothing moved into code. The structural replacement planned above is still the task; remove the secret ref from the task def only after it lands and only when no test run is in progress. The live coverage count check was not run (live DB/secret not reachable from the cloud sandbox).
+
+## Unchanged from the note above
+Failures 3–6 and the order-step-6 list (tools, documents, uploads, deliverables, old path, final report) are untouched.
+
+## Next agent
+A UI-capable agent should take the pass (prompt "TASK FORK-UI-1" given to the owner): the three owed checks first, then the remaining one-user pass. Rules above still bind.
