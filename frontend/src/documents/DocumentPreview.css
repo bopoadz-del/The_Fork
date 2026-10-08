@@ -127,3 +127,43 @@
   font-size: 11px;
   line-height: 1.4;
 }
+
+.doc-preview__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.doc-preview__header .doc-preview__title {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.doc-preview__download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.doc-preview__download-btn {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 10px;
+  border: 1px solid var(--text-tertiary);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.doc-preview__download-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.doc-preview__download-error {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}

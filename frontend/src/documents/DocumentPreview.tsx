@@ -7,8 +7,12 @@
  *                       Authorization header — the raw route is bearer-gated,
  *                       so we fetch the bytes and embed a blob URL rather than
  *                       pointing the element at a URL an iframe can't authorize)
- *   kind text         → formatted <pre> block
+ *   kind text         → formatted <pre> block; ``indexed_only`` marks the
+ *                       text the platform indexed when no original is stored
  *   kind unsupported  → functional message naming the file type
+ *
+ * Every state offers Download (GET .../download): the original bytes, or the
+ * indexed text when no original is stored.
  */
 import { useEffect, useState } from 'react'
 import { apiGet, ApiError } from '../lib/api'
@@ -34,7 +38,7 @@ interface Props {
 type PreviewData =
   | { kind: 'table'; sheets: Array<{ name: string; rows: string[][] }>; truncated?: boolean; size?: number; has_file?: boolean }
   | { kind: 'pdf'; size?: number; has_file?: boolean }
-  | { kind: 'text'; text: string; truncated?: boolean; size?: number; has_file?: boolean }
+  | { kind: 'text'; text: string; truncated?: boolean; size?: number; has_file?: boolean; indexed_only?: boolean; note?: string }
   | { kind: 'unsupported'; ext: string; size?: number; has_file?: boolean }
 
 export default function DocumentPreview({ projectId, document: doc, emptyLabel, onHydrated }: Props) {
@@ -103,6 +107,7 @@ function DocumentPreviewLoaded({
     return (
       <div className="doc-preview doc-preview--status" role="alert">
         {error}
+        <DownloadButton projectId={projectId} docId={doc.id} name={doc.original_name} />
       </div>
     )
   }
@@ -117,8 +122,11 @@ function DocumentPreviewLoaded({
 
   return (
     <div className="doc-preview">
-      <div className="doc-preview__title" title={doc.original_name}>
-        {doc.original_name}
+      <div className="doc-preview__header">
+        <div className="doc-preview__title" title={doc.original_name}>
+          {doc.original_name}
+        </div>
+        <DownloadButton projectId={projectId} docId={doc.id} name={doc.original_name} />
       </div>
       {data.kind === 'table' && (
         <TablePreview
@@ -133,6 +141,9 @@ function DocumentPreviewLoaded({
       )}
       {data.kind === 'text' && (
         <div className="doc-preview__scroll">
+          {data.indexed_only && (
+            <p className="doc-preview__note" role="note">{data.note}</p>
+          )}
           <pre className="doc-preview__text">{data.text}</pre>
           {data.truncated && (
             <p className="doc-preview__note">Preview truncated to the first part of the document.</p>
@@ -141,10 +152,78 @@ function DocumentPreviewLoaded({
       )}
       {data.kind === 'unsupported' && (
         <div className="doc-preview--status">
-          Inline preview is not available for {data.ext || 'this'} files. Use the document list to download it.
+          Inline preview is not available for {data.ext || 'this'} files. Use Download to save it.
         </div>
       )}
     </div>
+  )
+}
+
+// ── Download ─────────────────────────────────────────────────────────────────
+
+/** Filename from a Content-Disposition header (RFC 6266 ``filename*`` first). */
+function dispositionFilename(header: string | null, fallback: string): string {
+  if (!header) return fallback
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header)
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim())
+    } catch {
+      // fall through to the plain filename
+    }
+  }
+  const plain = /filename="([^"]+)"/i.exec(header)
+  return plain ? plain[1] : fallback
+}
+
+function DownloadButton({ projectId, docId, name }: { projectId: string; docId: string; name: string }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const download = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const token = getToken()
+      // Bearer-gated, so fetch the bytes and save a blob URL rather than
+      // pointing a link at a URL the browser cannot authorize.
+      const res = await fetch(
+        `${API_BASE}/v1/projects/${projectId}/documents/${docId}/download`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      )
+      if (!res.ok) {
+        let detail = `Could not download the document (HTTP ${res.status}).`
+        try {
+          const body = (await res.json()) as { detail?: string }
+          if (typeof body.detail === 'string' && body.detail.trim()) detail = body.detail
+        } catch {
+          // keep the HTTP status fallback
+        }
+        throw new Error(detail)
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = window.document.createElement('a')
+      a.href = url
+      a.download = dispositionFilename(res.headers.get('Content-Disposition'), name)
+      window.document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not download the document.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <span className="doc-preview__download">
+      <button type="button" className="doc-preview__download-btn" onClick={() => void download()} disabled={busy}>
+        {busy ? 'Downloading…' : 'Download'}
+      </button>
+      {error && <span className="doc-preview__download-error" role="alert">{error}</span>}
+    </span>
   )
 }
 

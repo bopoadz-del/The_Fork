@@ -450,17 +450,22 @@ def _preview_citeable_owner_ids(workspace_project_id: str) -> set[str]:
     return {pid for pid in owners if pid}
 
 
-def _resolve_preview_document(
+def _resolve_document_file(
     project_id: str, document_id: str, user_id: str, *, role: str = "user",
-) -> Tuple[Dict[str, Any], str, str]:
-    """Access-check and resolve a document for preview.
+) -> Tuple[Dict[str, Any], str, Optional[str], Optional[HTTPException]]:
+    """Access-check and resolve a document and its stored file.
 
-    Returns ``(doc, ext, file_path)``. Read-only access — non-owners may
-    preview shared / master-corpus documents like the read GET does.
-    ``doc_limit=0`` keeps the project access check cheap (no document rows
-    serialized — critical for the ~2,700-doc master corpus). The master-corpus
-    alias resolves to its backing source id before the ownership match, because
-    ``get_document`` returns the SOURCE project_id, not the alias.
+    Returns ``(doc, ext, file_path, missing)``. When no original is stored,
+    ``file_path`` is None and ``missing`` is the clear 404 that explains why
+    (empty blob, missing, Drive not configured, Drive fetch failed...); the
+    caller raises it or falls back to the indexed text.
+
+    Read-only access — non-owners may preview shared / master-corpus
+    documents like the read GET does. ``doc_limit=0`` keeps the project
+    access check cheap (no document rows serialized — critical for the
+    ~2,700-doc master corpus). The master-corpus alias resolves to its
+    backing source id before the ownership match, because ``get_document``
+    returns the SOURCE project_id, not the alias.
 
     A document cited from Master Corpus / GK is previewable from the
     workspace that cited it. A private project the caller does not have
@@ -470,7 +475,6 @@ def _resolve_preview_document(
     (the platform keeps no copy of an original) and ``size=0``. After the
     ownership check, hydrate from the row's Google Drive file id rather
     than 404-ing on disk.
-    A truly missing or 0-byte blob stays a clear 404 — never a 500.
     """
     _owned_or_404(
         project_id, user_id, read_only=True, role=role, doc_limit=0,
@@ -482,22 +486,37 @@ def _resolve_preview_document(
         raise HTTPException(
             404, f"Document '{document_id}' not found in project '{project_id}'"
         )
+    _, ext = os.path.splitext((doc.get("original_name") or "").lower())
     fp, blob_state = store.materialize_document_file(doc)
     if not fp:
         if blob_state == "empty":
-            raise HTTPException(
+            missing = HTTPException(
                 404,
                 "Document file is empty (0 bytes) and cannot be previewed",
             )
-        if blob_state == "missing":
-            raise HTTPException(404, "Document file is not available for preview")
-        raise HTTPException(
-            404,
-            f"Document file is not available for preview ({blob_state})",
-        )
-    _, ext = os.path.splitext((doc.get("original_name") or "").lower())
+        elif blob_state == "missing":
+            missing = HTTPException(404, "Document file is not available for preview")
+        else:
+            missing = HTTPException(
+                404,
+                f"Document file is not available for preview ({blob_state})",
+            )
+        return doc, ext, None, missing
     refreshed = store.get_document(document_id) or doc
-    return refreshed, ext, fp
+    return refreshed, ext, fp, None
+
+
+def _resolve_preview_document(
+    project_id: str, document_id: str, user_id: str, *, role: str = "user",
+) -> Tuple[Dict[str, Any], str, str]:
+    """``_resolve_document_file`` for callers that need the original: a
+    document with no stored file is its clear 404, never a 500."""
+    doc, ext, fp, missing = _resolve_document_file(
+        project_id, document_id, user_id, role=role,
+    )
+    if missing is not None:
+        raise missing
+    return doc, ext, fp
 
 
 def _table_preview(file_path: str, ext: str) -> Dict[str, Any]:
@@ -580,6 +599,54 @@ def _text_preview(file_path: str, ext: str) -> Dict[str, Any]:
     return {"kind": "text", "text": text[:PREVIEW_TEXT_CHARS], "truncated": truncated}
 
 
+_INDEXED_ONLY_NOTE = (
+    "The original file is not stored on the platform. This is the text the "
+    "platform indexed from it, which is what answers were drawn from."
+)
+
+
+def _indexed_text(owner_project_id: str, document_id: str) -> str:
+    """The text the platform indexed for a document, chunks in order.
+
+    Read under the document's OWNING project: a Master Corpus / general
+    knowledge document's chunks are not stored under the workspace that cited
+    it. Empty when nothing was indexed or the chunk store is unavailable."""
+    try:
+        from app.core.rag import vector_store as _vs
+
+        chunks = _vs.get_store().doc_chunk_texts(owner_project_id, [document_id])
+    except Exception:  # noqa: BLE001 — no chunk store is "nothing indexed"
+        logger.debug("indexed text lookup failed", exc_info=True)
+        return ""
+    return "\n\n".join(t for t in chunks.get(document_id, []) or [] if t)
+
+
+def _from_other_layer(project_id: str, doc: Dict[str, Any]) -> bool:
+    """True when the document belongs to another project's layer (Master
+    Corpus, general knowledge) rather than the workspace itself."""
+    owner = str(doc.get("project_id") or "")
+    own = {project_id, store._master_corpus_source(project_id) or project_id}
+    return owner not in own
+
+
+def _display_filename(project_id: str, doc: Dict[str, Any]) -> str:
+    """The name a user sees for a document: its own name in its own project,
+    scrubbed like the Sources panel when it comes from another layer."""
+    from app.core.identifier_scrub import scrub_identifiers_filename
+
+    name = str(doc.get("original_name") or doc.get("id") or "document")
+    name = os.path.basename(name.replace("\\", "/")) or "document"
+    return scrub_identifiers_filename(name) if _from_other_layer(project_id, doc) else name
+
+
+def _content_disposition(filename: str) -> str:
+    """RFC 6266 attachment header that survives non-ASCII filenames."""
+    from urllib.parse import quote
+
+    ascii_name = filename.encode("ascii", "replace").decode("ascii").replace('"', "'")
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
+
+
 @router.get("/v1/projects/{project_id}/documents/{document_id}/preview")
 async def preview_document(
     project_id: str, document_id: str, auth: dict = Depends(require_user)
@@ -593,10 +660,23 @@ async def preview_document(
 
     A malformed / unreadable file returns 422 (never 500).
     """
-    doc, ext, fp = _resolve_preview_document(
+    doc, ext, fp, missing = _resolve_document_file(
         project_id, document_id, auth["user_id"],
         role=auth.get("role") or "user",
     )
+    if fp is None:
+        text = _indexed_text(str(doc.get("project_id") or project_id), document_id)
+        if not text.strip():
+            raise missing
+        return {
+            "kind": "text",
+            "text": text[:PREVIEW_TEXT_CHARS],
+            "truncated": len(text) > PREVIEW_TEXT_CHARS,
+            "indexed_only": True,
+            "note": _INDEXED_ONLY_NOTE,
+            "size": int(doc.get("size") or 0),
+            "has_file": False,
+        }
     try:
         if ext in _TABLE_EXTS:
             payload: Dict[str, Any] = _table_preview(fp, ext)
@@ -639,6 +719,44 @@ async def preview_document_raw(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(422, f"Could not read the document: {exc}")
     return Response(content=raw, media_type="application/pdf")
+
+
+@router.get("/v1/projects/{project_id}/documents/{document_id}/download")
+async def download_document(
+    project_id: str, document_id: str, auth: dict = Depends(require_user)
+):
+    """The document as a file: its original bytes, or -- when no original is
+    stored -- the text the platform indexed, as ``<name> (indexed text).txt``.
+
+    Same access rule as the preview: the workspace's own documents and the
+    ones it may cite. A cited document from another layer keeps its filename
+    scrubbed, exactly as the Sources panel shows it."""
+    doc, _ext, fp, missing = _resolve_document_file(
+        project_id, document_id, auth["user_id"],
+        role=auth.get("role") or "user",
+    )
+    filename = _display_filename(project_id, doc)
+    if fp is None:
+        text = _indexed_text(str(doc.get("project_id") or project_id), document_id)
+        if not text.strip():
+            raise missing
+        return Response(
+            content=text.encode("utf-8"),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": _content_disposition(f"{filename} (indexed text).txt")},
+        )
+    try:
+        raw = file_crypto.read_document(fp)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(422, f"Could not read the document: {exc}")
+    import mimetypes
+
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return Response(
+        content=raw,
+        media_type=media_type,
+        headers={"Content-Disposition": _content_disposition(filename)},
+    )
 
 
 @router.delete("/v1/projects/{project_id}")
