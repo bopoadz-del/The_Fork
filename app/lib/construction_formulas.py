@@ -669,6 +669,11 @@ _REQUIRED_GROUPS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
         ("udl_w_kn_m", "central_point_load_kn"),
         ("span_m",),
     ),
+    # A volume needs a plan dimension of some shape; with none it asks
+    # rather than reporting 0 m3.
+    "concrete_volume": (
+        ("length_m", "diameter_m", "top_width_m"),
+    ),
 }
 
 _PARAM_UNIT_OVERRIDE: Dict[str, str] = {
@@ -1525,7 +1530,7 @@ _TEXT_NUM_RE = r"[+-]?\d+(?:,\d{3})*(?:\.\d+)?"
 
 _TEXT_UNIT_RE = (
     r"(?:kN/m2|kN/m²|N/mm2|N/mm²|mm2|mm²|m2|m²|m3|m³|"
-    r"MPa|kPa|kN|mm|m/s|m|%|deg)"
+    r"MPa|kPa|kN|mm|cm|km|m/s|m|%|deg)"
 )
 
 _CODE_ACI_RE = re.compile(r"\b(?:aci|asce|aisc|tms)\b", re.IGNORECASE)
@@ -1605,6 +1610,34 @@ def _text_label_map(fn: Any) -> Dict[str, str]:
             add(incoming, dest)
     return out
 
+# Length units, in metres. A length the user writes in one unit is converted
+# to the unit the parameter's name declares (``_m`` / ``_mm``).
+_LENGTH_IN_M: Dict[str, float] = {"mm": 0.001, "cm": 0.01, "m": 1.0, "km": 1000.0}
+
+# English dimension adjectives written after the figure ("12 m long",
+# "200 mm thick") and the dimension noun each names.
+_DIMENSION_ADJECTIVES: Dict[str, str] = {
+    "long": "length", "in length": "length",
+    "wide": "width", "in width": "width", "broad": "width",
+    "thick": "thickness", "in thickness": "thickness",
+    "deep": "depth", "in depth": "depth",
+    "high": "height", "tall": "height", "in height": "height",
+    "in diameter": "diameter", "diameter": "diameter",
+}
+
+
+def _to_param_unit(num: float, unit: Optional[str], dest: str) -> float:
+    """``num`` written in ``unit``, in the unit ``dest`` declares."""
+    unit = (unit or "").strip().lower()
+    if unit not in _LENGTH_IN_M:
+        return num
+    if dest.endswith("_mm"):
+        return num * _LENGTH_IN_M[unit] / 0.001
+    if dest.endswith("_m"):
+        return num * _LENGTH_IN_M[unit]
+    return num
+
+
 def extract_calculation_params_from_text(
     fn: Any,
     text: str,
@@ -1664,7 +1697,26 @@ def extract_calculation_params_from_text(
         num = _parse_text_number(match.group(1))
         if num is None:
             continue
-        found[dest] = num
+        found[dest] = _to_param_unit(num, match.group(2) if match.lastindex and match.lastindex >= 2 else None, dest)
+        consumed.append(match.span())
+
+    # Figure first, dimension after: "12 m long, 8 m wide and 200 mm thick".
+    adjectives = "|".join(sorted((re.escape(a) for a in _DIMENSION_ADJECTIVES), key=len, reverse=True))
+    trailing = re.compile(
+        rf"({_TEXT_NUM_RE})\s*({_TEXT_UNIT_RE})?\s+({adjectives})(?![A-Za-z])",
+        re.IGNORECASE,
+    )
+    for match in trailing.finditer(raw):
+        if _overlaps(match.span()):
+            continue
+        noun = _DIMENSION_ADJECTIVES[match.group(3).lower()]
+        dest = labels.get(_norm_label(noun))
+        if not dest or dest in found:
+            continue
+        num = _parse_text_number(match.group(1))
+        if num is None:
+            continue
+        found[dest] = _to_param_unit(num, match.group(2), dest)
         consumed.append(match.span())
 
     accepted = {

@@ -73,6 +73,12 @@ def concrete_volume(
     if waste_factor < 0:
         return {"error": "waste_factor must be >= 0."}
     s = (shape or "rectangular").strip().lower()
+    if s == "rectangular" and not float(length_m):
+        # No shape named: the dimensions given say which one it is.
+        if float(diameter_m) and float(height_m):
+            s = "cylinder"
+        elif (float(top_width_m) or float(bottom_width_m)) and float(depth_m):
+            s = "trapezoidal"
     if s == "cylinder":
         unit = math.pi * (diameter_m / 2.0) ** 2 * height_m
         expr = f"pi*({diameter_m}/2)^2*{height_m}"
