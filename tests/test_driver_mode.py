@@ -604,3 +604,11 @@ def test_a_foreign_documents_name_is_scrubbed_in_sources(monkeypatch):
                                               "score": 0.9, "origin": "master_corpus", "snippet": "x"}]}})}]
     out = sources.panel(trail, [])
     assert out and out[0]["doc_name"] == "[scrubbed]" and out[0]["layer"] == "master_corpus"
+
+
+def test_streamed_pieces_keep_their_line_breaks(monkeypatch):
+    _no_retrieval(monkeypatch)
+    answer = "Summary line.\n\n- First point.\n- Second point.\n\nClosing note."
+    monkeypatch.setattr(llm, "call", _scripted([{"content": answer}], []))
+    events = _run(_agent(), user_message="list it")
+    assert "".join(e["content"] for e in events if e["type"] == "token") == answer
