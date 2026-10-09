@@ -157,6 +157,43 @@ def stated_calculator_inputs(
     return stated
 
 
+def _result_mentions(result: Any, value: Any) -> bool:
+    """True when this result's figures or notes already show ``value``."""
+    parts: List[str] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, str):
+            parts.append(obj)
+        elif isinstance(obj, dict):
+            for item in obj.values():
+                walk(item)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+        elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
+            parts.append(str(obj))
+
+    walk(result)
+    return _user_states_value("\n".join(parts), value)
+
+
+def _call_supplied_an_operand(
+    signature: inspect.Signature,
+    stated_keys: Iterable[str],
+    given: Dict[str, Any],
+) -> bool:
+    """True when the call carried a figure the user, not the signature, chose."""
+    if stated_keys:
+        return True
+    for key, val in given.items():
+        param = signature.parameters.get(key)
+        if param is None:
+            continue
+        if param.default is inspect.Parameter.empty or not _same_value(val, param.default):
+            return True
+    return False
+
+
 def calculator_default_lines(
     calculation: str,
     result: Any,
@@ -168,6 +205,8 @@ def calculator_default_lines(
 
     A zero default is the absence of a figure. A currency the formula
     inserts only because the parameter was left blank is not restated.
+    When the call carried no figure of the user's, a default the result
+    shows under any field is still that default.
     """
     from app.lib import formula_registry
 
@@ -181,6 +220,7 @@ def calculator_default_lines(
         return []
     known = set(stated_keys or ())
     given = dict(passed or {})
+    supplied = _call_supplied_an_operand(signature, known, given)
     lines: List[str] = []
     for key, param in signature.parameters.items():
         if param.default is inspect.Parameter.empty or key in known:
@@ -189,8 +229,11 @@ def calculator_default_lines(
         if isinstance(default, bool):
             continue
         echoed = result.get(key) if key in result else given.get(key)
-        if echoed is None or not _same_value(echoed, default):
-            continue
+        shown = echoed is not None and _same_value(echoed, default)
+        if not shown:
+            if supplied or not _result_mentions(result, default):
+                continue
+            echoed = default
         if _user_states_value(user_text, default):
             continue
         if isinstance(default, (int, float)):

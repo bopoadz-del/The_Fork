@@ -3856,6 +3856,8 @@ def _message_wants_named_calculator(text: str) -> bool:
         return True
     if _IPC_ISSUE_RE.search(raw) and not _carries_ipc_figures(raw):
         return False
+    if not _formula_run_authorized(raw):
+        return False
     return True
 
 
@@ -4086,6 +4088,7 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
                     or wants_procurement
                     or wants_rfi
                     or wants_drawing_qto
+                    or not _formula_run_authorized(text)
                 )
             ):
                 continue
@@ -11000,6 +11003,43 @@ def _user_supplied_registered_calculation(
         return None
 
 
+def _formula_run_authorized(text: str) -> bool:
+    """A named formula may run only when the user asked for a calculation
+    or already supplied an operand.
+
+    A question that asks what a document states, and gives no figure,
+    is not that request. The calculator would otherwise run on its
+    signature defaults.
+    """
+    raw = text or ""
+    if _looks_like_self_contained_calculation(raw) or _states_formula_with_input(raw):
+        return True
+    if _NAMED_CALC_ASK_RE.search(raw):
+        return True
+    try:
+        from app.lib.construction_formulas import (
+            explicit_calculation_request,
+            message_names_registry_id,
+            named_formula_operands,
+        )
+        if explicit_calculation_request(raw):
+            return True
+        if message_names_registry_id(raw):
+            return True
+        if named_formula_operands(raw):
+            return True
+        from app.lib.construction_formulas_structural_rc import (
+            looks_like_slab_thickness_min_ask,
+        )
+        # That detector already requires a span the user wrote.
+        if looks_like_slab_thickness_min_ask(raw):
+            return True
+    except Exception:  # noqa: BLE001 — routing must still classify
+        _LOG.exception("formula authorization check failed")
+        return True
+    return False
+
+
 def _message_is_formula_style_ask(text: str) -> bool:
     """True when the turn is a formula / calculator ask, not a doc lookup.
 
@@ -11045,13 +11085,16 @@ def _message_is_formula_style_ask(text: str) -> bool:
     # Two-token spaced names ("concrete volume") collide with BOQ lookups
     # and must stay on RAG — `_message_names_registered_calculator` is
     # too loose here.
-    if _message_names_unambiguous_calculator(raw):
-        return True
     low = raw.lower()
-    for phrases, tool in _INTENT_TOOL_MAP:
-        if tool == "construction_calc" and any(p in low for p in phrases):
-            return True
-    return _message_matches_calculator_stem(raw)
+    named = _message_names_unambiguous_calculator(raw) or any(
+        tool == "construction_calc" and any(p in low for p in phrases)
+        for phrases, tool in _INTENT_TOOL_MAP
+    ) or _message_matches_calculator_stem(raw)
+    if not named:
+        return False
+    # The display name alone does not supply the operands. Running the
+    # formula then fills every input from its signature.
+    return _formula_run_authorized(raw)
 
 
 def message_wants_formula_calculator(text: str) -> bool:
@@ -11268,6 +11311,8 @@ async def _predispatch_formula_calc(
             (await _off_loop(_message_is_formula_style_ask, detect))
             or (await _off_loop(_message_wants_named_calculator, detect))
         ):
+            return None
+        if not (await _off_loop(_formula_run_authorized, detect)):
             return None
         completed = await _off_loop(_user_supplied_registered_calculation, detect)
         bound: dict[str, Any] = {}

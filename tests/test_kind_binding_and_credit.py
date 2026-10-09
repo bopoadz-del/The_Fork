@@ -274,6 +274,213 @@ def test_model_prose_is_not_a_calculator_source_title():
     assert row is None or "allowance" not in (row.get("doc_name") or "").lower()
 
 
+def _document_question(display: str) -> str:
+    return f"What is the {display} stated in the project specification?"
+
+
+def _explicit_calculation(display: str) -> str:
+    return f"Calculate the {display}."
+
+
+def _default_only_formulas():
+    """Formulas a document question names, and that succeed with no operands."""
+    from app.lib.construction_formulas import calculator_name_from_text
+
+    rows = []
+    for spec in all_specs():
+        ask = _document_question(spec.display_name)
+        if calculator_name_from_text(ask) != spec.name:
+            continue
+        env = run_calculation(spec.name, {})
+        if not isinstance(env, dict) or env.get("status") != "success":
+            continue
+        rows.append((spec.name, spec.display_name))
+    return rows
+
+
+DEFAULT_ONLY = _default_only_formulas()
+
+
+def test_default_only_document_questions_cover_the_registry():
+    names = {name for name, _display in DEFAULT_ONLY}
+    assert len(names) >= 4
+    assert "formwork_striking_time" in names
+
+
+@pytest.mark.parametrize(
+    "name,display",
+    DEFAULT_ONLY,
+    ids=[name for name, _display in DEFAULT_ONLY],
+)
+def test_document_question_with_no_operands_does_not_select_a_calculator(name, display):
+    """A specification question that supplies no figure is not a calculation."""
+    from app.agents.runtime import (
+        _forced_specific_tool,
+        _message_is_formula_style_ask,
+        _message_wants_named_calculator,
+    )
+
+    ask = _document_question(display)
+    assert not any(ch.isdigit() for ch in ask)
+    assert _message_is_formula_style_ask(ask) is False, ask
+    assert _message_wants_named_calculator(ask) is False, ask
+    assert _forced_specific_tool(
+        [{"role": "user", "content": ask}], {"construction_calc"},
+    ) is None
+
+
+LIVE_FORMWORK_DOCUMENT = (
+    "What is the formwork striking time for suspended slabs and the "
+    "test cube frequency in the upload check note?"
+)
+
+
+def test_formwork_document_question_is_not_a_calculator():
+    from app.agents.runtime import (
+        _apply_rag_context,
+        _forced_specific_tool,
+        _message_is_formula_style_ask,
+        _message_wants_named_calculator,
+    )
+
+    ask = LIVE_FORMWORK_DOCUMENT
+    assert _message_is_formula_style_ask(ask) is False
+    assert _message_wants_named_calculator(ask) is False
+    assert _forced_specific_tool(
+        [{"role": "user", "content": ask}], {"construction_calc"},
+    ) is None
+    msgs = [{"role": "user", "content": ask}]
+    assert _apply_rag_context(msgs, {"content": "Strike after the cube test."}) is True
+    assert "CALCULATION REQUEST" not in msgs[-1]["content"]
+
+
+def test_formwork_document_answer_keeps_the_cited_document(monkeypatch):
+    monkeypatch.setattr(
+        "app.core.projects.get_document",
+        lambda did: {"original_name": "upload-check-note.pdf"},
+    )
+    answer = (
+        "The upload check note sets the striking time and the cube frequency. "
+        "See upload-check-note.pdf."
+    )
+    out = _pp(
+        LIVE_FORMWORK_DOCUMENT,
+        answer,
+        retrieval=(
+            "[doc_id=d1 chunk=0 src=upload-check-note.pdf] "
+            "Strike soffit formwork after the cube result."
+        ),
+    )
+    assert "platform calculator" not in out.lower()
+    assert "8.0" not in out
+    assert "upload-check-note.pdf" in out
+    sources = _build_sources_from_audit(
+        {
+            "chunks": [{
+                "doc_id": "d1", "chunk_index": 0, "score": 0.91,
+                "chunk_id": "c0", "layer": "own",
+            }],
+            "user_message_preview": LIVE_FORMWORK_DOCUMENT,
+        },
+        out,
+    )
+    names = [s.get("doc_name") or "" for s in sources]
+    assert any("upload-check-note.pdf" in name for name in names)
+    assert not any("platform calculator" in name for name in names)
+
+
+def _result_figure(result: dict) -> float | None:
+    for val in result.values():
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            continue
+        return float(val)
+    return None
+
+
+@pytest.mark.parametrize(
+    "name,display",
+    DEFAULT_ONLY,
+    ids=[name for name, _display in DEFAULT_ONLY],
+)
+def test_explicit_calculation_may_run_on_defaults_and_labels_them(name, display):
+    """An explicit calculation with no figures may use defaults, and says so."""
+    from app.lib.construction_formulas import CALCULATORS
+    from app.lib.formula_registry import get
+    from app.lib.source_labels import _user_states_value, input_phrase
+
+    from app.agents.runtime import (
+        _forced_specific_tool,
+        _message_is_formula_style_ask,
+    )
+
+    ask = _explicit_calculation(display)
+    assert _message_is_formula_style_ask(ask) is True, ask
+    assert _forced_specific_tool(
+        [{"role": "user", "content": ask}], {"construction_calc"},
+    ) == "construction_calc"
+    env = run_calculation(name, {"text": ask})
+    assert env.get("status") == "success", ask
+    result = env["result"]
+    figure = _result_figure(result)
+    assert figure is not None, name
+    signature = inspect.signature(CALCULATORS[name])
+    spec = get(name)
+    spec_inputs = spec.inputs if spec else {}
+    notes = result.get("notes") if isinstance(result.get("notes"), list) else []
+    blob = " ".join(str(item) for item in notes)
+    blob += " " + " ".join(str(val) for val in result.values() if not isinstance(val, list))
+    messages = _calc_turn(name, {"text": ask}, env, ask)
+    out = gate(f"The result is {figure}.\n", None, messages)
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip().lower().startswith("source:")]
+    assert len(lines) == 1, out
+    label = calculator_label(name, {})
+    assert lines[0].startswith("Source: " + label)
+    row = _platform_calculator_source(out)
+    assert row is not None
+    assert row["doc_name"] == label
+    note_text = " ".join(str(item) for item in notes)
+    if note_text:
+        assert note_text not in (row["doc_name"] or "")
+    labelled = False
+    for key, param in signature.parameters.items():
+        default = param.default
+        if default is inspect.Parameter.empty or isinstance(default, bool):
+            continue
+        if isinstance(default, (int, float)) and float(default) == 0.0:
+            continue
+        if not isinstance(default, (int, float, str)):
+            continue
+        if not _user_states_value(blob, default):
+            continue
+        phrase = input_phrase(key, default, spec_inputs.get(key, ""))
+        assert phrase in out, (name, phrase)
+        labelled = True
+    if labelled:
+        assert "calculator's default" in out
+
+
+def _calc_turn(name, params, env, ask):
+    args = json.dumps({"calculation": name, "params": params})
+    return [
+        {"role": "user", "content": ask},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call-default",
+                "type": "function",
+                "function": {"name": "construction_calc", "arguments": args},
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-default",
+            "name": "construction_calc",
+            "content": json.dumps(env),
+        },
+    ]
+
+
 def test_one_registry_source_line_and_defaults_are_not_user_inputs():
     answer = f"The concrete volume is 25.2 m3.\n{MODEL_SOURCE}\n"
     out = gate(answer, None, _slab_messages())

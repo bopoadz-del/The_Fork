@@ -1907,6 +1907,40 @@ def _words_all_present(text: str, words: List[str]) -> bool:
     return all(re.search(rf"\b{re.escape(word)}\b", low) for word in words)
 
 
+def explicit_calculation_request(text: str) -> bool:
+    """The user asked for a calculation, not for what a document states."""
+    return _CALC_SELECT_VERB_RE.search(text or "") is not None
+
+
+def message_names_registry_id(text: str) -> bool:
+    """The ask contains a formula's registry id, not only its display name."""
+    underscored = (text or "").lower().replace("-", "_")
+    if not underscored.strip():
+        return False
+    for name in CALCULATORS:
+        if len(name) >= 6 and name.lower() in underscored:
+            return True
+    return False
+
+
+def named_formula_operands(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """Figures the ask already binds for the one formula it names."""
+    name = calculator_name_from_text(text)
+    if not name:
+        return None
+    fn = CALCULATORS.get(name)
+    if fn is None:
+        return None
+    bound = extract_calculation_params_from_text(fn, text)
+    numeric = {
+        key: val for key, val in bound.items()
+        if isinstance(val, (int, float)) and not isinstance(val, bool)
+    }
+    if not numeric:
+        return None
+    return name, numeric
+
+
 def formula_completed_by_user_text(
     text: str,
 ) -> Optional[Tuple[str, Dict[str, Any]]]:
