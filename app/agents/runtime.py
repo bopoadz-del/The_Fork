@@ -722,6 +722,15 @@ _INPUT_QUESTION_NUDGE = (
     "The calculator did not run because a supplied value is outside what it "
     "accepts. Do not call it again with a value you chose. Ask the user: {question}"
 )
+# The calculator needs an input nobody gave. A figure the user's message or
+# the retrieved project documents state may be supplied; otherwise the user
+# is asked in these words -- an input's code name is not a question.
+_CALC_MISSING_INPUT_NUDGE = (
+    "The calculator did not run because an input is missing. If the user's "
+    "message or the project documents state it, call the calculator again "
+    "with that figure. Otherwise do not choose a value: ask the user exactly "
+    "this: {question}"
+)
 # construction_calc "Unknown calculation" means the formula is not in the
 # registry. Retrying another calculator name loops; self-coding writes
 # Python once and returns. Only injected when the agent can delegate.
@@ -11872,6 +11881,8 @@ def _nudge_for_failed_tool(tool_result: dict[str, Any], agent: "Agent") -> str:
         err = str(inner.get("error") or "")
         if inner.get("needs_input") and inner.get("question"):
             return _INPUT_QUESTION_NUDGE.format(question=inner["question"])
+        if inner.get("missing") and inner.get("question"):
+            return _CALC_MISSING_INPUT_NUDGE.format(question=inner["question"])
     if (
         agent.can_delegate
         and agent.name != "self-coding"
