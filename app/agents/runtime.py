@@ -536,9 +536,13 @@ _CONTEXT_LEAK_RETRY_NUDGE = (
 _PROGRESS_NARRATION_RE = re.compile(
     r"(?:continuing|resuming|reading|re-?reading|fetching|retrieving|"
     r"searching|pulling|checking|loading|processing|extracting|scanning|"
-    r"analy[sz]ing|looking|validating)\b[^.!?\n]*[.!?\u2026]*\s*$",
+    r"analy[sz]ing|looking|validating|re-?trying|trying|attempting|calling|"
+    r"invoking|querying|re-[a-z]+ing|"
+    r"[a-z]+ing(?=\b[^.!?\n]*\b(?:again|once\s+more|one\s+more\s+time)\b))"
+    r"\b[^.!?\n]*[.!?\u2026]*\s*$",
     re.IGNORECASE,
 )
+_TAIL_SENTENCE_RE = re.compile(r"(?<=[.!?\u2026])[ \t]+(?=\S[^.!?\n]*[.!?\u2026]*\s*$)")
 
 
 def _strip_progress_narration(text: str) -> str:
@@ -560,13 +564,21 @@ def _strip_progress_narration(text: str) -> str:
     new vocabulary that the platform itself taught the model.
 
     Narration is not an answer, so it cannot be what makes the sentence
-    before it one. Strip it, then judge what is left.
+    before it one. A narrating sentence at the end of a line goes the same
+    way as a narrating line ("Both files are registered. Retrying the
+    extractors once more.").
     """
     lines = (text or "").rstrip().split("\n")
-    while lines and (
-        not lines[-1].strip() or _PROGRESS_NARRATION_RE.match(lines[-1].strip())
-    ):
-        lines.pop()
+    while lines:
+        last = lines[-1].strip()
+        if not last or _PROGRESS_NARRATION_RE.match(last):
+            lines.pop()
+            continue
+        cut = _TAIL_SENTENCE_RE.search(last)
+        if cut and _PROGRESS_NARRATION_RE.match(last[cut.end():]):
+            lines[-1] = last[:cut.start()]
+            continue
+        break
     return "\n".join(lines).strip()
 
 
@@ -577,17 +589,11 @@ def _looks_like_search_preamble(text: str) -> bool:
         return False
     if _SEARCH_PREAMBLE_RE.search(t) or _SEARCH_PROMISE_TAIL_RE.search(t):
         return True
-    stripped = _strip_progress_narration(t)
-    if not stripped:
-        # Nothing but narration. "Continuing BOQ extraction..." is a status
-        # line, not a reply to a question about quantities.
-        return True
-    if stripped == t:
-        return False
-    return bool(
-        _SEARCH_PREAMBLE_RE.search(stripped)
-        or _SEARCH_PROMISE_TAIL_RE.search(stripped)
-    )
+    # Nothing but narration ("Continuing BOQ extraction...") is a status
+    # line, not a reply. A short reply that ENDS on narration stopped on work
+    # it had not done: the model meant to go round the tool loop again, so
+    # what came before it is the middle of a turn, not its answer.
+    return _strip_progress_narration(t) != t
 
 
 def _final_text_needs_forced_retry(
@@ -606,7 +612,41 @@ def _final_text_needs_forced_retry(
     # type does not change whether a dangling promise is an answer.
     if _looks_like_search_preamble(text):
         return True
-    return False
+    return _exit_leaves_nothing(text)
+
+
+def _exit_leaves_nothing(text: str) -> bool:
+    """True when every sentence of ``text`` is about the platform's own
+    workings, so the exit check would hand the user nothing of it."""
+    if not (text or "").strip() or text.strip() == _EMPTY_RESPONSE_FALLBACK:
+        return False
+    from app.agents import answer_exit
+
+    return not (answer_exit.check_text(text) or "").strip()
+
+
+#: Retry instruction when the model's reply was only about the platform's own
+#: workings (its tools, steps and fields), which never reach the user.
+_USER_TERMS_RETRY_NUDGE = (
+    "Your previous reply described the platform's own workings (tool, step, "
+    "operation or field names, calls and retries) instead of answering, and "
+    "none of that is shown to the user. Answer the user's question now in "
+    "plain text from what this thread already holds, in the user's own "
+    "terms. Do not name tools, steps, operations or fields and do not "
+    "describe calls. If something could not be found or read, say what is "
+    "missing in the user's terms; if an input is needed, ask for it by name."
+)
+
+
+def _forced_retry_nudge(text: str) -> str | None:
+    """The instruction that goes with the forced no-tools retry for ``text``."""
+    if text == _TOOL_FORMAT_FALLBACK:
+        return _TOOL_FORMAT_RETRY_NUDGE
+    if _looks_like_search_preamble(text):
+        return _SEARCH_PREAMBLE_RETRY_NUDGE
+    if _exit_leaves_nothing(text):
+        return _USER_TERMS_RETRY_NUDGE
+    return None
 
 # Keys that strongly indicate an internal search tool argument payload.
 _SEARCH_TOOL_ARG_KEYS = {
@@ -5431,15 +5471,24 @@ def _graft_composed_user_priced_takeoff(
         return text
 
 
+def _turn_input_question() -> str:
+    """The question this turn's tools asked for an input they need, in the
+    user's words, or ''."""
+    from app.agents import answer_exit
+
+    turn = answer_exit.current_turn()
+    return "\n".join(turn.questions).strip() if turn and turn.questions else ""
+
+
 def _nonblank_after_empty_synthesis(
     text: str,
     messages: list[dict[str, Any]] | None,
 ) -> str:
     """Never ship a blank bubble after a successful deliverable calc.
 
-    Prefer a priced take-off compose. If that is off / inapplicable and
-    ``construction_calc`` already ran, emit the cut-off sentence rather
-    than an empty end event.
+    Prefer a priced take-off compose. A tool that is still missing an input
+    asks for it. If ``construction_calc`` produced a result this turn, emit
+    the cut-off sentence rather than an empty end event.
     """
     raw = (text or "").strip()
     body = _strip_coverage_footer(raw)
@@ -5457,7 +5506,10 @@ def _nonblank_after_empty_synthesis(
     recovered = _recover_answer_from_tool_messages("", messages).strip()
     if recovered:
         return _with_footer(recovered)
-    if _turn_already_ran_construction_calc(messages) or _construction_calc_from_messages(
+    asked = _turn_input_question()
+    if asked:
+        return _with_footer(asked)
+    if _calc_payload_numbers(messages or []) is not None or _construction_calc_from_messages(
         messages,
     ):
         return _with_footer(_SYNTH_CUTOFF_NOTICE)

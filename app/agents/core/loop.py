@@ -70,7 +70,7 @@ async def _chat_impl(
         _build_missing_reference_answer, _build_sources_from_audit,
         _calc_input_question, _compose_boq_scope_wbs_answer, _compose_excerpt_boq_instead_of_retry,
         _conflicting_tools_after_predispatch, _empty_router_verdict, _file_tool_hint,
-        _final_text_needs_forced_retry, _fulfill_answer_report, _has_unread_windows,
+        _final_text_needs_forced_retry, _forced_retry_nudge, _fulfill_answer_report, _has_unread_windows,
         _inline_boq_hard_excludes, _is_capability_request, _latest_operator_ask, _llm_config,
         _looks_like_search_preamble, _message_wants_locked_deliverable,
         _normalize_tool_call_ids, _nudge_for_failed_tool, _off_loop, _parse_dsml_tool_calls,
@@ -553,10 +553,9 @@ async def _chat_impl(
                     if priced:
                         final_text = priced
                     else:
-                        if final_text == _TOOL_FORMAT_FALLBACK:
-                            messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
-                        elif (await _off_loop(_looks_like_search_preamble, final_text)):
-                            messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
+                        _nudge = await _off_loop(_forced_retry_nudge, final_text)
+                        if _nudge:
+                            messages.append({"role": "user", "content": _nudge})
                         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                         if forced_resp.get("status") == "error":
                             final_text = _EMPTY_RESPONSE_FALLBACK
