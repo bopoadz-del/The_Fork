@@ -102,7 +102,7 @@ async def test_chat_returns_structured_sources(monkeypatch):
     src = result["sources"][0]
     assert src["doc_id"] == "doc_1"
     assert src["doc_name"] == "SomeDoc.pdf"
-    assert src["page_or_section"] == "chunk #1"
+    assert src["page_or_section"] == ""
     assert src["score"] == 0.82
     assert src["confidence"] == "High"
     assert src["project_id"] == "proj_a"
@@ -132,6 +132,9 @@ async def test_chat_stream_end_event_includes_sources(monkeypatch):
 
     monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
     monkeypatch.setattr("app.agents.runtime.rag_inject", fake_rag_inject)
+    monkeypatch.setattr(
+        "app.core.projects.get_document", lambda did: {"original_name": "SomeDoc.pdf"}
+    )
     _patch_guardrail(monkeypatch)
 
     events = []
@@ -178,7 +181,8 @@ async def test_chat_source_labels_do_not_expose_raw_paths(monkeypatch):
     result = await agent.chat("What does the spec say?", project_id="proj_a")
 
     assert "X:\\Example Drive" not in result["answer"]
-    assert "[source: SomeDoc.pdf, chunk 1]" in result["answer"]
+    assert "(Source: SomeDoc.pdf)" in result["answer"]
+    assert "chunk" not in result["answer"]
     assert result["sources"][0]["doc_name"] == "SomeDoc.pdf"
 
 

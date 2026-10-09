@@ -8517,12 +8517,14 @@ def _scrub_supplied_input_wording(
 
 
 def _scrub_registry_ids(text: str) -> str:
-    """Registered formula and tool ids in the answer read as display names."""
+    """Registered formula and tool ids in the answer read as display names;
+    a ``key=literal`` dump goes rather than being read as words."""
     if not text:
         return text
     try:
+        from app.agents.answer_exit import remove_dumps
         from app.lib.source_labels import plain_registry_text
-        return plain_registry_text(text)
+        return plain_registry_text(remove_dumps(text))
     except Exception:  # noqa: BLE001 — the id scrub must not break a turn
         _LOG.exception("registry id scrub failed")
         return text
@@ -8547,6 +8549,9 @@ def _postprocess_answer(
     When ``fallback_used`` is set (the retriever answered from the Master Corpus
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
+    from app.agents import answer_exit
+
+    answer_exit.note_evidence(rag_sys_msg, messages)
     text = _recover_answer_from_tool_messages(text, messages)
     # The fetch-window truncation notice is not an
     # answer. Blank it so later grafts can compose, and so we never
@@ -8845,7 +8850,8 @@ def _extract_cited_chunk_indexes(text: str) -> list[tuple[str, int]]:
 
 def page_or_section_label(chunk_meta: dict[str, Any]) -> str:
     """Where in its source a cited chunk sits: ``p. N`` when the page is known
-    (PDF sources), else the chunk label."""
+    (PDF sources), else nothing. A chunk number is the index's, not a place
+    a reader can find."""
     page = chunk_meta.get("page")
     try:
         page_no = int(page) if page is not None else 0
@@ -8853,7 +8859,7 @@ def page_or_section_label(chunk_meta: dict[str, Any]) -> str:
         page_no = 0
     if page_no > 0:
         return f"p. {page_no}"
-    return f"chunk #{chunk_meta.get('chunk_index')}"
+    return ""
 
 
 def _platform_calculator_source(final_text: str) -> dict[str, Any] | None:

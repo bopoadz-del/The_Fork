@@ -16,12 +16,17 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 async def chat(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
     """One turn. Identical retrievals within it are answered once
     (vector_store turn memo); see ``_chat_impl``."""
+    from app.agents import answer_exit
+    from app.core.offload import off_loop
     from app.core.rag.vector_store import end_turn_memo, start_turn_memo
 
     token = start_turn_memo()
+    turn, turn_token = answer_exit.begin_turn()
     try:
-        return await self._chat_impl(*args, **kwargs)
+        result = await self._chat_impl(*args, **kwargs)
+        return await off_loop(answer_exit.check_result, result, turn)
     finally:
+        answer_exit.reset_turn(turn_token)
         end_turn_memo(token)
 
 
@@ -923,12 +928,23 @@ async def chat_stream(
                 producer_task, heartbeat_task, return_exceptions=True,
             )
 
+    from app.agents import answer_exit
+    from app.core.offload import off_loop
+
+    # Opened before the producer task exists, so the task (and the threads it
+    # offloads to) record this turn's evidence into the same record.
+    _exit_turn = answer_exit.open_turn()
+    _streamed: list[str] = []
     _leak_guard = _EmitLeakGuard()
     try:
         async for event in _inner():
             event = _leak_guard.check(event)
             if event is None:
                 continue
+            if isinstance(event, dict) and event.get("type") == "token" and isinstance(event.get("content"), str):
+                _streamed.append(event["content"])
+            if isinstance(event, dict) and event.get("type") == "end":
+                event = await off_loop(answer_exit.check_end_event, event, "".join(_streamed), _exit_turn)
             if (
                 isinstance(event, dict)
                 and event.get("type") == "start"
@@ -964,9 +980,13 @@ async def chat_stream(
         )
         if not token_emitted:
             yield {"type": "token", "content": _EMPTY_RESPONSE_FALLBACK}
+            _streamed.append(_EMPTY_RESPONSE_FALLBACK)
         yield _with_hat_signals(
-            {"type": "end", "iterations": 0, "sources": [],
-             "tools": list(tools_seen)},
+            await off_loop(
+                answer_exit.check_end_event,
+                {"type": "end", "iterations": 0, "sources": [], "tools": list(tools_seen)},
+                "".join(_streamed), _exit_turn,
+            ),
             _hat_evt,
         )
 

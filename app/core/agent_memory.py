@@ -450,6 +450,12 @@ def append_message(
         from app.agents.provenance_trail import LAST_PROVENANCE
 
         provenance = LAST_PROVENANCE.get()
+    if role == "assistant" and isinstance(content, str):
+        # A reopened conversation shows what was stored; it passes the same
+        # exit check as the live answer. check_text never raises.
+        from app.agents import answer_exit
+
+        content = answer_exit.check_text_or_fallback(content)
     with _lock:
         with SessionLocal() as session:
             session.add(

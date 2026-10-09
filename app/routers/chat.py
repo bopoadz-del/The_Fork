@@ -21,6 +21,7 @@ from app.dependencies import require_user
 from app.dependencies import block_instances
 from app.infra.monitoring import capture_llm_transport_failure, get_request_id
 from app.routers.chat_watchdog import guarantee_terminal
+from app.routers.exit_frames import with_answer_exit
 from app.routers.hat_frames import with_hat_signals
 
 #: Upper bound on one chat message. Above this the turn is refused with 413
@@ -903,7 +904,7 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
     return StreamingResponse(
         turn_gate.hold_until_done(turn_progress.opened(
         guarantee_terminal(
-            with_hat_signals(event_stream(), request.message),
+            with_hat_signals(with_answer_exit(event_stream()), request.message),
             request_id=get_request_id(),
         )), _release_turn),
         media_type="text/event-stream",
@@ -1111,7 +1112,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     return StreamingResponse(
         turn_gate.hold_until_done(turn_progress.opened(
         guarantee_terminal(
-            with_hat_signals(event_stream(), prompt),
+            with_hat_signals(with_answer_exit(event_stream()), prompt),
             request_id=get_request_id(),
         )), _release_turn),
         media_type="text/event-stream",
