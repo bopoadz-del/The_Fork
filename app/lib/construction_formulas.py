@@ -2318,6 +2318,84 @@ def _input_rejection_envelope(
     }
 
 
+def _bare_figure(value: Any) -> Optional[float]:
+    """A figure passed with no unit of its own, or None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and _PLAIN_NUM_RE.match(value):
+        return _ask_float(value)
+    return None
+
+
+def _call_unit(params: Dict[str, Any]) -> Optional[str]:
+    """The one unit a call states for its figures (``"unit": "ft"``)."""
+    for source in [params] + [coerce_calc_params(params.get(k)) for k in _FLATTEN_NEST_KEYS]:
+        unit = source.get("unit") if isinstance(source, dict) else None
+        if isinstance(unit, str) and unit.strip() and _parse_unit(unit.strip()) is not None:
+            return unit.strip()
+    return None
+
+
+def _units_written_for(figure: float, text: str) -> List[str]:
+    """Every unit the ask writes for this figure, a chain's shared unit included."""
+    from app.lib.construction_formulas_quantities import dimension_chains
+
+    found = [unit for chain in dimension_chains(text) for num, unit in chain
+             if unit and _numbers_agree(num, figure)]
+    written = re.compile(rf"(?<![\w.,])({_TEXT_NUM_RE})\s*({_TEXT_UNIT_RE})(?![A-Za-z0-9])", re.IGNORECASE)
+    for match in written.finditer(text or ""):
+        num = _parse_text_number(match.group(1))
+        if num is not None and _numbers_agree(num, figure):
+            found.append(match.group(2))
+    return found
+
+
+def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dict[str, float],
+                          text: str, call_unit: Optional[str]) -> Dict[str, Any]:
+    """A bare figure the caller passed is in the unit the ask wrote for that
+    figure, else in the call's own unit, when that unit measures what the
+    input measures. The figure then goes through the input's unit conversion.
+    Two different units written for one figure leave it as passed."""
+    from app.lib import formula_registry
+
+    spec = formula_registry.get(name)
+    if spec is None:
+        return bound
+    declared = formula_registry.parameters(spec)
+    out = dict(bound)
+    for key, figure in caller.items():
+        dests = list(_partition_bound_params(fn, {key: figure})[0])
+        p = declared.get(dests[0]) if len(dests) == 1 else None
+        if (p is None or p.kind not in formula_registry.NUMERIC_KINDS or not p.unit
+                or not _numbers_agree(out.get(p.name), figure)):
+            continue
+        target = _parse_unit(p.unit)
+        if target is None:
+            continue
+
+        def factor(unit: str) -> Optional[float]:
+            parsed = _parse_unit(unit)
+            if parsed is None or parsed.dimension != target.dimension:
+                return None
+            got = _convert_units(1.0, unit, p.unit).get("value_out")
+            return round(got, 9) if isinstance(got, (int, float)) else None
+
+        by_factor: Dict[float, str] = {}
+        for unit in _units_written_for(figure, text):
+            f = factor(unit)
+            if f is not None:
+                by_factor.setdefault(f, unit)
+        unit = next(iter(by_factor.values())) if len(by_factor) == 1 else None
+        if unit is None and call_unit and factor(call_unit) is not None and (
+                not by_factor or factor(call_unit) in by_factor):
+            unit = call_unit
+        if unit and factor(unit) != 1.0:
+            out[p.name] = f"{figure!r} {unit}"
+    return out
+
+
 def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run one whitelisted deterministic calculator by name with keyword params.
 
@@ -2341,11 +2419,15 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # + top-level siblings (volume / BCWS / excavation_bank_m3 / water_depth_m)
     # must reach the calculator. Flatten before E4 so a nested concrete ask
     # still pins.
+    call_unit = _call_unit(params)
     params = _flatten_calc_kwargs(params)
     if positional is None:
         positional = _pop_positional(params)
     else:
         params.pop(_POSITIONAL_KEY, None)
+    caller_figures = {key: figure for key, val in params.items()
+                      if not _is_junk_key(key) and (figure := _bare_figure(val)) is not None}
+    ask_text = _ask_blob(params)
     # Live UI pack E4: a concrete/raft ask (or leftover-L6 excavation name
     # plus "documented waste factor" in ``text``) must apply the project's
     # 5% waste. Resolve before the name lookup so a missing calculation
@@ -2449,6 +2531,8 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     from app.lib import formula_registry
     context = _pop_conversion_context(fn, params)
     params, unknown = _partition_bound_params(fn, params)
+    if not _accepts_param(fn, "unit"):
+        params = _attach_written_units(str(name), fn, params, caller_figures, ask_text, call_unit)
     params, conversions, unit_rejected = formula_registry.convert_written_units(
         str(name), params, context)
     params = _coerce_bound_values(fn, params)
