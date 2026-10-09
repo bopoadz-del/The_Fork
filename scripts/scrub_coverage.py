@@ -149,7 +149,7 @@ def live_values(cluster: str, service: str, names: Sequence[str]) -> Dict[str, s
     return out
 
 
-def live_corpus(sample_chunks: int) -> Tuple[List[str], int]:
+def live_corpus(sample_chunks: int, counts: Optional[Dict[str, object]] = None) -> Tuple[List[str], int]:
     """(texts, scrubbed project count): the scrubbed projects' records, their
     document filenames, and up to ``sample_chunks`` indexed chunks each."""
     from sqlalchemy import text as sql
@@ -159,22 +159,28 @@ def live_corpus(sample_chunks: int) -> Tuple[List[str], int]:
     spec = identifier_scrub._load_spec()
     ids = identifier_scrub._scrubbed_project_ids(spec)
     texts: List[str] = []
+    counts = counts if counts is not None else {}
     projects._ensure_db()
     with projects.SessionLocal() as session:
-        for row in session.execute(sql(
-            "SELECT name, client, location FROM projects WHERE id = ANY(:ids)"
-        ), {"ids": list(ids)}):
-            texts.extend(str(v) for v in row if v)
-        for (name,) in session.execute(sql(
-            "SELECT original_name FROM documents WHERE project_id = ANY(:ids)"
-        ), {"ids": list(ids)}):
-            if name:
-                texts.append(str(name))
-                texts.append(str(name).replace("_", " "))
+        counts["db_dialect"] = session.get_bind().dialect.name
+        counts["project_rows"] = counts["document_rows"] = counts["chunk_rows"] = 0
         for pid in ids:
+            for row in session.execute(sql(
+                "SELECT name, client, location FROM projects WHERE id = :pid"
+            ), {"pid": pid}):
+                counts["project_rows"] += 1
+                texts.extend(str(v) for v in row if v)
+            for (name,) in session.execute(sql(
+                "SELECT original_name FROM documents WHERE project_id = :pid"
+            ), {"pid": pid}):
+                counts["document_rows"] += 1
+                if name:
+                    texts.append(str(name))
+                    texts.append(str(name).replace("_", " "))
             for (body,) in session.execute(sql(
                 "SELECT text FROM chunks WHERE project_id = :pid ORDER BY doc_id, chunk_index LIMIT :n"
             ), {"pid": pid, "n": int(sample_chunks)}):
+                counts["chunk_rows"] += 1
                 if body:
                     texts.append(str(body))
     return texts, len(ids)
@@ -197,11 +203,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         os.environ[DB_NAME] = values.pop(DB_NAME)
         os.environ.pop(SECRET_NAME, None)  # the structural scrub must not see it
         sys.path.insert(0, str(ROOT))
-        texts, n_projects = live_corpus(args.sample_chunks)
+        counts: Dict[str, object] = {}
+        texts, n_projects = live_corpus(args.sample_chunks, counts)
         from app.core import identifier_scrub
 
         identifier_scrub._reset_cache()
         result = coverage(patterns, texts, identifier_scrub.scrub_identifiers)
+        result.update(counts)
         result["scrubbed_projects"] = n_projects
         result["structural_rules"] = identifier_scrub.rules_loaded()
         result["vacuous"] = vacuous(result)
@@ -212,6 +220,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
     except CoverageError as exc:
         result = {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 -- a driver message can carry a connection string
+        result = {"ok": False, "error": f"{type(exc).__name__} while reading the live store (message withheld)"}
     Path(args.out).write_text(json.dumps(result, indent=2) + "\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     lines = ["### Scrub coverage (counts only)", ""] + [f"- {k}: {v}" for k, v in result.items()]
