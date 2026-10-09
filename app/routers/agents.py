@@ -162,8 +162,20 @@ async def get_conversation_messages(
     if conv is None:
         return {"conversation_id": conversation_id, "messages": []}
 
-    msgs = agent_memory.get_messages(conversation_id)
+    msgs = (await _off_loop(_reopened_messages, conversation_id))
     return {"conversation_id": conversation_id, "messages": msgs}
+
+
+def _reopened_messages(conversation_id: str) -> list[dict]:
+    """Stored messages as a reopened conversation shows them: an assistant
+    answer stored before the exit check existed passes it on the way out."""
+    from app.agents import answer_exit
+
+    msgs = agent_memory.get_messages(conversation_id)
+    for m in msgs:
+        if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+            m["content"] = answer_exit.check_text_or_fallback(m["content"])
+    return msgs
 
 
 @router.get("/v1/agents")
@@ -454,6 +466,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
 
     # Local import: keeps this router's import graph unchanged for the
     # non-streaming endpoints.
+    from app.routers.exit_frames import with_answer_exit
     from app.routers.hat_frames import with_hat_signals
 
     from app.core import turn_gate, turn_progress
@@ -461,7 +474,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
         _release_turn = await turn_gate.acquire()
     return StreamingResponse(
         turn_gate.hold_until_done(turn_progress.opened(
-        with_hat_signals(event_stream(), message)), _release_turn),
+        with_hat_signals(with_answer_exit(event_stream()), message)), _release_turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

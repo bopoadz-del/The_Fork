@@ -251,6 +251,13 @@ class UniversalBlock(ABC):
                 "swallowed %s in execute() — continuing",
                 "Exception", exc_info=True,
             )
+
+        if status == "error":
+            # So a copy of this error text in the answer is recognised at the
+            # exit and replaced by one plain sentence. Never raises.
+            from app.agents import answer_exit
+
+            answer_exit.note_tool_result(self.name, {**params, "status": "error", "result": result})
         
         return {
             "block": self.name,

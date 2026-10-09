@@ -8547,6 +8547,9 @@ def _postprocess_answer(
     When ``fallback_used`` is set (the retriever answered from the Master Corpus
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
+    from app.agents import answer_exit
+
+    answer_exit.note_evidence(rag_sys_msg, messages)
     text = _recover_answer_from_tool_messages(text, messages)
     # The fetch-window truncation notice is not an
     # answer. Blank it so later grafts can compose, and so we never
