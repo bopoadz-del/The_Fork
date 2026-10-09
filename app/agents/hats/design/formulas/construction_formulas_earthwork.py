@@ -15,7 +15,7 @@ import math
         'friction_angle_deg': Param('deg', 0, 60, label='friction angle'),
         'slope_angle_deg': Param('deg', 0, 90, label='slope angle'),
         'cohesion_kpa': Param('kPa', 0, 1000, label='cohesion'),
-        'unit_weight_kn_m3': Param('m3', 5, 30, label='soil unit weight'),
+        'unit_weight_kn_m3': Param('kN/m3', 5, 30, label='soil unit weight'),
         'depth_m': Param('m', 0, 500),
     },
     outputs={'factor_of_safety': '-', 'frictional_term': '-', 'cohesive_term': '-'},

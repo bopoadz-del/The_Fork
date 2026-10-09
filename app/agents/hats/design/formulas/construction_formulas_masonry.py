@@ -30,7 +30,7 @@ def _norm_code(code: str) -> str:
         'radius_gyration_mm': Param('mm', 1, 10000, label='radius of gyration'),
         'steel_area_mm2': Param('mm2', 0, 1e7, label='steel area'),
         'steel_stress_mpa': Param('MPa', 0, 1500, label='steel stress'),
-        'gamma_m': Param('m', 1, 5, label='partial safety factor for masonry'),
+        'gamma_m': Param('-', 1, 5, label='partial safety factor for masonry'),
         'eccentricity_mm': Param('mm', 0, 10000),
         'ke': Param('-', 100, 2000, label='masonry modulus factor'),
         'eff_height_mm': Param('mm', 50, 50000, label='effective height'),

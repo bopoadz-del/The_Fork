@@ -170,7 +170,7 @@ def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -
         'required_pressure_n_mm2': Param('N/mm2', 0, 10, label='grout pressure'),
         'strength_28d_n_mm2': Param('N/mm2', 1, 150, label='28-day strength'),
         'strength_7d_n_mm2': Param('N/mm2', 1, 150, label='7-day strength'),
-        'mixing_time_minutes': Param('-', 0, 120, label='mixing time'),
+        'mixing_time_minutes': Param('min', 0, 120, label='mixing time'),
     },
     outputs={'duct_area_mm2': 'mm2', 'grout_volume_l_m': 'm', 'pressure_n_mm2': 'N/mm2', 'pressure_kg_cm2': '-', 'pressure_psi': '-', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_min': '-'},
 )
@@ -203,7 +203,7 @@ def grout_pressure_calc(
     inputs={
         'temperature_history_c': Param('degC', -30, 100, label='recorded temperatures'),
         'time_intervals_hours': Param('h', 0, 100000, label='time intervals'),
-        'datum_temperature': Param('-', -30, 10, label='datum temperature'),
+        'datum_temperature': Param('degC', -30, 10, label='datum temperature'),
         'strength_28d_n_mm2': Param('N/mm2', 1, 150, label='28-day strength', grade='concrete'),
         'reference_temperature_c': Param('degC', -30, 80, label='reference temperature'),
         'gain_a': Param('-', 0, 50, label='strength-gain constant a'),

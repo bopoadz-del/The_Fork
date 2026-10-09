@@ -14,7 +14,7 @@ from typing import Dict, Optional
     inputs={
         'claimed_amount': Param('currency', 0, 1e13),
         'certified_amount': Param('currency', 0, 1e13),
-        'retention_rate': Param('-', 0, 1, label='retention'),
+        'retention_rate': Param('fraction', 0, 1, label='retention'),
         'cumulative_previous_certified': Param('currency', 0, 1e13, label='previously certified amount'),
         'contract_value': Param('currency', 0, 1e13),
     },

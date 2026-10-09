@@ -16,7 +16,7 @@ from typing import Any, Dict
         'concrete_m3': Param('m3', 0, 1e8),
         'structural_steel_t': Param('t', 0, 1e6),
         'piping_dia_inch': Param('-', 0, 1e9, label='piping (inch-diameter)'),
-        'electrical_cable_km': Param('-', 0, 100000, label='electrical cable'),
+        'electrical_cable_km': Param('km', 0, 100000, label='electrical cable'),
         'area_m2': Param('m2', 0, 1e8),
     },
     outputs={'civil_supervisors': '-', 'structural_supervisors': '-', 'piping_supervisors': '-', 'electrical_supervisors': '-', 'general_supervisors': '-', 'total_supervisors': '-', 'hse_officers': '-', 'document_controllers': '-', 'total_supervision_staff': '-'},
