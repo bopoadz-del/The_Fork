@@ -36,8 +36,9 @@ import contextvars
 import json
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
@@ -58,8 +59,8 @@ class Place:
 
     name: str
     doc_id: str = ""
-    chunk: Optional[int] = None
-    page: Optional[int] = None
+    chunk: int | None = None
+    page: int | None = None
 
 
 @dataclass
@@ -71,7 +72,7 @@ class Turn:
     tool_errors: list[tuple[str, str]] = field(default_factory=list)
 
 
-_TURN: contextvars.ContextVar[Optional[Turn]] = contextvars.ContextVar("answer_exit_turn", default=None)
+_TURN: contextvars.ContextVar[Turn | None] = contextvars.ContextVar("answer_exit_turn", default=None)
 
 
 def open_turn() -> Turn:
@@ -81,7 +82,7 @@ def open_turn() -> Turn:
     return turn
 
 
-def current_turn() -> Optional[Turn]:
+def current_turn() -> Turn | None:
     return _TURN.get()
 
 
@@ -95,21 +96,25 @@ def begin_turn() -> tuple[Turn, contextvars.Token]:
     return turn, _TURN.set(turn)
 
 
-def _page(value: Any) -> Optional[int]:
-    try:
-        page = int(value)
-    except (TypeError, ValueError):
-        return None
-    return page if page > 0 else None
-
-
-def _chunk(value: Any) -> Optional[int]:
+def _as_int(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
-    try:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
         return int(value)
-    except (TypeError, ValueError):
-        return None
+    if isinstance(value, str) and re.fullmatch(r"\s*-?\d+\s*", value):
+        return int(value)
+    return None
+
+
+def _page(value: Any) -> int | None:
+    page = _as_int(value)
+    return page if page is not None and page > 0 else None
+
+
+def _chunk(value: Any) -> int | None:
+    return _as_int(value)
 
 
 def _step_label(tool: str, payload: Any) -> str:
@@ -145,7 +150,7 @@ def _error_texts(payload: Any) -> list[str]:
     return found
 
 
-def note_tool_result(tool: str, payload: Any, turn: Optional[Turn] = None) -> None:
+def note_tool_result(tool: str, payload: Any, turn: Turn | None = None) -> None:
     """Record a tool's error text so a copy of it in the answer is recognised."""
     turn = turn or _TURN.get()
     if turn is None:
@@ -160,9 +165,9 @@ def note_tool_result(tool: str, payload: Any, turn: Optional[Turn] = None) -> No
 
 
 def note_evidence(
-    rag_sys_msg: Optional[dict[str, Any]],
-    messages: Optional[Iterable[dict[str, Any]]],
-    turn: Optional[Turn] = None,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: Iterable[dict[str, Any]] | None,
+    turn: Turn | None = None,
 ) -> None:
     """Record the places this turn read (retrieval markers, tool passages) and
     the tools that failed (tool messages)."""
@@ -194,7 +199,7 @@ def note_evidence(
         _LOG.warning("answer_exit: could not record the turn's evidence", exc_info=True)
 
 
-def places_from_sources(rows: Optional[Iterable[dict[str, Any]]]) -> list[Place]:
+def places_from_sources(rows: Iterable[dict[str, Any]] | None) -> list[Place]:
     places: list[Place] = []
     for row in rows or []:
         if not isinstance(row, dict):
@@ -214,6 +219,8 @@ _HEX_ID = r"[0-9a-f]{6,}(?:-[0-9a-f]{2,}){0,4}"
 _UUID_RE = re.compile(r"(?<![\w-])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\w-])",
                       re.IGNORECASE)
 _EXT_RE = re.compile(r"\.[A-Za-z0-9]{2,5}$")
+#: A hex token at least this long is an id (stored ids carry 32).
+_ID_LENGTH = 24
 
 
 def _display_name(name: str) -> str:
@@ -306,7 +313,7 @@ class CitationIndex:
         name: str = "",
         chunks: Iterable[int] = (),
         pages: Iterable[int] = (),
-    ) -> Optional[tuple[str, list[int]]]:
+    ) -> tuple[str, list[int]] | None:
         """``(document name, pages)`` for a citation, or None when nothing
         backs it. ``pages`` is empty when the document has no page there."""
         chunks = [c for c in chunks if c is not None]
@@ -337,6 +344,11 @@ class CitationIndex:
         if not shown or _looks_like_id(shown):
             return None
         found = sorted({p.page for p in matched if p.page})
+        if not found and not chunks and (doc or name):
+            # The document is cited without a chunk: its page is known only
+            # when the turn read it at one page.
+            pages_read = {p.page for p in pool if p.page}
+            found = sorted(pages_read) if len(pages_read) == 1 else []
         return shown, (stated or found)
 
 
@@ -440,7 +452,7 @@ def _parse_cite(inner: str, index: CitationIndex, *, labelled: bool = False) -> 
     return cite
 
 
-def _resolve(cite: _Cite, index: CitationIndex) -> Optional[str]:
+def _resolve(cite: _Cite, index: CitationIndex) -> str | None:
     hit = index.resolve(doc=cite.doc, name=cite.name, chunks=cite.chunks, pages=cite.pages)
     return render_place(*hit) if hit else None
 
@@ -496,7 +508,7 @@ def _rewrite_brackets(text: str, index: CitationIndex) -> str:
     return "".join(out)
 
 
-def _matching_close(text: str, start: int, limit: int, opener: str, closer: str) -> Optional[int]:
+def _matching_close(text: str, start: int, limit: int, opener: str, closer: str) -> int | None:
     depth = 0
     for i in range(start, limit):
         ch = text[i]
@@ -600,13 +612,16 @@ def _rewrite_inline(text: str, index: CitationIndex) -> str:
 
     def known_id(m: re.Match[str]) -> str:
         token = m.group(0)
-        if not (_looks_like_id(token) and re.search(r"[a-f]", token, re.IGNORECASE)
-                and index.is_document_id(token)):
+        if not (_looks_like_id(token) and re.search(r"[a-f]", token, re.IGNORECASE)):
+            return token
+        # A short hex token may be a code or a colour; one of id length is an
+        # id whether or not this turn read it.
+        if not (index.is_document_id(token) or len(token.replace("-", "")) >= _ID_LENGTH):
             return token
         hit = index.resolve(doc=token)
         return hit[0] if hit else _MARK
 
-    return re.sub(rf"(?<![\w./-]){_HEX_ID}(?![\w./-])", known_id, text, flags=re.IGNORECASE)
+    return re.sub(rf"(?<![\w./-]){_HEX_ID}(?![\w/-])(?!\.\w)", known_id, text, flags=re.IGNORECASE)
 
 
 # ── Identifiers and dumps ────────────────────────────────────────────────────
@@ -661,9 +676,7 @@ def _restore(text: str, held: list[str]) -> str:
     return re.sub(r"\x01(\d+)\x02", lambda m: held[int(m.group(1))], text)
 
 
-def _plain_identifiers(text: str) -> str:
-    from app.lib.source_labels import plain_registry_text
-
+def _drop_dumps(text: str) -> str:
     def dump(m: re.Match[str]) -> str:
         key = m.group("key")
         plain_key = "_" not in key and "." not in key
@@ -678,7 +691,13 @@ def _plain_identifiers(text: str) -> str:
             return m.group(0)
         return _MARK
 
-    text = plain_registry_text(_DUMP_RE.sub(dump, text))
+    return _DUMP_RE.sub(dump, text)
+
+
+def _plain_identifiers(text: str) -> str:
+    from app.lib.source_labels import plain_registry_text
+
+    text = plain_registry_text(_drop_dumps(text))
 
     def assign(m: re.Match[str]) -> str:
         key = m.group("key")
@@ -731,7 +750,7 @@ def _error_sentence(label: str, err: str) -> str:
     return head
 
 
-def _replace_tool_errors(text: str, turn: Optional[Turn]) -> str:
+def _replace_tool_errors(text: str, turn: Turn | None) -> str:
     errors = [(label, err) for label, err in (turn.tool_errors if turn else [])
               if _INTERNAL_TOKEN_RE.search(err)]
     lines = []
@@ -747,6 +766,13 @@ def _replace_tool_errors(text: str, turn: Optional[Turn]) -> str:
                 pieces = [_norm(p) for p in _SENTENCE_SPLIT_RE.split(err) if len(_norm(p)) >= 16]
                 if len(body) >= 16 and (body in norm_err or any(p in body for p in pieces)):
                     plain = _error_sentence(label, err)
+                    whole = re.search(r"\s+".join(map(re.escape, err.split())), part)
+                    if whole and part[whole.end():].strip(" .") and plain not in said:
+                        # The error ran into the next sentence: only its own
+                        # words are replaced.
+                        said.add(plain)
+                        part = f"{part[:whole.start()]}{plain} {part[whole.end():].lstrip(' .')}".strip()
+                        plain = None
                     break
             if plain is None and _STRUCTURAL_ERROR_RE.search(part):
                 plain = _error_sentence("", "")
@@ -841,7 +867,8 @@ _HEADLESS_SENTENCE_RE = re.compile(
 def _tidy(text: str) -> str:
     if _MARK not in text:
         return text
-    from app.agents.citation_provenance import SENTINEL, _tidy as tidy
+    from app.agents.citation_provenance import SENTINEL
+    from app.agents.citation_provenance import _tidy as tidy
 
     text = _JOINED_MARKS_RE.sub(_MARK, text)
     text = _HEADLESS_SENTENCE_RE.sub(_MARK, text)
@@ -849,8 +876,8 @@ def _tidy(text: str) -> str:
 
 
 def build_index(
-    turn: Optional[Turn] = None,
-    sources: Optional[Iterable[dict[str, Any]]] = None,
+    turn: Turn | None = None,
+    sources: Iterable[dict[str, Any]] | None = None,
     *,
     lookup: bool = True,
 ) -> CitationIndex:
@@ -862,9 +889,9 @@ def build_index(
 def check_text(
     text: str,
     *,
-    turn: Optional[Turn] = None,
-    sources: Optional[Iterable[dict[str, Any]]] = None,
-    index: Optional[CitationIndex] = None,
+    turn: Turn | None = None,
+    sources: Iterable[dict[str, Any]] | None = None,
+    index: CitationIndex | None = None,
 ) -> str:
     """The answer as it may leave: citations resolved to name and page or
     removed, no chunk numbers, ids, dumps, raw tool errors or machinery words."""
@@ -893,6 +920,23 @@ def check_text(
         return text
 
 
+def remove_dumps(text: str) -> str:
+    """``text`` without ``key=literal`` dumps (``delta_ok=false``,
+    ``summary {}``). For a step that rewrites ``key=value`` as words before
+    the exit: a dump read as words is still a dump."""
+    if not isinstance(text, str) or not text:
+        return text
+    try:
+        held_text, held = _protect(text, CitationIndex(lookup=False))
+        out = _drop_dumps(held_text)
+        if out == held_text:
+            return text
+        return _tidy(_restore(out, held))
+    except Exception:  # noqa: BLE001 -- the exit must never break an answer
+        _LOG.exception("answer_exit: dump removal failed; text passed through")
+        return text
+
+
 def check_text_or_fallback(text: str, **kwargs: Any) -> str:
     """``check_text`` for a whole answer: one that was nothing but internals
     becomes the platform's empty-turn reply, never an empty bubble (the client
@@ -906,11 +950,11 @@ def check_text_or_fallback(text: str, **kwargs: Any) -> str:
 
 
 def check_sources(
-    rows: Optional[list[dict[str, Any]]],
+    rows: list[dict[str, Any]] | None,
     *,
-    turn: Optional[Turn] = None,
-    index: Optional[CitationIndex] = None,
-) -> Optional[list[dict[str, Any]]]:
+    turn: Turn | None = None,
+    index: CitationIndex | None = None,
+) -> list[dict[str, Any]] | None:
     """Sources rows as they may leave: a document name, and the page or nothing."""
     if not isinstance(rows, list):
         return rows
@@ -951,7 +995,7 @@ def check_sources(
         return rows
 
 
-def check_end_event(event: dict[str, Any], streamed: str = "", turn: Optional[Turn] = None) -> dict[str, Any]:
+def check_end_event(event: dict[str, Any], streamed: str = "", turn: Turn | None = None) -> dict[str, Any]:
     """The terminal stream event as it may leave. ``streamed`` is the text the
     tokens carried; the client shows ``content`` in its place, so an event
     without content gets the checked streamed text."""

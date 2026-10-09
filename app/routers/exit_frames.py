@@ -17,7 +17,7 @@ Any failure passes the frame through unchanged.
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from app.routers.hat_frames import _decode, _encode
 

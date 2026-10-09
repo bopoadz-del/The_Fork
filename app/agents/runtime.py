@@ -8517,12 +8517,14 @@ def _scrub_supplied_input_wording(
 
 
 def _scrub_registry_ids(text: str) -> str:
-    """Registered formula and tool ids in the answer read as display names."""
+    """Registered formula and tool ids in the answer read as display names;
+    a ``key=literal`` dump goes rather than being read as words."""
     if not text:
         return text
     try:
+        from app.agents.answer_exit import remove_dumps
         from app.lib.source_labels import plain_registry_text
-        return plain_registry_text(text)
+        return plain_registry_text(remove_dumps(text))
     except Exception:  # noqa: BLE001 — the id scrub must not break a turn
         _LOG.exception("registry id scrub failed")
         return text
