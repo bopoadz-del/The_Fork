@@ -6174,7 +6174,7 @@ def _calc_payload_numbers(messages: list[dict[str, Any]]) -> set | None:
         is_calc = (
             msg.get("role") == "tool" and msg.get("name") == "construction_calc"
         ) or content.lstrip().startswith(f"{_PREDISPATCH_PREFIX} construction_calc")
-        if not is_calc or '"error"' in content:
+        if not is_calc or '"error"' in content or content.lstrip().startswith(_CALC_NOT_RUN_HEAD):
             continue
         found = True
         for tok in _CG_NUM_RE.findall(content):
@@ -11208,17 +11208,20 @@ def _formula_ask_force_enabled() -> bool:
 
 
 def _message_names_unambiguous_calculator(text: str) -> bool:
-    """Registry name in underscore form, or a 3+ token spaced name.
+    """Registry name in underscore form, or a 3+ token spaced name or
+    display name.
 
     ``pe_unit_convert`` is unambiguous. ``concrete volume`` is not —
     it is also a BOQ lookup phrase. See test_self_contained_calculation_routing.
     """
     try:
-        from app.lib.construction_formulas import CALCULATORS
+        from app.lib.construction_formulas import CALCULATORS, calculators_named_by_display
     except Exception:  # noqa: BLE001
         _LOG.debug("CALCULATORS import failed", exc_info=True)
         return False
     raw = text or ""
+    if calculators_named_by_display(raw):
+        return True
     underscored = raw.lower().replace("-", "_")
     spaced = raw.lower()
     for name in CALCULATORS:
@@ -11766,6 +11769,9 @@ def _formula_calculator_name_from_message(text: str) -> str | None:
         return None
 
 
+_CALC_NOT_RUN_HEAD = f"{_PREDISPATCH_PREFIX} construction_calc was not run."
+
+
 def _formula_predispatch_instruction(calc_name: str | None, result: Any) -> str:
     """What the model is told after the formula pre-dispatch.
 
@@ -11774,17 +11780,54 @@ def _formula_predispatch_instruction(calc_name: str | None, result: Any) -> str:
     and "answer from that result" left the model nothing to answer from: it
     filled the gap with free-form variants that changed run to run ("a 10%
     allowance -> 44 days"). Say what actually happened and what to do.
+
+    A calculator that matched but did not run is not "no calculator": its
+    question names the inputs it needs by their labels.
     """
     ok = bool(isinstance(result, dict) and result.get("ok"))
     if calc_name and ok:
         return ("construction_calc has already been run. Answer from that "
                 "result. Do not answer from Master Corpus excerpts.")
+    inner = result.get("result") if isinstance(result, dict) else None
+    inner = inner if isinstance(inner, dict) else {}
+    question = str(inner.get("question") or "").strip()
+    if inner.get("status") == "not_run" and str(inner.get("reason") or "").strip():
+        return str(inner["reason"]).strip()
+    if calc_name and question:
+        nudge = _INPUT_QUESTION_NUDGE if inner.get("needs_input") else _CALC_MISSING_INPUT_NUDGE
+        return nudge.format(question=question)
+    if calc_name:
+        from app.lib.source_labels import formula_display_name
+
+        display = formula_display_name(calc_name) or "The matched calculator"
+        return (f"{display} did not return a result on this request. Do not "
+                "compute it yourself or choose its inputs. If the user's message "
+                "or the project documents state them, call construction_calc "
+                f"with {calc_name} and those figures; otherwise ask the user for "
+                "the inputs it needs.")
     return ("No registry calculator matched this question, so there is no "
             "calculator result. If one of the listed calculators fits, call "
             "construction_calc with that name. Otherwise compute the answer "
             "once from the operator's own figures, show the working, and state "
             "a single result: no alternative scenarios, allowances or figures "
             "the operator did not give. Do not answer from Master Corpus excerpts.")
+
+
+def _formula_not_run_bubble(calc_name: str | None, result: Any) -> str:
+    """The platform note for a formula pre-dispatch that produced no result.
+
+    An envelope that is not a result is never handed over as a draft that
+    has "already been run": the model repeated the tool's error to the user
+    as a failed run. The note says the calculator was not run and what to do,
+    with the registered names only when none matched.
+    """
+    inner = result.get("result") if isinstance(result, dict) else None
+    inner = inner if isinstance(inner, dict) else {}
+    parts = [_CALC_NOT_RUN_HEAD, _formula_predispatch_instruction(calc_name, result)]
+    available = inner.get("available")
+    if not calc_name and isinstance(available, list) and available:
+        parts.append("Registered calculators: " + ", ".join(str(a) for a in available) + ".")
+    return " ".join(parts)
 
 
 async def _predispatch_formula_calc(
@@ -11844,11 +11887,12 @@ async def _predispatch_formula_calc(
         }
         result = await agent._run_tool_call(tc)
         inner = result.get("result") if isinstance(result, dict) else result
-        if (
+        ran = (
             isinstance(inner, dict)
             and inner.get("status") == "success"
-            and inner.get("calculation")
-        ):
+            and bool(inner.get("calculation"))
+        )
+        if ran:
             # A user-bubble alone is not a tool run, so the credit path
             # never sees the calculator. Record the same envelope as a
             # tool result. The arguments carry the user's inputs.
@@ -11863,13 +11907,20 @@ async def _predispatch_formula_calc(
                 "tool_call_id": tc["id"],
                 "content": json.dumps(inner, default=str),
             })
-        rendered = json.dumps(inner, default=str)[:4000]
-        _inject_predispatch(
-            messages,
-            "construction_calc",
-            rendered,
-            (await _off_loop(_formula_predispatch_instruction, calc_name, result)),
-        )
+            _inject_predispatch(
+                messages,
+                "construction_calc",
+                json.dumps(inner, default=str)[:4000],
+                (await _off_loop(_formula_predispatch_instruction, calc_name, result)),
+            )
+        else:
+            from app.agents import answer_exit
+
+            answer_exit.note_tool_result("construction_calc", inner)
+            messages.append({
+                "role": "user",
+                "content": await _off_loop(_formula_not_run_bubble, calc_name, result),
+            })
         return {
             "name": "construction_calc",
             "ok": bool(isinstance(result, dict) and result.get("ok")),

@@ -72,6 +72,10 @@ class Turn:
     tool_errors: list[tuple[str, str]] = field(default_factory=list)
     #: Tool, block, action and operation names this turn's calls used.
     step_names: set[str] = field(default_factory=set)
+    #: A tool's question for inputs it needs and did not get, in the user's words.
+    questions: list[str] = field(default_factory=list)
+    #: The question asked in place of the error text that came with it.
+    error_questions: dict[str, str] = field(default_factory=dict)
 
 
 _TURN: contextvars.ContextVar[Turn | None] = contextvars.ContextVar("answer_exit_turn", default=None)
@@ -174,12 +178,33 @@ def _error_texts(payload: Any) -> list[str]:
     return found
 
 
+def _input_questions(payload: Any) -> list[tuple[str, str]]:
+    """(question, the error text beside it) for every envelope that asks for
+    inputs it needs, at any depth."""
+    found: list[tuple[str, str]] = []
+    if isinstance(payload, dict):
+        question = payload.get("question")
+        if (isinstance(question, str) and question.strip()
+                and (payload.get("missing") or payload.get("needs_input"))):
+            err = payload.get("error")
+            found.append((question.strip(), err.strip() if isinstance(err, str) else ""))
+        for key in ("result", "data"):
+            found.extend(_input_questions(payload.get(key)))
+    return found
+
+
 def note_tool_result(tool: str, payload: Any, turn: Turn | None = None) -> None:
-    """Record a tool's error text so a copy of it in the answer is recognised."""
+    """Record a tool's error text so a copy of it in the answer is recognised,
+    and its question for missing inputs."""
     turn = turn or _TURN.get()
     if turn is None:
         return
     try:
+        for question, err in _input_questions(payload):
+            if question not in turn.questions:
+                turn.questions.append(question)
+            if err and err != question:
+                turn.error_questions.setdefault(err, question)
         turn.step_names.update(_call_names(tool, payload))
         for err in _error_texts(payload):
             turn.step_names.update(_error_step_names(err))
@@ -986,9 +1011,25 @@ def _error_sentence(label: str, err: str) -> str:
     return f"{label} needs the {wanted}." if label else f"I need the {wanted} to work this out."
 
 
+def _error_forms(err: str) -> list[str]:
+    """The error as the tool wrote it and as an answer copies it after
+    registry ids were already read out as display names."""
+    from app.lib.source_labels import plain_registry_text
+
+    forms = [err]
+    try:
+        plain = plain_registry_text(err)
+    except Exception:  # noqa: BLE001 -- the raw form still matches
+        _LOG.debug("answer_exit: plain form of a tool error unavailable", exc_info=True)
+        plain = err
+    if plain.strip() and plain != err:
+        forms.append(plain)
+    return forms
+
+
 def _replace_tool_errors(text: str, turn: Turn | None) -> str:
-    errors = [(label, err) for label, err in (turn.tool_errors if turn else [])
-              if _INTERNAL_TOKEN_RE.search(err)]
+    errors = [(label, err, form) for label, err in (turn.tool_errors if turn else [])
+              if _INTERNAL_TOKEN_RE.search(err) for form in _error_forms(err)]
     lines = []
     said: set[str] = set()
     for line in text.split("\n"):
@@ -997,12 +1038,12 @@ def _replace_tool_errors(text: str, turn: Turn | None) -> str:
         for part in parts:
             body = _norm(part)
             plain = None
-            for label, err in errors:
-                norm_err = _norm(err)
-                pieces = [_norm(p) for p in _SENTENCE_SPLIT_RE.split(err) if len(_norm(p)) >= 16]
+            for label, err, form in errors:
+                norm_err = _norm(form)
+                pieces = [_norm(p) for p in _SENTENCE_SPLIT_RE.split(form) if len(_norm(p)) >= 16]
                 if len(body) >= 16 and (body in norm_err or any(p in body for p in pieces)):
-                    plain = _error_sentence(label, err)
-                    whole = re.search(r"\s+".join(map(re.escape, err.split())), part)
+                    plain = turn.error_questions.get(err) or _error_sentence(label, err)
+                    whole = re.search(r"\s+".join(map(re.escape, form.split())), part)
                     if whole and part[whole.end():].strip(" .") and plain not in said:
                         # The error ran into the next sentence: only its own
                         # words are replaced.
@@ -1133,6 +1174,7 @@ _MECHANICS_RE = re.compile(
     r"|\bunimplemented\b"
     r"|\btraceback\b|\bstack[ \t]+trace\b|\bHTTP[ \t]+\d{3}\b|\bstatus[ \t]+code\b"
     r"|\bunknown[ \t]+(?:operation|action|tool|parameter|argument|function|block)s?\b"
+    r"|\bpre-?dispatch(?:ed|es|ing)?\b"
     r"|\b(?:steps?|requests?|calls?|tools?|blocks?)\b[^.!?\n]{0,40}\bdid(?:n't|[ \t]+not)[ \t]+return\b",
     re.IGNORECASE,
 )
@@ -1389,13 +1431,16 @@ def remove_dumps(text: str) -> str:
 
 def check_text_or_fallback(text: str, **kwargs: Any) -> str:
     """``check_text`` for a whole answer: one that was nothing but internals
-    becomes the platform's empty-turn reply, never an empty bubble (the client
-    would show the raw streamed tokens in its place)."""
+    becomes the turn's own question for the inputs a tool still needs, or the
+    platform's empty-turn reply, never an empty bubble (the client would show
+    the raw streamed tokens in its place)."""
     checked = check_text(text, **kwargs)
     if isinstance(text, str) and text.strip() and not (checked or "").strip():
         from app.agents.runtime import _EMPTY_RESPONSE_FALLBACK
 
-        return _EMPTY_RESPONSE_FALLBACK
+        turn = kwargs.get("turn") or _TURN.get()
+        asked = check_text("\n".join(turn.questions), **kwargs) if turn and turn.questions else ""
+        return asked.strip() or _EMPTY_RESPONSE_FALLBACK
     return checked
 
 
