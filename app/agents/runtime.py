@@ -966,6 +966,97 @@ def _project_files_named_in(project_id: str, user_low: str) -> list[str]:
     return _names_mentioned(user_low, names)
 
 
+_GENERIC_DOCUMENT_NOUNS = frozenset({
+    "document", "doc", "file", "upload", "attachment", "record",
+})
+# Function words of a question. What is left of the ask is what it is about.
+_ASK_FUNCTION_WORDS = frozenset({
+    "what", "which", "when", "where", "does", "said", "says", "state", "states",
+    "about", "that", "this", "these", "those", "there", "their", "from", "with",
+    "have", "give", "tell", "please", "uploaded", "attached", "shared", "into",
+    "your", "mine", "they", "them", "were", "been", "being", "should", "would",
+    "could", "much", "many", "will", "shall", "also", "just", "only",
+})
+_OWN_UPLOAD_CANDIDATES = 5
+
+
+def _singular(word: str) -> str:
+    for suffix in ("ies", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)] + ("y" if suffix == "ies" else "")
+    return word
+
+
+def _name_tokens(name: str) -> list[str]:
+    return re.findall(r"[a-z]+", os.path.splitext(name or "")[0].lower())
+
+
+def _token_is_noun(token: str, noun: str) -> bool:
+    token, noun = _singular(token), _singular(noun)
+    if token == noun:
+        return True
+    shorter, longer = sorted((token, noun), key=len)
+    return len(shorter) >= 4 and longer.startswith(shorter)
+
+
+def _resolve_own_upload(project_id: str, user_msg: str) -> dict[str, Any] | None:
+    """The user's own document an ask refers to without naming it.
+
+    Read the usual way: the project's document list, then the file's text.
+    The document noun narrows the list ("my note" -> names with "note");
+    the ask's subject words, in the name and then in the text, choose among
+    what is left; the latest upload breaks a tie. With nothing to choose by
+    among several documents, none is picked.
+    """
+    nouns = _own_upload_nouns(user_msg)
+    if not project_id or not nouns:
+        return None
+    from app.core import projects as _projects
+    from app.core.ingest_status import TEXT_BEARING_EXTS
+
+    readable = [
+        d for d in (_projects.list_document_names(project_id) or [])
+        if (ext := os.path.splitext(d.get("original_name") or "")[1].lower())
+        in TEXT_BEARING_EXTS and ext not in _FILE_PREDISPATCH_EXTS
+    ]
+    if not readable:
+        return None
+    specific = [
+        n.split()[-1] for n in nouns
+        if _singular(n.split()[-1]) not in _GENERIC_DOCUMENT_NOUNS
+    ]
+    by_noun = [
+        d for d in readable
+        if any(_token_is_noun(t, n) for t in _name_tokens(d.get("original_name") or "")
+               for n in specific)
+    ]
+    pool = by_noun if (by_noun or not specific) else readable
+    noun_words = {_singular(w) for n in nouns for w in n.split()}
+    subject = {
+        _singular(w) for w in re.findall(r"[a-z]{4,}", (user_msg or "").lower())
+        if w not in _ASK_FUNCTION_WORDS and _singular(w) not in noun_words
+    }
+    recent = list(reversed(pool))[:_OWN_UPLOAD_CANDIDATES]
+    best: tuple[tuple[int, int, int], dict[str, Any]] | None = None
+    for rank, d in enumerate(recent):
+        name = d.get("original_name") or ""
+        content, doc, err = _fetch_document_content(project_id, str(d.get("id") or ""), "")
+        if err or not content:
+            continue
+        name_hits = sum(1 for t in _name_tokens(name) if _singular(t) in subject)
+        words = {_singular(w) for w in re.findall(r"[a-z]{4,}", str(content.get("text") or "").lower())}
+        text_hits = len(subject & words)
+        score = (name_hits, text_hits, -rank)
+        if best is None or score > best[0]:
+            best = (score, {"name": name, "doc": doc, "content": content})
+    if best is None:
+        return None
+    (name_hits, text_hits, _rank), chosen = best
+    if name_hits or text_hits or len(recent) == 1:
+        return chosen
+    return None
+
+
 def _file_tool_hint(messages: list, project_id: str | None,
                     allowed_blocks: list[str]) -> str:
     """When the user's request names a REAL project file and the agent has
@@ -1104,17 +1195,32 @@ async def _predispatch_file_tool(
                 if tool and tool in agent.allowed_blocks:
                     target = (name, tool)
                     break
+        reason = "the request names that file"
+        own_doc: dict[str, Any] | None = None
+        if not named and not target:
+            own_doc = await _off_loop(_resolve_own_upload, project_id, user_msg)
+            if own_doc:
+                text_target = own_doc["name"]
+                reason = "the request refers to the user's own uploaded document"
         if text_target and not target:
-            content, doc, err = (await _off_loop(_fetch_document_content, project_id, "", text_target))
-            if err or not content:
-                return None
+            if own_doc:
+                content, doc = own_doc["content"], own_doc["doc"]
+            else:
+                content, doc, err = (await _off_loop(_fetch_document_content, project_id, "", text_target))
+                if err or not content:
+                    return None
             payload = str((content or {}).get("text") or "")[:6000]
+            shown = (doc or {}).get("original_name") or text_target
+            marker = (
+                f"[doc_id={(doc or {}).get('id') or shown} chunk=0 "
+                f"src={shown}]"
+            )
             messages.append({
                 "role": "user",
                 "content": (
                     f"PLATFORM PRE-DISPATCH: fetch_document has ALREADY been "
-                    f"run on '{text_target}' because the request names that "
-                    f"file. Its authoritative contents:\n{payload}\n"
+                    f"run on '{shown}' because {reason}. Its authoritative "
+                    f"contents:\n{marker}\n{payload}\n"
                     "Quote unique tokens from this result verbatim. Do not "
                     "stop at listing the filename."
                 ),
@@ -11167,37 +11273,115 @@ def _user_supplied_registered_calculation(
         return None
 
 
-# The ask locates the answer in a project record. A bare formula name
-# is not this; "in the specification" / "in the upload check note" is.
+# Kinds of record a user points at. The noun says what the record is,
+# never which record it is.
+_DOCUMENT_NOUN = (
+    r"(?:notes?|specifications?|specs?|documents?|docs?|files?|uploads?|"
+    r"attachments?|drawings?|clauses?|contracts?|schedules?|reports?|"
+    r"checklists?|datasheets?|appendices|annex(?:es)?|boq|bills?|memos?|"
+    r"minutes|letters?|records?|method\s+statements?)"
+)
+# Words that end a noun phrase instead of modifying its head noun.
+_PHRASE_BREAK = (
+    r"(?!(?:about|of|for|on|in|at|the|a|an|to|with|from|and|or|what|"
+    r"which|that|is|are|was|does|do|say|says)\b)"
+)
+# A file name the user typed: a stem and a document extension. A stem may
+# hold spaces ("level 2 memo v3.docx"); it never holds a word of the
+# sentence around it.
+_FILE_WORD = (
+    r"(?!(?:about|of|for|on|in|at|the|a|an|to|with|from|and|or|what|which|"
+    r"that|is|are|was|does|do|did|say|says|per|by|my|our|your|this|these|"
+    r"those|it|its|calculate|compute|work|out|using|under|according)\b)"
+    r"[\w\-]+"
+)
+_FILE_TOKEN = (
+    rf"(?:{_FILE_WORD}[ ]){{0,5}}[\w\-]+(?:\.[\w\-]+)*"
+    r"\.(?:txt|md|docx?|pdf|xlsx?|csv|rtf|odt)\b"
+)
+_DETERMINER = r"(?:(?:the|this|that|my|our|your)\s+)?"
+
+# The ask locates the answer in a project record: "in the specification",
+# "per site_note.txt". A bare formula name is not this.
 _DOCUMENT_FRAME_RE = re.compile(
     r"\b(?:in|from|per|under|according\s+to|stated\s+in|set\s+out\s+in|"
     r"specified\s+in|given\s+in)\s+"
     r"(?:the\s+|this\s+|our\s+|my\s+|a\s+|an\s+)?"
-    r"(?:[\w-]+\s+){0,6}"
-    r"(?:notes?|specifications?|specs?|documents?|uploads?|drawings?|"
-    r"clauses?|contracts?|schedules?|reports?|checklists?|datasheets?|"
-    r"appendices|annex(?:es)?|boq|bills?|method\s+statements?)\b",
+    rf"(?:(?:[\w-]+\s+){{0,6}}{_DOCUMENT_NOUN}\b|{_FILE_TOKEN})",
+    re.IGNORECASE,
+)
+# The ask asks what a record says: "what does the note say", "what does
+# site_note.txt state".
+_REPORT_FRAME_RE = re.compile(
+    rf"\b(?:does|do|did|will)\s+(?:(?:[\w'’\-]+\s+){{0,6}}?{_DOCUMENT_NOUN}|{_DETERMINER}{_FILE_TOKEN})\s+"
+    r"(?:say|state|specify|require|show|give|list|mention|recommend|"
+    r"set\s+out|define|stipulate|allow|prescribe|indicate|contain|have)\b",
+    re.IGNORECASE,
+)
+# The user points at a record of their own without naming the file:
+# "my uploaded note", "the attached spec", "the memo I uploaded".
+_OWN_UPLOAD_RE = re.compile(
+    rf"\b(?:my|our)\s+(?:{_PHRASE_BREAK}[\w-]+\s+){{0,3}}?(?P<n1>{_DOCUMENT_NOUN})\b"
+    r"|\b(?:the|this|that|these|those)\s+(?:(?:just|recently|latest|last)\s+)?"
+    rf"(?:uploaded|attached|shared)\s+(?:{_PHRASE_BREAK}[\w-]+\s+){{0,3}}?"
+    rf"(?P<n2>{_DOCUMENT_NOUN})\b"
+    rf"|\b(?:the|this|that)\s+(?P<n3>{_DOCUMENT_NOUN})\s+(?:that\s+|which\s+)?"
+    r"(?:i|we)\s+(?:just\s+|have\s+|had\s+)?"
+    r"(?:uploaded|attached|shared|sent|added|gave|provided)\b",
     re.IGNORECASE,
 )
 
 
-def _formula_run_authorized(text: str) -> bool:
-    """The user asked for a calculation or already wrote an operand."""
+_UPLOAD_VERB_RE = re.compile(
+    r"\b(?:uploaded|attached|shared|sent|added|provided|gave)\b", re.IGNORECASE,
+)
+
+
+def _own_upload_nouns(text: str) -> list[str]:
+    """Document nouns the ask uses for a record of the user's own.
+
+    "my schedule" alone may be a deliverable to build; it is a record to
+    read when the phrase says it was uploaded, or the ask asks what the
+    record says.
+    """
     raw = text or ""
+    framed = bool(_DOCUMENT_FRAME_RE.search(raw) or _REPORT_FRAME_RE.search(raw))
+    nouns: list[str] = []
+    for match in _OWN_UPLOAD_RE.finditer(raw):
+        if not framed and _UPLOAD_VERB_RE.search(match.group(0)) is None:
+            continue
+        noun = match.group("n1") or match.group("n2") or match.group("n3") or ""
+        noun = re.sub(r"\s+", " ", noun.strip().lower())
+        if noun and noun not in nouns:
+            nouns.append(noun)
+    return nouns
+
+
+def _document_question(text: str) -> bool:
+    """The ask is about what a record says, not a request to compute."""
+    raw = text or ""
+    return bool(
+        _DOCUMENT_FRAME_RE.search(raw)
+        or _REPORT_FRAME_RE.search(raw)
+        or _own_upload_nouns(raw)
+    )
+
+
+_FILE_TOKEN_RE = re.compile(_FILE_TOKEN, re.IGNORECASE)
+
+
+def _without_file_names(text: str) -> str:
+    """The ask with typed file names blanked: a digit in a name is not a figure."""
+    return _FILE_TOKEN_RE.sub(" ", text or "")
+
+
+def _user_supplied_operand(text: str) -> bool:
+    """The user's own words already carry a figure a calculator can use."""
+    raw = _without_file_names(text)
     if _looks_like_self_contained_calculation(raw) or _states_formula_with_input(raw):
         return True
-    if _NAMED_CALC_ASK_RE.search(raw):
-        return True
     try:
-        from app.lib.construction_formulas import (
-            explicit_calculation_request,
-            message_names_registry_id,
-            named_formula_operands,
-        )
-        if explicit_calculation_request(raw):
-            return True
-        if message_names_registry_id(raw):
-            return True
+        from app.lib.construction_formulas import named_formula_operands
         if named_formula_operands(raw):
             return True
         from app.lib.construction_formulas_structural_rc import (
@@ -11207,22 +11391,89 @@ def _formula_run_authorized(text: str) -> bool:
         if looks_like_slab_thickness_min_ask(raw):
             return True
     except Exception:  # noqa: BLE001 — routing must still classify
-        _LOG.exception("formula authorization check failed")
+        _LOG.exception("operand check failed")
         return True
     return False
 
 
-def _document_question_without_operands(text: str) -> bool:
-    """A document question that supplies no figure for a calculator.
+def _formula_run_authorized(text: str, calculation: str | None = None) -> bool:
+    """A calculator may run on this ask.
 
-    The named formula would otherwise run on its signature defaults.
-    An explicit calculation, or a figure the user already wrote, is
-    not this question.
+    It may when the user supplied an operand. Otherwise only when the ask
+    requests that calculation and is not a question about what a record
+    says: answering a record question from signature defaults gives
+    figures that are neither the user's nor the document's. ``calculation``
+    narrows "requests that calculation" to the formula about to run.
     """
     raw = text or ""
-    if _DOCUMENT_FRAME_RE.search(raw) is None:
+    if _user_supplied_operand(raw):
+        return True
+    if _document_question(raw):
         return False
-    return not _formula_run_authorized(raw)
+    if _NAMED_CALC_ASK_RE.search(raw):
+        return True
+    try:
+        from app.lib.construction_formulas import (
+            calculator_name_from_text,
+            explicit_calculation_request,
+            message_names_registry_id,
+        )
+        if explicit_calculation_request(raw) or message_names_registry_id(raw):
+            return True
+        named = calculator_name_from_text(raw)
+        if calculation:
+            return named == calculation
+        return bool(named)
+    except Exception:  # noqa: BLE001 — routing must still classify
+        _LOG.exception("formula authorization check failed")
+        return True
+
+
+def _document_question_without_operands(text: str) -> bool:
+    """A question about what a record says that supplies no figure."""
+    raw = text or ""
+    return _document_question(raw) and not _user_supplied_operand(raw)
+
+
+def _defaulted_run_refusal(
+    calculation: str | None,
+    params: dict[str, Any] | None,
+    user_message: str | None,
+) -> dict[str, Any] | None:
+    """The envelope for a calculator call that would run only on defaults.
+
+    None when the call carries an operand, or the operator's ask requests
+    this calculation. A call with no operator ask (not a chat turn) is not
+    judged here.
+    """
+    ask = (user_message or "").strip()
+    name = str(calculation or "").strip()
+    if not ask or not name:
+        return None
+    try:
+        from app.lib.construction_formulas import run_carries_operand
+        from app.lib.source_labels import formula_display_name
+
+        call = dict(params or {})
+        if isinstance(call.get("text"), str):
+            call["text"] = _without_file_names(call["text"])
+        if run_carries_operand(name, call, ""):
+            return None
+        if _formula_run_authorized(ask, name):
+            return None
+        display = formula_display_name(name) or "This calculation"
+    except Exception:  # noqa: BLE001 — the guard must not break a turn
+        _LOG.exception("defaulted-run check failed")
+        return None
+    return {
+        "status": "not_run",
+        "calculation": name,
+        "reason": (
+            f"{display} was not run: the request gives no figure for it "
+            "and does not ask for that calculation. Answer from the text "
+            "of the documents read for this turn."
+        ),
+    }
 
 
 def _message_is_formula_style_ask(text: str) -> bool:
