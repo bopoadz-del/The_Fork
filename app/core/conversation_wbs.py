@@ -299,6 +299,7 @@ def fulfill_wbs_export(
     project_id: str | None,
     conversation_id: str | None,
     agent_name: str,
+    owner_id: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Compile the confirmation + export offer from staged conversation WBS.
 
@@ -308,7 +309,7 @@ def fulfill_wbs_export(
 
     if conversation_id:
         agent_memory.get_or_create_conversation(
-            conversation_id, agent_name, project_id,
+            conversation_id, agent_name, project_id, owner_id=owner_id,
         )
         agent_memory.append_message(conversation_id, "user", user_message)
 

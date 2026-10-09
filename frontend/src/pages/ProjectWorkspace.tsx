@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import AppHeader from '../components/AppHeader'
 import { type Project } from './ProjectCard'
-import { apiGet, apiPost, apiPostForm, ApiError } from '../lib/api'
+import { apiGet, apiPatch, apiPost, apiPostForm, ApiError } from '../lib/api'
 import { getToken } from '../lib/token'
 import { exportEndpointForWorkspace } from '../lib/exportEndpoint'
 import { ReconnectGaveUp, sendWithReconnect } from '../lib/reconnect'
@@ -19,6 +19,13 @@ import ChatList from '../chat/ChatList'
 import ChatComposer, { type AgentOption } from '../chat/ChatComposer'
 import SourcesList from '../chat/SourcesList'
 import { sanitizeAssistantContent } from '../chat/toolJsonGuard'
+import {
+  freshSessionEntropy,
+  historyBelongsToSession,
+  mintConversationId,
+  orderSessionsNewestFirst,
+  renameTitleError,
+} from '../chat/session'
 import { activityForTool, plainMetadata } from '../chat/userFacingText'
 import { INTERRUPTED_MESSAGE, isInterruptedStream } from '../lib/streamOutcome'
 import DocumentGraph from '../documents/DocumentGraph'
@@ -822,18 +829,22 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
     return () => { cancelled = true }
   }, [])
 
-  // Conversation sessions (Quarry CHAT HISTORY parity). The default session
-  // keeps the legacy stable id ws-{project} so existing threads carry
-  // forward; "New chat" mints ws-{project}-{timestamp}. The session list
-  // comes from GET /v1/projects/{id}/conversations.
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+  // Opening a project and "New chat" each mint a new id. The legacy
+  // stable id is never the composer thread, so the first send cannot
+  // append to an older conversation. Past sessions are reopened from
+  // the list. The list is GET /v1/projects/{id}/conversations.
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(() =>
+    id ? mintConversationId(id, freshSessionEntropy()) : null,
+  )
   const [conversationList, setConversationList] = useState<ConversationSummary[]>([])
-  const conversationId = activeConversationId ?? (id ? `ws-${id}` : null)
+  const conversationId = activeConversationId
+  const activeIdRef = useRef<string | null>(activeConversationId)
+  activeIdRef.current = activeConversationId
 
   const refreshConversations = useCallback(() => {
     if (!id) return
     apiGet<{ conversations: ConversationSummary[] }>(`/v1/projects/${id}/conversations`)
-      .then((r) => setConversationList(r.conversations ?? []))
+      .then((r) => setConversationList(orderSessionsNewestFirst(r.conversations ?? [])))
       .catch(() => { /* history list is progressive enhancement */ })
   }, [id])
 
@@ -871,33 +882,6 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
         if (cancelled) return
         setWsState({ tag: 'ready', project })
         setDocuments(project.documents ?? [])
-
-        // Load persisted conversation history for this workspace.
-        // If the user has already sent a message before this resolves,
-        // skip loading to avoid clobbering their in-progress turn.
-        try {
-          const hist = await apiGet<{
-            conversation_id: string
-            messages: Array<{ role: string; content: string }>
-          }>(`/v1/agents/conversations/ws-${id}/messages`)
-          if (cancelled) return
-          if (hist.messages.length > 0 && messagesRef.current.length === 0) {
-            setMessages(
-              hist.messages.map((m) => {
-                const role = (m.role === 'user' ? 'user' : 'assistant') as MessageRole
-                return {
-                  id: msgId(),
-                  role,
-                  content: role === 'assistant'
-                    ? sanitizeAssistantContent(m.content)
-                    : m.content,
-                }
-              })
-            )
-          }
-        } catch {
-          // History fetch failed — start with an empty thread, don't block the workspace
-        }
       } catch (err) {
         if (cancelled) return
         if (err instanceof ApiError && err.status === 404) {
@@ -917,19 +901,24 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
 
   const handleSelectConversation = useCallback((convId: string) => {
     abortRef.current?.abort()
+    activeIdRef.current = convId
     setActiveConversationId(convId)
     setMessages([])
     apiGet<{ messages: Array<{ role: string; content: string }> }>(
       `/v1/agents/conversations/${convId}/messages`,
     )
       .then((hist) => {
-        setMessages(
-          (hist.messages ?? []).map((m) => ({
+        const loaded = (hist.messages ?? []).map((m) => {
+          const role = (m.role === 'user' ? 'user' : 'assistant') as MessageRole
+          return {
             id: msgId(),
-            role: (m.role === 'user' ? 'user' : 'assistant') as MessageRole,
-            content: m.content,
-          })),
-        )
+            role,
+            content: role === 'assistant' ? sanitizeAssistantContent(m.content) : m.content,
+          }
+        })
+        const kept = historyBelongsToSession(convId, activeIdRef.current, loaded)
+        if (!kept) return
+        setMessages(kept)
       })
       .catch(() => { /* empty thread on failure — same as project load */ })
   }, [])
@@ -937,8 +926,23 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
   const handleNewConversation = useCallback(() => {
     if (!id) return
     abortRef.current?.abort()
-    setActiveConversationId(`ws-${id}-${Date.now()}`)
+    const next = mintConversationId(id, freshSessionEntropy())
+    activeIdRef.current = next
+    setActiveConversationId(next)
     setMessages([])
+  }, [id])
+
+  const handleRenameConversation = useCallback(async (convId: string, title: string) => {
+    const problem = renameTitleError(title)
+    if (problem) throw new Error(problem)
+    if (!id) return
+    const updated = await apiPatch<{ title: string }>(
+      `/v1/projects/${id}/conversations/${encodeURIComponent(convId)}`,
+      { title },
+    )
+    setConversationList((prev) =>
+      prev.map((row) => (row.id === convId ? { ...row, title: updated.title } : row)),
+    )
   }, [id])
 
   // ── Document mutation callbacks ───────────────────────────────────────────
@@ -1511,6 +1515,7 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
           activeConversationId={conversationId}
           onSelectConversation={handleSelectConversation}
           onNewConversation={handleNewConversation}
+          onRenameConversation={handleRenameConversation}
           onClearConversation={clearConversation}
           documents={
             <DocumentsPanel

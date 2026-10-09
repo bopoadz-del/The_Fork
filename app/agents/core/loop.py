@@ -102,6 +102,7 @@ async def _chat_impl(
     if message_wants_answer_report(user_message) and answer_report_export_enabled():
         answer, exports = _fulfill_answer_report(
             user_message, project_id, conversation_id, history, self.name,
+            owner_id=user_id,
         )
         await _emit("final", {"answer": answer})
         return {
@@ -118,6 +119,7 @@ async def _chat_impl(
     if message_wants_wbs_export(user_message):
         answer, exports = fulfill_wbs_export(
             user_message, project_id, conversation_id, self.name,
+            owner_id=user_id,
         )
         await _emit("final", {"answer": answer})
         return {
@@ -155,7 +157,7 @@ async def _chat_impl(
     ):
         if conversation_id:
             from app.core import agent_memory
-            (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id))
+            (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id, owner_id=user_id))
             (await _off_loop(agent_memory.append_message, conversation_id, "user", user_message))
             (await _off_loop(agent_memory.append_message, conversation_id, "assistant", _UNINDEXED_PROJECT_MESSAGE))
         return {
@@ -170,7 +172,7 @@ async def _chat_impl(
     effective_history = list(history or [])
     if conversation_id:
         from app.core import agent_memory
-        (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id))
+        (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id, owner_id=user_id))
         prior = (await _off_loop(agent_memory.get_messages, conversation_id))
         prior_turns = [
             {"role": m["role"], "content": m["content"]}

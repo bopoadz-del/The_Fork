@@ -105,6 +105,7 @@ CREATE TABLE conversations (
     id         TEXT PRIMARY KEY,
     agent_name TEXT NOT NULL,
     project_id TEXT,
+    owner_id   TEXT,
     title      TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

@@ -120,6 +120,10 @@ class UpdateProjectRequest(BaseModel):
     location: Optional[str] = None
 
 
+class RenameConversationRequest(BaseModel):
+    title: str
+
+
 class CreateProjectFromDriveRequest(BaseModel):
     """PR C — user-facing variant of approve-from-drive.
 
@@ -860,42 +864,101 @@ async def clear_project_conversation(
     }
 
 
+def _session_scope(project_id: str, user_id: str) -> tuple[set[str], Optional[str]]:
+    """Project ids a session may be bound to, and the project row owner.
+
+    Uses the row-only access check. Loading the project's documents here
+    made every history refresh walk the corpus.
+    """
+    if not store.can_access_project(
+        project_id, user_id=user_id, include_admin_approved=True
+    ):
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    storage_id = store.storage_project_id(project_id)
+    return {project_id, storage_id}, store.project_owner(storage_id)
+
+
+def _public_session(conv: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": conv["id"],
+        "title": conv.get("title"),
+        "created_at": conv.get("created_at"),
+        "updated_at": conv.get("updated_at"),
+    }
+
+
+def _session_for_caller(
+    project_id: str,
+    conversation_id: str,
+    user_id: str,
+) -> Dict[str, Any]:
+    """The session when it belongs to this project and this caller, else 404."""
+    from app.core import agent_memory
+
+    project_ids, owner_id = _session_scope(project_id, user_id)
+    conv = agent_memory.get_conversation(conversation_id)
+    if conv is None:
+        raise HTTPException(404, "Conversation not found")
+    on_project = conv.get("project_id") in project_ids or any(
+        agent_memory.workspace_id_binds(conversation_id, pid) for pid in project_ids
+    )
+    if not on_project or not agent_memory.session_visible_to(conv, user_id, owner_id):
+        raise HTTPException(404, "Conversation not found")
+    return conv
+
+
 @router.get("/v1/projects/{project_id}/conversations")
 async def list_project_conversations(
     project_id: str,
     auth: dict = Depends(require_user),
 ):
-    """List the project's chat sessions, newest-first — the sidebar CHAT
-    HISTORY section (Quarry standalone parity; scoped out of PR #101 as
-    "next PR"). Titles come from each conversation's first user message
-    (stamped in agent_memory.append_message). Owner-only, same auth shape
-    as the clear endpoint above.
+    """Chat sessions on this project that belong to the caller, newest first.
+
+    Anyone who can open the project can list. They see sessions they wrote.
+    A session stored before owner tracking (NULL owner) is listed only for
+    the project row owner. Another user's sessions are omitted.
     """
-    resolved_id = store._master_corpus_source(project_id) or project_id
-    proj = store.get_project(
-        project_id, user_id=auth["user_id"], include_admin_approved=True
-    )
-    if not proj:
-        raise HTTPException(404, f"Project '{project_id}' not found")
-    if proj.get("user_id") != auth["user_id"] and auth.get("role") != "admin":
-        raise HTTPException(403, "Admin or project owner required")
     from app.core import agent_memory
 
-    conversations: List[Dict[str, Any]] = []
-    seen: set = set()
-    for pid in {project_id, resolved_id}:
-        for conv in agent_memory.list_conversations(project_id=pid):
-            if conv["id"] in seen:
-                continue
-            seen.add(conv["id"])
-            conversations.append({
-                "id": conv["id"],
-                "title": conv.get("title"),
-                "created_at": conv.get("created_at"),
-                "updated_at": conv.get("updated_at"),
-            })
-    conversations.sort(key=lambda c: str(c.get("updated_at") or ""), reverse=True)
-    return {"conversations": conversations[:50]}
+    project_ids, owner_id = _session_scope(project_id, auth["user_id"])
+    rows = agent_memory.list_visible_sessions(
+        project_ids, auth["user_id"], owner_id, limit=50,
+    )
+    return {"conversations": [_public_session(conv) for conv in rows]}
+
+
+@router.patch("/v1/projects/{project_id}/conversations/{conversation_id}")
+async def rename_project_conversation(
+    project_id: str,
+    conversation_id: str,
+    body: RenameConversationRequest,
+    auth: dict = Depends(require_user),
+):
+    """Rename a session the caller owns. The stored name is collapsed
+    whitespace, at most 80 characters, and cannot contain HTML.
+    """
+    from app.core import agent_memory
+
+    _session_for_caller(project_id, conversation_id, auth["user_id"])
+    try:
+        updated = agent_memory.rename_conversation(conversation_id, body.title)
+    except agent_memory.SessionTitleError as exc:
+        if exc.code == "HTML":
+            detail = "Title cannot contain HTML"
+        elif exc.code == "long":
+            detail = "Title is too long"
+        else:
+            detail = "Title cannot be empty"
+        raise HTTPException(400, detail) from exc
+    if updated is None:
+        raise HTTPException(404, "Conversation not found")
+    await audit.arecord(
+        "conversation.renamed",
+        project_id=project_id,
+        conversation_id=conversation_id,
+        user_id=auth["user_id"],
+    )
+    return _public_session(updated)
 
 
 # ── documents — store only, no analysis (Roadmap V2 · 0.3) ──────────────────

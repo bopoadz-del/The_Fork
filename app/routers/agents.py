@@ -83,24 +83,41 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
       ``system_seed``, or an id in ``RAG_GENERAL_KNOWLEDGE_PROJECTS``).
       Covers both "project doesn't exist" and "private project belongs to
       someone else". The physical master-corpus source id stays owner-only;
-      only the alias is shared.
+      only the alias is shared. A row that does not exist yet may be
+      created. A row that exists is served only to its writer; a NULL
+      owner (written before owner tracking) is served only to the project
+      row owner.
     - non-``ws-`` id   → not a project-scoped workspace conversation. If a stored
       conversation row exists with a ``project_id``, that same read grant is
       checked; a stored row with NO ``project_id`` has no ownership binding → 404;
-      a non-existent row is allowed (ad-hoc API conversation).
+      a non-existent row is allowed (ad-hoc API conversation). When the row
+      records an owner, only that user may read it. A NULL owner keeps the
+      project grant so a shared platform conversation stays readable.
 
     Raises HTTPException(404) when access is denied.
     """
+    user_id = auth["user_id"]
     if conversation_id.startswith(_WS_PREFIX):
+        accessible: str | None = None
         for project_id in _workspace_project_candidates(conversation_id):
             # Same include_admin_approved grant as project GET / documents /
             # rag search (PR #586). Master-corpus-only was the leftover that
             # 404'd New chat on a shared general-knowledge project for every non-owner.
+            # Row-only check: listing documents here walked the whole corpus.
             if store.can_access_project(
                 project_id, user_id=auth["user_id"], include_admin_approved=True
             ):
-                return
-        raise HTTPException(404, "Conversation not found")
+                accessible = project_id
+                break
+        if accessible is None:
+            raise HTTPException(404, "Conversation not found")
+        conv = agent_memory.get_conversation(conversation_id)
+        if conv is None:
+            return
+        owner_id = store.project_owner(store.storage_project_id(accessible))
+        if not agent_memory.session_visible_to(conv, user_id, owner_id):
+            raise HTTPException(404, "Conversation not found")
+        return
 
     # Non-workspace conversation id — fall back to the stored row's binding.
     conv = agent_memory.get_conversation(conversation_id)
@@ -111,8 +128,10 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
         # No ownership binding at all — do not serve it.
         raise HTTPException(404, "Conversation not found")
     if not store.can_access_project(
-        stored_pid, user_id=auth["user_id"], include_admin_approved=True
+        stored_pid, user_id=user_id, include_admin_approved=True
     ):
+        raise HTTPException(404, "Conversation not found")
+    if conv.get("owner_id") and conv.get("owner_id") != user_id:
         raise HTTPException(404, "Conversation not found")
 
 
@@ -214,7 +233,9 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     # For the master-corpus alias, conversation access already gates the turn
     # and the source corpus belongs to the system user.
     if req.project_id is not None and req.project_id != store.MASTER_CORPUS_PROJECT_ID:
-        project = store.get_project(req.project_id, user_id=auth["user_id"])
+        project = store.get_project(
+            req.project_id, user_id=auth["user_id"], include_admin_approved=True,
+        )
         if project is None:
             raise HTTPException(404, "Project not found")
 
