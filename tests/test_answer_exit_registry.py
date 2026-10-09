@@ -673,7 +673,11 @@ _CREDIT_CASES = [(s.name, j) for s in formula_registry.all_specs() if s.display_
 @pytest.mark.parametrize("formula,join", _CREDIT_CASES[::7] + _CREDIT_CASES[-len(_JOINS):])
 def test_one_source_line_per_calculator_credit(formula, join):
     ax = _ax()
-    from app.lib.source_labels import calculator_label, formula_display_name, tool_display_name
+    from app.lib.source_labels import (
+        calculator_label,
+        formula_display_name,
+        tool_display_name,
+    )
 
     credit = f"Source: {calculator_label(formula, {})}."
     platform = tool_display_name("construction_calc")
