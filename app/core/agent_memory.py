@@ -10,13 +10,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.models import AgentFact, Conversation, Message
@@ -78,11 +79,25 @@ def _fact_project_id_from_db(project_id: Optional[str]) -> str:
     return project_id if project_id else ""
 
 
+# Same cap the first user message uses when it stamps a title.
+SESSION_TITLE_MAX = 80
+_MARKUP = re.compile(r"<[^>]*>")
+
+
+class SessionTitleError(ValueError):
+    """A rename the server will not store. ``code`` is empty, long, or HTML."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
 def _conversation_as_dict(conversation: Conversation) -> Dict[str, Any]:
     return {
         "id": conversation.id,
         "agent_name": conversation.agent_name,
         "project_id": conversation.project_id,
+        "owner_id": conversation.owner_id,
         "title": conversation.title,
         "created_at": conversation.created_at,
         "updated_at": conversation.updated_at,
@@ -134,8 +149,22 @@ def init_db() -> None:
         Conversation.__table__.create(bind=engine, checkfirst=True)
         Message.__table__.create(bind=engine, checkfirst=True)
         AgentFact.__table__.create(bind=engine, checkfirst=True)
+        _patch_conversation_columns(url)
         _initialized = True
         _initialized_for_url = url
+
+
+def _patch_conversation_columns(url: str) -> None:
+    """SQLite databases created before owner tracking. Postgres uses Alembic."""
+    if not url.startswith("sqlite"):
+        return
+    from sqlalchemy import text as sqla_text
+
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.execute(sqla_text("PRAGMA table_info(conversations)"))}
+        if cols and "owner_id" not in cols:
+            conn.execute(sqla_text("ALTER TABLE conversations ADD COLUMN owner_id TEXT"))
+            conn.commit()
 
 
 def _ensure_db() -> None:
@@ -149,52 +178,65 @@ def get_or_create_conversation(
     conversation_id: str,
     agent_name: str,
     project_id: Optional[str] = None,
+    owner_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Return the existing conversation row or create it with the given id. Idempotent."""
+    """Return the existing conversation row or create it with the given id. Idempotent.
+
+    A NULL ``project_id`` or ``owner_id`` is filled when the caller now knows
+    one. A value already stored is never overwritten.
+    """
     _ensure_db()
     db_project_id = _project_id_to_db(project_id)
+    db_owner_id = owner_id or None
     with SessionLocal() as session:
         conversation = session.get(Conversation, conversation_id)
-        if conversation:
-            existing = _conversation_as_dict(conversation)
-            # Hygiene: backfill a NULL project_id when a real one is now known.
-            # Never overwrite a non-NULL stored value (would re-tenant the row).
-            if existing.get("project_id") is None and db_project_id is not None:
-                with _lock:
-                    now = _now()
-                    session.execute(
-                        update(Conversation)
-                        .where(
-                            Conversation.id == conversation_id,
-                            Conversation.project_id.is_(None),
-                        )
-                        .values(project_id=db_project_id, updated_at=now)
-                    )
-                    session.commit()
-                    session.refresh(conversation)
+        if conversation is not None:
+            needs_project = conversation.project_id is None and db_project_id is not None
+            needs_owner = conversation.owner_id is None and db_owner_id is not None
+            if not needs_project and not needs_owner:
                 return _conversation_as_dict(conversation)
-            return existing
 
     now = _now()
     with _lock:
         with SessionLocal() as session:
             conversation = session.get(Conversation, conversation_id)
-            if conversation:
-                return _conversation_as_dict(conversation)
-            session.add(
-                Conversation(
-                    id=conversation_id,
-                    agent_name=agent_name,
-                    project_id=db_project_id,
-                    title=None,
-                    created_at=now,
-                    updated_at=now,
+            if conversation is None:
+                session.add(
+                    Conversation(
+                        id=conversation_id,
+                        agent_name=agent_name,
+                        project_id=db_project_id,
+                        owner_id=db_owner_id,
+                        title=None,
+                        created_at=now,
+                        updated_at=now,
+                    )
                 )
-            )
+                session.commit()
+                return _conversation_as_dict(
+                    session.get(Conversation, conversation_id)  # type: ignore[arg-type]
+                )
+            if conversation.project_id is None and db_project_id is not None:
+                session.execute(
+                    update(Conversation)
+                    .where(
+                        Conversation.id == conversation_id,
+                        Conversation.project_id.is_(None),
+                    )
+                    .values(project_id=db_project_id, updated_at=now)
+                )
+            if conversation.owner_id is None and db_owner_id is not None:
+                session.execute(
+                    update(Conversation)
+                    .where(
+                        Conversation.id == conversation_id,
+                        Conversation.owner_id.is_(None),
+                    )
+                    .values(owner_id=db_owner_id, updated_at=now)
+                )
             session.commit()
-            return _conversation_as_dict(
-                session.get(Conversation, conversation_id)  # type: ignore[arg-type]
-            )
+            session.refresh(conversation)
+            return _conversation_as_dict(conversation)
 
 
 def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
@@ -220,6 +262,118 @@ def list_conversations(
             )
         rows = session.scalars(stmt).all()
     return [_conversation_as_dict(c) for c in rows]
+
+
+def session_visible_to(
+    conversation: Dict[str, Any],
+    user_id: Optional[str],
+    project_owner_id: Optional[str],
+) -> bool:
+    """A session belongs to the user who wrote it.
+
+    Rows that predate owner tracking have a NULL ``owner_id``. Those stay
+    with the project row owner, because there is no record of the writer.
+    """
+    if not user_id:
+        return False
+    owner = conversation.get("owner_id")
+    if owner:
+        return owner == user_id
+    return bool(project_owner_id) and project_owner_id == user_id
+
+
+def workspace_id_binds(conversation_id: str, project_id: str) -> bool:
+    """True when a ``ws-`` id names this project and not a longer neighbour id."""
+    if not conversation_id or not project_id:
+        return False
+    legacy = f"ws-{project_id}"
+    return conversation_id == legacy or conversation_id.startswith(f"{legacy}-")
+
+
+def _like_literal(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def list_visible_sessions(
+    project_ids: Iterable[str],
+    user_id: str,
+    project_owner_id: Optional[str],
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Sessions on these project ids that ``user_id`` may see, newest first.
+
+    A row counts when its stored ``project_id`` is one of ``project_ids``,
+    or its id is the legacy ``ws-{id}`` thread or ``ws-{id}-{suffix}``.
+    Another user's sessions are omitted. A NULL owner is visible only when
+    ``user_id`` is the project row owner.
+    """
+    _ensure_db()
+    ids = [pid for pid in dict.fromkeys(project_ids) if pid]
+    if not ids or not user_id:
+        return []
+    bound = [Conversation.project_id.in_(ids)]
+    for pid in ids:
+        legacy = f"ws-{pid}"
+        bound.append(Conversation.id == legacy)
+        bound.append(
+            Conversation.id.like(f"ws-{_like_literal(pid)}-%", escape="\\")
+        )
+    if project_owner_id and project_owner_id == user_id:
+        visible = or_(
+            Conversation.owner_id == user_id,
+            Conversation.owner_id.is_(None),
+        )
+    else:
+        visible = Conversation.owner_id == user_id
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(Conversation)
+            .where(or_(*bound))
+            .where(visible)
+            .order_by(Conversation.updated_at.desc())
+            .limit(limit)
+        ).all()
+    return [_conversation_as_dict(c) for c in rows]
+
+
+def collapse_session_title(raw: str) -> str:
+    """Whitespace-collapsed title, or ``SessionTitleError``.
+
+    ``<`` and ``>`` are rejected so a stored name cannot carry markup.
+    """
+    text = "" if raw is None else str(raw)
+    if "<" in text or ">" in text:
+        raise SessionTitleError("HTML")
+    collapsed = " ".join(text.split())
+    if not collapsed:
+        raise SessionTitleError("empty")
+    if len(collapsed) > SESSION_TITLE_MAX:
+        raise SessionTitleError("long")
+    return collapsed
+
+
+def title_from_message(content: str) -> str:
+    """Default title from a user message: markup removed, then truncated."""
+    text = _MARKUP.sub(" ", content or "")
+    text = text.replace("<", " ").replace(">", " ")
+    return " ".join(text.split())[:SESSION_TITLE_MAX]
+
+
+def rename_conversation(conversation_id: str, title: str) -> Optional[Dict[str, Any]]:
+    """Store a collapsed title. Returns None when the row does not exist."""
+    stored = collapse_session_title(title)
+    _ensure_db()
+    now = _now()
+    with _lock:
+        with SessionLocal() as session:
+            conversation = session.get(Conversation, conversation_id)
+            if conversation is None:
+                return None
+            conversation.title = stored
+            conversation.updated_at = now
+            session.commit()
+            session.refresh(conversation)
+            return _conversation_as_dict(conversation)
 
 
 def delete_conversation(conversation_id: str) -> bool:
@@ -314,15 +468,16 @@ def append_message(
                 .values(updated_at=now)
             )
             if role == "user" and content:
-                title = " ".join(content.split())[:80]
-                session.execute(
-                    update(Conversation)
-                    .where(
-                        Conversation.id == conversation_id,
-                        Conversation.title.is_(None),
+                title = title_from_message(content)
+                if title:
+                    session.execute(
+                        update(Conversation)
+                        .where(
+                            Conversation.id == conversation_id,
+                            Conversation.title.is_(None),
+                        )
+                        .values(title=title)
                     )
-                    .values(title=title)
-                )
             session.commit()
     with SessionLocal() as session:
         message = session.get(Message, mid)

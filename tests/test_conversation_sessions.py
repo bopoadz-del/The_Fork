@@ -66,6 +66,15 @@ def client_and_memory(tmp_path, monkeypatch):
         lambda pid, **_k: {"id": pid, "name": "P", "user_id": "u1"},
     )
     monkeypatch.setattr(
+        projects_router.store, "can_access_project", lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        projects_router.store, "storage_project_id", lambda pid: pid,
+    )
+    monkeypatch.setattr(
+        projects_router.store, "project_owner", lambda _pid: "u1",
+    )
+    monkeypatch.setattr(
         projects_router.store, "_master_corpus_source", lambda _pid: None
     )
     with TestClient(app) as client:

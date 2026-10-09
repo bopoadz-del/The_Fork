@@ -426,6 +426,9 @@ class Conversation(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     agent_name: Mapped[str] = mapped_column(String, nullable=False)
     project_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Who wrote the session. NULL means the row predates owner tracking
+    # and stays visible only to the project row owner.
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)

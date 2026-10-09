@@ -2501,6 +2501,7 @@ def _fulfill_answer_report(
     conversation_id: str | None,
     history: list[dict[str, Any]] | None,
     agent_name: str,
+    owner_id: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Compile the numbered (or all) chat answers and persist the confirmation.
 
@@ -2512,7 +2513,7 @@ def _fulfill_answer_report(
     prior: list[dict[str, Any]] = []
     if conversation_id:
         agent_memory.get_or_create_conversation(
-            conversation_id, agent_name, project_id,
+            conversation_id, agent_name, project_id, owner_id=owner_id,
         )
         prior = [
             {"role": m["role"], "content": m["content"]}

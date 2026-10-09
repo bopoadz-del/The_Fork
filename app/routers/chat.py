@@ -538,6 +538,7 @@ async def _stream_from_predefined(
             from app.core import agent_memory
             agent_memory.get_or_create_conversation(
                 conversation_id, "project-assistant", project_id,
+                owner_id=user_id,
             )
             agent_memory.append_message(conversation_id, "user", user_message)
             agent_memory.append_message(conversation_id, "assistant", answer)
@@ -550,6 +551,7 @@ async def _stream_from_predefined(
     if message_wants_wbs_export(user_message):
         answer, exports = fulfill_wbs_export(
             user_message, project_id, conversation_id, "project-assistant",
+            owner_id=user_id,
         )
         for word in answer.split(" "):
             yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"

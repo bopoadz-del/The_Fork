@@ -6,18 +6,18 @@
  *   • DOCUMENTS — the active project's uploaded files. Slot-rendered
  *     so the existing DocumentsPanel (in ProjectWorkspace) provides
  *     upload + delete + status. Hidden when no project is active.
- *   • CONVERSATION — what the backend actually supports: ONE per
- *     project, addressed by ws-{projectId}. Shows message count +
- *     Export + Clear actions wired to the existing handlers. There
- *     is no multi-thread history API today, so the section is named
- *     for what it is, not what it isn't.
+ *   • CONVERSATION — message count plus Export and Clear for the
+ *     session open in the composer.
+ *   • CHAT HISTORY — this project's sessions for the signed-in user,
+ *     newest first, each renameable by its owner.
  *   • Sign out — bottom of rail.
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { Plus, LogOut, Download, RotateCcw, Settings, MessageSquare } from 'lucide-react'
+import { Plus, LogOut, Download, RotateCcw, Settings, MessageSquare, Pencil } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { apiGet, ApiError } from '../lib/api'
+import { renameTitleError, sessionListTitle } from '../chat/session'
 import './LeftPanel.css'
 
 interface ProjectRow {
@@ -74,6 +74,8 @@ interface Props {
   onSelectConversation?: (id: string) => void
   /** Start a fresh session. */
   onNewConversation?: () => void
+  /** Persist a new name for a session the caller owns. */
+  onRenameConversation?: (id: string, title: string) => Promise<void>
 }
 
 /** "Today" / "Yesterday" / "N days ago" — matches the standalone's history
@@ -120,9 +122,13 @@ export default function LeftPanel({
   activeConversationId,
   onSelectConversation,
   onNewConversation,
+  onRenameConversation,
 }: Props) {
   const { logout, user, loading: authLoading } = useAuth()
   const [state, setState] = useState<LoadState>({ tag: 'loading' })
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
 
   useEffect(() => {
     if (authLoading || !user) return
@@ -272,22 +278,85 @@ export default function LeftPanel({
             <ul className="left-panel__history">
               {conversations.map((c) => (
                 <li key={c.id}>
-                  <button
-                    type="button"
-                    className={`left-panel__history-item${
-                      c.id === activeConversationId ? ' left-panel__history-item--active' : ''
-                    }`}
-                    onClick={() => onSelectConversation(c.id)}
-                    title={c.title ?? c.id}
-                  >
-                    <MessageSquare size={12} />
-                    <span className="left-panel__history-title">
-                      {c.title || 'Untitled session'}
-                    </span>
-                    <span className="left-panel__history-when">
-                      {relativeDay(c.updated_at)}
-                    </span>
-                  </button>
+                  {renamingId === c.id ? (
+                    <form
+                      className="left-panel__history-rename"
+                      onSubmit={(event) => {
+                        event.preventDefault()
+                        if (!onRenameConversation) return
+                        const problem = renameTitleError(renameDraft)
+                        if (problem) {
+                          setRenameError(problem)
+                          return
+                        }
+                        void onRenameConversation(c.id, renameDraft)
+                          .then(() => {
+                            setRenamingId(null)
+                            setRenameError(null)
+                          })
+                          .catch((err: unknown) => {
+                            setRenameError(err instanceof Error ? err.message : 'Could not rename')
+                          })
+                      }}
+                    >
+                      <input
+                        className="left-panel__history-rename-input"
+                        value={renameDraft}
+                        maxLength={80}
+                        aria-label="Session name"
+                        autoFocus
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                      />
+                      <button type="submit" className="left-panel__convo-btn">Save</button>
+                      <button
+                        type="button"
+                        className="left-panel__convo-btn"
+                        onClick={() => {
+                          setRenamingId(null)
+                          setRenameError(null)
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      {renameError ? (
+                        <p className="left-panel__empty">{renameError}</p>
+                      ) : null}
+                    </form>
+                  ) : (
+                    <div className="left-panel__history-line">
+                      <button
+                        type="button"
+                        className={`left-panel__history-item${
+                          c.id === activeConversationId ? ' left-panel__history-item--active' : ''
+                        }`}
+                        onClick={() => onSelectConversation(c.id)}
+                        title={sessionListTitle(c.title)}
+                      >
+                        <MessageSquare size={12} />
+                        <span className="left-panel__history-title">
+                          {sessionListTitle(c.title)}
+                        </span>
+                        <span className="left-panel__history-when">
+                          {relativeDay(c.updated_at)}
+                        </span>
+                      </button>
+                      {onRenameConversation ? (
+                        <button
+                          type="button"
+                          className="left-panel__history-rename-btn"
+                          aria-label="Rename session"
+                          title="Rename session"
+                          onClick={() => {
+                            setRenamingId(c.id)
+                            setRenameDraft(String(c.title ?? '').replace(/\s+/g, ' ').trim())
+                            setRenameError(null)
+                          }}
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

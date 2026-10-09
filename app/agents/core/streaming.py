@@ -82,6 +82,7 @@ async def _chat_stream_impl(
         yield {"type": "start", "agent": self.name}
         answer, exports = _fulfill_answer_report(
             user_message, project_id, conversation_id, history, self.name,
+            owner_id=user_id,
         )
         for chunk in _chunks(answer, 80):
             yield {"type": "token", "content": chunk}
@@ -98,6 +99,7 @@ async def _chat_stream_impl(
         yield {"type": "start", "agent": self.name}
         answer, exports = fulfill_wbs_export(
             user_message, project_id, conversation_id, self.name,
+            owner_id=user_id,
         )
         for chunk in _chunks(answer, 80):
             yield {"type": "token", "content": chunk}
@@ -138,7 +140,7 @@ async def _chat_stream_impl(
     ):
         if conversation_id:
             from app.core import agent_memory
-            (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id))
+            (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id, owner_id=user_id))
             (await _off_loop(agent_memory.append_message, conversation_id, "user", user_message))
             (await _off_loop(agent_memory.append_message, conversation_id, "assistant", _UNINDEXED_PROJECT_MESSAGE))
         for chunk in _chunks(_UNINDEXED_PROJECT_MESSAGE, 80):
@@ -150,7 +152,7 @@ async def _chat_stream_impl(
     effective_history = list(history or [])
     if conversation_id:
         from app.core import agent_memory
-        (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id))
+        (await _off_loop(agent_memory.get_or_create_conversation, conversation_id, self.name, project_id, owner_id=user_id))
         prior = (await _off_loop(agent_memory.get_messages, conversation_id))
         prior_turns = [
             {"role": m["role"], "content": m["content"]}
