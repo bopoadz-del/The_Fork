@@ -3,14 +3,19 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 @formula(
     owner='base',
     display_name='Excavation volume',
     description='Bank (in-situ) excavation volume of a rectangular pit or trench, and the loose volume after bulking.',
-    inputs={'length_m': 'm', 'width_m': 'm', 'depth_m': 'm', 'bulking_factor': '-'},
+    inputs={
+        'length_m': Param('m', 0, 10000),
+        'width_m': Param('m', 0, 10000),
+        'depth_m': Param('m', 0, 500),
+        'bulking_factor': Param('-', 0, 1, label='bulking'),
+    },
     outputs={'bank_volume_m3': 'm3', 'loose_volume_m3': 'm3', 'bulked_volume_m3': 'm3', 'bulking_factor': '-'},
 )
 def excavation_volume(
@@ -43,7 +48,11 @@ def excavation_volume(
     owner='base',
     display_name='Backfill volume',
     description='Backfill needed around a structure: the void left after the structure, and the loose volume to import allowing for swell.',
-    inputs={'excavation_bank_m3': 'm3', 'structure_volume_m3': 'm3', 'swell_factor': '-'},
+    inputs={
+        'excavation_bank_m3': Param('m3', 0, 1e8, label='excavated bank volume'),
+        'structure_volume_m3': Param('m3', 0, 1e8),
+        'swell_factor': Param('-', 0, 1, label='swell'),
+    },
     outputs={'void_volume_m3': 'm3', 'loose_backfill_needed_m3': 'm3', 'swell_factor': '-'},
 )
 def backfill_volume(

@@ -1324,10 +1324,6 @@ def _extract_carbon_from_ask(text: str, out: Dict[str, Any]) -> None:
             match = re.search(rf"{_ASK_NUM}\s*m³", text, re.IGNORECASE)
         if match:
             out["volume_m3"] = _ask_float(match.group(1))
-    if not _ask_present(out, "grade"):
-        match = re.search(r"\b(c\s*\d{2})\b", text, re.IGNORECASE)
-        if match:
-            out["grade"] = match.group(1).replace(" ", "").lower()
 
 def _extract_mix_from_ask(text: str, out: Dict[str, Any]) -> None:
     if _ask_present(out, "w_c_ratio"):
@@ -1715,6 +1711,35 @@ def _to_param_unit(num: float, unit: Optional[str], dest: str) -> float:
     return num
 
 
+_STANDARD_DESIGNATION_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:AASHTO|ACI|AISC|ANSI|AS|ASCE|ASHRAE|ASTM|BS(?:\s+EN)?|CIBSE|CIRIA|CSA|DIN|EN|IBC|"
+    r"ICC|IS|ISO|NFPA|NZS|SASO|SBC|TMS|UBC|UFC)\s?[A-Z]?\d{2,5}(?:[-:.]\d+)*(?!\d|\.\d)",
+)
+
+
+def _first_open(rx: "re.Pattern[str]", raw: str, overlaps: Any) -> "Optional[re.Match[str]]":
+    """The first match of ``rx`` in ``raw`` that no earlier binding consumed."""
+    return next((m for m in rx.finditer(raw) if not overlaps(m.span())), None)
+
+
+def _bind_grade_labels(fn: Any, grades: List[Tuple[Tuple[int, int], str, float, str]],
+                       found: Dict[str, Any]) -> None:
+    """Bind each material's one grade label to that material's one open input."""
+    from app.lib import formula_registry
+
+    spec = _formula_spec(fn)
+    params = formula_registry.parameters(spec) if spec else {}
+    by_family: Dict[str, List[Tuple[float, str]]] = {}
+    for _span, family, strength, label in grades:
+        if (strength, label) not in by_family.setdefault(family, []):
+            by_family[family].append((strength, label))
+    for family, labels in by_family.items():
+        owners = [k for k, p in params.items() if p.grade == family and k not in found]
+        if len(labels) == 1 and len(owners) == 1:
+            strength, label = labels[0]
+            found[owners[0]] = formula_registry.grade_value(params[owners[0]], strength, label)
+
+
 def extract_calculation_params_from_text(
     fn: Any,
     text: str,
@@ -1738,6 +1763,14 @@ def extract_calculation_params_from_text(
     def _overlaps(span: Tuple[int, int]) -> bool:
         return any(span[0] < c[1] and c[0] < span[1] for c in consumed)
 
+    # A standard's designation ("ACI 318", "BS 8110") is never a figure. A
+    # grade label ("C30", "S355", "B500B") states a strength for the input
+    # of its own material only, and is never a figure for any other input.
+    consumed.extend(m.span() for m in _STANDARD_DESIGNATION_RE.finditer(raw))
+    from app.lib import formula_registry
+    grades = [g for g in formula_registry.grade_labels_in(raw) if not _overlaps(g[0])]
+    consumed.extend(g[0] for g in grades)
+
     for label, dest in sorted(labels.items(), key=lambda kv: len(kv[0]), reverse=True):
         if dest in found:
             continue
@@ -1751,26 +1784,26 @@ def extract_calculation_params_from_text(
                 re.IGNORECASE,
             )
             glued = re.compile(
-                rf"(?<![A-Za-z0-9]){pat}({_TEXT_NUM_RE})(?![A-Za-z])"
+                rf"(?<![A-Za-z0-9]){pat}({_TEXT_NUM_RE})(?![\dA-Za-z])"
                 rf"(?:\s*({_TEXT_UNIT_RE}))?",
                 re.IGNORECASE,
             )
-            match = rx.search(raw) or glued.search(raw)
+            match = _first_open(rx, raw, _overlaps) or _first_open(glued, raw, _overlaps)
         else:
             rx = re.compile(
                 rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+(?:is|of|equals)\s+|\s+)({_TEXT_NUM_RE})"
                 rf"(?:\s*({_TEXT_UNIT_RE}))?",
                 re.IGNORECASE,
             )
-            match = rx.search(raw)
+            match = _first_open(rx, raw, _overlaps)
             if match is None and len(compact) <= 4:
                 glued = re.compile(
                     rf"(?<![A-Za-z0-9]){pat}({_TEXT_NUM_RE})(?![A-Za-z0-9])"
                     rf"(?:\s*({_TEXT_UNIT_RE}))?",
                     re.IGNORECASE,
                 )
-                match = glued.search(raw)
-        if match is None or _overlaps(match.span()):
+                match = _first_open(glued, raw, _overlaps)
+        if match is None:
             continue
         num = _parse_text_number(match.group(1))
         if num is None:
@@ -1808,6 +1841,8 @@ def extract_calculation_params_from_text(
         elif euro and not aci:
             found["code"] = "eurocode"
 
+    _bind_grade_labels(fn, grades, found)
+
     declared_units = _declared_units(fn)
     spec = _formula_spec(fn)
     rows = describe_calculation_params(fn, name=spec.name if spec else None)
@@ -1830,8 +1865,10 @@ def extract_calculation_params_from_text(
     unit_pat = _figure_unit_pattern(extra_units)
     boundary = r"(?![A-Za-z0-9])"
     # A period or a comma-space is punctuation. A comma that is followed by
-    # a digit is still this number (a thousands group).
-    number = rf"(?<![\d,])({_TEXT_NUM_RE})(?!\d)(?!,\d)"
+    # a digit is still this number (a thousands group). Digits glued to a
+    # letter belong to a label, grade or code, except a
+    # multiplication sign written as x ("10x5x0.25").
+    number = rf"(?<![\d,])(?<![A-WYZa-wyz])({_TEXT_NUM_RE})(?!\d)(?!,\d)"
     leftover_rx = re.compile(
         rf"{number}\s*({unit_pat}){boundary}",
         re.IGNORECASE,
@@ -2226,6 +2263,26 @@ def _unknown_arg_envelope(
         "expected_params": expected,
     }
 
+def _input_rejection_envelope(
+    name: str, rejected: List[Dict[str, Any]], missing: List[str],
+) -> Dict[str, Any]:
+    """The calculator was not run: a supplied value has the wrong type or
+    lies outside the input's declared range. The question asks the user
+    for those inputs by their labels."""
+    from app.lib.source_labels import input_question
+
+    question = input_question(name, rejected, missing)
+    return {
+        "status": "error",
+        "needs_input": True,
+        "calculation": name,
+        "error": question,
+        "question": question,
+        "rejected": rejected,
+        "missing": list(missing),
+    }
+
+
 def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run one whitelisted deterministic calculator by name with keyword params.
 
@@ -2356,7 +2413,11 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             }
     params, unknown = _partition_bound_params(fn, params)
     params = _coerce_bound_values(fn, params)
+    from app.lib import formula_registry
+    params, rejected = formula_registry.check_inputs(str(name), params)
     missing = _missing_required(fn, params, name=str(name))
+    if rejected and not unknown:
+        return _input_rejection_envelope(str(name), rejected, missing)
     if unknown:
         if missing:
             env = _bind_error_envelope(str(name), fn, missing)

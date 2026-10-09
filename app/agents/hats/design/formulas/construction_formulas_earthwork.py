@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 
 
@@ -11,7 +11,13 @@ import math
     owner='design',
     display_name='Slope factor of safety',
     description='Factor of safety of an infinite slope, with and without cohesion.',
-    inputs={'friction_angle_deg': 'deg', 'slope_angle_deg': 'deg', 'cohesion_kpa': 'kPa', 'unit_weight_kn_m3': 'm3', 'depth_m': 'm'},
+    inputs={
+        'friction_angle_deg': Param('deg', 0, 60, label='friction angle'),
+        'slope_angle_deg': Param('deg', 0, 90, label='slope angle'),
+        'cohesion_kpa': Param('kPa', 0, 1000, label='cohesion'),
+        'unit_weight_kn_m3': Param('m3', 5, 30, label='soil unit weight'),
+        'depth_m': Param('m', 0, 500),
+    },
     outputs={'factor_of_safety': '-', 'frictional_term': '-', 'cohesive_term': '-'},
 )
 def slope_fos_simple(

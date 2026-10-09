@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 from typing import Dict
 
 
@@ -11,7 +11,12 @@ from typing import Dict
     owner='base',
     display_name='Diaphragm wall panel volume',
     description='Concrete volume of diaphragm wall panels, with an allowance for tremie overbreak.',
-    inputs={'panel_length': '-', 'wall_thickness': '-', 'excavation_depth': '-', 'panel_count': '-'},
+    inputs={
+        'panel_length': Param('-', 0, 100),
+        'wall_thickness': Param('-', 0, 5),
+        'excavation_depth': Param('-', 0, 200),
+        'panel_count': Param('-', 1, 10000, label='number of panels'),
+    },
     outputs={'panel_count': '-', 'volume_per_panel_m3': 'm3', 'total_volume_m3': 'm3', 'volume_with_waste_m3': 'm3', 'waste_factor': '-'},
 )
 def diaphragm_wall_panel_volume(

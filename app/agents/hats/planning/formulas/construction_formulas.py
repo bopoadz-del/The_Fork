@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 from typing import Any, Dict
 
@@ -12,7 +12,13 @@ from typing import Any, Dict
     owner='planning',
     display_name='Supervision manpower',
     description='Supervision manpower for given quantities, from supervision ratios flagged as indicative defaults.',
-    inputs={'concrete_m3': 'm3', 'structural_steel_t': 't', 'piping_dia_inch': '-', 'electrical_cable_km': '-', 'area_m2': 'm2'},
+    inputs={
+        'concrete_m3': Param('m3', 0, 1e8),
+        'structural_steel_t': Param('t', 0, 1e6),
+        'piping_dia_inch': Param('-', 0, 1e9, label='piping (inch-diameter)'),
+        'electrical_cable_km': Param('-', 0, 100000, label='electrical cable'),
+        'area_m2': Param('m2', 0, 1e8),
+    },
     outputs={'civil_supervisors': '-', 'structural_supervisors': '-', 'piping_supervisors': '-', 'electrical_supervisors': '-', 'general_supervisors': '-', 'total_supervisors': '-', 'hse_officers': '-', 'document_controllers': '-', 'total_supervision_staff': '-'},
 )
 def supervision_ratio(
@@ -63,7 +69,10 @@ def supervision_ratio(
     owner='planning',
     display_name='Electrical installation programme',
     description='Electrical installation programme: stage durations from first fix to handover.',
-    inputs={'floor_area_m2': 'm2', 'num_floors': '-'},
+    inputs={
+        'floor_area_m2': Param('m2', 0, 1e8),
+        'num_floors': Param('-', 1, 300, label='number of floors'),
+    },
     outputs={'total_area_m2': 'm2', 'stages': '-', 'total_days': 'days'},
 )
 def electrical_installation_sequence(
@@ -84,7 +93,10 @@ def electrical_installation_sequence(
     owner='planning',
     display_name='Plumbing installation programme',
     description='Plumbing installation programme: stage durations from submittal to handover.',
-    inputs={'floor_area_m2': 'm2', 'num_floors': '-'},
+    inputs={
+        'floor_area_m2': Param('m2', 0, 1e8),
+        'num_floors': Param('-', 1, 300, label='number of floors'),
+    },
     outputs={'stages': '-', 'cumulative_days': 'days', 'total_days': 'days'},
 )
 def plumbing_flow_programme(floor_area_m2: float, num_floors: int = 1) -> Dict[str, Any]:

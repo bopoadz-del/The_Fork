@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 # Factors express "how many *to_unit* in one *from_unit*" via a common SI base.
@@ -86,7 +86,11 @@ _PRESSURE_TO_KPA = {
     owner='base',
     display_name='Unit conversion',
     description='Converts a value between common engineering units (length, area, volume, time, pressure and stress).',
-    inputs={'value': 'currency', 'from_unit': '-', 'to_unit': '-'},
+    inputs={
+        'value': Param('currency', -1e13, 1e13, label='value to convert'),
+        'from_unit': Param('-'),
+        'to_unit': Param('-'),
+    },
     outputs={'value_in': '-', 'from_unit': '-', 'to_unit': '-', 'value_out': '-', 'dimension': '-', 'formula_used': '-'},
 )
 def pe_unit_convert(value: float, from_unit: str, to_unit: str) -> dict:

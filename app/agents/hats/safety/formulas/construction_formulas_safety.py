@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 # Scaffold duty rated loads (OSHA 1926.451): light 25 psf, medium 50, heavy 75.
@@ -15,7 +15,11 @@ _OSHA_MAF_KN = 8.0  # OSHA 1926.502 maximum arresting force (body harness)
     owner='safety',
     display_name='Scaffold load capacity',
     description='Intended scaffold load and the capacity it must be built to support.',
-    inputs={'platform_area_m2': 'm2', 'duty': '-', 'safety_factor': '-'},
+    inputs={
+        'platform_area_m2': Param('m2', 0, 10000),
+        'duty': Param('-'),
+        'safety_factor': Param('-', 1, 10),
+    },
     outputs={'duty': '-', 'duty_load_kpa': 'kPa', 'intended_load_kn': 'kN', 'required_capacity_kn': 'kN', 'safety_factor': '-'},
 )
 def scaffold_load_capacity(
@@ -45,7 +49,12 @@ def scaffold_load_capacity(
     owner='safety',
     display_name='Fall arrest force',
     description='Peak arrest force on a falling worker from mass, free-fall distance and deceleration distance.',
-    inputs={'worker_mass_kg': 'kg', 'free_fall_m': 'm', 'deceleration_distance_m': 'm', 'g': '-'},
+    inputs={
+        'worker_mass_kg': Param('kg', 20, 300),
+        'free_fall_m': Param('m', 0, 10, label='free-fall distance'),
+        'deceleration_distance_m': Param('m', 0, 10),
+        'g': Param('-', 9.7, 9.9, label='gravitational acceleration'),
+    },
     outputs={'max_arrest_force_kn': 'kN', 'within_osha_limit': '-', 'osha_limit_kn': 'kN'},
 )
 def fall_arrest_force(
@@ -82,7 +91,12 @@ def fall_arrest_force(
     owner='safety',
     display_name='Crane lift capacity and utilisation',
     description="Net crane capacity after rigging deductions, and the lift's utilisation.",
-    inputs={'chart_capacity_t': 't', 'deductions_t': 't', 'load_t': 't', 'max_utilization': '-'},
+    inputs={
+        'chart_capacity_t': Param('t', 0, 10000, label='chart capacity'),
+        'deductions_t': Param('t', 0, 10000),
+        'load_t': Param('t', 0, 10000, label='load'),
+        'max_utilization': Param('-', 0, 1, label='maximum utilisation'),
+    },
     outputs={'net_capacity_t': 't', 'utilization_percent': '%', 'passed': '-', 'max_utilization_percent': '%'},
 )
 def crane_lift_capacity(

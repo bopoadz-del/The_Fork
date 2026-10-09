@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import logging
 import math
 import os
@@ -33,7 +33,19 @@ def _concrete_quantity(quantity: float) -> float | None:
     owner='base',
     display_name='Concrete volume',
     description='Concrete volume of a rectangular element, a cylinder or a trapezoidal section, with an optional waste factor and element count.',
-    inputs={'length_m': 'm', 'width_m': 'm', 'thickness_m': 'm', 'shape': '-', 'diameter_m': 'm', 'height_m': 'm', 'top_width_m': 'm', 'bottom_width_m': 'm', 'depth_m': 'm', 'waste_factor': '-', 'quantity': '-'},
+    inputs={
+        'length_m': Param('m', 0, 10000),
+        'width_m': Param('m', 0, 10000),
+        'thickness_m': Param('m', 0, 50),
+        'shape': Param('-'),
+        'diameter_m': Param('m', 0, 100),
+        'height_m': Param('m', 0, 1000),
+        'top_width_m': Param('m', 0, 10000),
+        'bottom_width_m': Param('m', 0, 10000),
+        'depth_m': Param('m', 0, 500),
+        'waste_factor': Param('-', 0, 1, label='waste allowance'),
+        'quantity': Param('-', 1, 100000, label='number of elements'),
+    },
     outputs={'shape': '-', 'quantity': '-', 'volume_m3': 'm3', 'net_volume_m3': 'm3', 'volume_with_waste_m3': 'm3', 'value': 'currency', 'waste_factor': '-'},
 )
 def concrete_volume(

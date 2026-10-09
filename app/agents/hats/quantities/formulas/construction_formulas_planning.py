@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 from typing import Optional
 
 
@@ -11,7 +11,12 @@ from typing import Optional
     owner='quantities',
     display_name='Material consumption',
     description='Material required for a quantity of work from the output per unit and an optional waste factor.',
-    inputs={'quantity_of_work': '-', 'output_per_unit': '-', 'waste_factor': '-', 'waste_percent': '%'},
+    inputs={
+        'quantity_of_work': Param('-', 0, 1e12),
+        'output_per_unit': Param('-', 0, 1e12),
+        'waste_factor': Param('-', 0, 1, label='waste allowance'),
+        'waste_percent': Param('%', 0, 100, label='waste allowance'),
+    },
     outputs={'material_required': '-', 'base_without_waste': '-', 'waste_factor': '-'},
 )
 def material_consumption(
@@ -62,7 +67,14 @@ def material_consumption(
     owner='quantities',
     display_name='Concrete mix material quantities',
     description='Material volumes for a concrete volume from cement, sand and aggregate proportions.',
-    inputs={'wet_volume': '-', 'cement_parts': '-', 'sand_parts': '-', 'aggregate_parts': '-', 'dry_volume_factor': '-', 'waste_factor': '-'},
+    inputs={
+        'wet_volume': Param('-', 0, 1e7, label='wet concrete volume'),
+        'cement_parts': Param('-', 0, 20),
+        'sand_parts': Param('-', 0, 20),
+        'aggregate_parts': Param('-', 0, 20),
+        'dry_volume_factor': Param('-', 1, 2),
+        'waste_factor': Param('-', 0, 1, label='waste allowance'),
+    },
     outputs={'wet_volume': '-', 'dry_volume': '-', 'dry_volume_factor': '-', 'proportions': '-', 'cement_volume': '-', 'sand_volume': '-', 'aggregate_volume': '-'},
 )
 def concrete_mix_proportions(

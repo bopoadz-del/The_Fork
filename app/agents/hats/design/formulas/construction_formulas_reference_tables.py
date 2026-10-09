@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 # Indicative embodied-carbon factors (kgCO2e per m3 of concrete), ICE/EPD family.
@@ -15,7 +15,11 @@ _CONCRETE_ECO2_KGM3 = {"c20": 260.0, "c25": 290.0, "c30": 320.0,
     owner='design',
     display_name='Embodied carbon of concrete',
     description='Embodied carbon of a concrete volume from an emission factor per cubic metre.',
-    inputs={'volume_m3': 'm3', 'grade': '-', 'embodied_kgco2e_m3': 'kgCO2e/m3'},
+    inputs={
+        'volume_m3': Param('m3', 0, 1e7),
+        'grade': Param('-', label='concrete grade', grade='concrete'),
+        'embodied_kgco2e_m3': Param('kgCO2e/m3', 0, 2000, label='embodied carbon per m3'),
+    },
     outputs={'total_kgco2e': 'kgCO2e', 'total_tco2e': 'tCO2e', 'factor_kgco2e_m3': 'kgCO2e/m3'},
 )
 def carbon_footprint_concrete(

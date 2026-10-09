@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 @formula(
@@ -12,8 +12,12 @@ from app.lib.formula_registry import formula
     description=("Checks a measured value against a specified value and tolerance: whether it is "
                  "within tolerance, its deviation, and the margin left. The specified value and "
                  "the tolerance come from the user or the project documents."),
-    inputs={"measured": "same unit as specified", "specified": "same unit as specified",
-            "tolerance_plus": "same unit as specified", "tolerance_minus": "same unit as specified"},
+    inputs={
+        'measured': Param('same unit as specified', -1e9, 1e9, label='measured value'),
+        'specified': Param('same unit as specified', -1e9, 1e9, label='specified value'),
+        'tolerance_plus': Param('same unit as specified', 0, 1e9, label='plus tolerance'),
+        'tolerance_minus': Param('same unit as specified', 0, 1e9, label='minus tolerance'),
+    },
     outputs={"within_tolerance": "-", "deviation": "same unit as specified",
              "lower_limit": "same unit as specified", "upper_limit": "same unit as specified",
              "margin": "same unit as specified"},

@@ -3,14 +3,17 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 @formula(
     owner='design',
     display_name='Beam bending moment under a uniform load',
     description='Maximum bending moment of a simply supported beam under a uniformly distributed load.',
-    inputs={'udl_w_kn_m': 'kN/m', 'span_m': 'm'},
+    inputs={
+        'udl_w_kn_m': Param('kN/m', 0, 100000, label='uniform load'),
+        'span_m': Param('m', 0, 200),
+    },
     outputs={'max_moment_kn_m': 'kN.m'},
 )
 def beam_moment_simple(udl_w_kn_m: float, span_m: float) -> dict:
@@ -35,7 +38,11 @@ def beam_moment_simple(udl_w_kn_m: float, span_m: float) -> dict:
     owner='design',
     display_name='Beam bending moment under a point load',
     description='Maximum bending moment of a simply supported beam under one point load at a given position.',
-    inputs={'point_load_kn': 'kN', 'span_m': 'm', 'distance_from_left_m': 'm'},
+    inputs={
+        'point_load_kn': Param('kN', 0, 1e6, label='point load'),
+        'span_m': Param('m', 0, 200),
+        'distance_from_left_m': Param('m', 0, 200, label='distance of the load from the left support'),
+    },
     outputs={'max_moment_kn_m': 'kN.m'},
 )
 def beam_moment_point_load(
@@ -74,7 +81,11 @@ def beam_moment_point_load(
     owner='design',
     display_name='Beam shear force',
     description='Maximum shear of a simply supported beam under a distributed load and an optional central point load.',
-    inputs={'udl_w_kn_m': 'kN/m', 'span_m': 'm', 'central_point_load_kn': 'kN'},
+    inputs={
+        'udl_w_kn_m': Param('kN/m', 0, 100000, label='uniform load'),
+        'span_m': Param('m', 0, 200),
+        'central_point_load_kn': Param('kN', 0, 1e6, label='central point load'),
+    },
     outputs={'max_shear_kn': 'kN'},
 )
 def beam_shear_simple(
@@ -101,7 +112,10 @@ def beam_shear_simple(
     owner='design',
     display_name='Fixed-end beam moments under a uniform load',
     description='Support and midspan bending moments of a fixed-ended beam under a uniformly distributed load.',
-    inputs={'udl_w_kn_m': 'kN/m', 'span_m': 'm'},
+    inputs={
+        'udl_w_kn_m': Param('kN/m', 0, 100000, label='uniform load'),
+        'span_m': Param('m', 0, 200),
+    },
     outputs={'support_moment_kn_m': 'kN.m', 'midspan_moment_kn_m': 'kN.m', 'max_moment_kn_m': 'kN.m'},
 )
 def beam_moment_fixed_udl(udl_w_kn_m: float, span_m: float) -> dict:

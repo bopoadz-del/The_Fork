@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
@@ -26,7 +26,13 @@ class FormworkStrikingResult:
     owner='qaqc',
     display_name='Formwork striking time',
     description='Earliest formwork striking time from element type, temperature and test strength.',
-    inputs={'concrete_strength_7h': '-', 'design_required_strength': '-', 'ciria_surface_strength': '-', 'bs8110_minimum_hours': 'h', 'proposed_hours': 'h'},
+    inputs={
+        'concrete_strength_7h': Param('-', 0, 150, label='concrete strength at striking'),
+        'design_required_strength': Param('-', 0, 150, label='required striking strength'),
+        'ciria_surface_strength': Param('-', 0, 150, label='CIRIA surface strength'),
+        'bs8110_minimum_hours': Param('h', 0, 1000, label='minimum striking time'),
+        'proposed_hours': Param('h', 0, 1000, label='proposed striking time'),
+    },
     outputs={'recommended_hours': 'h', 'bs8110_minimum_hours': 'h', 'ciria_minimum_strength_n_mm2': 'N/mm2', 'design_required_strength_n_mm2': 'N/mm2', 'actual_early_strength_n_mm2': 'N/mm2'},
 )
 def formwork_striking_time(
@@ -70,7 +76,9 @@ def formwork_striking_time(
     owner='qaqc',
     display_name='Aggregate fineness modulus',
     description='Fineness modulus of an aggregate from its cumulative sieve retentions.',
-    inputs={'sieve_retained_percentages': '%'},
+    inputs={
+        'sieve_retained_percentages': Param('%', 0, 100, label='cumulative percentages retained'),
+    },
     outputs={'fineness_modulus': '-'},
 )
 def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
@@ -83,7 +91,10 @@ def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     owner='qaqc',
     display_name='Concrete modulus of rupture',
     description='Flexural tensile strength (modulus of rupture) of concrete, to the selected code.',
-    inputs={'fck_n_mm2': 'N/mm2', 'code': '-'},
+    inputs={
+        'fck_n_mm2': Param('N/mm2', 5, 150, label='characteristic concrete strength', grade='concrete'),
+        'code': Param('-'),
+    },
     outputs={'fck_n_mm2': 'N/mm2', 'value': 'currency', 'unit': '-', 'modulus_of_rupture_n_mm2': 'N/mm2', 'split_cylinder_aci_n_mm2': 'N/mm2', 'tensile_pct_of_compressive': '-'},
 )
 def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict[str, float]:
@@ -129,7 +140,10 @@ def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict
     owner='qaqc',
     display_name='Mass concrete thermal check',
     description='Mass-concrete thermal check: core temperature and core-to-surface difference against limits.',
-    inputs={'core_temp_c': 'degC', 'surface_temp_c': 'degC'},
+    inputs={
+        'core_temp_c': Param('degC', -30, 120, label='core temperature'),
+        'surface_temp_c': Param('degC', -50, 100, label='surface temperature'),
+    },
     outputs={'core_temp_c': 'degC', 'surface_temp_c': 'degC', 'delta_t_c': 'degC', 'core_ok': '-', 'delta_ok': '-', 'thermal_cracking_risk': '-'},
 )
 def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -> Dict[str, Any]:
@@ -151,7 +165,13 @@ def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -
     owner='qaqc',
     display_name='Post-tensioning grout checks',
     description='Grouting pressure and strength checks for post-tensioning ducts.',
-    inputs={'tendon_duct_diameter_mm': 'mm', 'required_pressure_n_mm2': 'N/mm2', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_minutes': '-'},
+    inputs={
+        'tendon_duct_diameter_mm': Param('mm', 10, 300),
+        'required_pressure_n_mm2': Param('N/mm2', 0, 10, label='grout pressure'),
+        'strength_28d_n_mm2': Param('N/mm2', 1, 150, label='28-day strength'),
+        'strength_7d_n_mm2': Param('N/mm2', 1, 150, label='7-day strength'),
+        'mixing_time_minutes': Param('-', 0, 120, label='mixing time'),
+    },
     outputs={'duct_area_mm2': 'mm2', 'grout_volume_l_m': 'm', 'pressure_n_mm2': 'N/mm2', 'pressure_kg_cm2': '-', 'pressure_psi': '-', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_min': '-'},
 )
 def grout_pressure_calc(
@@ -180,7 +200,15 @@ def grout_pressure_calc(
     owner='qaqc',
     display_name='Concrete strength by maturity',
     description='Concrete strength from its temperature history by the maturity method.',
-    inputs={'temperature_history_c': 'degC', 'time_intervals_hours': 'h', 'datum_temperature': '-', 'strength_28d_n_mm2': 'N/mm2', 'reference_temperature_c': 'degC', 'gain_a': '-', 'gain_b': '-'},
+    inputs={
+        'temperature_history_c': Param('degC', -30, 100, label='recorded temperatures'),
+        'time_intervals_hours': Param('h', 0, 100000, label='time intervals'),
+        'datum_temperature': Param('-', -30, 10, label='datum temperature'),
+        'strength_28d_n_mm2': Param('N/mm2', 1, 150, label='28-day strength', grade='concrete'),
+        'reference_temperature_c': Param('degC', -30, 80, label='reference temperature'),
+        'gain_a': Param('-', 0, 50, label='strength-gain constant a'),
+        'gain_b': Param('-', 0, 1, label='strength-gain constant b'),
+    },
     outputs={'maturity_index_c_hrs': 'degC.h', 'equivalent_age_days': 'days', 'predicted_strength_n_mm2': 'N/mm2', 'percent_of_28d': '%'},
 )
 def concrete_maturity_strength(

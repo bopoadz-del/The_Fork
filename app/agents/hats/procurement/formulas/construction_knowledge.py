@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 from typing import Dict, List, Optional
 
 
@@ -11,7 +11,10 @@ from typing import Dict, List, Optional
     owner='procurement',
     display_name='Tender evaluation',
     description='Scores and ranks tender submissions on weighted technical and commercial criteria.',
-    inputs={'tenderers': '-', 'weights': '-'},
+    inputs={
+        'tenderers': Param('-'),
+        'weights': Param('-'),
+    },
     outputs={'ranked_tenderers': '-', 'recommended': '-', 'weights_applied': '-', 'procedure': '-'},
 )
 def evaluate_tender(

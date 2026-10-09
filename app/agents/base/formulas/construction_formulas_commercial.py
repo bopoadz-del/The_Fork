@@ -3,14 +3,17 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 @formula(
     owner='base',
     display_name='Quantity times unit rate',
     description='Line extension: quantity times unit rate.',
-    inputs={'quantity': '-', 'unit_rate': '-'},
+    inputs={
+        'quantity': Param('-', 0, 1e12),
+        'unit_rate': Param('-', 0, 1e12),
+    },
     outputs={'total_cost': 'currency'},
 )
 def unit_cost_total(quantity: float, unit_rate: float) -> dict:
@@ -27,7 +30,11 @@ def unit_cost_total(quantity: float, unit_rate: float) -> dict:
     owner='base',
     display_name='Cost per area',
     description='Unit cost per area: a total cost divided by its area.',
-    inputs={'total_cost': 'currency', 'area': '-', 'area_unit': '-'},
+    inputs={
+        'total_cost': Param('currency', 0, 1e13),
+        'area': Param('-', 0, 1e9),
+        'area_unit': Param('-'),
+    },
     outputs={'cost_per_area': 'currency', 'area_unit': '-'},
 )
 def cost_per_area(total_cost: float, area: float, area_unit: str = "m2") -> dict:
@@ -47,7 +54,11 @@ def cost_per_area(total_cost: float, area: float, area_unit: str = "m2") -> dict
     owner='base',
     display_name='Productivity rate',
     description='Output per labour-hour and per worker from an output, the hours worked and the crew size.',
-    inputs={'output_quantity': '-', 'labor_hours': 'h', 'crew_size': '-'},
+    inputs={
+        'output_quantity': Param('-', 0, 1e12),
+        'labor_hours': Param('h', 0, 1e8, label='labour hours'),
+        'crew_size': Param('-', 1, 10000),
+    },
     outputs={'rate_per_hour': '-', 'rate_per_worker_hour': '-', 'crew_size': '-', 'unit': '-', 'value': 'currency', 'rate_per_worker_hour_unit': '-'},
 )
 def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int = 1) -> dict:

@@ -63,7 +63,7 @@ async def _chat_impl(
         _TOOL_FORMAT_RETRY_NUDGE, _UNINDEXED_PROJECT_MESSAGE, _apply_hat_activation,
         _apply_rag_context, _build_capability_answer, _build_exports_from_audit,
         _build_missing_reference_answer, _build_sources_from_audit,
-        _compose_boq_scope_wbs_answer, _compose_excerpt_boq_instead_of_retry,
+        _calc_input_question, _compose_boq_scope_wbs_answer, _compose_excerpt_boq_instead_of_retry,
         _conflicting_tools_after_predispatch, _empty_router_verdict, _file_tool_hint,
         _final_text_needs_forced_retry, _fulfill_answer_report, _has_unread_windows,
         _inline_boq_hard_excludes, _is_capability_request, _latest_operator_ask, _llm_config,
@@ -305,8 +305,10 @@ async def _chat_impl(
     )
     # Leftover F1: a BOQ-derived generate_wbs draft is the answer.
     # Skip the provider hop so AB-2022 CoC excerpts cannot refuse
-    # the turn. Other deliverables still keep the LLM.
-    _boq_wbs_fast = _compose_boq_scope_wbs_answer(_more_pre, user_message)
+    # the turn. Other deliverables still keep the LLM. A calculator that
+    # refused a supplied value answers with its question for that input.
+    _boq_wbs_fast = (_compose_boq_scope_wbs_answer(_more_pre, user_message)
+                     or _calc_input_question(_calc_pre))
     if _boq_wbs_fast:
         answer = (await _off_loop(_postprocess_answer, _boq_wbs_fast, _rag_sys_msg, messages,
             fallback_used=bool(_rag_audit.get("fallback_used")),

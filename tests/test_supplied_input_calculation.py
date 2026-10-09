@@ -9,6 +9,7 @@ default, not a figure from the project documents.
 from __future__ import annotations
 
 import inspect
+import math
 
 import pytest
 
@@ -25,7 +26,7 @@ from app.lib.construction_formulas import (
     describe_calculation_params,
     extract_calculation_params_from_text,
 )
-from app.lib.formula_registry import all_specs
+from app.lib.formula_registry import all_specs, parameters
 
 DELAY = (
     "Calculate delay damages per day: contract amount 50,000,000, "
@@ -51,14 +52,30 @@ def _scalar_number(param: inspect.Parameter) -> bool:
     return True
 
 
-def _phrase(name: str, unit: str, index: int) -> str:
+def _in_declared_range(spec, name: str, value: float) -> float:
+    """``value`` when the registry accepts it for ``name``, else a round figure inside that range."""
+    declared = parameters(spec).get(name)
+    if declared is None or declared.lo is None or declared.hi is None:
+        return value
+    lo, hi = declared.lo, declared.hi
+    whole = declared.kind == "integer"
+    if lo <= value <= hi and (not whole or float(value).is_integer()):
+        return value
+    floor = lo if lo > 0 else hi * 1e-3
+    middle = math.sqrt(floor * hi) if floor > 0 else (lo + hi) / 2
+    middle = float(f"{middle:.2g}")
+    return float(max(math.ceil(lo), round(middle))) if whole else middle
+
+
+def _phrase(spec, name: str, unit: str, index: int) -> str:
     if unit == "%" or name.endswith(("_percent", "_pct")):
-        value, unit_txt = "0.4", "%"
+        number, unit_txt = _in_declared_range(spec, name, 0.4), "%"
     elif "ratio" in name or name.endswith("_factor"):
-        value, unit_txt = "0.2", ""
+        number, unit_txt = _in_declared_range(spec, name, 0.2), ""
     else:
-        value = str(12 + index * 3)
+        number = _in_declared_range(spec, name, 12 + index * 3)
         unit_txt = "" if unit in ("", "-", "currency", "ratio", "count", "no", "nr") else unit
+    value = f"{int(number)}" if float(number).is_integer() else f"{number:g}"
     if len(name.replace("_", "")) == 1:
         return f"{name} = {value} {unit_txt}".strip()
     return f"{name} = {value} {unit_txt}".strip()
@@ -84,7 +101,7 @@ def _registry_cases() -> list[tuple[str, str, str]]:
                 blocked = True
                 break
             unit = (spec.inputs or {}).get(row["name"]) or row.get("unit") or ""
-            bits.append(_phrase(row["name"], unit, index))
+            bits.append(_phrase(spec, row["name"], unit, index))
             numeric += 1
         if blocked:
             continue
@@ -94,7 +111,7 @@ def _registry_cases() -> list[tuple[str, str, str]]:
                 if row["name"] == "code" or not _scalar_number(param):
                     continue
                 unit = (spec.inputs or {}).get(row["name"]) or row.get("unit") or ""
-                bits.append(_phrase(row["name"], unit, index))
+                bits.append(_phrase(spec, row["name"], unit, index))
                 numeric += 1
                 break
         if numeric == 0:

@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 from typing import Any, Dict
 
 
@@ -11,7 +11,14 @@ from typing import Any, Dict
     owner='quantities',
     display_name='Crane hire cost',
     description='Crane cost over a hire period including operator and rigging crew.',
-    inputs={'num_cranes': '-', 'crane_capacity_tons': '-', 'duration_months': '-', 'include_operator': '-', 'include_riggers': '-', 'remote_area_factor': '-'},
+    inputs={
+        'num_cranes': Param('-', 1, 100, label='number of cranes'),
+        'crane_capacity_tons': Param('-', 0, 10000, label='crane capacity'),
+        'duration_months': Param('-', 1, 240, label='duration'),
+        'include_operator': Param('-'),
+        'include_riggers': Param('-'),
+        'remote_area_factor': Param('-', 1, 3),
+    },
     outputs={'num_cranes': '-', 'crane_capacity_tons': '-', 'duration_months': '-', 'dry_hire_sar_month': '-', 'operator_sar_month': '-', 'riggers_sar_month': '-', 'remote_area_factor': '-', 'per_crane_monthly_sar': 'currency', 'total_project_cost_sar': 'currency', 'mobilization_sar': 'currency', 'demobilization_sar': 'currency', 'grand_total_sar': 'currency'},
 )
 def crane_cost_estimate(
@@ -75,7 +82,25 @@ def crane_cost_estimate(
     owner='quantities',
     display_name='Concrete cost build-up',
     description='Cost build-up of concrete per cubic metre from materials, labour, plant and overheads.',
-    inputs={'quantity_m3': 'm3', 'cement_kg_m3': 'kg/m3', 'cement_price_sar_t': 't', 'aggregate_price_sar_t': 't', 'water_price_sar_m3': 'm3', 'microsilica_kg_m3': 'kg/m3', 'microsilica_price_sar_kg': 'kg', 'plasticizer_lit_m3': 'm3', 'plasticizer_price_sar_lit': 'currency', 'plant_cost_sar_m3': 'm3', 'labour_cost_sar_m3': 'm3', 'erection_sar_m3': 'm3', 'power_sar_m3': 'm3', 'indirect_sar_m3': 'm3', 'indirect_pct': '%', 'markup_pct': '%', 'waste_pct': '%'},
+    inputs={
+        'quantity_m3': Param('m3', 0, 1e7),
+        'cement_kg_m3': Param('kg/m3', 0, 1000, label='cement content'),
+        'cement_price_sar_t': Param('t', 0, 1e6),
+        'aggregate_price_sar_t': Param('t', 0, 1e6),
+        'water_price_sar_m3': Param('m3', 0, 100000),
+        'microsilica_kg_m3': Param('kg/m3', 0, 200, label='microsilica content'),
+        'microsilica_price_sar_kg': Param('kg', 0, 100000),
+        'plasticizer_lit_m3': Param('m3', 0, 100, label='plasticizer dose per m3'),
+        'plasticizer_price_sar_lit': Param('currency', 0, 100000),
+        'plant_cost_sar_m3': Param('m3', 0, 100000),
+        'labour_cost_sar_m3': Param('m3', 0, 100000),
+        'erection_sar_m3': Param('m3', 0, 100000),
+        'power_sar_m3': Param('m3', 0, 100000),
+        'indirect_sar_m3': Param('m3', 0, 100000),
+        'indirect_pct': Param('%', 0, 1, label='indirect cost share'),
+        'markup_pct': Param('%', 0, 1, label='markup'),
+        'waste_pct': Param('%', 0, 1, label='waste allowance'),
+    },
     outputs={'material_cost_sar_m3': 'm3', 'direct_cost_sar_m3': 'm3', 'selling_price_sar_m3': 'm3', 'total_project_value_sar': 'currency'},
 )
 def cost_buildup_concrete(
@@ -152,7 +177,17 @@ def cost_buildup_concrete(
     owner='quantities',
     display_name='Reinforcement cost build-up',
     description='Cost build-up of reinforcement per tonne from material, fabrication, fixing and overheads.',
-    inputs={'quantity_kg': 'kg', 'material_price_sar_t': 't', 'labour_mhr_t': 't', 'labour_rate_sar_hr': '-', 'crane_hr_t': 't', 'crane_rate_sar_hr': '-', 'waste_pct': '%', 'indirect_pct': '%', 'markup_pct': '%'},
+    inputs={
+        'quantity_kg': Param('kg', 0, 1e8),
+        'material_price_sar_t': Param('t', 0, 1e6),
+        'labour_mhr_t': Param('t', 0, 10000, label='labour hours per tonne'),
+        'labour_rate_sar_hr': Param('-', 0, 100000),
+        'crane_hr_t': Param('t', 0, 1000, label='crane hours per tonne'),
+        'crane_rate_sar_hr': Param('-', 0, 1e6),
+        'waste_pct': Param('%', 0, 1, label='waste allowance'),
+        'indirect_pct': Param('%', 0, 1, label='indirect cost share'),
+        'markup_pct': Param('%', 0, 1, label='markup'),
+    },
     outputs={'material_sar_t': 't', 'labour_sar_t': 't', 'equipment_sar_t': 't', 'selling_price_sar_t': 't', 'total_project_value_sar': 'currency'},
 )
 def cost_buildup_rebar(
@@ -188,7 +223,18 @@ def cost_buildup_rebar(
     owner='quantities',
     display_name='Formwork cost build-up',
     description='Cost build-up of formwork per square metre from materials, reuses, labour and overheads.',
-    inputs={'area_m2': 'm2', 'shuttering_supply_sar_m2': 'm2', 'scaffolding_sar_m2_day': '-', 'cycle_days': 'days', 'labour_mhr_m2': 'm2', 'labour_rate_sar_hr': '-', 'crane_rate_sar_hr': '-', 'crane_output_m2_hr': '-', 'indirect_pct': '%', 'markup_pct': '%'},
+    inputs={
+        'area_m2': Param('m2', 0, 1e8),
+        'shuttering_supply_sar_m2': Param('m2', 0, 100000),
+        'scaffolding_sar_m2_day': Param('-', 0, 10000),
+        'cycle_days': Param('days', 1, 365, label='formwork cycle'),
+        'labour_mhr_m2': Param('m2', 0, 1000, label='labour hours per m2'),
+        'labour_rate_sar_hr': Param('-', 0, 100000),
+        'crane_rate_sar_hr': Param('-', 0, 1e6),
+        'crane_output_m2_hr': Param('-', 0, 100000),
+        'indirect_pct': Param('%', 0, 1, label='indirect cost share'),
+        'markup_pct': Param('%', 0, 1, label='markup'),
+    },
     outputs={'shuttering_sar_m2': 'm2', 'scaffolding_sar_m2': 'm2', 'material_sar_m2': 'm2', 'labour_sar_m2': 'm2', 'selling_price_sar_m2': 'm2', 'total_for_area_sar': 'currency'},
 )
 def cost_buildup_formwork(
@@ -233,7 +279,16 @@ NOTE_REMOTE_AREA = (
     owner='quantities',
     display_name='Mobilisation cost',
     description='Mobilisation cost for site set-up from its component items.',
-    inputs={'num_personnel': '-', 'duration_months': '-', 'camp_type': '-', 'include_offices': '-', 'include_camp': '-', 'include_transport': '-', 'include_safety_medical': '-', 'remote_area_factor': '-'},
+    inputs={
+        'num_personnel': Param('-', 1, 100000, label='number of personnel'),
+        'duration_months': Param('-', 1, 240, label='duration'),
+        'camp_type': Param('-'),
+        'include_offices': Param('-'),
+        'include_camp': Param('-'),
+        'include_transport': Param('-'),
+        'include_safety_medical': Param('-'),
+        'remote_area_factor': Param('-', 1, 3),
+    },
     outputs={'num_personnel': '-', 'duration_months': '-', 'camp_type': '-', 'remote_area_factor': '-', 'breakdown': '-', 'recurring_monthly_sar': 'currency', 'total_recurring_sar': 'currency', 'total_fixed_sar': 'currency', 'grand_total_sar': 'currency'},
 )
 def mobilization_cost_estimate(

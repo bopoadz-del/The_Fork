@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 
 
@@ -21,7 +21,14 @@ def _norm_code(code: str) -> str:
     owner='design',
     display_name='Wind pressure',
     description="Wind velocity pressure from a wind speed and the selected code's coefficients.",
-    inputs={'wind_speed_m_s': 'm/s', 'code': '-', 'kz': '-', 'kzt': '-', 'kd': '-', 'air_density_kg_m3': 'kg/m3'},
+    inputs={
+        'wind_speed_m_s': Param('m/s', 0, 120, label='wind speed'),
+        'code': Param('-'),
+        'kz': Param('-', 0, 3, label='velocity pressure exposure coefficient (Kz)'),
+        'kzt': Param('-', 1, 4, label='topographic factor (Kzt)'),
+        'kd': Param('-', 0, 1, label='directionality factor (Kd)'),
+        'air_density_kg_m3': Param('kg/m3', 0.5, 2),
+    },
     outputs={'velocity_pressure_pa': 'Pa', 'velocity_pressure_kn_m2': 'kN/m2'},
 )
 def wind_pressure(
@@ -65,7 +72,17 @@ def wind_pressure(
     owner='design',
     display_name='Seismic base shear',
     description='Equivalent lateral-force base shear from the seismic coefficient and the seismic weight.',
-    inputs={'seismic_weight_kn': 'kN', 'code': '-', 'sds': '-', 'r': '-', 'ie': '-', 'ag_g': '-', 'soil_factor_s': '-', 'behaviour_factor_q': '-', 'lambda_factor': '-'},
+    inputs={
+        'seismic_weight_kn': Param('kN', 0, 1e8, label='seismic weight'),
+        'code': Param('-'),
+        'sds': Param('-', 0, 3, label='design spectral acceleration (SDS)'),
+        'r': Param('-', 1, 8, label='response modification factor'),
+        'ie': Param('-', 1, 1.5, label='importance factor'),
+        'ag_g': Param('-', 0, 1, label='design ground acceleration (ag/g)'),
+        'soil_factor_s': Param('-', 1, 2, label='soil factor'),
+        'behaviour_factor_q': Param('-', 1, 8, label='behaviour factor'),
+        'lambda_factor': Param('-', 0.5, 1, label='correction factor'),
+    },
     outputs={'base_shear_kn': 'kN', 'seismic_response_coefficient_cs': '-'},
 )
 def seismic_base_shear(
@@ -109,7 +126,14 @@ def seismic_base_shear(
     owner='design',
     display_name='Live load reduction',
     description='Reduced design live load on a member with a large tributary area.',
-    inputs={'base_live_load_kn_m2': 'kN/m2', 'tributary_area_m2': 'm2', 'code': '-', 'kll': '-', 'psi0': '-', 'min_factor': '-'},
+    inputs={
+        'base_live_load_kn_m2': Param('kN/m2', 0, 100, label='unreduced live load'),
+        'tributary_area_m2': Param('m2', 0, 100000),
+        'code': Param('-'),
+        'kll': Param('-', 1, 4, label='live load element factor'),
+        'psi0': Param('-', 0, 1, label='combination factor'),
+        'min_factor': Param('-', 0, 1, label='minimum reduction factor'),
+    },
     outputs={'reduced_live_load_kn_m2': 'kN/m2', 'reduction_factor': '-'},
 )
 def live_load_reduction(

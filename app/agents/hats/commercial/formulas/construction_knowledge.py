@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 from typing import Dict, Optional
 
 
@@ -11,7 +11,13 @@ from typing import Dict, Optional
     owner='commercial',
     display_name='Payment due on a claim',
     description='Payment due on a claim: certified amount less retention and previous certificates.',
-    inputs={'claimed_amount': 'currency', 'certified_amount': 'currency', 'retention_rate': '-', 'cumulative_previous_certified': 'currency', 'contract_value': 'currency'},
+    inputs={
+        'claimed_amount': Param('currency', 0, 1e13),
+        'certified_amount': Param('currency', 0, 1e13),
+        'retention_rate': Param('-', 0, 1, label='retention'),
+        'cumulative_previous_certified': Param('currency', 0, 1e13, label='previously certified amount'),
+        'contract_value': Param('currency', 0, 1e13),
+    },
     outputs={'claimed_amount': 'currency', 'certified_amount': 'currency', 'retention_held': 'currency', 'net_payment_due': 'currency', 'cumulative_certified': 'currency', 'percent_complete': '%', 'disputed_amount': 'currency', 'retention_rate_pct': '%'},
 )
 def calculate_payment(
@@ -50,7 +56,15 @@ def calculate_payment(
     owner='commercial',
     display_name='Earned value measures',
     description='Earned value measures (cost and schedule variance, CPI, SPI, estimate at completion) from PV, EV, AC and BAC.',
-    inputs={'bac': 'currency', 'bcwp': 'currency', 'bcws': 'currency', 'acwp': 'currency', 'pv': 'currency', 'ev': 'currency', 'ac': 'currency'},
+    inputs={
+        'bac': Param('currency', 0, 1e13, label='budget at completion'),
+        'bcwp': Param('currency', 0, 1e13, label='earned value (BCWP)'),
+        'bcws': Param('currency', 0, 1e13, label='planned value (BCWS)'),
+        'acwp': Param('currency', 0, 1e13, label='actual cost (ACWP)'),
+        'pv': Param('currency', 0, 1e13, label='planned value'),
+        'ev': Param('currency', 0, 1e13, label='earned value'),
+        'ac': Param('currency', 0, 1e13, label='actual cost'),
+    },
     outputs={'cost': 'currency (CV, CPI, EAC)', 'schedule': 'currency (SV, SPI)', 'cpi_health': '-'},
 )
 def calculate_evm(
