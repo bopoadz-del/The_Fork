@@ -25,6 +25,12 @@ _LOG = logging.getLogger(__name__)
 #: Shown after a formula's display name, so the reader knows it was computed.
 CALCULATOR_SUFFIX = "platform calculator"
 
+#: A figure that no registered formula produced: the sandbox ran the
+#: arithmetic the user already stated. Not a library formula.
+IMPROVISED_WORKING = (
+    "Improvised working — not from the platform library, verify before use"
+)
+
 #: Units that carry no reading of their own after a number.
 _UNITLESS = frozenset({"", "-", "currency", "ratio", "count", "no", "nr", "fraction"})
 

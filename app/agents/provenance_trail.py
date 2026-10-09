@@ -18,6 +18,7 @@ SOURCE_USER = "user_input"
 SOURCE_PROJECT = "project_document"
 SOURCE_GENERAL = "general_knowledge"
 SOURCE_CALCULATOR = "calculator"
+SOURCE_IMPROVISED = "improvised_working"
 
 #: Provenance of the answer just finished in this task (read by the message
 #: store so the record is saved with the assistant message).

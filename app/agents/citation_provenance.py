@@ -582,7 +582,7 @@ def _strip_cued_ids(text: str, allowed: set[str]) -> tuple[str, list[str]]:
 # line is one shape; an inline mention is the other. Both are the credit
 # for a figure only when a calculator produced that figure.
 _CHUNK_REF_RE = re.compile(r"\bchunks?\s*(\d+)\b", re.IGNORECASE)
-_NUMBER_RE = re.compile(r"(?<![\w])(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w])")
+_NUMBER_RE = re.compile(r"(?<![\w])(-?(?:\d{1,3}(?:,\d{3})+|\d+))(?:\.\d+)?(?![\w])")
 _INLINE_CHUNK_RE = re.compile(
     r"[\[【]\s*sources?\s*:\s*[^\]】,]{1,200}?\s*,\s*chunks?\s*\d+\s*[\]】]"
     r"|\(\s*(?:sources?\s*:\s*)?[^()]{0,200}?\s*chunks?\s*\d+\s*\)"
@@ -887,6 +887,93 @@ def _line_names_source(line_low: str, name: str) -> bool:
 
 def _credit_already_present(answer: str, credit: _CalculatorCredit) -> bool:
     return _fmt_credit(credit) in (answer or "")
+
+
+def _improvised_line() -> str:
+    from app.lib.source_labels import IMPROVISED_WORKING
+
+    return "Source: " + IMPROVISED_WORKING
+
+
+def _is_executor_run(rec: EvidenceRecord) -> bool:
+    """True when this tool run is sandboxed generated code (the formula
+    executor), not a registered calculator envelope."""
+    obj = _parse_dict(rec.text) or {}
+    inner = obj.get("result") if isinstance(obj.get("result"), dict) else obj
+    if isinstance(inner, dict) and inner.get("generated_code") is not None:
+        return True
+    return (rec.tool or "").lower() in {"formula_executor_v2", "formula_executor"}
+
+
+def _generic_tool_numbers(rec: EvidenceRecord) -> list[float]:
+    """Numeric values a successful tool returned, at any one-level wrap."""
+    obj = _parse_dict(rec.text)
+    if obj is None:
+        return []
+    if obj.get("status") == "error" or obj.get("ok") is False:
+        return []
+    payload = obj.get("result") if isinstance(obj.get("result"), dict) else obj
+    if isinstance(payload, dict) and payload.get("status") == "error":
+        return []
+    found: list[float] = []
+
+    def take(value: Any) -> None:
+        if isinstance(value, bool) or value is None:
+            return
+        if isinstance(value, (int, float)):
+            if value == value and value != float("inf"):
+                found.append(float(value))
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in ("notes", "error", "generated_code", "traceback", "stdout"):
+                    continue
+                take(item)
+            return
+        if isinstance(value, list):
+            for item in value:
+                if not isinstance(item, str):
+                    take(item)
+
+    if isinstance(payload, dict):
+        take({k: v for k, v in payload.items()
+              if k not in ("notes", "error", "generated_code", "traceback", "stdout",
+                           "attempts", "cache_hit", "task", "question", "missing")})
+    else:
+        take(obj.get("result", obj))
+    return found
+
+
+def _other_tool_entries(ev: Evidence) -> list[tuple[set[float], dict[str, Any]]]:
+    """Numbers a tool returned that are not a registered-calculator envelope."""
+    from app.agents import provenance_trail as pt
+
+    out: list[tuple[set[float], dict[str, Any]]] = []
+    for rec in ev.records:
+        if rec.kind != "tool_run" or _calculation_payload(rec.text):
+            continue
+        nums = set(_generic_tool_numbers(rec))
+        if not nums:
+            continue
+        if _is_executor_run(rec):
+            out.append((nums, {"source": pt.SOURCE_IMPROVISED,
+                               "formula": rec.tool or "formula_executor_v2"}))
+        else:
+            out.append((nums, {"source": pt.SOURCE_CALCULATOR, "formula": rec.tool or ""}))
+    return out
+
+
+def _missing_improvised_credit(out: str, ev: Evidence, answer: str) -> str:
+    line = _improvised_line()
+    if line in (out or ""):
+        return ""
+    for rec in ev.records:
+        if rec.kind != "tool_run" or not _is_executor_run(rec):
+            continue
+        nums = _generic_tool_numbers(rec)
+        if nums and _has_number(answer, nums):
+            return line
+    return ""
 
 
 def _missing_calculator_credit(
@@ -1247,7 +1334,8 @@ def gate(
             return text if out == text else out
         credit = _missing_calculator_credit(out, credits, text)
         defaults = _missing_default_lines(out, credits, text)
-        extra = "\n".join(part for part in (defaults, credit) if part)
+        improvised = _missing_improvised_credit(out, ev, text)
+        extra = "\n".join(part for part in (defaults, credit, improvised) if part)
         if not removed and not extra:
             return text if out == text else out
         if removed:
@@ -1281,11 +1369,13 @@ def closing_notes(answer: str, messages: list[dict[str, Any]] | None, *,
         credits = _calculator_credits(ev)
         credit = _missing_calculator_credit(answer, credits, answer)
         defaults = _missing_default_lines(answer, credits, answer)
+        improvised = _missing_improvised_credit(answer, ev, answer)
     except Exception:  # noqa: BLE001 -- a gate must never break an answer
         _LOG.exception("closing_notes failed; no credit appended")
         credit = ""
         defaults = ""
-    extra = "\n".join(part for part in (defaults, credit) if part)
+        improvised = ""
+    extra = "\n".join(part for part in (defaults, credit, improvised) if part)
     out = ("\n\n" + extra) if extra else ""
     if removed:
         out += UNVERIFIED_NOTE
@@ -1296,15 +1386,17 @@ def closing_notes(answer: str, messages: list[dict[str, Any]] | None, *,
 #
 # The same evidence objects, asked one more question: where did each FIGURE in
 # the answer come from? Every figure (a number carrying a unit, a currency or a
-# percent) gets an entry -- user input, calculator (formula and inputs),
-# project document or general knowledge (document and page). A figure with no
-# entry is not stated (when enforced): its clause is removed. One mechanism:
-# the calculator credit, retrieval records and user words above are what back
-# a figure here.
+# percent) gets an entry -- user input, a tool result (registered calculator
+# or the formula executor), or a retrieved passage. A figure the model
+# derived (re-division, re-labelling, an invented example) is not a source:
+# pairwise arithmetic on grounded numbers is not a source. A figure with no
+# entry is either the value of arithmetic on the user's own operands, run
+# through the formula executor's sandbox and labelled improvised working, or
+# it is not stated (its clause is removed).
 
 _PROV_FIGURE_RE = re.compile(
     r"(?<![\w.])(?P<pre>(?:SAR|AED|USD|EUR|GBP|QAR|KWD|OMR|BHD|\$|£|€)\s?)?"
-    r"(?P<num>\d[\d,]*(?:\.\d+)?)"
+    r"(?P<num>-?\d[\d,]*(?:\.\d+)?)"
     r"(?P<post>\s?(?:%|(?:mm|cm|km|m|m2|m²|m3|m³|kg|t|kN|kN/m|kN/m2|kN/m²|MPa|kPa|Pa|"
     r"N/mm2|N/mm²|psi|ksi|days?|weeks?|months?|years?|hours?|hrs?|mins?|kW|kWh|lux|lx|"
     r"°C|L|litres?|liters?|tonnes?|tons?|nos?|sqm|cum)\b))?",
@@ -1338,24 +1430,105 @@ def _match(value: float, pool: Iterable[float]) -> bool:
     return any(_close(value, p) for p in pool)
 
 
-def _rescaled(values: Iterable[float]) -> set[float]:
-    vals = set(values)
-    return vals | {v * 1000 for v in vals} | {v / 1000 for v in vals}
+#: Arithmetic the answer wrote: operands (optional unit) joined by a
+#: product or quotient, then an equals. Grammar, not a vocabulary.
+_ARITH_EXPR_RE = re.compile(
+    r"(?P<expr>\d[\d,]*(?:\.\d+)?(?:\s*[A-Za-zµμ°/%²³²³]+)?"
+    r"(?:\s*[×xX*·/÷]\s*\d[\d,]*(?:\.\d+)?(?:\s*[A-Za-zµμ°/%²³²³]+)?){1,8})"
+    r"\s*(?:=|equals|is)\s*"
+    r"(?P<out>\d[\d,]*(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+_GAPS: _contextvars.ContextVar[list] = _contextvars.ContextVar("figure_gaps", default=None)
 
 
-def _working(values: set[float]) -> set[float]:
-    """Pairwise working on grounded numbers: a substitution line explains the
-    calculator's arithmetic; it does not invent a figure."""
-    out: set[float] = set()
-    vals = sorted(values)[:40]
-    for a in vals:
-        for b in vals:
-            out.add(a * b)
-            out.add(a + b)
-            out.add(abs(a - b))
-            if b:
-                out.add(a / b)
-    return out
+def figure_gaps() -> list[dict[str, Any]]:
+    """Gaps this turn's figure check recorded (removed or improvised)."""
+    return list(_GAPS.get() or [])
+
+
+def _note_gap(kind: str, figure: str, gaps: list[dict[str, Any]]) -> None:
+    gaps.append({"kind": kind, "figure": figure})
+
+
+def _to_python_arith(expr: str) -> str | None:
+    """The answer's arithmetic as a sandbox expression, or None."""
+    text = expr or ""
+    for src, dst in (("×", "*"), ("·", "*"), ("÷", "/"), ("–", "-"), ("—", "-")):
+        text = text.replace(src, dst)
+    text = re.sub(r"[A-Za-zµμ°/%²³²³]+", " ", text)
+    text = re.sub(r"(?<=\d)\s*[xX]\s*(?=\d)", "*", text)
+    text = text.replace(",", "")
+    text = re.sub(r"\s+", "", text)
+    if not text or not re.fullmatch(r"[\d.+\-*/()]+", text):
+        return None
+    return text
+
+
+def _eval_improvised(expr: str) -> float | None:
+    """Run ``expr`` in the formula executor's sandbox. None when it cannot."""
+    py = _to_python_arith(expr)
+    if py is None:
+        return None
+    try:
+        from app.blocks.formula_executor_v2 import _run_sandboxed_with_timeout
+
+        box = _run_sandboxed_with_timeout(f"result = {py}", {}, 5)
+    except Exception:  # noqa: BLE001 -- fall back to the sandbox itself
+        from app.core.sandbox import run_sandboxed
+
+        box = run_sandboxed(f"result = {py}")
+    if not getattr(box, "success", False):
+        return None
+    value = getattr(box, "result", None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value != value or value == float("inf"):
+        return None
+    return float(value)
+
+
+def _sentence_around(text: str, start: int, end: int) -> str:
+    left = max(text.rfind(". ", 0, start), text.rfind("\n", 0, start),
+               text.rfind("? ", 0, start), text.rfind("! ", 0, start))
+    rights = [i for i in (text.find(". ", end), text.find("\n", end),
+                          text.find("? ", end), text.find("! ", end)) if i != -1]
+    right = min(rights) if rights else len(text)
+    return text[(left + 1 if left != -1 else 0):right]
+
+
+def _user_operand_expr(
+    text: str,
+    mention: re.Match,
+    value: float,
+    user_vals: set[float],
+    tool_only: set[float],
+) -> bool:
+    """True when this figure is arithmetic on the user's operands alone.
+
+    An operand the user did not state (a tool result the model re-divided,
+    an invented example) does not qualify: that figure is removed.
+    """
+    sentence = _sentence_around(text, mention.start(), mention.end())
+    for m in _ARITH_EXPR_RE.finditer(sentence):
+        try:
+            stated = float(m.group("out").replace(",", ""))
+        except ValueError:
+            continue
+        if not _close(stated, value):
+            continue
+        operands = _nums(m.group("expr"))
+        if len(operands) < 2:
+            continue
+        if any(_match(op, tool_only) for op in operands):
+            continue
+        if not all(_match(op, user_vals) for op in operands):
+            continue
+        got = _eval_improvised(m.group("expr"))
+        if got is not None and _close(got, value):
+            return True
+    return False
 
 
 def _entry_for_record(rec: EvidenceRecord, figure: str) -> dict[str, Any]:
@@ -1378,15 +1551,18 @@ def figure_provenance(
     tool_passages: bool = False,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Return ``(answer, provenance)``: every figure credited to its source --
-    the user's own words, a calculator run (formula and inputs), or a
-    retrieved chunk (layer, document, page). With ``enforce`` a figure that
-    matches none of them is removed (its clause); without, the answer is
-    returned unchanged and only the record is built. Never raises -- on
-    failure the answer passes through with an empty record."""
+    the user's own words, a tool run this turn (a registered formula or the
+    formula executor), or a retrieved chunk (layer, document, page). A
+    figure the model derived from those is not a source. With ``enforce``
+    an unbacked figure is run through the formula executor when it is
+    arithmetic on the user's operands, otherwise removed (its clause);
+    without, the answer is unchanged and only the record is built. Never
+    raises -- on failure the answer passes through with an empty record."""
     from app.agents import provenance_trail as pt
 
     try:
         if not text or not text.strip():
+            _GAPS.set([])
             return text, []
         ev = build_evidence(rag_sys_msg, messages, tool_passages=tool_passages)
         user_vals: set[float] = set()
@@ -1398,22 +1574,30 @@ def figure_provenance(
             nums = set(credit.result_numbers) | set(_nums(json.dumps(credit.inputs, default=str)))
             calc_entries.append((nums, {"source": pt.SOURCE_CALCULATOR,
                                         "formula": credit.calculation, "inputs": credit.inputs}))
-        calc_pool: set[float] = set()
-        for nums, _meta in calc_entries:
-            calc_pool |= nums
-        working = _working(_rescaled(calc_pool | user_vals)) if calc_entries else set()
+        tool_entries = _other_tool_entries(ev)
+        tool_vals: set[float] = set()
+        for nums, _meta in (*calc_entries, *tool_entries):
+            tool_vals |= nums
+        tool_only = {v for v in tool_vals if not _match(v, user_vals)}
         retrievals = [r for r in ev.records if r.kind == "retrieval" and r.text]
 
         entries: list[dict[str, Any]] = []
         bad: list[re.Match] = []
+        gaps: list[dict[str, Any]] = []
+        improvised = False
         for m, value in _figure_mentions(text):
             fig = m.group(0).strip()
             entry: dict[str, Any] | None = None
-            if _match(value, _rescaled(user_vals)):
+            if _match(value, user_vals):
                 entry = {"figure": fig, "source": pt.SOURCE_USER}
             if entry is None:
                 for nums, meta in calc_entries:
-                    if _match(value, _rescaled(nums)):
+                    if _match(value, nums):
+                        entry = {"figure": fig, **meta}
+                        break
+            if entry is None:
+                for nums, meta in tool_entries:
+                    if _match(value, nums):
                         entry = {"figure": fig, **meta}
                         break
             if entry is None:
@@ -1421,21 +1605,32 @@ def figure_provenance(
                     if _match(value, _nums(rec.text)):
                         entry = _entry_for_record(rec, fig)
                         break
-            if entry is None and working and _match(value, working):
-                entry = {"figure": fig, "source": pt.SOURCE_CALCULATOR, "working": True}
+            if entry is None and _user_operand_expr(text, m, value, user_vals, tool_only):
+                entry = {"figure": fig, "source": pt.SOURCE_IMPROVISED}
+                improvised = True
+                _note_gap("improvised_working", fig, gaps)
             if entry is None:
                 bad.append(m)
                 entries.append({"figure": fig, "source": None})
+                _note_gap("removed", fig, gaps)
             else:
                 entries.append(entry)
+        _GAPS.set(gaps)
         if not enforce:
             return text, entries
         out = text
-        for m in reversed(bad):
-            start, end = _clause_span(out, m.start(), m.end())
+        spans = {_clause_span(text, m.start(), m.end()) for m in bad}
+        for start, end in sorted(spans, reverse=True):
+            if start >= len(out) or start >= end:
+                continue
+            end = min(end, len(out))
             out = out[:start].rstrip(" ,;") + out[end:]
         if bad:
             _LOG.info("figure_provenance: removed %d figure(s) with no source", len(bad))
+        if improvised:
+            line = _improvised_line()
+            if line not in (out or ""):
+                out = out.rstrip() + "\n\n" + line
         return out, [e for e in entries if e.get("source")]
     except Exception:  # noqa: BLE001 -- a gate must never break an answer
         _LOG.exception("figure_provenance failed; passing answer through")
