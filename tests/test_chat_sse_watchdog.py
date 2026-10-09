@@ -288,11 +288,12 @@ def test_both_streaming_endpoints_are_wrapped():
 
     source = open(chat_mod.__file__, encoding="utf-8").read()
     # Hat activation sits INSIDE the terminal guard, so the call is
-    # guarantee_terminal(with_hat_signals(event_stream(), ...)). The old
+    # guarantee_terminal(with_hat_signals(with_answer_exit(event_stream()), ...)). The old
     # contiguous substring no longer matches; both wrappers must still
-    # wrap both endpoints.
+    # wrap both endpoints. The exit check sits innermost, around the
+    # event stream itself.
     assert source.count("guarantee_terminal(") == 2
-    assert source.count("with_hat_signals(event_stream()") == 2
+    assert source.count("with_hat_signals(with_answer_exit(event_stream())") == 2
     assert source.count("StreamingResponse(") == 2
 
 
