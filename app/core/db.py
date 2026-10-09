@@ -111,9 +111,15 @@ class _LazyEngine:
 engine = _LazyEngine()  # type: ignore[assignment]
 
 
-@lru_cache(maxsize=8)
 def _session_factory_for_url(url: str) -> sessionmaker[Session]:
-    return sessionmaker(autocommit=False, autoflush=False, bind=_engine_for_url(url))
+    return _session_factory_for_engine(_engine_for_url(url))
+
+
+# Keyed by the engine, not the URL: once the engine cache evicts a URL and
+# makes a new engine for it, a URL-keyed factory would keep the old pool open.
+@lru_cache(maxsize=8)
+def _session_factory_for_engine(bound: Engine) -> sessionmaker[Session]:
+    return sessionmaker(autocommit=False, autoflush=False, bind=bound)
 
 
 def SessionLocal() -> Session:
