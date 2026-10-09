@@ -70,6 +70,8 @@ class Turn:
     places: list[Place] = field(default_factory=list)
     #: (step label, error text) for every tool that returned an error.
     tool_errors: list[tuple[str, str]] = field(default_factory=list)
+    #: Tool, block, action and operation names this turn's calls used.
+    step_names: set[str] = field(default_factory=set)
 
 
 _TURN: contextvars.ContextVar[Turn | None] = contextvars.ContextVar("answer_exit_turn", default=None)
@@ -118,6 +120,7 @@ def _chunk(value: Any) -> int | None:
 
 
 def _step_label(tool: str, payload: Any) -> str:
+    """The step's display name, or '' (an internal name is never a label)."""
     action = payload.get("action") if isinstance(payload, dict) else None
     from app.lib.source_labels import formula_display_name, tool_display_name
 
@@ -127,11 +130,32 @@ def _step_label(tool: str, payload: Any) -> str:
         shown = tool_display_name(name) or formula_display_name(name)
         if shown:
             return shown
-    for name in (action, tool):
-        if isinstance(name, str) and name.strip():
-            words = re.sub(r"[_.]+", " ", name).strip()
-            return words[:1].upper() + words[1:]
     return ""
+
+
+#: Argument keys whose value names a step (an action, an operation, a block).
+_NAME_KEYS = ("action", "operation", "op", "tool", "block", "block_name", "mode", "calculation")
+_NAME_VALUE_RE = re.compile(r"[a-z][a-z0-9]*(?:[_.][a-z0-9]+)*")
+
+
+def _call_names(tool: str, args: Any) -> set[str]:
+    names = {tool.strip().lower()} if isinstance(tool, str) and tool.strip() else set()
+    if isinstance(args, dict):
+        for key in _NAME_KEYS:
+            value = args.get(key)
+            if isinstance(value, str) and _NAME_VALUE_RE.fullmatch(value.strip().lower()):
+                names.add(value.strip().lower())
+    return names
+
+
+def _error_step_names(err: str) -> set[str]:
+    """Code names in a tool's error text that are not parameters: the
+    operations and actions it lists."""
+    from app.lib.source_labels import _registry_maps
+
+    _displays, params, _units = _registry_maps()
+    return {t.lower() for t in re.findall(rf"(?<![\w.]){_IDENT}(?![\w])", err or "")
+            if t.lower() not in params and _is_word_ident(t.lower(), dotted=True)}
 
 
 def _error_texts(payload: Any) -> list[str]:
@@ -156,7 +180,9 @@ def note_tool_result(tool: str, payload: Any, turn: Turn | None = None) -> None:
     if turn is None:
         return
     try:
+        turn.step_names.update(_call_names(tool, payload))
         for err in _error_texts(payload):
+            turn.step_names.update(_error_step_names(err))
             label = _step_label(tool, payload)
             if (label, err) not in turn.tool_errors:
                 turn.tool_errors.append((label, err))
@@ -188,6 +214,15 @@ def note_evidence(
             if place not in turn.places:
                 turn.places.append(place)
         for m in msgs:
+            if isinstance(m, dict) and m.get("role") == "assistant":
+                for call in m.get("tool_calls") or []:
+                    fn = (call.get("function") or {}) if isinstance(call, dict) else {}
+                    raw = fn.get("arguments")
+                    try:
+                        args = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+                    except (TypeError, ValueError):
+                        args = {}
+                    turn.step_names.update(_call_names(str(fn.get("name") or ""), args))
             if not isinstance(m, dict) or m.get("role") != "tool":
                 continue
             try:
@@ -380,6 +415,7 @@ _TELEMETRY_RE = re.compile(
 )
 _SOURCE_LABEL_RE = re.compile(r"^\s*\**\s*(?:sources?|cited|citations?|ref(?:erence)?s?)\s*\**\s*[:=-]\s*",
                               re.IGNORECASE)
+_SOURCE_LABEL_AT_RE = re.compile(_SOURCE_LABEL_RE.pattern.lstrip("^"), re.IGNORECASE)
 _CUE_RE = re.compile(r"^(?:see|per|from|in|at|cf\.?|ref\.?|refer\s+to|according\s+to|as\s+stated\s+in)\b\s*",
                      re.IGNORECASE)
 #: A retrieval key strong enough to make a span a citation.
@@ -488,6 +524,21 @@ def _rewrite_brackets(text: str, index: CitationIndex) -> str:
         if close is not None:
             inner = text[start + 1:close]
             end = close + 1
+        elif not text[start + 1:line_end].replace(_MARK, "").strip(" \t.,;:"):
+            # An opener with nothing after it is what a removal left.
+            out.append(text[pos:start] + _MARK)
+            pos = line_end
+            continue
+        elif _SOURCE_LABEL_AT_RE.match(text, start + 1, line_end):
+            # An unclosed "(Source: name" runs to the end of its sentence:
+            # it is closed on the name it gives, or removed whole.
+            cut = _NEXT_SENTENCE_RE.search(text, start + 1, line_end)
+            end = cut.start("gap") if cut else line_end
+            inner = text[start + 1:end]
+            out.append(text[pos:start])
+            out.append(_close_cite(inner, index))
+            pos = end
+            continue
         else:
             run = _UNCLOSED_RUN_RE.match(text, start + 1)
             inner = run.group(0) if run else ""
@@ -506,6 +557,27 @@ def _rewrite_brackets(text: str, index: CitationIndex) -> str:
             out.append(_MARK)
         pos = end
     return "".join(out)
+
+
+_FILE_EXTS = r"pdf|docx?|xlsx?|xlsm|csv|txt|md|pptx?|dwg|dxf|ifc|xer|xml|json|zip|rar|png|jpe?g"
+#: Where an open citation's name ends: a sentence end, or a file name's
+#: extension ahead of a new sentence.
+_NEXT_SENTENCE_RE = re.compile(rf"(?:(?<=[.;!?])|\.(?:{_FILE_EXTS})\b)(?P<gap>[ \t]+)(?=[A-Z])")
+
+
+def _close_cite(inner: str, index: CitationIndex) -> str:
+    stop = re.search(r"[ \t.,;:]*$", inner)
+    body = inner[:stop.start()] if stop else inner
+    tail = "." if "." in inner[len(body):] else ""
+    cite = _parse_cite(body, index, labelled=True)
+    if not (cite.machine or cite.name):
+        return _MARK
+    place = _resolve(cite, index)
+    if place:
+        return f"(Source: {place}){tail}"
+    if cite.machine:
+        return _MARK
+    return f"(Source: {cite.name}){tail}"
 
 
 def _matching_close(text: str, start: int, limit: int, opener: str, closer: str) -> int | None:
@@ -632,16 +704,18 @@ def _rewrite_inline(text: str, index: CitationIndex) -> str:
 _IDENT = r"[a-z][a-z0-9]*(?:[_.][a-z0-9]+)+"
 _LITERAL = (r"\{\s*\}|\[\s*\]|\{[^{}\n]{0,240}\}|\[[^\[\]\n]{0,240}\]|"
             r"true\b|false\b|null\b|none\b|nan\b|undefined\b")
+#: Markup a model wraps a key in: code ticks, quotes, bold.
+_KEY_WRAP = r"[`\"'*]{0,2}"
 _DUMP_RE = re.compile(
-    rf"(?<![\w\\./@-])`?(?P<key>{_IDENT}|[a-z]{{3,}})`?"
-    rf"(?:[ \t]*(?P<sep>=|:)[ \t]*|[ \t]+)(?P<val>{_LITERAL})",
+    rf"(?<![\w\\./@-]){_KEY_WRAP}(?P<key>{_IDENT}|[a-z]{{3,}}){_KEY_WRAP}"
+    rf"(?:[ \t]*(?P<sep>=|:)[ \t]*{_KEY_WRAP}|[ \t]+)(?P<val>{_LITERAL})[`*]{{0,2}},?",
     re.IGNORECASE,
 )
 _ASSIGN_RE = re.compile(rf"(?<![\w\\./@-])(?P<key>{_IDENT})=(?P<val>[^\s,;)\]]+)")
 _IDENT_RE = re.compile(rf"(?<![\w\\./@#-])(?P<id>{_IDENT})(?![\w/@-])(?!\.[A-Za-z0-9])")
 _PROTECTED_RE = re.compile(
     r"https?://\S+|www\.\S+|\S+@\S+\.\w+|```.*?```"
-    r"|(?<![\w-])[\w][\w.&()'+-]{0,160}?\.(?:pdf|docx?|xlsx?|xlsm|csv|txt|md|pptx?|dwg|dxf|ifc|xer|xml|json|zip|rar|png|jpe?g)\b",
+    rf"|(?<![\w-])[\w][\w.&()'+-]{{0,160}}?\.(?:{_FILE_EXTS})\b",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -689,15 +763,167 @@ def _drop_dumps(text: str) -> str:
         val = m.group("val")
         if val.startswith(("{", "[")) and len(val) > 2 and not re.search(r"[\"':]|^\[\s*\d", val):
             return m.group(0)
-        return _MARK
+        return _DUMP
 
     return _DUMP_RE.sub(dump, text)
 
 
-def _plain_identifiers(text: str) -> str:
-    from app.lib.source_labels import plain_registry_text
+#: Stands where a tool, block, action or operation name was until the
+#: sentence around it is settled (:func:`_settle_steps`).
+_STEP = "\x03"
+#: Stands where a ``key=literal`` dump was: a sentence that held one says
+#: nothing to a reader unless it also carries a figure.
+_DUMP = "\x04"
+_STEP_NOUN = (r"(?:tools?|blocks?|actions?|operations?|ops|functions?|modules?|engines?|endpoints?"
+              r"|handlers?|routines?|methods?|calls?)")
+_step_cache: dict[Any, Any] = {}
 
-    text = plain_registry_text(_drop_dumps(text))
+
+def _step_sources() -> tuple[dict[str, Any], dict[str, Any]]:
+    from app.agents.core import tool_registry
+    from app.blocks import BLOCK_REGISTRY
+
+    tool_registry.load()
+    return tool_registry._TOOLS, BLOCK_REGISTRY
+
+
+def _static_step_names() -> frozenset[str]:
+    """Every name the platform runs a step by: agent tools, blocks, and the
+    actions the step tables route to. Read from the registries, so a tool or
+    block added later is covered."""
+    try:
+        tools, blocks = _step_sources()
+    except Exception:  # noqa: BLE001 -- a missing registry only narrows the set
+        _LOG.debug("answer_exit: step registries unavailable", exc_info=True)
+        tools, blocks = {}, {}
+    key = ("static", len(tools), len(blocks))
+    cached = _step_cache.get("static")
+    if cached and cached[0] == key:
+        return cached[1]
+    names: set[str] = set(tools) | set(blocks)
+    try:
+        from app.core.action_router import ACTION_HINTS
+        from app.core.cm_step_aliases import ACTION_ALIASES, STEP_TO_TARGET
+
+        names.update(ACTION_HINTS)
+        names.update(STEP_TO_TARGET)
+        names.update(n for target in STEP_TO_TARGET.values() for n in target if n)
+        names.update(ACTION_ALIASES)
+        names.update(ACTION_ALIASES.values())
+    except Exception:  # noqa: BLE001
+        _LOG.debug("answer_exit: step tables unavailable", exc_info=True)
+    found = frozenset(str(n).strip().lower() for n in names if str(n).strip())
+    _step_cache["static"] = (key, found)
+    return found
+
+
+def _step_words_re(names: frozenset[str]) -> re.Pattern[str] | None:
+    """A multi-word step name written as words, or a list of them, ahead of
+    a step noun: "bim extractor block", "audit and register actions"."""
+    multi = tuple(sorted({n for n in names if re.fullmatch(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+", n)
+                          and _is_word_ident(n)}, key=len, reverse=True))
+    if not multi:
+        return None
+    cached = _step_cache.get("words")
+    if cached and cached[0] == multi:
+        return cached[1]
+    one = "|".join(r"[ _-]+".join(map(re.escape, n.split("_"))) for n in multi)
+    pattern = re.compile(
+        rf"(?<![\w-])(?:{one})(?:[ \t]*(?:,[ \t]*(?:and[ \t]+|or[ \t]+)?|and[ \t]+|or[ \t]+|&[ \t]*)"
+        rf"(?:{one}))*(?=[ \t]+{_STEP_NOUN}\b)",
+        re.IGNORECASE,
+    )
+    _step_cache["words"] = (multi, pattern)
+    return pattern
+
+
+def _is_step_name(token: str, steps: frozenset[str]) -> bool:
+    low = token.lower()
+    if low in steps:
+        return True
+    if "." in low:
+        # block.operation, module.attribute
+        return low.split(".", 1)[0] in steps or "_" in low
+    return False
+
+
+_CHIP_RE = re.compile(r"`([^`\n]+)`")
+_PLAIN_WORDS_RE = re.compile(r"[A-Za-z][A-Za-z0-9 -]*[A-Za-z0-9]")
+
+
+def _unwrap_chips(text: str, steps: frozenset[str], called: frozenset[str]) -> str:
+    """A code chip around a code name or plain words loses its ticks; one
+    that names a step becomes a step mark. Ticks with no partner go."""
+
+    from app.lib.source_labels import _registry_maps
+
+    displays, params, _units = _registry_maps()
+
+    def chip(m: re.Match[str]) -> str:
+        inner = m.group(1).strip()
+        bare = inner.rstrip("()").strip()
+        if re.fullmatch(_IDENT, bare):
+            low = bare.lower()
+            # A code name shown as code is the platform's own name for a
+            # step or a field, unless it is a registered name with words.
+            if low in displays or low in params or not _is_word_ident(low, dotted=True):
+                return bare
+            return _STEP
+        if _PLAIN_WORDS_RE.fullmatch(bare):
+            key = re.sub(r"[ -]+", "_", bare.lower())
+            if ("_" in key and key in steps) or key in called:
+                return _STEP
+            return bare
+        return m.group(0)
+
+    lines = []
+    for line in text.split("\n"):
+        line = _CHIP_RE.sub(chip, line)
+        if "`" in line:
+            parts = re.split(r"(`[^`\n]+`)", line)
+            line = "".join(p if p.startswith("`") and p.endswith("`") and len(p) > 1 else
+                           p.replace("`", _MARK) for p in parts)
+        lines.append(line)
+    return "\n".join(lines)
+
+
+_FENCE_RE = re.compile(r"```[\w+-]*[ \t]*\n?(?P<body>.*?)```", re.DOTALL)
+_DATA_LINE_RE = re.compile(
+    rf"[ \t]*(?:[-*][ \t]+)?{_KEY_WRAP}[A-Za-z_][\w.-]*{_KEY_WRAP}[ \t]*[:=][ \t]*\S.*"
+    r"|[ \t]*[\[\]{}(),]+[ \t]*"
+    rf"|[ \t]*(?:[-*][ \t]+)?{_IDENT}(?:[ \t]*,[ \t]*{_IDENT})*[ \t]*,?[ \t]*",
+)
+_CODE_KEY_RE = re.compile(rf"[\"']|(?<![\w.]){_IDENT}(?![\w])|[:=][ \t]*{_KEY_WRAP}(?:{_LITERAL})")
+
+
+def _drop_dump_fences(text: str) -> str:
+    """A fenced block that is only data (JSON, ``key: value`` lines with a
+    code key or a literal value, a list of code names) is a dump and goes.
+    A fence with code in it is kept as written."""
+
+    def fence(m: re.Match[str]) -> str:
+        body = m.group("body").strip()
+        if not body:
+            return _MARK
+        try:
+            if isinstance(json.loads(body), (dict, list)):
+                return _MARK
+        except ValueError:
+            pass
+        lines = [ln for ln in body.split("\n") if ln.strip()]
+        if all(_DATA_LINE_RE.fullmatch(ln) for ln in lines) and any(_CODE_KEY_RE.search(ln) for ln in lines):
+            return _MARK
+        return m.group(0)
+
+    return _FENCE_RE.sub(fence, text) if "```" in text else text
+
+
+def _plain_identifiers(text: str, steps: frozenset[str] = frozenset(),
+                       called: frozenset[str] = frozenset()) -> str:
+    from app.lib.source_labels import _registry_maps, parameter_words, plain_registry_text
+
+    text = plain_registry_text(_unwrap_chips(_drop_dumps(text), steps, called))
+    _displays, params, _units = _registry_maps()
 
     def assign(m: re.Match[str]) -> str:
         key = m.group("key")
@@ -709,9 +935,17 @@ def _plain_identifiers(text: str) -> str:
 
     def ident(m: re.Match[str]) -> str:
         token = m.group("id")
-        return _words(token) if _is_word_ident(token) else token
+        if _is_step_name(token, steps):
+            return _STEP
+        if not _is_word_ident(token):
+            return token
+        if token in params:
+            return parameter_words(token, params[token]) or _words(token)
+        return _words(token)
 
-    return _IDENT_RE.sub(ident, text)
+    text = _IDENT_RE.sub(ident, text)
+    words = _step_words_re(steps)
+    return words.sub(_STEP, text) if words else text
 
 
 # ── Raw tool errors ──────────────────────────────────────────────────────────
@@ -744,10 +978,12 @@ def _error_sentence(label: str, err: str) -> str:
             words = parameter_words(low, params[low])
             if words and words not in needs:
                 needs.append(words)
-    head = f"{label} did not return a result." if label else "One step of this request did not return a result."
-    if needs:
-        head += f" It needs: {', '.join(needs)}."
-    return head
+    if not needs:
+        # That a step failed is the platform's business; the answer goes on
+        # without the copied error.
+        return ""
+    wanted = needs[0] if len(needs) == 1 else f"{', '.join(needs[:-1])} and {needs[-1]}"
+    return f"{label} needs the {wanted}." if label else f"I need the {wanted} to work this out."
 
 
 def _replace_tool_errors(text: str, turn: Turn | None) -> str:
@@ -771,7 +1007,7 @@ def _replace_tool_errors(text: str, turn: Turn | None) -> str:
                         # The error ran into the next sentence: only its own
                         # words are replaced.
                         said.add(plain)
-                        part = f"{part[:whole.start()]}{plain} {part[whole.end():].lstrip(' .')}".strip()
+                        part = f"{part[:whole.start()]}{plain or _MARK} {part[whole.end():].lstrip(' .')}".strip()
                         plain = None
                     break
             if plain is None and _STRUCTURAL_ERROR_RE.search(part):
@@ -782,7 +1018,7 @@ def _replace_tool_errors(text: str, turn: Turn | None) -> str:
             if plain not in said:
                 said.add(plain)
                 lead = re.match(r"[ \t]*(?:[-*•][ \t]+)?", part)
-                kept.append((lead.group(0) if lead else "") + plain)
+                kept.append((lead.group(0) if lead else "") + (plain or _MARK))
         lines.append(" ".join(kept) if kept else "")
     return "\n".join(lines)
 
@@ -813,6 +1049,30 @@ def _cap_like(original: str, new: str) -> str:
     return new[:1].upper() + new[1:] if original[:1].isupper() else new
 
 
+#: Words that cannot modify a noun: what precedes a noun phrase rather than
+#: sitting inside one. English grammar, not a vocabulary of the corpus.
+_CLOSED_CLASS = frozenset((
+    "a an the this that these those any no all some each every either neither both such what which whose "
+    "in on at of from for to by with within into onto about as than via per across among between through "
+    "under over below above after before during without upon against toward towards beyond "
+    "and or but nor so yet if because while although though since unless whether "
+    "is are was were be been being am has have had do does did not can could may might must shall should "
+    "will would it its they their them there here i we you he she my our your his her me us "
+    "see find found show shows showed state states stated say says said contain contains mention mentions "
+    "give gives gave use used using read include includes cite cites quote quotes"
+).split())
+
+
+def _modified(before: str) -> bool:
+    """The noun that follows ``before`` has a modifier: the last word is a
+    noun or adjective, not a determiner, preposition, verb or pronoun."""
+    m = re.search(r"([A-Za-z][A-Za-z'-]*)[ \t]+$", before)
+    if not m:
+        return False
+    word = m.group(1).lower()
+    return word not in _CLOSED_CLASS and not re.fullmatch(_MACHINE_ADJ, word) and not word.endswith("ly")
+
+
 def _machine_wording(text: str) -> str:
     def phrase(m: re.Match[str]) -> str:
         noun = m.group("noun").lower()
@@ -830,13 +1090,19 @@ def _machine_wording(text: str) -> str:
         if not (strong or machine):
             return m.group(0)
         plural = noun.endswith("s") or noun.startswith(("search", "retrieval"))
-        if noun == "context":
+        if not det and _modified(m.string[:m.start()]):
+            # "the specification excerpt": the noun phrase began earlier,
+            # with its own determiner; only the head noun is replaced.
+            new = "material" if noun == "context" else ("sections" if plural else "section")
+        elif noun == "context":
             new = f"{det if det in ('no', 'any', 'all the') else 'the'} project material"
         elif plural:
             keep = det if det in ("no", "any", "some", "all", "all the", "all of the") else "the"
             new = f"{keep} project document sections"
+        elif not det:
+            new = "project document section"
         else:
-            keep = {"an": "a", "": "a", "these": "the", "those": "the"}.get(det, det)
+            keep = {"an": "a", "these": "the", "those": "the"}.get(det, det)
             new = f"{keep} project document section"
         return _cap_like(m.group(0), new)
 
@@ -852,6 +1118,110 @@ def _machine_wording(text: str) -> str:
                                          f"inputs {m.group('post')}")),
         text,
     )
+
+
+# ── Step names and tool-call mechanics ───────────────────────────────────────
+
+#: How the platform's calls worked, said to the user: the arguments, the
+#: engine's expectations, what is implemented. Never part of an answer.
+_MECHANICS_RE = re.compile(
+    r"\bJSON[ \t]+(?:strings?|objects?|bod(?:y|ies)|arguments?|inputs?|keys?|fields?)\b|\binput[ \t]+JSON\b"
+    r"|\bJSON\b[^.!?\n]{0,60}\b(?:params|parameters|arguments)\b"
+    r"|\b(?:params|kwargs|args)\b"
+    r"|\bengine(?:'s)?[ \t]+version\b"
+    r"|\bimplemented[ \t]+(?:in|by|on)[ \t]+(?:this|the)[ \t]+(?:engine|version|tool|block|platform|api|build)\b"
+    r"|\bunimplemented\b"
+    r"|\btraceback\b|\bstack[ \t]+trace\b|\bHTTP[ \t]+\d{3}\b|\bstatus[ \t]+code\b"
+    r"|\bunknown[ \t]+(?:operation|action|tool|parameter|argument|function|block)s?\b"
+    r"|\b(?:steps?|requests?|calls?|tools?|blocks?)\b[^.!?\n]{0,40}\bdid(?:n't|[ \t]+not)[ \t]+return\b",
+    re.IGNORECASE,
+)
+#: The model telling the user about its own calls.
+_PROCESS_RE = re.compile(
+    r"\b(?:I|we)(?:'ve|[ \t]+(?:had|have|then|first|initially|also|just|originally))?[ \t]+"
+    r"(?:called|invoked|passed|retried|re-?ran|re-?tried|sent|queried|routed|dispatched|"
+    r"tried[ \t]+(?:calling|invoking|again|to[ \t]+(?:call|invoke|run)))\b"
+    r"|\bmy[ \t]+(?:(?:first|second|third|earlier|previous|initial|last|original)[ \t]+)?"
+    r"(?:calls?|attempts?|requests?|quer(?:y|ies)|tries)\b"
+    r"|\b(?:calls?|attempts?|requests?)[ \t]+(?:both[ \t]+|all[ \t]+)?(?:failed|errored|returned[ \t]+(?:an[ \t]+)?errors?)\b",
+    re.IGNORECASE,
+)
+#: What the model's calls are made of; process narration names one.
+_CALL_NOUN_RE = re.compile(
+    r"\b(?:calls?|tools?|functions?|actions?|operations?|parameters?|arguments?|inputs?|requests?|"
+    r"quer(?:y|ies)|engine|blocks?|steps?|JSON|schema|searche?s?|retriev\w*)\b",
+    re.IGNORECASE,
+)
+_FAILURE_RE = re.compile(
+    r"\b(?:fail(?:ed|s|ing|ure)?|errors?|errored|rejected|wrong|incorrect(?:ly)?|"
+    r"did(?:n't|[ \t]+not)[ \t]+work|retry|again|instead|crashed|timed[ \t]+out|"
+    r"(?:returned|reported|gave|produced)[ \t]+nothing|no[ \t]+results?|empty[ \t]+results?)\b",
+    re.IGNORECASE,
+)
+_STEP_NOUN_RE = re.compile(rf"\b{_STEP_NOUN}\b", re.IGNORECASE)
+_JOINED_STEPS_RE = re.compile(
+    rf"{_STEP}(?:[ \t]*(?:,[ \t]*(?:and[ \t]+|or[ \t]+)?|and[ \t]+|or[ \t]+|&[ \t]*)[ \t]*{_STEP})+",
+    re.IGNORECASE,
+)
+_STEP_PHRASE_RE = re.compile(
+    rf"(?P<det>\b(?:the|a|an|this|that|these|those|its|their|our|my)[ \t]+)?(?P<marks>{_STEP}+)"
+    rf"(?:[ \t]*\([ \t]*\))?(?P<noun>[ \t]+{_STEP_NOUN}\b)?",
+    re.IGNORECASE,
+)
+_LINE_LEAD_RE = re.compile(r"[ \t]*(?:(?:[-*•+]|\d+[.)])[ \t]+)?(?:\*\*)?")
+
+
+def _mechanics(sentence: str) -> bool:
+    if _MECHANICS_RE.search(sentence):
+        return True
+    if _DUMP in sentence and not re.search(r"\d", sentence.replace(_DUMP, "")):
+        return True
+    if _PROCESS_RE.search(sentence) and _FAILURE_RE.search(sentence) and _CALL_NOUN_RE.search(sentence):
+        return True
+    if _STEP in sentence:
+        # A sentence that names a step and says how it ran, or only that it
+        # exists, is about the platform; one with a figure is about the work.
+        if _FAILURE_RE.search(sentence) or _PROCESS_RE.search(sentence):
+            return True
+        if not re.search(r"\d", sentence):
+            rest = sentence.replace(_STEP, " ")
+            if _STEP_NOUN_RE.search(rest) or len(re.findall(r"[A-Za-z]{2,}", rest)) < 6:
+                return True
+    return False
+
+
+def _step_phrase(m: re.Match[str]) -> str:
+    det = (m.group("det") or "").strip().lower()
+    plural = len(m.group("marks")) > 1 or (m.group("noun") or "").strip().lower().endswith("s")
+    lead = "the" if det in ("the", "this", "that", "these", "those", "its", "their", "our", "my") else (
+        "" if plural else "a")
+    new = f"{lead} {'platform steps' if plural else 'platform step'}".strip()
+    before = m.string[:m.start()]
+    at_start = bool(re.search(r"(?:^|\n)[ \t]*(?:(?:[-*•+]|\d+[.)])[ \t]+)?(?:\*\*)?$|[.!?][ \t]+$", before))
+    return new[:1].upper() + new[1:] if at_start or (m.group("det") or "")[:1].isupper() else new
+
+
+def _settle_steps(text: str) -> str:
+    """Sentences about the platform's calls go; a step name left in a
+    sentence about the work reads "a platform step"."""
+    if _STEP not in text and _DUMP not in text and not (_MECHANICS_RE.search(text) or _PROCESS_RE.search(text)):
+        return text
+    text = _JOINED_STEPS_RE.sub(_STEP * 2, text)
+    out: list[str] = []
+    for line in text.split("\n"):
+        parts = _SENTENCE_SPLIT_RE.split(line)
+        kept = [p for p in parts if not _mechanics(p)]
+        if len(kept) == len(parts):
+            out.append(_STEP_PHRASE_RE.sub(_step_phrase, line) if _STEP in line else line)
+            continue
+        if not kept:
+            continue
+        if kept[0] is not parts[0]:
+            lead = _LINE_LEAD_RE.match(parts[0])
+            kept[0] = (lead.group(0) if lead else "") + kept[0].lstrip()
+        line = " ".join(kept)
+        out.append(_STEP_PHRASE_RE.sub(_step_phrase, line) if _STEP in line else line)
+    return "\n".join(out).replace(_DUMP, _MARK)
 
 
 # ── One Source line per credit ───────────────────────────────────────────────
@@ -949,8 +1319,11 @@ def check_text(
         out = _rewrite_brackets(out, index)
         out = _rewrite_inline(out, index)
         out = _replace_tool_errors(out, turn)
+        out = _drop_dump_fences(out)
         out, held = _protect(out, index)
-        out = _plain_identifiers(out)
+        called = frozenset(turn.step_names) if turn else frozenset()
+        out = _plain_identifiers(out, _static_step_names() | called, called)
+        out = _settle_steps(out)
         out = _machine_wording(out)
         out = _restore(out, held)
         out = _tidy(out)
@@ -965,6 +1338,38 @@ def check_text(
         return text
 
 
+_SENTENCE_END_RE = re.compile(r"[.!?…](?:[\"'”’)\]*_`]+)?(?=[ \t]|$)")
+_ABBREV_END_RE = re.compile(
+    r"(?:^|[\s(])(?:e\.g|i\.e|vs|cf|approx|nos?|cl|fig|incl|mr|ms|dr)\.$",
+    re.IGNORECASE,
+)
+_LEAD_IN_RE = re.compile(r"[ \t]*(?:#{1,6}[ \t].*|\*\*[^*\n]+\*\*:?|[^\n]*:[ \t]*(?:\*\*)?)[ \t]*")
+
+
+def end_on_a_sentence(text: str) -> str:
+    """``text`` cut back to its last whole sentence, for an answer the model
+    stopped writing part-way (a length limit, a dropped stream). Only the
+    last line was being written: it keeps what ends a sentence, or goes
+    whole (a half list item or table row is not a sentence either). A
+    heading or lead-in left with nothing under it goes too."""
+    if not isinstance(text, str) or not text.strip():
+        return text
+    body = text.rstrip()
+    if body.count("```") % 2:
+        body = body[:body.rfind("```")].rstrip()
+    lines = body.split("\n")
+    last = lines.pop()
+    ends = [m.end() for m in _SENTENCE_END_RE.finditer(last)
+            if not _ABBREV_END_RE.search(last[:m.start() + 1])]
+    if last.rstrip().endswith("|") and last.lstrip().startswith("|"):
+        lines.append(last)
+    elif ends:
+        lines.append(last[:ends[-1]].rstrip())
+    while lines and (not lines[-1].strip() or (len(lines) > 1 and _LEAD_IN_RE.fullmatch(lines[-1]))):
+        lines.pop()
+    return "\n".join(lines).rstrip()
+
+
 def remove_dumps(text: str) -> str:
     """``text`` without ``key=literal`` dumps (``delta_ok=false``,
     ``summary {}``). For a step that rewrites ``key=value`` as words before
@@ -973,7 +1378,7 @@ def remove_dumps(text: str) -> str:
         return text
     try:
         held_text, held = _protect(text, CitationIndex(lookup=False))
-        out = _drop_dumps(held_text)
+        out = _drop_dumps(held_text).replace(_DUMP, _MARK)
         if out == held_text:
             return text
         return _tidy(_restore(out, held))

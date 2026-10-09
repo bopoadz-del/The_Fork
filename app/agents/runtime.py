@@ -9961,6 +9961,33 @@ class _SynthStreamError(Exception):
 _SYNTH_CUTOFF_NOTICE = "The answer was cut off — please ask again."
 
 
+class _SynthLengthCut(_SynthStreamError):
+    """The streamed synthesis stopped at the model's output token limit
+    (``finish_reason=length``): the text ends wherever the limit fell."""
+
+
+# The model's output stopped at its token limit. What it wrote is kept up to
+# its last whole sentence; this says why the answer stops there.
+_LENGTH_CUT_NOTICE = "The answer reached its length limit here. Ask me to continue for the rest."
+
+
+def _finished_on_length(choice: Any) -> bool:
+    if not isinstance(choice, dict):
+        return False
+    return str(choice.get("finish_reason") or "").lower() in {"length", "max_tokens"}
+
+
+def _end_cut_answer(text: str, notice: str = _LENGTH_CUT_NOTICE) -> str:
+    """An answer the model stopped writing part-way, ending on its last whole
+    sentence and then ``notice``: never mid-sentence."""
+    from app.agents.answer_exit import end_on_a_sentence
+
+    kept = end_on_a_sentence(text or "")
+    if notice in kept:
+        return kept
+    return f"{kept}\n\n{notice}" if kept.strip() else notice
+
+
 _TPM_CHAR_BUDGET = 16000  # ~4k tokens; the default prompt-compaction budget
 
 

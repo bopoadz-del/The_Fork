@@ -13,11 +13,11 @@ or block added later is covered without editing this file:
   number, document id or marker key is left;
 * a citation nothing backs is removed, never guessed;
 * a Sources row shows the page or nothing, and has a document name;
-* every registered formula and tool id reads as its display name, every
-  block id and unregistered code name as words;
+* every registered formula and tool id reads as its display name; a block
+  id never shows; an unregistered code name reads as words;
 * a ``key=literal`` dump goes;
-* a tool's error text copied into the answer becomes one plain sentence
-  naming the step;
+* a tool's error text copied into the answer goes; what is left is an ask
+  for the input it named, never a sentence about the step failing;
 * refusal wording that names the platform's machinery reads in the user's
   terms;
 * text with nothing internal in it is left exactly as written;
@@ -383,7 +383,8 @@ def test_copied_tool_error_becomes_one_plain_sentence(tool, display, param, vari
     ax.note_tool_result(tool, {"status": "error", "error": err}, turn)
     out = ax.check_text(f"I tried the step. {err} Let me know the value.", turn=turn)
     assert param not in out and "{" not in out and "Error:" not in out, out
-    assert "did not return a result." in out and out.endswith("Let me know the value."), out
+    assert "did not return" not in out and out.endswith("Let me know the value."), out
+    assert f"{display} needs the " in out, out
     _assert_idempotent(out, turn=turn)
 
 
@@ -393,7 +394,7 @@ def test_structural_error_line_is_replaced(head):
     ax = _ax()
     out = ax.check_text(f"Here is what happened.\n{head}something broke at line 3")
     assert head.strip() not in out and "broke" not in out, out
-    assert "did not return a result." in out, out
+    assert out == "Here is what happened.", out
     _assert_idempotent(out)
 
 
@@ -418,7 +419,7 @@ def test_block_error_is_recorded_wherever_the_block_runs():
         ax.reset_turn(token)
     assert any(e == err for _label, e in turn.tool_errors), turn.tool_errors
     out = ax.check_text(f"It said: {err}", turn=turn)
-    assert "did not return a result." in out and "{" not in out, out
+    assert "I need the " in out and "{" not in out and "did not return" not in out, out
 
 
 # ── machinery wording ───────────────────────────────────────────────────────
@@ -618,7 +619,7 @@ def test_queued_evidence():
     for raw in ("delta_ok", "learning_engine", "{}", "smart_orchestrator", "boq_processor",
                 "project_type inferred", "No risks supplied"):
         assert raw not in out, (raw, out)
-    assert "did not return a result." in out, out
+    assert "did not return" not in out and "platform step" not in out, out
     rows = ax.check_sources([{"doc_id": doc["doc_id"], "doc_name": doc["name"], "chunk_index": 0,
                               "page_or_section": "chunk #0"}], turn=turn)
     assert rows == [{"doc_id": doc["doc_id"], "doc_name": doc["name"], "chunk_index": 0, "page_or_section": ""}]

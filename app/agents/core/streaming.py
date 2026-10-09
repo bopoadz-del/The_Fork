@@ -27,10 +27,12 @@ async def _chat_stream_impl(
 ) -> AsyncIterator[dict[str, Any]]:
     """Internal implementation. ``chat_stream`` wraps this with an emit
     guarantee so silent / crashing exits become structured error events."""
+    from app.agents.answer_exit import end_on_a_sentence
     from app.agents.runtime import (  # noqa: F401 -- read at call time
         MAX_TOOL_ITERATIONS, _CONTEXT_LEAK_RETRY_NUDGE, _EMPTY_RESPONSE_FALLBACK,
         _EMPTY_ROUTER_NUDGE, _LOG, _SEARCH_PREAMBLE_RETRY_NUDGE,
-        _STREAM_DELIVERY_MARGIN_SECONDS, _SYNTH_CUTOFF_NOTICE, _SynthStreamError,
+        _LENGTH_CUT_NOTICE, _STREAM_DELIVERY_MARGIN_SECONDS, _SYNTH_CUTOFF_NOTICE, _SynthLengthCut,
+        _SynthStreamError,
         _TOOL_ERROR_NUDGE_CAP, _TOOL_FORMAT_FALLBACK, _TOOL_FORMAT_RETRY_NUDGE,
         _UNINDEXED_PROJECT_MESSAGE, _apply_hat_activation, _apply_rag_context,
         _build_attached_documents_note, _build_capability_answer, _build_exports_from_audit,
@@ -678,6 +680,7 @@ async def _chat_stream_impl(
             streamed_any = False
             fell_back = False
             cut_off = False
+            length_cut = False
             tool_leak = False
             acc: list[str] = []
             pending = ""
@@ -716,12 +719,18 @@ async def _chat_stream_impl(
                     # `_call_llm` (anti-duplicate). Finish with what
                     # streamed and mark the cut-off before persist/`end`.
                     cut_off = True
+                    length_cut = isinstance(_se, _SynthLengthCut)
                     _LOG.warning("chat_stream: synthesis stream dropped mid-way (%s)", _se)
                 else:
                     _LOG.info("chat_stream: synthesis stream unavailable (%s) — non-streaming fallback", _se)
                     fell_back = True
             if not fell_back:
                 raw = "".join(acc)
+                if cut_off:
+                    # Whatever cut the stream, it fell mid-sentence: the
+                    # answer ends on its last whole sentence (the client
+                    # shows the end event's content in place of the tokens).
+                    raw = end_on_a_sentence(raw)
                 # No context-leak check here on purpose. The in-loop
                 # guard above runs on `raw_so_far` after EVERY delta,
                 # including the last, so a repeat at this point cannot
@@ -911,15 +920,16 @@ async def _chat_stream_impl(
                         project_id=project_id,
                         audit_rec=_rag_audit,
                     ))
-                    if cut_off and _SYNTH_CUTOFF_NOTICE not in final_text:
+                    cut_notice = _LENGTH_CUT_NOTICE if length_cut else _SYNTH_CUTOFF_NOTICE
+                    if cut_off and cut_notice not in final_text:
                         suffix = (
                             ("\n\n" if final_text.strip() else "")
-                            + _SYNTH_CUTOFF_NOTICE
+                            + cut_notice
                         )
                         final_text = (
                             final_text.rstrip() + suffix
                             if final_text.strip()
-                            else _SYNTH_CUTOFF_NOTICE
+                            else cut_notice
                         )
                         yield {"type": "token", "content": suffix}
                 if _timing:

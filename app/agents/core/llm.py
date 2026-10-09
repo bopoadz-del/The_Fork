@@ -22,7 +22,8 @@ async def _call_llm(
 ) -> dict[str, Any]:
     from app.agents.runtime import (  # noqa: F401 -- read at call time
         _LOG, _MIN_LLM_ATTEMPT_SECONDS, _OPENROUTER_402_MAX_RETRIES,
-        _OPENROUTER_429_MAX_RETRIES, _compact_messages_for_openrouter, _forced_specific_tool,
+        _OPENROUTER_429_MAX_RETRIES, _compact_messages_for_openrouter, _end_cut_answer,
+        _finished_on_length, _forced_specific_tool,
         _http_400_is_retryable, _llm_choice_is_empty_or_filtered, _llm_config,
         _llm_fallback_ladder, _llm_http_timeout, _openrouter_402_afford_max_tokens,
         _openrouter_402_is_in_flight, _openrouter_402_should_retry,
@@ -439,6 +440,18 @@ async def _call_llm(
                     a_cfg["provider"], nxt_provider,
                 )
                 continue
+            if (_finished_on_length(choice) and (msg.get("content") or "").strip()
+                    and not msg.get("tool_calls")):
+                # The answer stopped where the output token limit fell,
+                # usually mid-sentence. It ends on its last whole sentence
+                # and says why it stops.
+                _LOG.warning(
+                    "llm: %s finish_reason=length agent=%s max_tokens=%s chars=%d — "
+                    "answer ends on its last whole sentence",
+                    a_cfg.get("provider"), self.name, payload.get("max_tokens"),
+                    len(msg.get("content") or ""),
+                )
+                msg["content"] = _end_cut_answer(msg["content"])
             return {"status": "success", "choice": choice, "raw": data}
         except Exception as e:  # noqa: BLE001 — response parse / rewrite
             last_error = {"status": "error", "error": f"{a_cfg['provider']} response error: {e}"}
@@ -475,7 +488,7 @@ async def _stream_synthesis(
     it has begun.
     """
     from app.agents.runtime import (  # noqa: F401 -- read at call time
-        _LOG, _SynthStreamError, _compact_messages_for_openrouter, _llm_config,
+        _LOG, _SynthLengthCut, _SynthStreamError, _compact_messages_for_openrouter, _llm_config,
         _llm_http_timeout, _provider_max_tokens, _provider_temperature, _resolve_attempt_model,
         _sanitize_messages_for_provider, httpx, json, os,
     )
@@ -516,6 +529,7 @@ async def _stream_synthesis(
     # Reasoning-phase deltas seen but deliberately not yielded (see below).
     reasoning_deltas = 0
     content_deltas = 0
+    finish_reason = ""
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(_llm_http_timeout(), read=_llm_http_timeout())) as client:
             payload = {
@@ -546,6 +560,7 @@ async def _stream_synthesis(
                         continue
                     choices = evt.get("choices") or []
                     if choices:
+                        finish_reason = str(choices[0].get("finish_reason") or finish_reason)
                         _delta_obj = choices[0].get("delta") or {}
                         # Reasoning models (e.g. deepseek-reasoner) stream a
                         # THINKING phase as ``reasoning_content`` before
@@ -596,3 +611,11 @@ async def _stream_synthesis(
                 "swallowed %s in _stream_synthesis() — continuing",
                 "Exception", exc_info=True,
             )
+    if content_deltas and finish_reason.lower() in ("length", "max_tokens"):
+        # Every token is already out; the caller ends the answer on its last
+        # whole sentence instead of where the limit fell.
+        _LOG.warning(
+            "%s streamed synthesis stopped at finish_reason=length agent=%s max_tokens=%s",
+            cfg["provider"], self.name, stream_max_tokens,
+        )
+        raise _SynthLengthCut(f"{cfg['provider']} output token limit reached")
