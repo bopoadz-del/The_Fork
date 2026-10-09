@@ -995,6 +995,20 @@ def check_sources(
         return rows
 
 
+def check_result(result: Any, turn: Turn | None = None) -> Any:
+    """A whole-turn result (``answer`` and ``sources``) as it may leave."""
+    if not isinstance(result, dict):
+        return result
+    fixed = dict(result)
+    rows = fixed.get("sources")
+    index = build_index(turn, rows if isinstance(rows, list) else None)
+    if isinstance(fixed.get("answer"), str):
+        fixed["answer"] = check_text_or_fallback(fixed["answer"], turn=turn, index=index)
+    if isinstance(rows, list):
+        fixed["sources"] = check_sources(rows, turn=turn, index=index)
+    return fixed
+
+
 def check_end_event(event: dict[str, Any], streamed: str = "", turn: Turn | None = None) -> dict[str, Any]:
     """The terminal stream event as it may leave. ``streamed`` is the text the
     tokens carried; the client shows ``content`` in its place, so an event

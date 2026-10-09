@@ -17,20 +17,14 @@ async def chat(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
     """One turn. Identical retrievals within it are answered once
     (vector_store turn memo); see ``_chat_impl``."""
     from app.agents import answer_exit
+    from app.core.offload import off_loop
     from app.core.rag.vector_store import end_turn_memo, start_turn_memo
 
     token = start_turn_memo()
     turn, turn_token = answer_exit.begin_turn()
     try:
         result = await self._chat_impl(*args, **kwargs)
-        if isinstance(result, dict):
-            result = dict(result)
-            index = answer_exit.build_index(turn, result.get("sources"))
-            if isinstance(result.get("answer"), str):
-                result["answer"] = answer_exit.check_text_or_fallback(result["answer"], turn=turn, index=index)
-            if isinstance(result.get("sources"), list):
-                result["sources"] = answer_exit.check_sources(result["sources"], turn=turn, index=index)
-        return result
+        return await off_loop(answer_exit.check_result, result, turn)
     finally:
         answer_exit.reset_turn(turn_token)
         end_turn_memo(token)
