@@ -79,9 +79,11 @@ def test_the_two_forms_are_different_numbers():
         "if these were the same number the unit confusion would not matter")
 
 
-def test_zero_strength_is_zero_in_both_forms():
-    assert _result({"fck_n_mm2": 0})["value"] == pytest.approx(0.0, abs=0.5)
-    assert _result({"fck_n_mm2": 0, "code": "aci"})["value"] == pytest.approx(0.0, abs=0.5)
+def test_zero_strength_is_asked_for_in_both_forms():
+    for params in ({"fck_n_mm2": 0}, {"fck_n_mm2": 0, "code": "aci"}):
+        out = cf.run_calculation(CALC, params)
+        assert out["status"] == "error" and out["needs_input"] is True, out
+        assert "characteristic concrete strength" in out["question"]
 
 
 # ── the same defect, left behind in the sibling function ───────────────────

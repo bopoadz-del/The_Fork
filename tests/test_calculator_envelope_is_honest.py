@@ -31,7 +31,7 @@ def test_rejected_inputs_do_not_report_success():
         "a calculator that refused its inputs must not report success; got "
         f"{out}"
     )
-    assert "1-5" in out.get("error", ""), out
+    assert "1 to 5" in out.get("error", ""), out
 
 
 def test_a_real_calculation_still_reports_success():

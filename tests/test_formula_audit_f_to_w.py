@@ -294,8 +294,9 @@ class TestModulusOfElasticityConcrete:
         # f'c=250; √250=15.8114; Ec=237_171 → rounds to 237171.
         r = _ok("modulus_of_elasticity_concrete", fck_n_mm2=25)
         assert r["value"] == pytest.approx(round(15_000 * math.sqrt(250)), abs=0.5)
-        z = _ok("modulus_of_elasticity_concrete", fck_n_mm2=0)
-        assert z["value"] == pytest.approx(0.0, abs=0.5)
+        z = _err("modulus_of_elasticity_concrete", fck_n_mm2=0)
+        assert z["needs_input"] is True
+        assert "characteristic concrete strength" in z["question"]
 
 
 class TestPlumbingFlowProgramme:
@@ -826,9 +827,10 @@ class TestFinenessModulus:
         assert r["unit"] == "unitless"
         assert "unitless" in str(r.get("note") or "").lower()
 
-    def test_empty_list_is_zero(self):
-        r = _ok("fineness_modulus", sieve_retained_percentages=[])
-        assert r["value"] == pytest.approx(0.0, abs=1e-9)
+    def test_empty_list_is_asked_for(self):
+        e = _err("fineness_modulus", sieve_retained_percentages=[])
+        assert e["needs_input"] is True
+        assert "at least one number" in e["question"]
 
 
 class TestLaserScanAccuracy:
@@ -1031,9 +1033,10 @@ class TestRebarWeight:
         assert r["unit_mass_kg_m"] == pytest.approx(unit, abs=0.0002)
         assert r["total_mass_kg"] == pytest.approx(unit * 12 * 50, abs=0.05)
 
-    def test_zero_diameter_is_zero_mass(self):
-        r = _ok("rebar_weight", bar_diameter_mm=0, total_length_m=12, quantity=50)
-        assert r["total_mass_kg"] == pytest.approx(0.0, abs=1e-9)
+    def test_zero_diameter_is_asked_for(self):
+        e = _err("rebar_weight", bar_diameter_mm=0, total_length_m=12, quantity=50)
+        assert e["needs_input"] is True
+        assert [r["parameter"] for r in e["rejected"]] == ["bar_diameter_mm"]
 
     def test_weight_to_length_12t_y16(self):
         unit = (math.pi / 4.0) * (0.016 ** 2) * 7850.0
