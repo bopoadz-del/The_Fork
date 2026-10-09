@@ -1,0 +1,10 @@
+{
+  "_doc": "Environment variable / secret NAMES the web task (ECS service the-fork) must no longer carry. deploy-aws.yml strips any listed name from the live task definition's environment and secrets before rolling (scripts/retire_task_env.py). Names only, never values.",
+  "service": "the-fork",
+  "retired": [
+    {
+      "name": "RAG_SCRUB_RULES",
+      "reason": "Identifier scrub rules are structural (app/core/scrub_rules.json + the projects store); the secret denylist is no longer read and its reference is retired."
+    }
+  ]
+}

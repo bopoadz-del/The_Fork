@@ -1,0 +1,85 @@
+{
+  "_doc": "Structural identifier-scrub rules (app/core/identifier_scrub.py). Rule PARAMETERS only: this file names no project, client, place or company. The identities themselves are read at run time from the projects store.",
+  "cache_ttl_seconds": 60,
+  "scrubbed_projects": {
+    "master_corpus_source": true,
+    "general_knowledge": true,
+    "skip_system_namespaces": true
+  },
+  "identity_fields": {
+    "name": {
+      "replacement": "the project",
+      "acronym": true
+    },
+    "client": {
+      "replacement": "the client",
+      "acronym": true
+    },
+    "location": {
+      "replacement": "the project location",
+      "acronym": false
+    }
+  },
+  "identity_expansion": {
+    "variants": true,
+    "min_value_length": 4,
+    "skip_all_generic_words": true
+  },
+  "document_number_code": {
+    "enabled": true,
+    "pattern": "^([A-Z][A-Z0-9]{2,11})(?=[-_ ])",
+    "min_occurrences": 3,
+    "generic_codes": [
+      "BOQ",
+      "DWG",
+      "DRG",
+      "SPEC",
+      "SPECS",
+      "RFI",
+      "NCR",
+      "MIR",
+      "WIR",
+      "IR",
+      "TQ",
+      "SOW",
+      "MOM",
+      "MS",
+      "ITP",
+      "HSE",
+      "QA",
+      "QC",
+      "QAQC",
+      "MEP",
+      "PDF",
+      "REV",
+      "DOC",
+      "TDS",
+      "MSDS",
+      "SDS",
+      "IFC",
+      "CAD",
+      "BIM",
+      "GA",
+      "SLD",
+      "COPY",
+      "DRAFT",
+      "FINAL",
+      "SCAN",
+      "IMG",
+      "NEW",
+      "OLD",
+      "TEMP"
+    ],
+    "replacement": "the project"
+  },
+  "title_block_labels": {
+    "enabled": false,
+    "labels": [
+      "Project\\s+Name\\s*:",
+      "Project\\s+Title\\s*:",
+      "Name\\s+of\\s+(?:the\\s+)?Project\\s*:"
+    ],
+    "replacement": "the project"
+  },
+  "extra_terms_replacement": "the project"
+}

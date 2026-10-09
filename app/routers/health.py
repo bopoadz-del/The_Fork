@@ -137,6 +137,15 @@ def ready(response: Response):
     """
     payload = _evaluate_health()
     payload["ready"] = payload["checks"]["database"]["ok"]
+    # Reported, not gating: zero rules while enabled means client identifiers
+    # pass through unscrubbed, which an operator must see -- but refusing
+    # traffic over it would take the service down.
+    from app.core import identifier_scrub
+
+    payload["identifier_scrub"] = {
+        "enabled": identifier_scrub._enabled(),
+        "rules_loaded": identifier_scrub.rules_loaded(),
+    }
     if not payload["ready"]:
         response.status_code = 503
     return payload
