@@ -228,6 +228,10 @@ async def _chat_stream_impl(
     if not _locked:
         _pre = await _predispatch_file_tool(self, messages, project_id)
     if _pre:
+        # The file read is a source for this turn. The other predispatches
+        # are already on this list; the named-file read has to be too, or
+        # Sources never sees the document the answer quoted.
+        stream_tool_results.append(_pre)
         _note_tool(_pre["name"])
         # SSE contract: the browser reads "tool" + "args_preview" on a
         # tool_call and "summary" on a tool_result -- see the main tool
@@ -490,7 +494,7 @@ async def _chat_stream_impl(
             "type": "end",
             "content": answer,
             "iterations": 0,
-            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
+            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer, stream_tool_results)),
             "provenance": (_rag_audit or {}).get("provenance") or [],
             "tools": list(tools_invoked),
         }
@@ -516,7 +520,7 @@ async def _chat_stream_impl(
             "type": "end",
             "content": answer,
             "iterations": 0,
-            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
+            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer, stream_tool_results)),
             "provenance": (_rag_audit or {}).get("provenance") or [],
             "tools": list(tools_invoked),
         }
@@ -541,7 +545,7 @@ async def _chat_stream_impl(
             "type": "end",
             "content": answer,
             "iterations": 0,
-            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
+            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer, stream_tool_results)),
             "provenance": (_rag_audit or {}).get("provenance") or [],
             "tools": list(tools_invoked),
         }
@@ -851,7 +855,7 @@ async def _chat_stream_impl(
                             "iterations": iteration + 1,
                             "model": served_model,
                             "tools": list(tools_invoked),
-                            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text,
+                            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text, stream_tool_results,
                             )),
                             "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results,
                                 conversation_id=conversation_id,
@@ -926,7 +930,7 @@ async def _chat_stream_impl(
                     "iterations": iteration + 1,
                     "model": served_model,
                     "tools": list(tools_invoked),
-                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
+                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text, stream_tool_results)),
                     "provenance": (_rag_audit or {}).get("provenance") or [],
                     "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results, conversation_id=conversation_id)),
                 }
@@ -974,7 +978,7 @@ async def _chat_stream_impl(
                     "model": served_model,
                     "tools": list(tools_invoked),
                     "recovered_from_llm_error": True,
-                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
+                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text, stream_tool_results)),
                     "provenance": (_rag_audit or {}).get("provenance") or [],
                     "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results,
                         conversation_id=conversation_id,
@@ -1148,7 +1152,7 @@ async def _chat_stream_impl(
                     "iterations": iteration + 1,
                     "model": served_model,
                     "tools": list(tools_invoked),
-                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
+                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text, stream_tool_results)),
                     "provenance": (_rag_audit or {}).get("provenance") or [],
                     "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results, conversation_id=conversation_id)),
                 }
@@ -1286,7 +1290,7 @@ async def _chat_stream_impl(
         "forced_final": True,
         "model": served_model,
         "tools": list(tools_invoked),
-        "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
+        "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text, stream_tool_results)),
         "provenance": (_rag_audit or {}).get("provenance") or [],
         "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, stream_tool_results, conversation_id=conversation_id)),
     }

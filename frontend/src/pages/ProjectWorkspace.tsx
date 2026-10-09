@@ -43,8 +43,14 @@ interface DocumentRecord {
   has_file?: boolean
   has_remote_source?: boolean
   uploaded_at?: string
-  /** Number of chunks the indexer stored for this doc. 0 = extraction failed. */
+  /** Chunks the indexer stored. Zero means the file is not in project search. */
   chunk_count?: number
+  /**
+   * Why a stored file is absent from project search, taken from the row.
+   * Absent when the file is searchable. The panel shows this and does not
+   * invent an extraction failure.
+   */
+  panel_status?: { label: string; detail: string; status?: string } | null
 }
 
 interface DriveFile {
@@ -371,7 +377,7 @@ function DocumentsPanel({
         <ul className="doc-list" aria-label="Project documents">
           {documents.slice(0, MAX_VISIBLE_DOCS).map((doc) => {
             const typeBadge = fileTypeBadge(doc.original_name)
-            const notIndexed = doc.chunk_count === 0
+            const indexNote = doc.panel_status
             return (
               <li key={doc.id} className="doc-row">
                 <div className="doc-row__main">
@@ -379,12 +385,12 @@ function DocumentsPanel({
                     {doc.original_name}
                   </span>
                   <span className="doc-row__meta">
-                    {notIndexed ? (
+                    {indexNote ? (
                       <span
                         className="doc-tag doc-tag--not-indexed"
-                        title="Extraction returned no usable text; the assistant cannot read this document"
+                        title={indexNote.detail || undefined}
                       >
-                        Not indexed
+                        {indexNote.label || 'Not indexed'}
                       </span>
                     ) : typeBadge ? (
                       <span className={`doc-tag doc-tag--type doc-tag--type-${typeBadge.kind}`}>

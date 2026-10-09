@@ -24,7 +24,17 @@ from sqlalchemy import and_, delete, func, or_, select, text as sqla_text
 from sqlalchemy.exc import IntegrityError
 
 from app.core.db import SessionLocal, engine, get_database_url
-from app.core.ingest_status import EXTRACTOR_VERSION, INDEXED, NO_CHUNK_STATUSES, TOMBSTONED
+from app.core.ingest_status import (
+    EXTRACT_FAILED,
+    EXTRACTOR_VERSION,
+    INDEXED,
+    INDEXED_STATUSES,
+    NO_CHUNK_STATUSES,
+    QUARANTINED,
+    TOMBSTONED,
+    UNSUPPORTED_TYPE,
+    ZERO_CHUNK,
+)
 from app.core.models import Document, IngestionJob, Project, ProjectFact
 from app.core.system_projects import GENERAL_KNOWLEDGE_PROJECT_DEFAULT, general_knowledge_env, primary_general_knowledge_project
 
@@ -244,6 +254,75 @@ def _path_looks_present(path: str) -> bool:
     return bool(path) and os.path.isfile(path) and os.path.getsize(path) > 0
 
 
+# A zero chunk count is not an extraction failure. These two stored statuses
+# are the ones that mean the extract itself produced nothing.
+_EXTRACT_FAILURE_DETAIL = (
+    "Extraction returned no usable text; the assistant cannot read this document"
+)
+_STORED_NOT_IN_INDEX = (
+    "This file is stored and has not been added to the project knowledge base."
+)
+_STATUS_DETAIL = {
+    ZERO_CHUNK: _EXTRACT_FAILURE_DETAIL,
+    EXTRACT_FAILED: _EXTRACT_FAILURE_DETAIL,
+    UNSUPPORTED_TYPE: "This file type is not added to the project knowledge base.",
+    TOMBSTONED: "This file is no longer in the project.",
+    QUARANTINED: "This file is quarantined and is not in the project knowledge base.",
+}
+
+
+def _indexing_record(doc: Dict[str, Any]) -> Dict[str, Any]:
+    meta = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+    recorded = meta.get("indexing") if isinstance(meta.get("indexing"), dict) else None
+    if recorded:
+        return recorded
+    direct = doc.get("indexing_status")
+    return direct if isinstance(direct, dict) else {}
+
+
+def panel_status_for(doc: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """The Documents-panel note for a file project search does not hold.
+
+    The detail is the reason already stored on the row (the index skip, or
+    the ingest status and its reason). A missing chunk count never becomes
+    an extraction failure on its own.
+    """
+    if int(doc.get("chunk_count") or 0) > 0 or doc.get("searchable"):
+        return None
+    indexing = _indexing_record(doc)
+    ingest = str(doc.get("ingest_status") or "").strip()
+    reason = str(doc.get("ingest_status_reason") or "").strip()
+    status = str(indexing.get("status") or "").strip()
+    detail = str(indexing.get("detail") or "").strip()
+    if status and status not in INDEXED_STATUSES:
+        return {
+            "label": "Not indexed",
+            "detail": detail or reason or _STATUS_DETAIL.get(ingest, _STORED_NOT_IN_INDEX),
+            "status": status,
+        }
+    if ingest in NO_CHUNK_STATUSES:
+        return {
+            "label": "Not indexed",
+            "detail": reason or _STATUS_DETAIL.get(ingest, _STORED_NOT_IN_INDEX),
+            "status": ingest,
+        }
+    return {
+        "label": "Not indexed",
+        "detail": reason or _STORED_NOT_IN_INDEX,
+        "status": ingest or "not_indexed",
+    }
+
+
+def attach_panel_status(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Set or clear ``panel_status`` from the document's current fields."""
+    note = panel_status_for(doc)
+    if note:
+        doc["panel_status"] = note
+    else:
+        doc.pop("panel_status", None)
+    return doc
+
+
 def _document_as_dict(document: Document) -> Dict[str, Any]:
     out = {
         "id": document.id,
@@ -274,6 +353,7 @@ def _document_as_dict(document: Document) -> Dict[str, Any]:
     local = _path_looks_present(out.get("file_path") or "")
     out["has_remote_source"] = bool(pointers["drive_file_id"])
     out["has_file"] = local or out["has_remote_source"]
+    attach_panel_status(out)
     return out
 
 

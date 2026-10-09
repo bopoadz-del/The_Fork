@@ -306,9 +306,9 @@ async def list_projects(auth: dict = Depends(require_user)):
 async def get_project(project_id: str, auth: dict = Depends(require_user)):
     """Project detail — documents + the computed readiness gate.
 
-    Documents are enriched with ``chunk_count`` so the frontend can render
-    a "Not indexed" badge for docs the extractor failed on (count == 0)
-    without making N extra round-trips.
+    Documents are enriched with the live ``chunk_count`` and ``panel_status``.
+    The badge states the reason stored on the row. A count of zero is not
+    treated as an extraction failure.
     """
     proj = _owned_or_404(
         project_id, auth["user_id"], read_only=True,
@@ -352,6 +352,9 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
                 _idx_meta = (doc.get("metadata") or {}).get("indexing")
                 if _idx_meta:
                     doc["indexing_status"] = _idx_meta
+                # Live counts override the ledger. Recompute the note so a
+                # file that now has chunks does not keep a not-indexed label.
+                store.attach_panel_status(doc)
     except Exception:
         # Enrichment is best-effort — never break the project load on it.
         logger.warning(
