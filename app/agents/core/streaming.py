@@ -39,7 +39,7 @@ async def _chat_stream_impl(
         _build_missing_reference_answer, _build_sources_from_audit, _chunks,
         _calc_input_question, _compose_boq_scope_wbs_answer, _compose_excerpt_boq_instead_of_retry,
         _conflicting_tools_after_predispatch, _cost_grounding_enabled, _empty_router_verdict,
-        _file_tool_hint, _final_text_needs_forced_retry, _forced_retry_min_seconds,
+        _file_tool_hint, _final_text_needs_forced_retry, _forced_retry_min_seconds, _forced_retry_nudge,
         _fulfill_answer_report, _has_unread_windows, _inline_boq_hard_excludes,
         _is_capability_request, _is_cost_shaped_query, _latest_operator_ask, _llm_config,
         _looks_like_internal_context_leak, _looks_like_internal_tool_json,
@@ -881,7 +881,8 @@ async def _chat_stream_impl(
                         )
                     elif promise_hold:
                         messages.append(
-                            {"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE}
+                            {"role": "user", "content": (await _off_loop(_forced_retry_nudge, final_text))
+                             or _SEARCH_PREAMBLE_RETRY_NUDGE}
                         )
                     _set_phase("forced-retry (streamed-synth)")
                     forced_resp = await self._call_llm(
@@ -1093,10 +1094,9 @@ async def _chat_stream_impl(
                             if _timing:
                                 _timing_log("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
                                              len(raw_content), time.monotonic() - _turn_t0)
-                            if final_text == _TOOL_FORMAT_FALLBACK:
-                                messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
-                            elif (await _off_loop(_looks_like_search_preamble, final_text)):
-                                messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
+                            _nudge = await _off_loop(_forced_retry_nudge, final_text)
+                            if _nudge:
+                                messages.append({"role": "user", "content": _nudge})
                             _fr_t0 = time.monotonic()
                             _set_phase("forced-retry")
                             forced_resp = await self._call_llm(
