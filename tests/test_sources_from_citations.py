@@ -83,7 +83,7 @@ def test_build_sources_uses_cited_chunks_when_present(monkeypatch):
     out = _build_sources_from_audit(audit, text)
 
     assert len(out) == 1
-    assert out[0]["page_or_section"] == "chunk #65"
+    assert (out[0]["chunk_index"], out[0]["page_or_section"]) == (65, "")
     assert out[0]["doc_name"] == "XYZ-406_HSE.pdf"
     # Score 0.69 → Medium, not High
     assert out[0]["confidence"] == "Medium"
@@ -103,7 +103,8 @@ def test_build_sources_falls_back_when_no_citations(monkeypatch):
     out = _build_sources_from_audit(audit, "answer with no citations")
     assert len(out) == 3
     # Top 3 by score desc: 0.78, 0.77, 0.74 — chunks 0, 18, 4
-    assert [c["page_or_section"] for c in out] == ["chunk #0", "chunk #18", "chunk #4"]
+    assert [c["chunk_index"] for c in out] == [0, 18, 4]
+    assert all(c["page_or_section"] == "" for c in out)
 
 
 def test_build_sources_falls_back_when_citation_doesnt_match(monkeypatch):
@@ -117,7 +118,7 @@ def test_build_sources_falls_back_when_citation_doesnt_match(monkeypatch):
     out = _build_sources_from_audit(audit, "see [source: other.pdf, chunk 99]")
     # Citation didn't match any injected chunk → fall back
     assert len(out) == 1
-    assert out[0]["page_or_section"] == "chunk #0"
+    assert (out[0]["chunk_index"], out[0]["page_or_section"]) == (0, "")
 
 
 def test_build_sources_unicode_dash_matches(monkeypatch):
@@ -131,7 +132,7 @@ def test_build_sources_unicode_dash_matches(monkeypatch):
     text = "see [source: XYZ‑406_HSE.pdf, chunk 65]"  # NBH
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
-    assert out[0]["page_or_section"] == "chunk #65"
+    assert (out[0]["chunk_index"], out[0]["page_or_section"]) == (65, "")
 
 
 def test_build_sources_empty_audit_returns_empty():
@@ -174,7 +175,7 @@ def test_build_sources_matches_inline_bracket_cite_by_chunk_index(monkeypatch):
     text = "Trees must be protected (Source: [AB-2022-202 - Site Demolition … Part 3], chunk 941)."
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1, out
-    assert out[0]["page_or_section"] == "chunk #941"
+    assert (out[0]["chunk_index"], out[0]["page_or_section"]) == (941, "")
 
 
 # ── PR #111 — bracketless "Source:" prefix form (gpt-oss variant) ──────
@@ -214,7 +215,7 @@ def test_build_sources_uses_bracketless_citation(monkeypatch):
     text = "Answer body.\nSource: XYZ-406_HSE.pdf, chunk 65."
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
-    assert out[0]["page_or_section"] == "chunk #65"
+    assert (out[0]["chunk_index"], out[0]["page_or_section"]) == (65, "")
 
 
 # ── PR #112 — [doc_id=X chunk=N] form (gpt-oss technical-precision style) ──
@@ -247,7 +248,7 @@ def test_build_sources_uses_doc_id_citation(monkeypatch):
     text = "Per the procedure [doc_id=d0c0000e, chunk 65, score 0.697]."
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
-    assert out[0]["page_or_section"] == "chunk #65"
+    assert (out[0]["chunk_index"], out[0]["page_or_section"]) == (65, "")
     assert out[0]["doc_id"] == "d0c0000e"
 
 
@@ -307,7 +308,8 @@ def test_build_sources_emits_fallback_when_citation_unparseable(monkeypatch):
     text = "The answer is based on some external document not in the project."
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 3
-    assert [c["page_or_section"] for c in out] == ["chunk #0", "chunk #3", "chunk #5"]
+    assert [c["chunk_index"] for c in out] == [0, 3, 5]
+    assert all(c["page_or_section"] == "" for c in out)
 
 
 def test_build_sources_uses_filename_mention_fallback(monkeypatch):
@@ -328,7 +330,7 @@ def test_build_sources_uses_filename_mention_fallback(monkeypatch):
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
     assert out[0]["doc_name"] == "Diff BOQ Qty Vs Revised Qty.xlsx"
-    assert out[0]["page_or_section"] == "chunk #0"
+    assert (out[0]["chunk_index"], out[0]["page_or_section"]) == (0, "")
 
 
 # ── P0B: source contract hardening ───────────────────────────────────────────
@@ -527,4 +529,4 @@ def test_sources_match_src_marker_to_injected_chunk(monkeypatch):
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1, out
     assert out[0]["doc_id"] == "d23"
-    assert out[0]["page_or_section"] == "chunk #12"
+    assert (out[0]["chunk_index"], out[0]["page_or_section"]) == (12, "")

@@ -8848,7 +8848,8 @@ def _extract_cited_chunk_indexes(text: str) -> list[tuple[str, int]]:
 
 def page_or_section_label(chunk_meta: dict[str, Any]) -> str:
     """Where in its source a cited chunk sits: ``p. N`` when the page is known
-    (PDF sources), else the chunk label."""
+    (PDF sources), else nothing. A chunk number is the index's, not a place
+    a reader can find."""
     page = chunk_meta.get("page")
     try:
         page_no = int(page) if page is not None else 0
@@ -8856,7 +8857,7 @@ def page_or_section_label(chunk_meta: dict[str, Any]) -> str:
         page_no = 0
     if page_no > 0:
         return f"p. {page_no}"
-    return f"chunk #{chunk_meta.get('chunk_index')}"
+    return ""
 
 
 def _platform_calculator_source(final_text: str) -> dict[str, Any] | None:

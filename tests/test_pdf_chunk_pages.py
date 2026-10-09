@@ -239,12 +239,12 @@ def test_migration_0021_adds_page_to_every_chunk_table_once(tmp_path):
 # ── citations ────────────────────────────────────────────────────────────────
 
 
-def test_citation_shows_the_page_when_known_else_the_chunk_label():
+def test_citation_shows_the_page_when_known_else_nothing():
     from app.agents.runtime import page_or_section_label
 
     assert page_or_section_label({"page": 123, "chunk_index": 7}) == "p. 123"
-    assert page_or_section_label({"page": None, "chunk_index": 7}) == "chunk #7"
-    assert page_or_section_label({"chunk_index": 7}) == "chunk #7"
+    assert page_or_section_label({"page": None, "chunk_index": 7}) == ""
+    assert page_or_section_label({"chunk_index": 7}) == ""
 
 
 def test_injected_chunk_audit_carries_the_page():
