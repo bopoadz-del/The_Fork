@@ -72,3 +72,16 @@ def test_no_credentials_fails_closed_with_a_reason(tmp_path, monkeypatch):
     out = tmp_path / "c.json"
     assert cov.main(["--out", str(out)]) == 1
     assert json.loads(out.read_text()) == {"ok": False, "error": "aws ecs describe-services failed: no credentials"}
+
+
+def test_a_comparison_that_read_nothing_is_not_a_pass():
+    cov = _load()
+    result = cov.coverage(cov.parse_rules(RULES), [], lambda t: t)
+    result["structural_rules"] = 0
+    assert cov.vacuous(result)
+    result = cov.coverage(cov.parse_rules(RULES), ["unrelated text"], lambda t: t)
+    result["structural_rules"] = 5
+    assert cov.vacuous(result) == "no secret rule matched the text read"
+    result = cov.coverage(cov.parse_rules(RULES), ["Zorblat Towers"], _scrub_only("Zorblat Towers"))
+    result["structural_rules"] = 5
+    assert cov.vacuous(result) == ""

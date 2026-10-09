@@ -87,6 +87,19 @@ def coverage(patterns: Sequence[str], corpus: Iterable[str], scrub) -> Dict[str,
     }
 
 
+def vacuous(result: Dict[str, object]) -> str:
+    """Why a comparison proved nothing, or "". A check that read no text, built
+    no structural rule or matched no secret rule cannot say the secret is
+    covered -- it fails, never passes."""
+    if not result.get("corpus_texts"):
+        return "no text of the scrubbed projects was read"
+    if not result.get("structural_rules"):
+        return "the structural scrub built no rule"
+    if not result.get("rules_matching_corpus"):
+        return "no secret rule matched the text read"
+    return ""
+
+
 # -- live reads (deploy credentials) --------------------------------------------
 
 
@@ -115,6 +128,11 @@ def _resolve(value_from: str) -> str:
 
 
 def live_values(cluster: str, service: str, names: Sequence[str]) -> Dict[str, str]:
+    """The named values (plain or secret), and EVERY plain ``environment``
+    value of the live task into os.environ: the scrub's own configuration
+    (which project is the master-corpus source, which are general knowledge)
+    is task config, and without it the check reads the defaults and compares
+    nothing."""
     svc = _aws("ecs", "describe-services", "--cluster", cluster, "--services", service)
     td_arn = svc["services"][0]["taskDefinition"]
     td = _aws("ecs", "describe-task-definition", "--task-definition", td_arn)["taskDefinition"]
@@ -123,6 +141,8 @@ def live_values(cluster: str, service: str, names: Sequence[str]) -> Dict[str, s
         for row in container.get("environment") or []:
             if row.get("name") in names:
                 out[row["name"]] = str(row.get("value") or "")
+            elif row.get("name"):
+                os.environ[str(row["name"])] = str(row.get("value") or "")
         for row in container.get("secrets") or []:
             if row.get("name") in names and row["name"] not in out:
                 out[row["name"]] = _resolve(str(row.get("valueFrom") or ""))
@@ -184,7 +204,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = coverage(patterns, texts, identifier_scrub.scrub_identifiers)
         result["scrubbed_projects"] = n_projects
         result["structural_rules"] = identifier_scrub.rules_loaded()
-        result["ok"] = result["uncovered_matches"] == 0 and result["unparseable_rules"] == 0
+        result["vacuous"] = vacuous(result)
+        result["ok"] = (
+            not result["vacuous"]
+            and result["uncovered_matches"] == 0
+            and result["unparseable_rules"] == 0
+        )
     except CoverageError as exc:
         result = {"ok": False, "error": str(exc)}
     Path(args.out).write_text(json.dumps(result, indent=2) + "\n")
