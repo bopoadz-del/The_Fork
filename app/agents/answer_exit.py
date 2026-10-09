@@ -854,6 +854,50 @@ def _machine_wording(text: str) -> str:
     )
 
 
+# ── One Source line per credit ───────────────────────────────────────────────
+
+_WHOLE_SOURCE_LINE_RE = re.compile(
+    r"^[ \t]*(?:[-*•][ \t]+)?\**[ \t]*Sources?[ \t]*\**[ \t]*:[ \t]*\**[ \t]*(?P<body>.*?)[ \t]*\**[ \t]*\.?[ \t]*$",
+    re.IGNORECASE,
+)
+_LABEL_JOINS_ONLY_RE = re.compile(r"(?:[\s.*`\"'→›»>|·;,/=-]|\bvia\b|\band\b)*", re.IGNORECASE)
+
+
+def _dedupe_source_lines(text: str) -> str:
+    """A Source line that repeats another, or that only names platform
+    labels a calculator credit in the same answer already gives (``Platform
+    calculator → Unit conversion`` beside ``Unit conversion — platform
+    calculator (…)``), is removed."""
+    from app.lib.source_labels import CALCULATOR_SUFFIX
+
+    lines = text.split("\n")
+    found = [(i, m.group("body")) for i, ln in enumerate(lines) if (m := _WHOLE_SOURCE_LINE_RE.match(ln))]
+    if len(found) < 2:
+        return text
+    suffix = CALCULATOR_SUFFIX.lower()
+    credit_mark = f" — {suffix}"
+    credited = {body.lower().split(credit_mark)[0].strip() for _i, body in found if credit_mark in body.lower()}
+    names = sorted(credited | {suffix}, key=len, reverse=True)
+    seen: set[str] = set()
+    drop: set[int] = set()
+    for i, body in found:
+        key = re.sub(r"\s+", " ", body.lower()).strip(" .")
+        if key in seen:
+            drop.add(i)
+            continue
+        seen.add(key)
+        if not credited or credit_mark in body.lower():
+            continue
+        rest = body.lower()
+        for name in names:
+            rest = rest.replace(name, " ")
+        if rest != body.lower() and _LABEL_JOINS_ONLY_RE.fullmatch(rest):
+            drop.add(i)
+    if not drop:
+        return text
+    return "\n".join(ln for i, ln in enumerate(lines) if i not in drop)
+
+
 # ── The check ────────────────────────────────────────────────────────────────
 
 _JOINED_MARKS_RE = re.compile(rf"{_MARK}(?:[ \t]*(?:[,;&]|\band\b|\bor\b)?[ \t]*{_MARK})+", re.IGNORECASE)
@@ -910,6 +954,7 @@ def check_text(
         out = _machine_wording(out)
         out = _restore(out, held)
         out = _tidy(out)
+        out = _dedupe_source_lines(out)
         if out == text:
             return text
         out = re.sub(r"[ \t]+\n", "\n", out)

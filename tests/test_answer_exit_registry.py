@@ -622,3 +622,75 @@ def test_queued_evidence():
     rows = ax.check_sources([{"doc_id": doc["doc_id"], "doc_name": doc["name"], "chunk_index": 0,
                               "page_or_section": "chunk #0"}], turn=turn)
     assert rows == [{"doc_id": doc["doc_id"], "doc_name": doc["name"], "chunk_index": 0, "page_or_section": ""}]
+
+
+# ── Source labels: display units, one line per credit ───────────────────────
+
+def _exponent_units():
+    from app.agents.base.formulas.construction_formulas_planning import _FAMILIES
+
+    known = {u for table in _FAMILIES.values() for u in table}
+    declared = {p.unit for s in formula_registry.all_specs() for p in formula_registry.parameters(s).values()}
+    return sorted(u for u in known | declared if u and re.search(r"[A-Za-z][234](?![0-9A-Za-z])", u)
+                  and not re.search(r"co2", u, re.IGNORECASE))
+
+
+_RAW_EXPONENT_RE = re.compile(r"(?<=[A-Za-z])(?<![Cc][Oo])[234](?![0-9A-Za-z])")
+
+
+@pytest.mark.parametrize("unit", _exponent_units())
+def test_unit_codes_in_a_calculator_label_show_as_display_units(unit):
+    from app.lib.source_labels import calculator_label
+
+    label = calculator_label("pe_unit_convert", {"value": 250, "from_unit": unit, "to_unit": unit})
+    assert not _RAW_EXPONENT_RE.search(label), label
+    assert re.search("[²³⁴]", label), label
+
+
+def _formulas_with_exponent_inputs():
+    out = []
+    for spec in formula_registry.all_specs():
+        params = formula_registry.parameters(spec)
+        hit = next((n for n, p in params.items() if p.unit and _RAW_EXPONENT_RE.search(p.unit)
+                    and p.kind in formula_registry.NUMERIC_KINDS and p.kind in ("number", "integer")), None)
+        if hit and spec.display_name:
+            out.append((spec.name, hit))
+    return out
+
+
+@pytest.mark.parametrize("formula,param", _formulas_with_exponent_inputs())
+def test_declared_units_in_a_calculator_label_show_as_display_units(formula, param):
+    from app.lib.source_labels import calculator_label
+
+    label = calculator_label(formula, {param: 12})
+    assert not _RAW_EXPONENT_RE.search(label.split("(", 1)[-1]), label
+
+
+_JOINS = (" → ", " -> ", " > ", " / ", ", ", " via ")
+_CREDIT_CASES = [(s.name, j) for s in formula_registry.all_specs() if s.display_name for j in _JOINS]
+
+
+@pytest.mark.parametrize("formula,join", _CREDIT_CASES[::7] + _CREDIT_CASES[-len(_JOINS):])
+def test_one_source_line_per_calculator_credit(formula, join):
+    ax = _ax()
+    from app.lib.source_labels import calculator_label, formula_display_name, tool_display_name
+
+    credit = f"Source: {calculator_label(formula, {})}."
+    platform = tool_display_name("construction_calc")
+    name = formula_display_name(formula)
+    for extra in (f"Source: {platform}{join}{name}", f"Source: {name}{join}{platform}",
+                  f"Source: {platform}", credit):
+        for lines in ((extra, credit), (credit, extra)):
+            text = "The result is 42.\n\n" + "\n".join(lines)
+            out = ax.check_text(text)
+            assert out.count("Source:") == 1 and credit.rstrip(".") in out, (text, out)
+            _assert_idempotent(out)
+
+
+def test_a_document_source_beside_a_calculator_credit_is_kept():
+    ax = _ax()
+    from app.lib.source_labels import calculator_label
+
+    credit = f"Source: {calculator_label('concrete_volume', {})}."
+    text = f"The slab is 900 m³.\n\nSource: Structural Notes.pdf, p. 4.\n{credit}"
+    assert ax.check_text(text) == text
