@@ -130,11 +130,11 @@ def _resolve(value_from: str) -> str:
 
 
 def live_values(cluster: str, service: str, names: Sequence[str]) -> Dict[str, str]:
-    """The named values (plain or secret), and EVERY plain ``environment``
-    value of the live task into os.environ: the scrub's own configuration
-    (which project is the master-corpus source, which are general knowledge)
-    is task config, and without it the check reads the defaults and compares
-    nothing."""
+    """The named values (plain or secret), and every OTHER value of the live
+    task -- plain environment and secrets alike -- into os.environ, so the
+    scrub resolves its configuration exactly as the live task does. Without
+    it the check reads the defaults and compares nothing. No value is ever
+    printed."""
     svc = _aws("ecs", "describe-services", "--cluster", cluster, "--services", service)
     td_arn = svc["services"][0]["taskDefinition"]
     td = _aws("ecs", "describe-task-definition", "--task-definition", td_arn)["taskDefinition"]
@@ -146,10 +146,18 @@ def live_values(cluster: str, service: str, names: Sequence[str]) -> Dict[str, s
             elif row.get("name"):
                 os.environ[str(row["name"])] = str(row.get("value") or "")
         for row in container.get("secrets") or []:
-            if row.get("name") and row["name"] not in names:
-                _SECRET_NAMES.add(str(row["name"]))
-            if row.get("name") in names and row["name"] not in out:
-                out[row["name"]] = _resolve(str(row.get("valueFrom") or ""))
+            name = str(row.get("name") or "")
+            if not name:
+                continue
+            _SECRET_NAMES.add(name)
+            value = _resolve(str(row.get("valueFrom") or ""))
+            if name in names:
+                out.setdefault(name, value)
+            else:
+                # The scrub's own configuration (which project is the source,
+                # which are general knowledge) is carried as task secrets:
+                # resolved into this process exactly as the live task gets it.
+                os.environ[name] = value
     return out
 
 
@@ -162,6 +170,11 @@ def live_corpus(sample_chunks: int, counts: Optional[Dict[str, object]] = None) 
 
     spec = identifier_scrub._load_spec()
     ids = identifier_scrub._scrubbed_project_ids(spec)
+    from app.core.models import rag_chunk_table_name
+
+    # The live chunk table (the app's own chokepoint; the legacy ``chunks``
+    # table is retired and empty).
+    chunk_table = rag_chunk_table_name(os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip())
     texts: List[str] = []
     counts = counts if counts is not None else {}
     projects._ensure_db()
@@ -182,7 +195,7 @@ def live_corpus(sample_chunks: int, counts: Optional[Dict[str, object]] = None) 
                     texts.append(str(name))
                     texts.append(str(name).replace("_", " "))
             for (body,) in session.execute(sql(
-                "SELECT text FROM chunks WHERE project_id = :pid ORDER BY doc_id, chunk_index LIMIT :n"
+                f"SELECT text FROM {chunk_table} WHERE project_id = :pid ORDER BY doc_id, chunk_index LIMIT :n"
             ), {"pid": pid, "n": int(sample_chunks)}):
                 counts["chunk_rows"] += 1
                 if body:
@@ -190,7 +203,7 @@ def live_corpus(sample_chunks: int, counts: Optional[Dict[str, object]] = None) 
         # Where the indexed text actually lives, by rank -- counts and flags
         # only, never an id: tells a misconfigured source from an empty one.
         top = session.execute(sql(
-            "SELECT project_id, COUNT(*) AS n FROM chunks GROUP BY project_id ORDER BY n DESC LIMIT 8"
+            f"SELECT project_id, COUNT(*) AS n FROM {chunk_table} GROUP BY project_id ORDER BY n DESC LIMIT 8"
         )).all()
         counts["chunk_holders"] = [
             {"rank": i + 1, "chunks": int(n), "scrubbed": pid in ids}
