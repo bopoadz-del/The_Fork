@@ -34,6 +34,8 @@ _parse_unit = getattr(units, "parse_unit", None)
 _convert_units = getattr(units, "convert_units", None)
 _convert_written = getattr(formula_registry, "convert_written_units", None)
 _CONTEXT_LABELS = getattr(units, "CONVERSION_CONTEXT", {})
+_unit_key = getattr(units, "unit_key", lambda token: str(token).strip().lower())
+_NO_CONVERTER = ("registry", "has-no-unit-converter")
 _CONTEXT = {"crew_size": 4, "hours_per_day": 8, "days_per_week": 6}
 
 _NUMERIC = formula_registry.NUMERIC_KINDS
@@ -84,8 +86,8 @@ def _scale_of(value) -> float:
 
 def _one_per_scale(table, written: str):
     """One unit per distinct factor of ``table``, other than ``written``'s."""
-    own = units.unit_key(written)
-    own_scale = next((_scale_of(v) for raw, v in table.items() if units.unit_key(raw) == own), None)
+    own = _unit_key(written)
+    own_scale = next((_scale_of(v) for raw, v in table.items() if _unit_key(raw) == own), None)
     seen, out = {own_scale}, []
     for raw, value in table.items():
         scale = _scale_of(value)
@@ -97,9 +99,9 @@ def _one_per_scale(table, written: str):
 
 
 def _family_of(written: str):
-    key = units.unit_key(written)
+    key = _unit_key(written)
     for family, table in _unit_tables().items():
-        if any(units.unit_key(raw) == key for raw in table):
+        if any(_unit_key(raw) == key for raw in table):
             return table
     return None
 
@@ -146,12 +148,13 @@ def test_every_numeric_input_declares_a_unit_the_converter_knows(formula, name):
     assert unit == "-" or _parse_unit(unit) is not None, f"{formula}.{name} declares {unit!r}"
 
 
-FAMILY_UNITS = [(family, raw) for family, table in _unit_tables().items() for raw in table]
+FAMILY_UNITS = ([(family, raw) for family, table in _unit_tables().items() for raw in table]
+                or [_NO_CONVERTER])
 
 
 @pytest.mark.parametrize("family,unit", FAMILY_UNITS, ids=[f"{f}:{u}" for f, u in FAMILY_UNITS])
 def test_every_unit_round_trips_through_its_base(family, unit):
-    assert _convert_units is not None
+    assert _convert_units is not None, "the base tool has no unit families"
     base = next(iter(_unit_tables()[family]))
     there = _convert_units(12.5, unit, base, **_CONTEXT)
     assert "value_out" in there, there
@@ -162,7 +165,7 @@ def test_every_unit_round_trips_through_its_base(family, unit):
 # ── another unit of the same kind: converted, never refused ────────────────
 
 DIMENSIONAL = _dimensional_inputs()
-CONVERTIBLE = [(f, n) for f, n in DIMENSIONAL if _alternates(_param(f, n).unit)]
+CONVERTIBLE = [(f, n) for f, n in DIMENSIONAL if _alternates(_param(f, n).unit)] or [_NO_CONVERTER]
 
 
 @pytest.mark.parametrize("formula,name", CONVERTIBLE, ids=_ids(CONVERTIBLE))
@@ -210,7 +213,7 @@ def _metamorphic_cases():
     return cases
 
 
-METAMORPHIC = _metamorphic_cases()
+METAMORPHIC = _metamorphic_cases() or [_NO_CONVERTER]
 
 
 def test_the_metamorphic_cases_span_the_formula_owners():
@@ -220,6 +223,7 @@ def test_the_metamorphic_cases_span_the_formula_owners():
 
 @pytest.mark.parametrize("formula,name", METAMORPHIC, ids=_ids(METAMORPHIC))
 def test_the_same_figure_in_another_unit_gives_the_same_result(formula, name):
+    assert _convert_units is not None, "no calculator input is converted by the base tool"
     spec = formula_registry.get(formula)
     base = _baseline(spec)
     p = _param(formula, name)
@@ -292,7 +296,7 @@ NEEDS_CONTEXT = _needs_context()
 @pytest.mark.parametrize("formula,name,unit", NEEDS_CONTEXT,
                          ids=[f"{f}.{n}:{u}" for f, n, u in NEEDS_CONTEXT])
 def test_a_conversion_that_needs_crew_or_hours_asks_by_label(formula, name, unit):
-    assert _convert_written is not None
+    assert _convert_written is not None, "no calculator input is converted by the base tool"
     p = _param(formula, name)
     needs = _convert_units(400, unit, p.unit)["needs_input"]
     values, _conv, rejected = _convert_written(formula, {name: f"400 {unit}"})
@@ -327,8 +331,8 @@ def test_labour_effort_to_working_days_asks_for_the_crew_size_and_working_hours(
 # ── a figure written in a sentence ────────────────────────────────────────
 
 def _written_in_prose(unit: str) -> bool:
-    prose = {units.unit_key(t) for t in units.text_unit_tokens()} | {"currency"}
-    return all(units.unit_key(part) in prose for part in unit.split("/"))
+    prose = {_unit_key(t) for t in getattr(units, "text_unit_tokens", list)()} | {"currency"}
+    return all(_unit_key(part) in prose for part in unit.split("/"))
 
 
 def _text_cases():
@@ -345,12 +349,13 @@ def _text_cases():
     return cases
 
 
-TEXT_CASES = _text_cases()
+TEXT_CASES = _text_cases() if _convert_units else [(*_NO_CONVERTER, "-")]
 
 
 @pytest.mark.parametrize("formula,name,unit", TEXT_CASES,
                          ids=[f"{f}.{n}:{u}" for f, n, u in TEXT_CASES])
 def test_a_figure_written_in_another_unit_in_a_sentence_is_converted(formula, name, unit):
+    assert _convert_units is not None, "no calculator input is converted by the base tool"
     spec = formula_registry.get(formula)
     p = _param(formula, name)
     value = _inside(p)
