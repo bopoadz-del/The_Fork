@@ -13,7 +13,7 @@ the inputs do.
 """
 from __future__ import annotations
 
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import SIGNED_FIGURE, formula
 
 import math
 
@@ -30,6 +30,12 @@ import json
 import logging
 
 import re
+
+from app.agents.base.formulas.construction_formulas_planning import (
+    convert_units as _convert_units,
+    parse_unit as _parse_unit,
+    text_unit_pattern as _text_unit_pattern,
+)
 
 # Formulas (and the helpers only they use) live in their owner's package;
 # imported back so existing imports of this module keep working.
@@ -227,16 +233,7 @@ _SYMBOL_VALUE_RE = re.compile(
     r"((?:[A-Za-z\u00b2\u00b3\u2074^/][A-Za-z0-9\u00b2\u00b3\u2074^/]*)?)\s*$"
 )
 
-_E_UNIT_TO_MPA: Dict[str, Optional[float]] = {
-    "": None, "mpa": 1.0, "n/mm2": 1.0, "n/mm^2": 1.0, "n/mm\u00b2": 1.0,
-    "gpa": 1e3, "kn/mm2": 1e3, "kn/mm^2": 1e3, "kn/mm\u00b2": 1e3,
-}
-
-_I_UNIT_TO_MM4: Dict[str, Optional[float]] = {
-    "": None, "mm4": 1.0, "mm^4": 1.0, "mm\u2074": 1.0,
-    "m4": 1e12, "m^4": 1e12, "m\u2074": 1e12,
-    "cm4": 1e4, "cm^4": 1e4, "cm\u2074": 1e4,
-}
+_SYMBOL_UNIT: Dict[str, str] = {"e": "MPa", "i": "mm4"}
 
 class _UnknownUnit(ValueError):
     """A symbol carried a unit this binder cannot scale. Refuse, never guess."""
@@ -252,7 +249,7 @@ def _canonical_from_symbol(symbol: str, value: Any) -> Any:
     """
     if symbol == "c":
         return value
-    table = _E_UNIT_TO_MPA if symbol == "e" else _I_UNIT_TO_MM4
+    target = _SYMBOL_UNIT[symbol]
     if isinstance(value, str):
         m = _SYMBOL_VALUE_RE.match(value)
         if not m:
@@ -264,15 +261,14 @@ def _canonical_from_symbol(symbol: str, value: Any) -> Any:
                     f"{symbol.upper()}={value!r}: cannot read a number and a unit from it")
             return value
         number = float(m.group(1).replace(",", "."))
-        unit = m.group(2).lower()
-        if unit not in table:
-            known = ", ".join(u for u in table if u)
-            raise _UnknownUnit(
-                f"{symbol.upper()}={value!r}: unit {unit!r} is not one this binder "
-                f"can scale ({known})")
-        factor = table[unit]
-        if factor is not None:
-            return number * factor
+        unit = m.group(2)
+        if unit:
+            out = _convert_units(number, unit, target)
+            if "value_out" not in out:
+                raise _UnknownUnit(
+                    f"{symbol.upper()}={value!r}: unit {unit!r} is not one this binder "
+                    f"can scale to {target} ({out.get('error', '')})")
+            return out["value_out"]
     else:
         try:
             number = float(value)
@@ -765,9 +761,10 @@ _TONNE_INCOMING = frozenset({
     "quantity_t", "qty_t", "tonnes", "tons", "tonne", "ton",
 })
 
-_FRACTION_PCT_KEYS = frozenset({
-    "waste_pct", "indirect_pct", "markup_pct",
-})
+def _percent_named_fraction(key: str, unit: Any) -> bool:
+    """An input that takes a fraction while its name says percent."""
+    words = _snake_key(key).split("_")
+    return str(unit or "").strip().lower() == "fraction" and words[-1] in ("pct", "percent")
 
 def _value_has_number(val: Any) -> bool:
     if isinstance(val, (int, float)) and not isinstance(val, bool):
@@ -853,18 +850,12 @@ def coerce_calc_params(raw: Any) -> Dict[str, Any]:
         return {}
     return {}
 
-# Length units the binder converts between when the caller's key and the
-# calculator's parameter name carry the same stem but different units. No
-# calculator takes a _cm parameter, so cm is not listed: an unmapped unit
-# fails the bind with "missing required span_mm (mm)", which is the right
-# outcome -- a named error the caller can act on.
-_LENGTH_IN_MM = {"mm": 1.0, "m": 1000.0}
-
 def _length_unit_factor(incoming: str, dest: str) -> Optional[float]:
     """Factor to convert ``incoming``'s unit to ``dest``'s, or None.
 
     Only when the two keys are the SAME quantity in different units --
-    ``span_m`` onto ``span_mm`` -- so nothing is converted across quantities.
+    ``span_m`` onto ``span_mm``, ``load_kn`` onto ``load_n`` -- so nothing
+    is converted across quantities. The factor is the base conversion tool's.
     """
     if "_" not in incoming or "_" not in dest:
         return None
@@ -872,9 +863,12 @@ def _length_unit_factor(incoming: str, dest: str) -> Optional[float]:
     dest_stem, dest_unit = dest.rsplit("_", 1)
     if inc_stem != dest_stem or inc_unit == dest_unit:
         return None
-    if inc_unit not in _LENGTH_IN_MM or dest_unit not in _LENGTH_IN_MM:
+    src, dst = _parse_unit(inc_unit), _parse_unit(dest_unit)
+    if (src is None or dst is None or src.dimension != dst.dimension or src.needs or dst.needs
+            or src.offset or dst.offset):
         return None
-    return _LENGTH_IN_MM[inc_unit] / _LENGTH_IN_MM[dest_unit]
+    out = _convert_units(1.0, inc_unit, dest_unit)
+    return out.get("value_out")
 
 def _scale_bound_value(incoming: str, dest: str, val: Any) -> Any:
     """quantity_t / tonnes → quantity_kg, and span_m → span_mm. Never invents a
@@ -901,7 +895,7 @@ def _scale_bound_value(incoming: str, dest: str, val: Any) -> Any:
         try:
             scaled = float(val) * factor
         except (TypeError, ValueError):
-            logger.debug("length token %r is not numeric", val)
+            logger.debug("unit-suffixed token %r is not numeric", val)
             return val
         logger.info("bind: converted %s=%s to %s=%s", inc, val, dest, scaled)
         return scaled
@@ -1184,10 +1178,10 @@ def bind_calculation_params(fn: Any, params: Optional[Dict[str, Any]] = None) ->
     bound, _unknown = _partition_bound_params(fn, params)
     return bound
 
-_ASK_NUM = r"(\d[\d,]*(?:\.\d+)?)"
+_ASK_NUM = rf"({SIGNED_FIGURE})"
 
 _NUM_UNIT_VALUE_RE = re.compile(
-    r"^[+\-]?\s*([\d,]+(?:\.\d+)?)\s*[A-Za-zµμ/%²³³°]+"
+    r"^\s*([+\-]?\s*[\d,]+(?:\.\d+)?)\s*[A-Za-zµμ/%²³³°]+"
 )
 
 _PLAIN_NUM_RE = re.compile(r"^[+\-]?\s*[\d,]+(?:\.\d+)?\s*$")
@@ -1485,7 +1479,7 @@ def _coerce_scalar(val: Any) -> Any:
         return float(number) if "." in number else int(number)
     match = _NUM_UNIT_VALUE_RE.match(text)
     if match:
-        number = match.group(1).replace(",", "")
+        number = match.group(1).replace(",", "").replace(" ", "")
         return float(number) if "." in number else int(number)
     return val
 
@@ -1519,6 +1513,8 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
     except (TypeError, ValueError):
         return bound
     out = dict(bound)
+    spec = _formula_spec(fn)
+    declared = dict(spec.inputs or {}) if spec else {}
     for key, val in list(out.items()):
         param = sig.parameters.get(key)
         if param is None:
@@ -1536,9 +1532,10 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(val, str):
             out[key] = _coerce_scalar(val)
         # Live excavation ask-2 sent bulking=25 (percent) not 0.25.
-        # Values in (1, 100] are percents; 1.25 stays a multiplier.
-        # cost_buildup_rebar waste_pct=10 was the same class (wrong_number 40590).
-        if key in {"bulking_factor", "swell_factor"} | _FRACTION_PCT_KEYS:
+        # Values in (1, 100] are percents; 1.25 stays a multiplier. An input
+        # declared as a fraction whose name says it is a percentage
+        # (waste_pct, markup_pct) reads a bare 10 as 10% the same way.
+        if key in {"bulking_factor", "swell_factor"} or _percent_named_fraction(key, declared.get(key)):
             number = out[key]
             if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0:
                 out[key] = float(number) / 100.0
@@ -1551,10 +1548,8 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
 _TEXT_NUM_RE = (r"[+-]?\d+(?:,\d{3})*(?:\.\d+)?"
                 r"(?:\s*[x×*]\s*10\s*\^\s*[+-]?\d+|[eE][+-]?\d+)?")
 
-_TEXT_UNIT_RE = (
-    r"(?:kN/m2|kN/m²|kN/m|N/mm2|N/mm²|mm4|mm⁴|cm4|m4|m⁴|mm2|mm²|m2|m²|m3|m³|"
-    r"GPa|MPa|kPa|kN|mm|cm|km|m/s|m|%|deg)"
-)
+# Any unit the base unit-conversion tool reads, written after a figure.
+_TEXT_UNIT_RE = _text_unit_pattern()
 
 _CODE_ACI_RE = re.compile(r"\b(?:aci|asce|aisc|tms)\b", re.IGNORECASE)
 
@@ -1603,21 +1598,16 @@ def binding_kind(unit: str) -> str:
 
 
 def _figure_unit_pattern(extra: Iterable[str] = ()) -> str:
-    """Unit tokens a figure may carry, longest first, plus this formula's own."""
-    tokens = [
-        "kN/m2", "kN/m²", "kN/m", "N/mm2", "N/mm²", "mm4", "mm⁴",
-        "cm4", "m4", "m⁴", "mm2", "mm²", "m2", "m²", "m3", "m³",
-        "GPa", "MPa", "kPa", "kN", "mm", "cm", "km", "m/s", "m", "%", "deg",
-    ]
-    seen = {token.casefold() for token in tokens}
+    """Units a figure may carry: every unit the conversion tool reads, plus
+    this formula's own declared tokens."""
+    tokens = []
     for token in extra:
         text = str(token or "").strip()
-        if not text or not binding_kind(text) or text.casefold() in seen:
-            continue
-        tokens.append(text)
-        seen.add(text.casefold())
+        if text and binding_kind(text) and text not in tokens:
+            tokens.append(text)
     tokens.sort(key=len, reverse=True)
-    return "(?:" + "|".join(re.escape(token) for token in tokens) + ")"
+    own = "|".join(re.escape(token) for token in tokens)
+    return f"(?:{_TEXT_UNIT_RE}" + (f"|(?:{own})(?![A-Za-z0-9])" if own else "") + ")"
 
 def _parse_text_number(raw: str) -> Optional[float]:
     text = str(raw).replace(",", "").strip()
@@ -1672,21 +1662,6 @@ def _text_label_map(fn: Any) -> Dict[str, str]:
             add(incoming, dest)
     return out
 
-# Unit families: a figure written in one unit is converted to the unit its
-# parameter's name declares, within the same family; across families (or
-# with no unit written) the figure is left as written.
-_UNIT_FAMILIES: Tuple[Dict[str, float], ...] = (
-    {"mm": 1e-3, "cm": 1e-2, "m": 1.0, "km": 1e3},                         # length, in m
-    {"mm4": 1e-12, "mm⁴": 1e-12, "cm4": 1e-8, "m4": 1.0, "m⁴": 1.0},      # second moment, in m4
-    {"pa": 1.0, "kpa": 1e3, "mpa": 1e6, "n/mm2": 1e6, "n/mm²": 1e6, "gpa": 1e9},  # stress, in Pa
-)
-_PARAM_SUFFIX_UNIT: Tuple[Tuple[str, str], ...] = (
-    ("_mm4", "mm4"), ("_n_mm2", "n/mm2"), ("_mpa", "mpa"), ("_kpa", "kpa"),
-    ("_gpa", "gpa"), ("_mm", "mm"), ("_m", "m"),
-)
-_LENGTH_IN_M: Dict[str, float] = _UNIT_FAMILIES[0]
-
-
 # English dimension adjectives written after the figure ("12 m long",
 # "200 mm thick") and the dimension noun each names.
 _DIMENSION_ADJECTIVES: Dict[str, str] = {
@@ -1699,16 +1674,23 @@ _DIMENSION_ADJECTIVES: Dict[str, str] = {
 }
 
 
-def _to_param_unit(num: float, unit: Optional[str], dest: str) -> float:
-    """``num`` written in ``unit``, in the unit ``dest`` declares."""
-    unit = (unit or "").strip().lower()
-    target = next((u for suf, u in _PARAM_SUFFIX_UNIT if dest.lower().endswith(suf)), None)
-    if not unit or target is None:
+def _to_param_unit(num: float, unit: Optional[str], dest: str, declared: str = "") -> Any:
+    """``num`` written in ``unit``, put into the unit ``dest`` declares (its
+    declaration, else the unit its name spells) by the base conversion tool.
+
+    A figure the tool cannot put into that unit on its own -- another kind
+    of quantity, or labour that needs a crew size -- keeps its unit written
+    ("5 kN"), so the input check converts it with what the call supplies, or
+    asks. An input with no unit of its own takes the figure as written.
+    """
+    written = (unit or "").strip()
+    target = (declared or "").strip() or _unit_from_name(dest)
+    if not written or not target or target == "-" or _parse_unit(target) is None:
         return num
-    for family in _UNIT_FAMILIES:
-        if unit in family and target in family:
-            return num * family[unit] / family[target]
-    return num
+    out = _convert_units(num, written, target)
+    if "value_out" in out:
+        return out["value_out"]
+    return f"{num!r} {written}"
 
 
 _STANDARD_DESIGNATION_RE = re.compile(
@@ -1770,6 +1752,8 @@ def extract_calculation_params_from_text(
     from app.lib import formula_registry
     grades = [g for g in formula_registry.grade_labels_in(raw) if not _overlaps(g[0])]
     consumed.extend(g[0] for g in grades)
+    spec = _formula_spec(fn)
+    declared_units = dict(spec.inputs or {}) if spec else {}
 
     for label, dest in sorted(labels.items(), key=lambda kv: len(kv[0]), reverse=True):
         if dest in found:
@@ -1808,13 +1792,21 @@ def extract_calculation_params_from_text(
         num = _parse_text_number(match.group(1))
         if num is None:
             continue
-        found[dest] = _to_param_unit(num, match.group(2) if match.lastindex and match.lastindex >= 2 else None, dest)
+        found[dest] = _to_param_unit(num, match.group(2) if match.lastindex and match.lastindex >= 2 else None,
+                                     dest, declared_units.get(dest, ""))
         consumed.append(match.span())
+
+    # A period or a comma-space is punctuation. A comma that is followed by
+    # a digit is still this number (a thousands group). Digits glued to a
+    # letter belong to a label, grade or code, except a
+    # multiplication sign written as x ("10x5x0.25"). A hyphen after a digit
+    # is a range ("10-12"), not the sign of the second figure.
+    number = rf"(?<![\d,])(?<![A-WYZa-wyz])({_TEXT_NUM_RE})(?!\d)(?!,\d)"
 
     # Figure first, dimension after: "12 m long, 8 m wide and 200 mm thick".
     adjectives = "|".join(sorted((re.escape(a) for a in _DIMENSION_ADJECTIVES), key=len, reverse=True))
     trailing = re.compile(
-        rf"({_TEXT_NUM_RE})\s*({_TEXT_UNIT_RE})?\s+({adjectives})(?![A-Za-z])",
+        rf"{number}\s*({_TEXT_UNIT_RE})?\s+({adjectives})(?![A-Za-z])",
         re.IGNORECASE,
     )
     for match in trailing.finditer(raw):
@@ -1827,7 +1819,7 @@ def extract_calculation_params_from_text(
         num = _parse_text_number(match.group(1))
         if num is None:
             continue
-        found[dest] = _to_param_unit(num, match.group(2), dest)
+        found[dest] = _to_param_unit(num, match.group(2), dest, declared_units.get(dest, ""))
         consumed.append(match.span())
 
     accepted = {
@@ -1843,14 +1835,14 @@ def extract_calculation_params_from_text(
 
     _bind_grade_labels(fn, grades, found)
 
-    declared_units = _declared_units(fn)
-    spec = _formula_spec(fn)
     rows = describe_calculation_params(fn, name=spec.name if spec else None)
     required_by_kind: Dict[str, List[str]] = {}
+    required_tokens: Dict[str, str] = {}
     extra_units: List[str] = []
     for row in rows:
+        declared = str(declared_units.get(row["name"]) or "").strip()
         token = str(
-            declared_units.get(row["name"]) or row.get("unit") or _unit_from_name(row["name"])
+            (declared if declared != "-" else "") or row.get("unit") or _unit_from_name(row["name"])
             or ""
         ).strip()
         if token:
@@ -1861,19 +1853,15 @@ def extract_calculation_params_from_text(
         # (w_kn_m is declared kN/m; its name suffix reads as kN.m).
         kind = binding_kind(token)
         required_by_kind.setdefault(kind, []).append(row["name"])
+        required_tokens[row["name"]] = token
 
     unit_pat = _figure_unit_pattern(extra_units)
     boundary = r"(?![A-Za-z0-9])"
-    # A period or a comma-space is punctuation. A comma that is followed by
-    # a digit is still this number (a thousands group). Digits glued to a
-    # letter belong to a label, grade or code, except a
-    # multiplication sign written as x ("10x5x0.25").
-    number = rf"(?<![\d,])(?<![A-WYZa-wyz])({_TEXT_NUM_RE})(?!\d)(?!,\d)"
     leftover_rx = re.compile(
         rf"{number}\s*({unit_pat}){boundary}",
         re.IGNORECASE,
     )
-    leftovers: Dict[str, List[float]] = {}
+    leftovers: Dict[str, List[Tuple[float, str]]] = {}
     for match in leftover_rx.finditer(raw):
         if _overlaps(match.span()):
             continue
@@ -1881,12 +1869,32 @@ def extract_calculation_params_from_text(
         unit = _norm_unit_token(match.group(2))
         if num is None or not unit:
             continue
-        leftovers.setdefault(unit, []).append(num)
+        leftovers.setdefault(unit, []).append((num, match.group(2)))
         consumed.append(match.span())
-    for unit, nums in leftovers.items():
+    unplaced: List[Tuple[float, str]] = []
+    for unit, figures in leftovers.items():
         dests = [name for name in (required_by_kind.get(unit) or []) if name not in found]
-        if len(nums) == 1 and len(dests) == 1:
-            found[dests[0]] = nums[0]
+        if len(figures) == 1 and len(dests) == 1:
+            found[dests[0]] = _to_param_unit(*figures[0], dests[0], required_tokens[dests[0]])
+        else:
+            unplaced.extend(figures)
+    # A figure in another unit of the same kind of quantity ("15.75 ft" for
+    # a span in mm) binds when it is the only one of that kind and exactly
+    # one open input measures that kind.
+    by_dimension: Dict[str, List[Tuple[float, str]]] = {}
+    for num, written in unplaced:
+        parsed = _parse_unit(written)
+        if parsed is not None:
+            by_dimension.setdefault(parsed.dimension, []).append((num, written))
+    open_by_dimension: Dict[str, List[str]] = {}
+    for name, token in required_tokens.items():
+        parsed = _parse_unit(token) if name not in found else None
+        if parsed is not None:
+            open_by_dimension.setdefault(parsed.dimension, []).append(name)
+    for dimension, figures in by_dimension.items():
+        dests = open_by_dimension.get(dimension) or []
+        if len(figures) == 1 and len(dests) == 1:
+            found[dests[0]] = _to_param_unit(*figures[0], dests[0], required_tokens[dests[0]])
 
     bare_rx = re.compile(
         rf"{number}(?!\s*(?:{unit_pat}){boundary})",
@@ -2182,13 +2190,13 @@ def _bind_error_envelope(
     msg = f"Bad parameters for {name}: {detail}. Expected: {expected_clause}."
     if extra:
         msg = f"{msg} ({extra})"
-    return {
+    return _with_input_question({
         "status": "error",
         "error": msg,
         "signature": f"{name}{_inspect.signature(fn)}",
         "expected_params": expected,
         "missing": missing,
-    }
+    }, name, missing)
 
 def _accepts_param(fn: Any, param_name: str) -> bool:
     try:
@@ -2262,6 +2270,33 @@ def _unknown_arg_envelope(
         "signature": f"{name}{_inspect.signature(fn)}",
         "expected_params": expected,
     }
+
+def _pop_conversion_context(fn: Any, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Crew size, working hours per day and working days per week given for
+    converting another input. A calculator that does not take one as an
+    input of its own still uses it to convert, and it is not an unknown argument."""
+    from app.agents.base.formulas.construction_formulas_planning import CONVERSION_CONTEXT
+    from app.lib import formula_registry
+
+    held: Dict[str, Any] = {}
+    for key in list(params):
+        canon = _snake_key(key)
+        if canon not in CONVERSION_CONTEXT:
+            continue
+        held[canon] = params[key]
+        if not _accepts_param(fn, canon):
+            params.pop(key)
+    return formula_registry.conversion_context(held)
+
+
+def _with_input_question(env: Dict[str, Any], name: str, missing: List[str]) -> Dict[str, Any]:
+    """The missing inputs asked for by their labels, next to the technical error."""
+    from app.lib.source_labels import input_question
+
+    if missing:
+        env["question"] = input_question(name, [], missing)
+    return env
+
 
 def _input_rejection_envelope(
     name: str, rejected: List[Dict[str, Any]], missing: List[str],
@@ -2411,10 +2446,15 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
                 "signature": f"{name}{_inspect.signature(fn)}",
                 "expected_params": describe_calculation_params(fn, name=str(name)),
             }
-    params, unknown = _partition_bound_params(fn, params)
-    params = _coerce_bound_values(fn, params)
     from app.lib import formula_registry
+    context = _pop_conversion_context(fn, params)
+    params, unknown = _partition_bound_params(fn, params)
+    params, conversions, unit_rejected = formula_registry.convert_written_units(
+        str(name), params, context)
+    params = _coerce_bound_values(fn, params)
     params, rejected = formula_registry.check_inputs(str(name), params)
+    refused = {row["parameter"] for row in unit_rejected}
+    rejected = unit_rejected + [row for row in rejected if row["parameter"] not in refused]
     missing = _missing_required(fn, params, name=str(name))
     if rejected and not unknown:
         return _input_rejection_envelope(str(name), rejected, missing)
@@ -2472,6 +2512,8 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # tool loop reads as a working answer and narrates as a result.
     #
     if _result_is_failure(result):
+        if isinstance(result.get("needs_input"), list) and result["needs_input"]:
+            return _input_rejection_envelope(str(name), [], list(result["needs_input"]))
         err = result["error"]
         if name in _CALC_REQUIRED_HELP and "needs" in err.lower():
             err = _CALC_REQUIRED_HELP[name]
@@ -2501,7 +2543,7 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             "Exception", exc_info=True,
         )
 
-    return {
+    envelope = {
         "status": "success",
         "calculation": name,
         "result": result,
@@ -2511,3 +2553,6 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             "firm cost, supply the project's priced-BOQ / rate-schedule rates."
         ),
     }
+    if conversions:
+        envelope["conversions"] = conversions
+    return envelope
