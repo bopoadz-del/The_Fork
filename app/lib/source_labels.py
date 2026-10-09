@@ -33,12 +33,28 @@ def _norm(unit: str) -> str:
     return re.sub(r"[^a-z0-9%]", "", (unit or "").lower())
 
 
+#: An exponent written as a digit after a unit symbol ("m2", "kg/m3", "mm4");
+#: not the digit of a chemical formula ("CO2", "kgCO2e").
+_UNIT_EXPONENT_RE = re.compile(r"(?<=[A-Za-z])(?<![Cc][Oo])([234])(?![0-9A-Za-z])")
+_SUPERSCRIPT = {"2": "²", "3": "³", "4": "⁴"}
+
+
 def unit_words(unit: str) -> str:
-    """A declared unit as a reader writes it after a figure: "currency/t" is "per t"."""
+    """A declared unit as a reader writes it after a figure: "currency/t" is
+    "per t", "m2" is "m²", "kN/m3" is "kN/m³"."""
     raw = (unit or "").strip()
     if raw.lower().startswith("currency/"):
-        return "per " + raw.split("/", 1)[1]
-    return raw
+        raw = "per " + raw.split("/", 1)[1]
+    return _UNIT_EXPONENT_RE.sub(lambda m: _SUPERSCRIPT[m.group(1)], raw)
+
+
+def _unit_value(value: Any) -> Optional[str]:
+    """A string input that is a unit ("ft2", "kN/m"), as a reader writes it."""
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z°µμ][\w°µμ/.^²³⁴ -]{0,15}", value.strip()):
+        return None
+    from app.agents.base.formulas.construction_formulas_planning import parse_unit
+
+    return unit_words(value) if parse_unit(value) is not None else None
 
 
 def _is_fraction(unit: str) -> bool:
@@ -77,13 +93,16 @@ def _fmt_value(value: Any) -> str:
 
 
 def parameter_words(key: str, unit: str = "") -> str:
-    """``length_m`` with unit "m" -> "length": the name without the unit it spells."""
+    """``length_m`` with unit "m" -> "length", ``bearing_kn_m2`` with unit
+    "kN/m2" -> "bearing": the name without the unit its last words spell."""
     words = [w for w in str(key).split("_") if w]
     norm = _norm(unit)
     percent = norm == "%" or _is_fraction(unit)
-    if len(words) > 1 and norm and (_norm(words[-1]) == norm
-                                    or (percent and words[-1].lower() in ("pct", "percent"))):
-        words = words[:-1]
+    if len(words) > 1 and percent and words[-1].lower() in ("pct", "percent"):
+        return " ".join(words[:-1])
+    for start in range(len(words) - 1, 0, -1):
+        if norm and _norm("".join(words[start:])) == norm:
+            return " ".join(words[:start])
     return " ".join(words)
 
 
@@ -93,7 +112,7 @@ def input_phrase(key: str, value: Any, unit: str = "") -> str:
     ``waste_pct, 0.05, "fraction"`` -> "waste 5%"."""
     words = parameter_words(key, unit).split()
     norm = _norm(unit)
-    shown = _fmt_value(value)
+    shown = _unit_value(value) or _fmt_value(value)
     if norm == "%":
         shown += "%"
     elif _is_fraction(unit) and isinstance(value, (int, float)) and not isinstance(value, bool):
