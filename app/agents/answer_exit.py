@@ -736,6 +736,12 @@ _DUMP_RE = re.compile(
     rf"(?:[ \t]*(?P<sep>=|:)[ \t]*{_KEY_WRAP}|[ \t]+)(?P<val>{_LITERAL})[`*]{{0,2}},?",
     re.IGNORECASE,
 )
+#: ``code_key: word`` -- a payload field and a word value (a figure after a
+#: code key reads as words instead).
+_FIELD_RE = re.compile(
+    rf"(?<![\w\\./@-]){_KEY_WRAP}(?P<key>{_IDENT}){_KEY_WRAP}[ \t]*:[ \t]*{_KEY_WRAP}"
+    r"(?P<val>[A-Za-z][\w/&+-]*)(?!\w|\.\w)[`\"'*]{0,2},?",
+)
 _ASSIGN_RE = re.compile(rf"(?<![\w\\./@-])(?P<key>{_IDENT})=(?P<val>[^\s,;)\]]+)")
 _IDENT_RE = re.compile(rf"(?<![\w\\./@#-])(?P<id>{_IDENT})(?![\w/@-])(?!\.[A-Za-z0-9])")
 _PROTECTED_RE = re.compile(
@@ -779,7 +785,7 @@ def _drop_dumps(text: str) -> str:
     def dump(m: re.Match[str]) -> str:
         key = m.group("key")
         plain_key = "_" not in key and "." not in key
-        if plain_key and m.group("sep") != "=":
+        if plain_key and m.group("sep") != "=" and not re.fullmatch(r"\{\s*\}|\[\s*\]", m.group("val")):
             return m.group(0)
         if plain_key and m.group("val").lower() in ("none", "nan", "undefined"):
             return m.group(0)
@@ -790,7 +796,19 @@ def _drop_dumps(text: str) -> str:
             return m.group(0)
         return _DUMP
 
-    return _DUMP_RE.sub(dump, text)
+    from app.lib.source_labels import _registry_maps
+
+    displays, params, _units = _registry_maps()
+
+    def field(m: re.Match[str]) -> str:
+        # A payload field shown with its value: a registered name reads as
+        # its label elsewhere; any other code key is the platform's own.
+        key = m.group("key").lower()
+        if key in displays or key in params or not _is_word_ident(key, dotted=True):
+            return m.group(0)
+        return _DUMP
+
+    return _FIELD_RE.sub(field, _DUMP_RE.sub(dump, text))
 
 
 #: Stands where a tool, block, action or operation name was until the
@@ -800,7 +818,7 @@ _STEP = "\x03"
 #: nothing to a reader unless it also carries a figure.
 _DUMP = "\x04"
 _STEP_NOUN = (r"(?:tools?|blocks?|actions?|operations?|ops|functions?|modules?|engines?|endpoints?"
-              r"|handlers?|routines?|methods?|calls?)")
+              r"|handlers?|routines?|methods?|calls?|steps?)")
 _step_cache: dict[Any, Any] = {}
 
 
@@ -873,6 +891,7 @@ def _is_step_name(token: str, steps: frozenset[str]) -> bool:
 
 
 _CHIP_RE = re.compile(r"`([^`\n]+)`")
+_EMPTY_CHIP_RE = re.compile(rf"(?<!`)`[ \t{_MARK}]*`(?!`)")
 _PLAIN_WORDS_RE = re.compile(r"[A-Za-z][A-Za-z0-9 -]*[A-Za-z0-9]")
 
 
@@ -903,6 +922,8 @@ def _unwrap_chips(text: str, steps: frozenset[str], called: frozenset[str]) -> s
 
     lines = []
     for line in text.split("\n"):
+        # A span with nothing left in it shows the user two ticks.
+        line = _EMPTY_CHIP_RE.sub(_MARK, line)
         line = _CHIP_RE.sub(chip, line)
         if "`" in line:
             parts = re.split(r"(`[^`\n]+`)", line)
@@ -937,7 +958,9 @@ def _drop_dump_fences(text: str) -> str:
             pass
         lines = [ln for ln in body.split("\n") if ln.strip()]
         if all(_DATA_LINE_RE.fullmatch(ln) for ln in lines) and any(_CODE_KEY_RE.search(ln) for ln in lines):
-            return _MARK
+            # Lines that carry figures are a report: they are read as text
+            # (each line checked on its own), not thrown away whole.
+            return body if any(re.search(r"(?<![\w.])\d", ln) for ln in lines) else _MARK
         return m.group(0)
 
     return _FENCE_RE.sub(fence, text) if "```" in text else text
@@ -979,7 +1002,7 @@ _INTERNAL_TOKEN_RE = re.compile(
     rf"(?<![\w./-])(?:{_IDENT})(?![\w/-])|[{{}}\[\]]|\w=\S|\b\w+(?:Error|Exception)\b|[\\/][\w.-]+[\\/]",
 )
 _STRUCTURAL_ERROR_RE = re.compile(
-    r"^[ \t]*(?:[-*•][ \t]+)?\**[ \t]*(?:error|exception|traceback)\b[ \t]*\**[ \t]*[:=]"
+    r"^[ \t]*(?:[-*•][ \t]+)?\**[ \t]*(?:error|exception|traceback)\b[ \t]*\**[ \t]*[:=](?![ \t]*\**[ \t]*[-+±]?\d)"
     r"|\bTraceback \(most recent call last\)"
     r"|\b[A-Z][A-Za-z]*(?:Error|Exception)\b[ \t]*[:(]"
     r"|[\"']?status[\"']?[ \t]*[:=][ \t]*[\"']?error\b",
@@ -1148,12 +1171,6 @@ def _machine_wording(text: str) -> str:
         return _cap_like(m.group(0), new)
 
     text = _MACHINE_PHRASE_RE.sub(phrase, text)
-    def tool_phrase(m: re.Match[str]) -> str:
-        what = m.group("what").lower()
-        noun = "platform step" if what.startswith("call") else "platform result"
-        return _cap_like(m.group(0), noun + ("s" if what.endswith("s") else ""))
-
-    text = _TOOL_PHRASE_RE.sub(tool_phrase, text)
     return _PARAM_PHRASE_RE.sub(
         lambda m: _cap_like(m.group(0), (f"{m.group('adj')} inputs" if m.group("adj") else
                                          f"inputs {m.group('post')}")),
@@ -1200,69 +1217,135 @@ _FAILURE_RE = re.compile(
     r"(?:returned|reported|gave|produced)[ \t]+nothing|no[ \t]+results?|empty[ \t]+results?)\b",
     re.IGNORECASE,
 )
-_STEP_NOUN_RE = re.compile(rf"\b{_STEP_NOUN}\b", re.IGNORECASE)
 _JOINED_STEPS_RE = re.compile(
     rf"{_STEP}(?:[ \t]*(?:,[ \t]*(?:and[ \t]+|or[ \t]+)?|and[ \t]+|or[ \t]+|&[ \t]*)[ \t]*{_STEP})+",
     re.IGNORECASE,
 )
-_STEP_PHRASE_RE = re.compile(
-    rf"(?P<det>\b(?:the|a|an|this|that|these|those|its|their|our|my)[ \t]+)?(?P<marks>{_STEP}+)"
-    rf"(?:[ \t]*\([ \t]*\))?(?P<noun>[ \t]+{_STEP_NOUN}\b)?",
+_LINE_LEAD_RE = re.compile(r"[ \t]*(?:(?:[-*•+]|\d+[.)])[ \t]+)?(?:\*\*)?")
+#: The model announcing that it is about to repeat a step.
+_RETRY_RE = re.compile(
+    r"^[ \t]*(?:(?:[-*•+]|\d+[.)])[ \t]+)?(?:\*\*)?"
+    r"(?:re-?trying|re-?running|re-?attempting|(?:trying|attempting)[ \t]+again)\b"
+    r"|^[ \t]*(?:(?:[-*•+]|\d+[.)])[ \t]+)?(?:\*\*)?[A-Za-z]+ing\b[^.!?\n]*\b(?:once[ \t]+more|one[ \t]+more[ \t]+time)\b"
+    r"|\b(?:I|we|let[ \t]+me)(?:'ll|[ \t]+will|'m[ \t]+going[ \t]+to|[ \t]+am[ \t]+going[ \t]+to)?[ \t]+(?:now[ \t]+)?"
+    r"(?:re-?try|re-?run|try[ \t]+again)\b",
     re.IGNORECASE,
 )
-_LINE_LEAD_RE = re.compile(r"[ \t]*(?:(?:[-*•+]|\d+[.)])[ \t]+)?(?:\*\*)?")
+_ID_NOUN = r"[ _-]?(?:ids?|identifiers?|uuids?)\b"
+#: An identifier only the platform has: no user knows or needs one.
+_PLATFORM_ID_RE = re.compile(
+    rf"\b(?:formula|tool|block|operation|action|chunk|registry|calculator|function|conversation|session|request)"
+    rf"{_ID_NOUN}",
+    re.IGNORECASE,
+)
+#: An identifier the platform keeps for a project or a document; asking the
+#: user for one asks them for the platform's own key.
+_KEPT_ID_RE = re.compile(rf"\b(?:project|doc(?:ument)?|file|record|user){_ID_NOUN}", re.IGNORECASE)
+_ASK_RE = re.compile(
+    r"\?|\b(?:please|provide|share|send|give|tell|confirm|specify|supply|let[ \t]+me[ \t]+know)\b",
+    re.IGNORECASE,
+)
+_STEPS = (rf"(?:\b(?:the|a|an|this|that|these|those|its|their|our|my)[ \t]+)?{_STEP}+"
+          rf"(?:[ \t]*\([ \t]*\))?(?:[ \t]+{_STEP_NOUN}\b)?")
+#: A step named in a phrase the sentence can lose ("using the X,", "(via X)").
+_STEP_ADJUNCT_RE = re.compile(
+    rf"(?P<lc>[ \t]*,)?[ \t]*\b(?:via|using|through|with|by|from|per|in|on|according[ \t]+to|based[ \t]+on)"
+    rf"[ \t]+{_STEPS}(?:(?P<rc>[ \t]*,)|(?=[ \t]*(?:[.;:!?)]|$)|[ \t]+(?:and|but|so|then)\b))",
+    re.IGNORECASE,
+)
+_STEP_PAREN_RE = re.compile(rf"[ \t]*\([ \t]*(?:(?:via|using|from|by|with)[ \t]+)?{_STEPS}[ \t]*\)", re.IGNORECASE)
+#: What a step did, said as what was found: the verb read with "I".
+_STEP_VERBS = {
+    "returned": "found", "returns": "found", "reported": "found", "reports": "found", "gave": "found",
+    "gives": "found", "showed": "found", "shows": "found", "produced": "found", "produces": "found",
+    "yielded": "found", "yields": "found", "listed": "found", "lists": "found", "found": "found",
+    "finds": "found", "extracted": "extracted", "extracts": "extracted", "identified": "identified",
+    "identifies": "identified", "detected": "detected", "detects": "detected", "counted": "counted",
+    "counts": "counted", "computed": "computed", "computes": "computed", "calculated": "calculated",
+    "calculates": "calculated", "measured": "measured", "measures": "measured", "recorded": "recorded",
+    "records": "recorded", "read": "read", "reads": "read", "located": "located", "locates": "located",
+    "matched": "matched", "matches": "matched", "priced": "priced", "prices": "priced",
+}
+#: A step as the subject of what it did, with an object after the verb.
+_STEP_SUBJECT_RE = re.compile(
+    rf"^(?P<lead>{_LINE_LEAD_RE.pattern}){_STEPS}[ \t]+(?:(?:has|have|had)[ \t]+)?(?:also[ \t]+)?"
+    rf"(?P<verb>{'|'.join(sorted(_STEP_VERBS, key=len, reverse=True))})\b"
+    r"(?=[ \t]+(?!(?:on|in|at|for|with|by|to|from|that|nothing|it|them|and|or|but|nor|so|then)\b)[\w$€£(])",
+    re.IGNORECASE,
+)
 
 
 def _mechanics(sentence: str) -> bool:
-    if _MECHANICS_RE.search(sentence):
+    if _MECHANICS_RE.search(sentence) or _RETRY_RE.search(sentence) or _PLATFORM_ID_RE.search(sentence):
+        return True
+    if _KEPT_ID_RE.search(sentence) and _ASK_RE.search(sentence):
         return True
     if _DUMP in sentence and not re.search(r"\d", sentence.replace(_DUMP, "")):
         return True
     if _PROCESS_RE.search(sentence) and _FAILURE_RE.search(sentence) and _CALL_NOUN_RE.search(sentence):
         return True
-    if _STEP in sentence:
-        # A sentence that names a step and says how it ran, or only that it
-        # exists, is about the platform; one with a figure is about the work.
-        if _FAILURE_RE.search(sentence) or _PROCESS_RE.search(sentence):
-            return True
-        if not re.search(r"\d", sentence):
-            rest = sentence.replace(_STEP, " ")
-            if _STEP_NOUN_RE.search(rest) or len(re.findall(r"[A-Za-z]{2,}", rest)) < 6:
-                return True
-    return False
+    # A sentence that names a step and says how it ran is about the platform.
+    return _STEP in sentence and bool(_FAILURE_RE.search(sentence) or _PROCESS_RE.search(sentence))
 
 
-def _step_phrase(m: re.Match[str]) -> str:
-    det = (m.group("det") or "").strip().lower()
-    plural = len(m.group("marks")) > 1 or (m.group("noun") or "").strip().lower().endswith("s")
-    lead = "the" if det in ("the", "this", "that", "these", "those", "its", "their", "our", "my") else (
-        "" if plural else "a")
-    new = f"{lead} {'platform steps' if plural else 'platform step'}".strip()
-    before = m.string[:m.start()]
-    at_start = bool(re.search(r"(?:^|\n)[ \t]*(?:(?:[-*•+]|\d+[.)])[ \t]+)?(?:\*\*)?$|[.!?][ \t]+$", before))
-    return new[:1].upper() + new[1:] if at_start or (m.group("det") or "")[:1].isupper() else new
+def _without_step(sentence: str) -> str:
+    """``sentence`` with the step it names taken out, or '' when the step
+    cannot leave without the sentence: a step is never named in its place.
+
+    The phrase that names it goes when the sentence stands without it
+    ("Using X, the total is 5" -> "The total is 5"); a step that did the
+    finding is said as what was found ("X found 42 items" -> "I found 42
+    items"). A sentence whose subject or object is the step goes whole.
+    """
+    lead = _LINE_LEAD_RE.match(sentence)
+    head = lead.group(0) if lead else ""
+
+    def adjunct(m: re.Match[str]) -> str:
+        return " " if (m.group("lc") and m.group("rc")) else ""
+
+    out = _STEP_PAREN_RE.sub("", sentence)
+    out = _STEP_ADJUNCT_RE.sub(adjunct, out)
+    out = _STEP_SUBJECT_RE.sub(lambda m: f"{m.group('lead')}I {_STEP_VERBS[m.group('verb').lower()]}", out)
+    if _STEP in out:
+        return ""
+    body = out[len(head):].lstrip(" \t,;:") if out.startswith(head) else out.lstrip(" \t,;:")
+    body = re.sub(r"[ \t]{2,}", " ", body)
+    body = re.sub(r"[ \t]+([,.;:!?])", r"\1", body)
+    if len(re.findall(r"[A-Za-z]{2,}", body)) < 2:
+        return ""
+    return head + body[:1].upper() + body[1:]
 
 
 def _settle_steps(text: str) -> str:
-    """Sentences about the platform's calls go; a step name left in a
-    sentence about the work reads "a platform step"."""
-    if _STEP not in text and _DUMP not in text and not (_MECHANICS_RE.search(text) or _PROCESS_RE.search(text)):
+    """Sentences about the platform's calls go. A step name leaves a
+    sentence about the work the way :func:`_without_step` takes it out,
+    and the sentence goes when it cannot."""
+    if (_STEP not in text and _DUMP not in text and not (_MECHANICS_RE.search(text) or _PROCESS_RE.search(text)
+            or _PLATFORM_ID_RE.search(text) or _KEPT_ID_RE.search(text)
+            or any(_RETRY_RE.search(p) for line in text.split("\n") for p in _SENTENCE_SPLIT_RE.split(line)))):
         return text
     text = _JOINED_STEPS_RE.sub(_STEP * 2, text)
     out: list[str] = []
     for line in text.split("\n"):
         parts = _SENTENCE_SPLIT_RE.split(line)
-        kept = [p for p in parts if not _mechanics(p)]
-        if len(kept) == len(parts):
-            out.append(_STEP_PHRASE_RE.sub(_step_phrase, line) if _STEP in line else line)
+        kept: list[str] = []
+        for part in parts:
+            if _mechanics(part):
+                continue
+            if _STEP in part:
+                part = _without_step(part)
+                if not part:
+                    continue
+            kept.append(part)
+        if kept == parts:
+            out.append(line)
             continue
         if not kept:
             continue
         if kept[0] is not parts[0]:
             lead = _LINE_LEAD_RE.match(parts[0])
-            kept[0] = (lead.group(0) if lead else "") + kept[0].lstrip()
-        line = " ".join(kept)
-        out.append(_STEP_PHRASE_RE.sub(_step_phrase, line) if _STEP in line else line)
+            kept[0] = (lead.group(0) if lead else "") + kept[0][len(_LINE_LEAD_RE.match(kept[0]).group(0)):]
+        out.append(" ".join(kept))
     return "\n".join(out).replace(_DUMP, _MARK)
 
 
@@ -1365,6 +1448,7 @@ def check_text(
         out, held = _protect(out, index)
         called = frozenset(turn.step_names) if turn else frozenset()
         out = _plain_identifiers(out, _static_step_names() | called, called)
+        out = _TOOL_PHRASE_RE.sub(_STEP, out)
         out = _settle_steps(out)
         out = _machine_wording(out)
         out = _restore(out, held)
@@ -1430,14 +1514,16 @@ def remove_dumps(text: str) -> str:
 
 
 def check_text_or_fallback(text: str, **kwargs: Any) -> str:
-    """``check_text`` for a whole answer: one that was nothing but internals
-    becomes the turn's own question for the inputs a tool still needs, or the
-    platform's empty-turn reply, never an empty bubble (the client would show
-    the raw streamed tokens in its place)."""
-    checked = check_text(text, **kwargs)
-    if isinstance(text, str) and text.strip() and not (checked or "").strip():
-        from app.agents.runtime import _EMPTY_RESPONSE_FALLBACK
+    """``check_text`` for a whole answer: one that was nothing but internals,
+    or the platform's empty-turn reply, becomes the turn's own question for
+    the inputs a tool still needs when there is one; otherwise the empty-turn
+    reply, never an empty bubble (the client would show the raw streamed
+    tokens in its place)."""
+    from app.agents.runtime import _EMPTY_RESPONSE_FALLBACK
 
+    checked = check_text(text, **kwargs)
+    if isinstance(text, str) and text.strip() and (
+            not (checked or "").strip() or checked.strip() == _EMPTY_RESPONSE_FALLBACK):
         turn = kwargs.get("turn") or _TURN.get()
         asked = check_text("\n".join(turn.questions), **kwargs) if turn and turn.questions else ""
         return asked.strip() or _EMPTY_RESPONSE_FALLBACK
