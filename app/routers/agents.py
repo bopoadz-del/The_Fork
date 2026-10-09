@@ -105,7 +105,7 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
             # 404'd New chat on a shared general-knowledge project for every non-owner.
             # Row-only check: listing documents here walked the whole corpus.
             if store.can_access_project(
-                project_id, user_id=user_id, include_admin_approved=True
+                project_id, user_id=auth["user_id"], include_admin_approved=True
             ):
                 accessible = project_id
                 break
