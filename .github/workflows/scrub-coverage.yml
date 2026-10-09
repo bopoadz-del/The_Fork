@@ -1,0 +1,48 @@
+name: scrub-coverage
+
+# One question, asked before RAG_SCRUB_RULES is retired: do the structural
+# scrub rules (app/core/identifier_scrub.py + app/core/scrub_rules.json)
+# remove every string the secret's rules matched in the scrubbed projects'
+# records, filenames and indexed text? scripts/scrub_coverage.py reads the
+# secret and the projects store through the deploy credentials and prints
+# COUNTS ONLY -- never a rule, a match or a value. Read-only; changes nothing.
+#
+# Run: Actions -> scrub-coverage -> Run workflow, or push a branch
+# ops-run/scrub-coverage* (so it can run from a branch before it is merged).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["ops-run/scrub-coverage**"]
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AWS_REGION: us-west-2
+      ECS_CLUSTER: cerebrum
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Requirements
+        run: pip install -q -r requirements.txt
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Coverage (counts only)
+        run: python scripts/scrub_coverage.py --out scrub-coverage.json
+      - name: Keep the counts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrub-coverage
+          path: scrub-coverage.json
+          if-no-files-found: warn
