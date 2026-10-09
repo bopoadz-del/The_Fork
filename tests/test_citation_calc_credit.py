@@ -98,23 +98,27 @@ def _assert_plain_credit(out: str, calculation: str, inputs: dict) -> None:
     assert calculation not in out
 
 
+def _assert_notes_not_on_source_line(out: str, notes: list) -> None:
+    """The Source line is the registry label and the user's inputs, the same
+    entry the Sources panel shows; the result notes are not its source."""
+    assert notes, notes
+    for line in out.splitlines():
+        if line.startswith("Source: "):
+            for note in notes:
+                assert note not in line, line
+
+
 def _assert_dewater_credit(out: str) -> None:
     _assert_plain_credit(out, "dewatering_uplift_check",
                          {"water_depth": 23, "raft_thickness": 2, "floor_count": 5})
-    notes = _DEWATER_ENV["result"]["notes"]
-    assert notes, notes
-    for note in notes:
-        assert note in out, note
+    _assert_notes_not_on_source_line(out, _DEWATER_ENV["result"]["notes"])
     assert "0.380" in out
     assert "The factor of safety is 0.380" in out
 
 
 def _assert_formwork_credit(out: str) -> None:
     _assert_plain_credit(out, "formwork_striking_time", {"concrete_strength_7h": 2})
-    notes = _FORMWORK_ENV["result"]["notes"]
-    assert notes, notes
-    for note in notes:
-        assert note in out, note
+    _assert_notes_not_on_source_line(out, _FORMWORK_ENV["result"]["notes"])
     hours = _FORMWORK_ENV["result"]["recommended_hours"]
     assert str(hours) in out
 
@@ -246,11 +250,25 @@ def test_malformed_calculator_payload_is_not_a_credit():
 
 
 def test_answer_that_already_credits_the_calculation_is_unchanged():
-    notes = "; ".join(_DEWATER_ENV["result"]["notes"])
     answer = (
         "Dewatering cannot stop. The factor of safety is 0.380.\n"
         "Source: Uplift check for stopping dewatering — platform calculator "
-        "(water depth 23, raft thickness 2, floor count 5) — "
-        f"{notes}\n"
+        "(water depth 23, raft thickness 2, floor count 5)\n"
     )
     assert gate(answer, _dewater_rag(), _dewater_messages()) is answer
+
+
+def test_credit_line_carrying_result_notes_is_reduced_to_the_label():
+    notes = "; ".join(_DEWATER_ENV["result"]["notes"])
+    label = (
+        "Source: Uplift check for stopping dewatering — platform calculator "
+        "(water depth 23, raft thickness 2, floor count 5)"
+    )
+    answer = (
+        "Dewatering cannot stop. The factor of safety is 0.380.\n"
+        f"{label} — {notes}\n"
+    )
+    out = gate(answer, _dewater_rag(), _dewater_messages())
+    assert out.count("Source: ") == 1
+    assert label in out.splitlines()
+    assert UNVERIFIED_NOTE.strip() not in out

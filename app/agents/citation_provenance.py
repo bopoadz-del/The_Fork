@@ -339,6 +339,58 @@ def _retrieval_records(rag_sys_msg: dict[str, Any] | None) -> list[EvidenceRecor
     return records
 
 
+_TOOL_NAME_RE = re.compile(r"\s*(?:the\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _platform_bubble(content: str) -> tuple[str, str] | None:
+    """``(tool, body)`` for a user-role bubble the platform wrote, else None.
+
+    The platform replays tool output and pre-dispatched runs as user-role
+    messages. They are tool runs, not the operator's words: a value in one
+    is the tool's, never a figure the user stated.
+    """
+    from app.agents.runtime import _PREDISPATCH_PREFIX, _TOOL_RESULT_PREFIX
+
+    head = (content or "").lstrip()
+    if head.startswith(_TOOL_RESULT_PREFIX):
+        rest = head[len(_TOOL_RESULT_PREFIX):]
+        name, sep, body = rest.partition("):")
+        if sep:
+            return name.strip(), body.strip()
+        return "", rest
+    if head.startswith(_PREDISPATCH_PREFIX):
+        match = _TOOL_NAME_RE.match(head[len(_PREDISPATCH_PREFIX):])
+        return (match.group("name") if match else ""), head
+    return None
+
+
+def _working_document_records(text: str) -> list[EvidenceRecord]:
+    """One retrieval record per file whose whole text a tool returned.
+
+    A fetched document is read evidence the same as a retrieved chunk: a
+    Source line naming it, or a figure quoted from it, is backed.
+    """
+    obj = _parse_dict(text)
+    if obj is None:
+        return []
+    from app.agents.runtime import _working_document_reads
+
+    records: list[EvidenceRecord] = []
+    seen: set[str] = set()
+    for name, body, doc_id in _working_document_reads([obj, {"result": obj}]):
+        key = (doc_id or name).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(EvidenceRecord(
+            kind="retrieval",
+            text=body,
+            source_name=name,
+            doc_id=doc_id or None,
+        ))
+    return records
+
+
 def _message_records(messages: Iterable[dict[str, Any]] | None) -> list[EvidenceRecord]:
     """Tool-run records (name + the arguments actually passed + the result)
     and the operator's own words."""
@@ -360,19 +412,28 @@ def _message_records(messages: Iterable[dict[str, Any]] | None) -> list[Evidence
         elif role == "tool":
             name = m.get("name") or None
             tid = str(m.get("tool_call_id") or "")
+            text = str(m.get("content") or "")
             records.append(EvidenceRecord(
                 kind="tool_run",
-                text=str(m.get("content") or ""),
+                text=text,
                 tool=name,
                 inputs=pending_args.get(tid, "") or pending_args.get(str(name), ""),
                 source_class="tool",
             ))
+            records.extend(_working_document_records(text))
         elif role == "user":
+            text = str(m.get("content") or "")
+            bubble = _platform_bubble(text)
+            if bubble is None:
+                records.append(EvidenceRecord(kind="user", text=text, source_class="user"))
+                continue
+            tool, body = bubble
             records.append(EvidenceRecord(
-                kind="user",
-                text=str(m.get("content") or ""),
-                source_class="user",
+                kind="tool_run", text=body, tool=tool or None, source_class="tool",
             ))
+            records.extend(_working_document_records(body))
+            if _MARKER_RE.search(body):
+                records.extend(_retrieval_records({"content": body}))
     return records
 
 
@@ -449,12 +510,14 @@ def _tidy(text: str) -> str:
             out.append(ln)
             continue
         table_row = bool(_TABLE_ROW_RE.match(ln))
-        ln = ln.replace(SENTINEL, "")
-        ln = re.sub(r"[ \t]{2,}", " ", ln)
         if table_row:
             # Leave the emptied cell in place; the row keeps its columns.
+            ln = re.sub(r"[ \t]{2,}", " ", ln.replace(SENTINEL, ""))
             out.append(ln.rstrip())
             continue
+        from app.lib.source_labels import tidy_removal_debris
+
+        ln = tidy_removal_debris(ln, SENTINEL)
         ln = re.sub(r"[ \t]*\|[ \t]*$", "", ln)
         ln = re.sub(r"^([ \t]*)\|[ \t]*", r"\1", ln)
         ln = re.sub(r"[ \t]+([.,;:])", r"\1", ln)
@@ -544,6 +607,9 @@ class _CalculatorCredit:
     inputs: dict[str, Any]
     result_numbers: list[float]
     default_lines: list[str] = field(default_factory=list)
+    #: (currency code, default line) for a currency the formula stamped
+    #: because the user gave none. Stated only when the answer shows it.
+    currency_defaults: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _parse_dict(raw: str) -> dict | None:
@@ -620,8 +686,24 @@ def _governing_inputs(raw: str) -> dict[str, Any]:
     return clean
 
 
+def _defaulted_run(calculation: str, inputs: str, ask: str) -> bool:
+    """A run on signature defaults alone that the operator's ask did not request.
+
+    Its figures are neither the user's nor a document's, so they are not
+    credited as an answer to that ask.
+    """
+    from app.agents.runtime import _defaulted_run_refusal, _unwrap_rag_folded_operator_text
+
+    args = _parse_dict(inputs) or {}
+    operator = _unwrap_rag_folded_operator_text(ask or "")
+    return _defaulted_run_refusal(calculation, args, operator) is not None
+
+
 def _calculator_credits(ev: Evidence) -> list[_CalculatorCredit]:
     credits: list[_CalculatorCredit] = []
+    users = [r.text for r in ev.records if r.kind == "user"]
+    user_text = "\n".join(users)
+    ask = users[-1] if users else ""
     for rec in ev.records:
         if rec.kind != "tool_run":
             continue
@@ -633,14 +715,19 @@ def _calculator_credits(ev: Evidence) -> list[_CalculatorCredit]:
         numbers = _result_numbers(result)
         if not calculation or not numbers:
             continue
+        if _defaulted_run(calculation, rec.inputs, ask):
+            continue
         notes_raw = result.get("notes") or []
         notes = (
             [str(note) for note in notes_raw if str(note).strip()]
             if isinstance(notes_raw, list) else []
         )
-        from app.lib.source_labels import calculator_default_lines, stated_calculator_inputs
+        from app.lib.source_labels import (
+            calculator_currency_defaults,
+            calculator_default_lines,
+            stated_calculator_inputs,
+        )
 
-        user_text = "\n".join(r.text for r in ev.records if r.kind == "user")
         raw_inputs = _governing_inputs(rec.inputs)
         credits.append(_CalculatorCredit(
             tool=rec.tool or "construction_calc",
@@ -649,6 +736,9 @@ def _calculator_credits(ev: Evidence) -> list[_CalculatorCredit]:
             inputs=stated_calculator_inputs(calculation, raw_inputs, user_text),
             result_numbers=numbers,
             default_lines=calculator_default_lines(
+                calculation, result, user_text, passed=raw_inputs,
+            ),
+            currency_defaults=calculator_currency_defaults(
                 calculation, result, user_text, passed=raw_inputs,
             ),
         ))
@@ -760,14 +850,39 @@ def _citation_is_false_chunk_credit(
 
 
 def _fmt_credit(credit: _CalculatorCredit) -> str:
-    """The credit a user reads: the formula's declared display name, never
-    the tool or function name (app.lib.source_labels)."""
+    """The credit a user reads: the formula's declared display name and the
+    inputs the user stated, the same entry the Sources panel shows. The
+    calculator's result notes are the result, not its source."""
     from app.lib.source_labels import calculator_label
 
-    head = "Source: " + calculator_label(credit.calculation, credit.inputs)
-    if credit.notes:
-        head += " — " + "; ".join(credit.notes)
-    return head
+    return "Source: " + calculator_label(credit.calculation, credit.inputs)
+
+
+_MIN_STEM = 5
+
+
+def _source_name_forms(name: str) -> list[str]:
+    """A read document's name as an answer may write it: whole, its base
+    name, or the base name without the extension."""
+    low = (name or "").strip().lower()
+    if not low:
+        return []
+    base = re.split(r"[\\/]", low)[-1].strip()
+    stem = re.sub(r"\.[a-z0-9]{1,5}$", "", base).strip()
+    forms = [low, base]
+    if len(stem) >= _MIN_STEM:
+        forms.append(stem)
+    return [f for f in dict.fromkeys(forms) if f]
+
+
+def _line_names_source(line_low: str, name: str) -> bool:
+    """The line names this document, or is a shortened form of its name."""
+    if not line_low.strip():
+        return False
+    for form in _source_name_forms(name):
+        if form in line_low or line_low.strip() in form:
+            return True
+    return False
 
 
 def _credit_already_present(answer: str, credit: _CalculatorCredit) -> bool:
@@ -785,7 +900,9 @@ def _missing_calculator_credit(
             continue
         if _credit_already_present(out, credit):
             continue
-        lines.append(_fmt_credit(credit))
+        line = _fmt_credit(credit)
+        if line not in lines:
+            lines.append(line)
     return "\n".join(lines)
 
 
@@ -853,11 +970,7 @@ def _strip_source_lines(
         # the chunk did not produce (Dewatering-p2: the proposal chunk was
         # retrieved, and the factor of safety came from the tool).
         names = ev.source_names(citable_only=bool(ids))
-        name_hit = False
-        for n in names:
-            if n and (n in low or low in n):
-                name_hit = True
-                break
+        name_hit = any(_line_names_source(low, n) for n in names)
         if name_hit and not _citation_is_false_chunk_credit(body, ev, credits, judged):
             return m.group(0)
         # A line naming the TOOL that ran is a RENDERED citation, not an
@@ -874,15 +987,20 @@ def _strip_source_lines(
         )
 
         if credits:
-            labels = [calculator_label(c.calculation, c.inputs).lower() for c in credits]
-            if any(label and label in low for label in labels):
-                return m.group(0)
+            for c in credits:
+                label = calculator_label(c.calculation, c.inputs)
+                if label and label.lower() in low:
+                    lead = re.match(r"[ \t]*(?:[-*•][ \t]+)?", m.group(0))
+                    return (lead.group(0) if lead else "") + _fmt_credit(c)
             displays = [formula_display_name(c.calculation) for c in credits]
             shown_now = [t for t in displays if t]
             shown_now.extend(tool_display_name(t) for t in tools)
-            if "platform calculator" in low or any(
-                name and name.lower() in low for name in shown_now
-            ):
+            if any(name and name.lower() in low for name in shown_now):
+                # The calculator did run: the model's own wording of its
+                # credit gives way to the rendered one. Nothing unbacked
+                # was named, so this is not a removal.
+                return SENTINEL
+            if "platform calculator" in low:
                 removed.append(m.group(0).strip())
                 return SENTINEL
 
@@ -921,10 +1039,7 @@ _DENIAL_RE = re.compile(
 
 def _sentence_names_evidence(sentence: str, ev: Evidence) -> bool:
     low = (sentence or "").lower()
-    for name in ev.source_names():
-        if name and name in low:
-            return True
-    return False
+    return any(_line_names_source(low, name) for name in ev.source_names())
 
 
 def _unbacked_retrieval_sentence(sentence: str, ev: Evidence) -> bool:
@@ -980,13 +1095,101 @@ def _missing_default_lines(
     answer: str,
 ) -> str:
     lines: list[str] = []
+    for line in _credited_default_lines(credits, answer):
+        if line not in (out or "") and line not in lines:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _credited_default_lines(credits: list[_CalculatorCredit], answer: str) -> list[str]:
+    """Every default the answer's committed figures rest on.
+
+    A currency default counts once the answer writes that currency: the
+    figure is then shown in a unit the user did not give.
+    """
+    lines: list[str] = []
     for credit in credits:
         if not _answer_commits(answer, credit):
             continue
-        for line in credit.default_lines:
-            if line and line not in (out or ""):
+        lines.extend(line for line in credit.default_lines if line)
+        for code, line in credit.currency_defaults:
+            if line and re.search(
+                rf"(?<![A-Za-z]){re.escape(code)}(?![A-Za-z])", answer or "",
+            ):
                 lines.append(line)
-    return "\n".join(lines)
+    return lines
+
+
+# A sentence that says no default (or no other default) was used: the
+# negation governs "default" within a few words, either side.
+_DEFAULT_DENIAL_RE = re.compile(
+    r"(?:\b(?:no|not|none|never|without)\b|n['’]t\b)(?:\W+\w+){0,4}?\W+defaults?\b"
+    r"|\bdefaults?\b(?:\W+\w+){0,3}?\W+(?:not|never)\b",
+    re.IGNORECASE,
+)
+
+
+def _denied_params(sentence: str, credits: list[_CalculatorCredit]) -> tuple[bool, bool]:
+    """``(names a parameter, names a defaulted parameter)`` for this sentence."""
+    from app.lib.source_labels import calculator_parameter_words
+
+    low = sentence.lower()
+    named = defaulted = False
+    for credit in credits:
+        for key, words, is_default in calculator_parameter_words(
+            credit.calculation, credit.inputs,
+        ):
+            if len(words) >= 3 and re.search(rf"\b{re.escape(words)}\b", low):
+                named = True
+                defaulted = defaulted or is_default
+    return named, defaulted
+
+
+def _strip_default_denials(
+    text: str,
+    credits: list[_CalculatorCredit],
+    answer: str,
+    *,
+    whole_answer: bool = True,
+) -> str:
+    """Drop a sentence denying defaults when the answer's credit lists some.
+
+    A denial about one input the user did state stays; a blanket one ("no
+    other defaults were used") or one about a defaulted input contradicts
+    the default lines beneath it. ``whole_answer=False``: ``answer`` is one
+    piece of a streamed answer, so any credited run's defaults count.
+    """
+    committed = [c for c in credits if not whole_answer or _answer_commits(answer, c)]
+    if whole_answer:
+        stated = _credited_default_lines(committed, answer)
+    else:
+        stated = [line for credit in committed for line in credit.default_lines if line]
+    if not stated:
+        return text
+    lines: list[str] = []
+    changed = False
+    for line in (text or "").split("\n"):
+        parts = re.split(r"((?<=[.!?])\s+)", line)
+        kept: list[str] = []
+        for part in parts:
+            body = part.strip()
+            if (
+                body
+                and _DEFAULT_DENIAL_RE.search(part)
+                and not any(body in dl or dl in part for dl in stated)
+            ):
+                named, defaulted = _denied_params(part, committed)
+                if defaulted or not named:
+                    changed = True
+                    if kept and re.fullmatch(r"\s+", kept[-1] or ""):
+                        kept.pop()
+                    continue
+            kept.append(part)
+        rebuilt = "".join(kept)
+        if line.strip() and not rebuilt.strip():
+            continue
+        lines.append(rebuilt.rstrip() if rebuilt != line else line)
+    return "\n".join(lines) if changed else text
 
 
 def gate(
@@ -1029,8 +1232,9 @@ def gate(
             out, r = _strip_cued_ids(out, allowed)
             removed += r
 
-        if removed:
+        if SENTINEL in out:
             out = _tidy(out)
+        out = _strip_default_denials(out, credits, text, whole_answer=annotate)
         if not annotate:
             # A piece of a streamed answer: strip only; the stream adds the
             # calculator credit and the note once, at its end (closing_notes).
@@ -1040,12 +1244,12 @@ def gate(
                     len(removed), removed[:5],
                 )
                 _REMOVED_IN_PIECE.set(True)
-            return out if removed else text
+            return text if out == text else out
         credit = _missing_calculator_credit(out, credits, text)
         defaults = _missing_default_lines(out, credits, text)
         extra = "\n".join(part for part in (defaults, credit) if part)
         if not removed and not extra:
-            return text
+            return text if out == text else out
         if removed:
             _LOG.warning(
                 "citation_provenance: removed %d unbacked attribution(s): %s",
