@@ -1124,9 +1124,11 @@ async def _predispatch_file_tool(
                 "ok": True,
                 "predispatched": True,
                 "result": {
+                    "document_id": (doc or {}).get("id"),
                     "filename": (doc or {}).get("original_name") or text_target,
                     "content": (content or {}).get("text"),
                     "truncated": (content or {}).get("truncated"),
+                    "source": (content or {}).get("source"),
                 },
             }
         if not target:
@@ -8759,9 +8761,146 @@ def _platform_calculator_source(final_text: str) -> dict[str, Any] | None:
     }
 
 
+# A use of a working document is a run of its own words in the answer.
+# One shared token is not a quote. A passage shorter than this is too
+# small to tell a quote from a coincidence, unless the passage itself is
+# only a few words long — then the whole passage has to appear.
+_WORKING_DOC_QUOTE_WORDS = 6
+_WORKING_DOC_MIN_WORDS = 4
+_QUOTE_TOKEN = re.compile(r"[a-z0-9]+(?:[.,][0-9]+)*", re.IGNORECASE)
+
+
+def _quote_words(text: str) -> list[str]:
+    return [w.lower() for w in _QUOTE_TOKEN.findall(text or "")]
+
+
+def _answer_quotes_passage(answer: str, passage: str) -> bool:
+    """True when the answer contains a contiguous run of the passage's words."""
+    words = _quote_words(passage)
+    if len(words) < _WORKING_DOC_MIN_WORDS:
+        return False
+    need = min(_WORKING_DOC_QUOTE_WORDS, len(words))
+    hay = " ".join(_quote_words(answer))
+    if not hay:
+        return False
+    for start in range(0, len(words) - need + 1):
+        if " ".join(words[start:start + need]) in hay:
+            return True
+    return False
+
+
+def _coerce_tool_payloads(tool_results: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Tool-result dicts, including a driver trail's JSON ``content``."""
+    payloads: list[dict[str, Any]] = []
+    for item in tool_results or []:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if item.get("role") == "tool" and isinstance(content, str):
+            try:
+                parsed = json.loads(content)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(parsed, dict):
+                payloads.append(parsed)
+            continue
+        payloads.append(item)
+    return payloads
+
+
+def _working_document_reads(
+    tool_results: list[dict[str, Any]] | None,
+) -> list[tuple[str, str, str]]:
+    """``(shown name, text, doc id)`` for a tool result that is one file's text.
+
+    A retrieval hit list is not a working-document read: those chunks are
+    already on the audit. The read is the single body the turn fetched.
+    """
+    found: list[tuple[str, str, str]] = []
+    for payload in _coerce_tool_payloads(tool_results):
+        if payload.get("ok") is False:
+            continue
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            continue
+        if isinstance(result.get("results"), list) or isinstance(result.get("chunks"), list):
+            continue
+        text = result.get("content")
+        if not isinstance(text, str):
+            text = result.get("text") if isinstance(result.get("text"), str) else ""
+        name = result.get("filename") or result.get("original_name") or ""
+        if not isinstance(name, str):
+            name = ""
+        name = name.strip()
+        text = text.strip()
+        if not name or not text:
+            continue
+        doc_id = str(result.get("document_id") or result.get("doc_id") or "")
+        found.append((name, text, doc_id))
+    return found
+
+
+def _working_document_sources(
+    final_text: str,
+    tool_results: list[dict[str, Any]] | None,
+    audit_rec: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Source rows for working documents whose text the answer actually uses."""
+    from app.core.rag.source_class import classify, label_for
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for name, text, doc_id in _working_document_reads(tool_results):
+        if not _answer_quotes_passage(final_text, text):
+            continue
+        key = (doc_id or name).strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        source_class = classify("own", name, text)
+        rows.append({
+            "doc_id": doc_id,
+            "doc_name": _clean_path_label(name),
+            "page_or_section": "",
+            "page": None,
+            "chunk_index": None,
+            "chunk_id": None,
+            "project_id": (audit_rec or {}).get("project_id"),
+            "score": 1.0,
+            "confidence": "High",
+            "layer": "own",
+            "layer_label": "Project document",
+            "source_class": source_class,
+            "source_class_label": label_for(source_class),
+        })
+    return rows
+
+
+def _dedupe_source_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen_ids: set[str] = set()
+    seen_names: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not row:
+            continue
+        doc_id = str(row.get("doc_id") or "")
+        name = str(row.get("doc_name") or "").strip().lower()
+        if doc_id and doc_id in seen_ids:
+            continue
+        if name and name in seen_names:
+            continue
+        if doc_id:
+            seen_ids.add(doc_id)
+        if name:
+            seen_names.add(name)
+        out.append(row)
+    return out
+
+
 def _build_sources_from_audit(
     audit_rec: dict[str, Any],
     final_text: str = "",
+    tool_results: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the SSE end-event sources list.
 
@@ -8776,9 +8915,29 @@ def _build_sources_from_audit(
          the pre-PR-110 behaviour. Preserves the old contract for the
          qwen-style agents that don't emit ``[source: ...]`` markers.
 
+    A working document is different from a retrieved chunk: its text was
+    read for this turn (``tool_results``) and is not in the audit. When
+    the answer uses that text, the document is listed under the name the
+    read carried, and retrieved chunks the answer did not use are left
+    out. An answer that did not use a working document keeps the steps
+    above, including the top-3 fallback.
+
     Empty list when ``audit_rec`` has no chunks (fallback turn), unless
-    the answer credits a platform calculator — that row is the source.
+    the answer credits a platform calculator — that row is the source —
+    or it used a working document.
     """
+    used_documents = _working_document_sources(final_text, tool_results, audit_rec)
+
+    def _finish(
+        rows: list[dict[str, Any]] | None, *, fallback: bool = False,
+    ) -> list[dict[str, Any]]:
+        kept = [row for row in (rows or []) if row]
+        if not used_documents:
+            return kept
+        if fallback:
+            kept = []
+        return _dedupe_source_rows([*used_documents, *kept])
+
     calc_row = _platform_calculator_source(final_text)
     chunks = (audit_rec or {}).get("chunks") or []
     ask = str((audit_rec or {}).get("user_message_preview") or "")
@@ -8789,17 +8948,17 @@ def _build_sources_from_audit(
             if (c.get("layer") or "own") != "master_corpus"
         ]
     if not chunks:
-        return [calc_row] if calc_row else []
+        return _finish([calc_row] if calc_row else [])
 
     # If the retrieval trust gate fired (identifier miss or confidence
     # threshold), don't fabricate a sources panel from fallback chunks.
     if audit_rec.get("identifier_miss") or audit_rec.get("threshold_fired"):
-        return [calc_row] if calc_row else []
+        return _finish([calc_row] if calc_row else [])
 
     # If the assistant explicitly declined to answer, don't fabricate a
     # sources panel from low-score fallback chunks.
     if _answer_is_caveat(final_text):
-        return [calc_row] if calc_row else []
+        return _finish([calc_row] if calc_row else [])
 
     try:
         from app.core import projects as _projects
@@ -8841,7 +9000,7 @@ def _build_sources_from_audit(
             )
         ]
         if not scoped:
-            return [calc_row] if calc_row else []
+            return _finish([calc_row] if calc_row else [])
         chunks = scoped
 
     def _sources_one_contract(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -8986,7 +9145,7 @@ def _build_sources_from_audit(
                 key=lambda s: (-(s.get("score") or 0), s.get("chunk_id") or "")
             )
             rows = ([calc_row] + matched) if calc_row else matched
-            return _sources_one_contract(rows)
+            return _finish(_sources_one_contract(rows))
 
     # 2) Filename-mention fallback: the model may have named a source in
     #    prose without a formal citation marker. If any injected filename
@@ -9015,13 +9174,14 @@ def _build_sources_from_audit(
         if calc_row:
             # The calculator is the source of the figure. A document the
             # answer actually names stays beside it. Unnamed retrieval
-            # does not fill the panel.
-            return _sources_one_contract([calc_row] + mention_hits[:3])
+            # does not fill the panel. A working document the answer
+            # quoted stays too.
+            return _finish(_sources_one_contract([calc_row] + mention_hits[:3]))
         if mention_hits:
-            return _sources_one_contract(mention_hits[:3])
+            return _finish(_sources_one_contract(mention_hits[:3]))
 
     if calc_row:
-        return [calc_row]
+        return _finish([calc_row])
 
     # 3) Final fallback: top-3 retrieved chunks by score.
     # Deterministic total order: score desc, then chunk_id asc so two chunks
@@ -9032,8 +9192,11 @@ def _build_sources_from_audit(
     by_score = sorted(
         chunks, key=lambda c: (-(c.get("score") or 0), c.get("chunk_id") or "")
     )[:3]
-    return _sources_one_contract(
-        [_format(c, _doc_name(c["doc_id"])) for c in by_score]
+    return _finish(
+        _sources_one_contract(
+            [_format(c, _doc_name(c["doc_id"])) for c in by_score]
+        ),
+        fallback=True,
     )
 
 
@@ -9110,7 +9273,7 @@ def _build_exports_from_audit(
         _projects = None
 
     exports: list[dict[str, Any]] = []
-    sources = _build_sources_from_audit(audit_rec, final_text)
+    sources = _build_sources_from_audit(audit_rec, final_text, tool_calls)
 
     # ── Cost BOQ offers (from cited documents) ──────────────────────────────
     if sources and _projects is not None:

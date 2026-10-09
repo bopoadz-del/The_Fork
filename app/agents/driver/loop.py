@@ -187,5 +187,5 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         yield {"type": "token", "content": notes}
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "provenance": provenance, "exit_check": check,
-           "sources": sources.panel(_trail(), provenance),
+           "sources": sources.panel(_trail(), provenance, "".join(sent)),
            "steps": step + 1, "elapsed_s": round(time.monotonic() - t0, 2)}

@@ -45,13 +45,38 @@ def _confidence(score: float) -> str:
     return "High" if score >= 0.75 else "Medium" if score >= 0.5 else "Low"
 
 
-def panel(trail: List[Dict[str, Any]], provenance: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Sources for the Sources panel, one per document."""
+def panel(
+    trail: List[Dict[str, Any]],
+    provenance: List[Dict[str, Any]],
+    answer: str = "",
+) -> List[Dict[str, Any]]:
+    """Sources for the Sources panel, one per document.
+
+    When ``answer`` uses a working document's text (a file read on this
+    turn, not a retrieved hit), that file is listed by its shown name and
+    hits the answer did not use are left out. With no such use, the best
+    retrieved hits stay.
+    """
     from app.core.identifier_scrub import scrub_identifiers_filename
 
     backing = {str(e.get("doc_id") or "") for e in provenance if e.get("doc_id")}
     backing |= {str(e.get("doc_name") or "") for e in provenance if e.get("doc_name")}
     hits = _hits(trail)
+    used_rows: List[Dict[str, Any]] = []
+    if (answer or "").strip():
+        from app.agents.runtime import _answer_quotes_passage, _working_document_sources
+
+        used_rows = _working_document_sources(answer, trail, {})
+        if used_rows:
+            def _hit_used(hit: Dict[str, Any]) -> bool:
+                doc_id = str(hit.get("document_id") or hit.get("doc_id") or "")
+                name = str(hit.get("filename") or hit.get("doc_name") or "")
+                if doc_id in backing or name in backing:
+                    return True
+                snippet = str(hit.get("snippet") or hit.get("text") or "")
+                return bool(snippet) and _answer_quotes_passage(answer, snippet)
+
+            hits = [hit for hit in hits if _hit_used(hit)]
     hits.sort(key=lambda h: (
         not ({str(h.get("document_id") or h.get("doc_id") or ""), str(h.get("filename") or "")} & backing),
         -float(h.get("score") or 0.0)))
@@ -75,6 +100,15 @@ def panel(trail: List[Dict[str, Any]], provenance: List[Dict[str, Any]]) -> List
         })
         if len(out) >= _MAX_SOURCES:
             break
+    if used_rows:
+        seen_ids = {str(row.get("doc_id") or "") for row in out}
+        seen_names = {str(row.get("doc_name") or "") for row in out}
+        extra = [
+            row for row in used_rows
+            if str(row.get("doc_id") or "") not in seen_ids
+            and str(row.get("doc_name") or "") not in seen_names
+        ]
+        out = [*extra, *out][:_MAX_SOURCES]
     return out
 
 

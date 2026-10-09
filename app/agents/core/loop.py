@@ -350,7 +350,7 @@ async def _chat_impl(
             "tool_calls": [],
             "iterations": 0,
             "messages": messages + [{"role": "assistant", "content": answer}],
-            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
+            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer, tool_calls_made)),
             "provenance": (_rag_audit or {}).get("provenance") or [],
         }
     # WAVE 2 B4: priced D599.5 is already in the excerpts. Skip the
@@ -376,7 +376,7 @@ async def _chat_impl(
             "tool_calls": [],
             "iterations": 0,
             "messages": messages + [{"role": "assistant", "content": answer}],
-            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
+            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer, tool_calls_made)),
             "provenance": (_rag_audit or {}).get("provenance") or [],
         }
     # BOQ page Part Summary total already in the excerpts.
@@ -400,7 +400,7 @@ async def _chat_impl(
             "tool_calls": [],
             "iterations": 0,
             "messages": messages + [{"role": "assistant", "content": answer}],
-            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer)),
+            "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, answer, tool_calls_made)),
             "provenance": (_rag_audit or {}).get("provenance") or [],
         }
     # Root fix for the tool-loop (mirrors chat_stream): cap explicit
@@ -474,7 +474,7 @@ async def _chat_impl(
                     "iterations": iteration + 1,
                     "messages": messages,
                     "recovered_from_llm_error": True,
-                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
+                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text, tool_calls_made)),
                     "provenance": (_rag_audit or {}).get("provenance") or [],
                     "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, tool_calls_made,
                         conversation_id=conversation_id,
@@ -579,7 +579,7 @@ async def _chat_impl(
                     "tool_calls": tool_calls_made,
                     "iterations": iteration + 1,
                     "messages": messages,
-                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
+                    "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text, tool_calls_made)),
                     "provenance": (_rag_audit or {}).get("provenance") or [],
                     "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, tool_calls_made, conversation_id=conversation_id)),
                 }
@@ -710,7 +710,7 @@ async def _chat_impl(
         "iterations": MAX_TOOL_ITERATIONS,
         "messages": messages,
         "forced_final": True,
-        "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text)),
+        "sources": (await _off_loop(_build_sources_from_audit, _rag_audit, final_text, tool_calls_made)),
         "provenance": (_rag_audit or {}).get("provenance") or [],
         "exports": (await _off_loop(_build_exports_from_audit, _rag_audit, final_text, tool_calls_made, conversation_id=conversation_id)),
     }
