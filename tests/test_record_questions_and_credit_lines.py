@@ -95,6 +95,8 @@ DEFAULT_RUNS = [
 
 
 def _scalar(param: inspect.Parameter) -> bool:
+    if param.kind in (param.VAR_KEYWORD, param.VAR_POSITIONAL):
+        return False
     ann = str(getattr(param.annotation, "__name__", "") or param.annotation).lower()
     if any(tok in ann for tok in ("str", "list", "dict", "bool", "tuple")):
         return False

@@ -123,12 +123,41 @@ _EXPLICIT_BIND_ONLY = frozenset({
     "dune_sand_pct",
 })
 
+def _phrase_words(text: str) -> List[str]:
+    return re.findall(r"[a-z0-9]+", (text or "").lower())
+
+
+def calculators_named_by_display(text: str) -> List[str]:
+    """Registry names whose display name the ask writes out in full.
+
+    The display name is what the platform itself calls a calculator in its
+    answers and Sources. One of three or more words is as specific as a
+    registry id written out. A two-word one ("Concrete volume") is also a
+    bill and take-off phrase, so it is left to the id rules.
+    """
+    words = _phrase_words(text)
+    if not words:
+        return []
+    padded = f" {' '.join(words)} "
+    from app.lib.formula_registry import all_specs
+
+    named: List[str] = []
+    for spec in all_specs():
+        if spec.name not in CALCULATORS:
+            continue
+        phrase = _phrase_words(spec.display_name)
+        if len(phrase) >= 3 and f" {' '.join(phrase)} " in padded:
+            named.append(spec.name)
+    return named
+
+
 def calculator_name_from_text(text: str) -> Optional[str]:
     """Unique registry name implied by ``text``, or None if absent/ambiguous.
 
     Full underscore / spaced names beat 2-token stems so
     ``concrete mix design sg`` is not tied with ``concrete_mix_slip_form``
     and ``cost buildup concrete`` is not tied with ``cost_buildup_rebar``.
+    A display name written out in full ranks next to a full registry name.
     A unique 3-token tail (``well point spacing``) also counts — live
     dewatering asks omit the leading ``dewatering_``.
     """
@@ -176,7 +205,8 @@ def calculator_name_from_text(text: str) -> Optional[str]:
                 and stem not in _FORMULA_NAME_STEM_COLLISIONS
             ):
                 stems.append(name)
-    for group in (full, triples, pairs, stems):
+    display = calculators_named_by_display(raw)
+    for group in (full, display, triples, pairs, stems):
         uniq = list(dict.fromkeys(group))
         if len(uniq) == 1:
             return uniq[0]

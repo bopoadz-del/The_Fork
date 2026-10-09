@@ -11208,17 +11208,20 @@ def _formula_ask_force_enabled() -> bool:
 
 
 def _message_names_unambiguous_calculator(text: str) -> bool:
-    """Registry name in underscore form, or a 3+ token spaced name.
+    """Registry name in underscore form, or a 3+ token spaced name or
+    display name.
 
     ``pe_unit_convert`` is unambiguous. ``concrete volume`` is not —
     it is also a BOQ lookup phrase. See test_self_contained_calculation_routing.
     """
     try:
-        from app.lib.construction_formulas import CALCULATORS
+        from app.lib.construction_formulas import CALCULATORS, calculators_named_by_display
     except Exception:  # noqa: BLE001
         _LOG.debug("CALCULATORS import failed", exc_info=True)
         return False
     raw = text or ""
+    if calculators_named_by_display(raw):
+        return True
     underscored = raw.lower().replace("-", "_")
     spaced = raw.lower()
     for name in CALCULATORS:
