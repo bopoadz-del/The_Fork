@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 
 
@@ -21,7 +21,20 @@ def _norm_code(code: str) -> str:
     owner='design',
     display_name='Concrete column axial capacity',
     description='Axial load capacity of a reinforced concrete column, with a slenderness check, to the selected code.',
-    inputs={'gross_area_mm2': 'mm2', 'steel_area_mm2': 'mm2', 'fc_mpa': 'MPa', 'fy_mpa': 'MPa', 'unsupported_length_mm': 'mm', 'radius_gyration_mm': 'mm', 'code': '-', 'tie_type': '-', 'k_factor': '-', 'applied_load_kn': 'kN', 'cm': '-', 'slenderness_limit': '-'},
+    inputs={
+        'gross_area_mm2': Param('mm2', 1, 1e8, label='gross area'),
+        'steel_area_mm2': Param('mm2', 0, 1e7, label='steel area'),
+        'fc_mpa': Param('MPa', 5, 150, label='concrete compressive strength', grade='concrete'),
+        'fy_mpa': Param('MPa', 100, 1500, label='reinforcement yield strength', grade='rebar'),
+        'unsupported_length_mm': Param('mm', 100, 100000, label='unsupported length'),
+        'radius_gyration_mm': Param('mm', 1, 10000, label='radius of gyration'),
+        'code': Param('-'),
+        'tie_type': Param('-'),
+        'k_factor': Param('-', 0.5, 2.5, label='effective length factor'),
+        'applied_load_kn': Param('kN', 0, 1e7, label='applied load'),
+        'cm': Param('-', 0.2, 1, label='moment correction factor'),
+        'slenderness_limit': Param('-', 1, 200),
+    },
     outputs={'axial_capacity_kn': 'kN', 'slenderness_ratio': '-', 'slenderness_limit': '-', 'is_slender': '-', 'euler_critical_load_kn': 'kN', 'moment_magnifier_delta_ns': '-'},
 )
 def column_axial_capacity(

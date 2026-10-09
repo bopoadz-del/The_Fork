@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import logging
 from typing import Any, Dict, Optional
 
@@ -14,7 +14,12 @@ logger = logging.getLogger(__name__)
     owner='planning',
     display_name='Total float and criticality',
     description='Total float of an activity from its early and late dates, and whether it is critical.',
-    inputs={'early_start': '-', 'early_finish': '-', 'late_start': '-', 'late_finish': '-'},
+    inputs={
+        'early_start': Param('-', 0, 100000),
+        'early_finish': Param('-', 0, 100000),
+        'late_start': Param('-', 0, 100000),
+        'late_finish': Param('-', 0, 100000),
+    },
     outputs={'total_float': '-', 'is_critical': '-', 'consistency_check_lf_minus_ef': '-'},
 )
 def critical_path_float(
@@ -56,7 +61,11 @@ def critical_path_float(
     owner='planning',
     display_name='Progress and remaining quantity',
     description='Planned and actual percent complete, remaining quantity and progress variance.',
-    inputs={'total_qty': '-', 'planned_qty': '-', 'actual_qty': '-'},
+    inputs={
+        'total_qty': Param('-', 0, 1e12, label='total quantity'),
+        'planned_qty': Param('-', 0, 1e12, label='planned quantity'),
+        'actual_qty': Param('-', 0, 1e12, label='actual quantity'),
+    },
     outputs={'planned_percent': '%', 'actual_percent': '%', 'planned_qty': '-', 'actual_qty': '-', 'remaining_qty': '-', 'progress_variance_percent': '%'},
 )
 def progress_quantity(
@@ -167,7 +176,24 @@ def _daily_production_from_rate_alias(
     owner='planning',
     display_name='Quantity, productivity, manpower and duration',
     description='Links quantity, productivity, manpower and duration: any one from the others.',
-    inputs={'quantity_executed': '-', 'man_hours': 'h', 'quantity': '-', 'productivity': '-', 'manpower': '-', 'working_hours': 'h', 'remaining_manhours': '-', 'available_hours': 'h', 'daily_production': '-', 'remaining_qty': '-', 'remaining_days': 'days', 'productivity_rate': '-', 'rate_unit': '-', 'crew_cost_per_day': 'currency', 'day_rate': '-', 'gang_cost_per_day': 'currency'},
+    inputs={
+        'quantity_executed': Param('-', 0, 1e12),
+        'man_hours': Param('h', 0, 1e8),
+        'quantity': Param('-', 0, 1e12),
+        'productivity': Param('-', 0, 1e9),
+        'manpower': Param('-', 0, 1e6),
+        'working_hours': Param('h', 0, 1e8),
+        'remaining_manhours': Param('-', 0, 1e10, label='remaining man-hours'),
+        'available_hours': Param('h', 0, 1e8),
+        'daily_production': Param('-', 0, 1e9),
+        'remaining_qty': Param('-', 0, 1e12, label='remaining quantity'),
+        'remaining_days': Param('days', 0, 36500),
+        'productivity_rate': Param('-', 0, 1e9),
+        'rate_unit': Param('-'),
+        'crew_cost_per_day': Param('currency', 0, 1e9),
+        'day_rate': Param('-', 0, 1e9),
+        'gang_cost_per_day': Param('currency', 0, 1e9),
+    },
     outputs={'productivity': 'per productivity_units', 'required_manpower': '-', 'manhours_required': 'h', 'daily_required_production': '-', 'duration': 'duration_units', 'total_cost': 'currency'},
 )
 def productivity_manpower_duration(

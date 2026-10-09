@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 from typing import Optional
 
@@ -22,7 +22,13 @@ def _norm_code(code: str) -> str:
     owner='design',
     display_name='Steel member tension capacity',
     description='Design tensile strength of a steel member: the lesser of gross-section yielding and net-section rupture.',
-    inputs={'gross_area_mm2': 'mm2', 'net_area_mm2': 'mm2', 'fy_mpa': 'MPa', 'fu_mpa': 'MPa', 'code': '-'},
+    inputs={
+        'gross_area_mm2': Param('mm2', 1, 1e8, label='gross area'),
+        'net_area_mm2': Param('mm2', 1, 1e8, label='net area'),
+        'fy_mpa': Param('MPa', 100, 1500, label='steel yield strength', grade='steel'),
+        'fu_mpa': Param('MPa', 200, 2000, label='steel ultimate strength'),
+        'code': Param('-'),
+    },
     outputs={'capacity_kn': 'kN', 'governing_limit_state': '-', 'yield_capacity_kn': 'kN', 'rupture_capacity_kn': 'kN'},
 )
 def steel_tension_capacity(
@@ -76,7 +82,13 @@ def steel_tension_capacity(
     owner='design',
     display_name='Bolt shear capacity',
     description='Design shear capacity of a bolt over its shear planes, to the selected code.',
-    inputs={'bolt_area_mm2': 'mm2', 'shear_strength_mpa': 'MPa', 'n_shear_planes': '-', 'code': '-', 'alpha_v': '-'},
+    inputs={
+        'bolt_area_mm2': Param('mm2', 1, 20000, label='bolt area'),
+        'shear_strength_mpa': Param('MPa', 10, 2000, label='bolt shear strength'),
+        'n_shear_planes': Param('-', 1, 4, label='number of shear planes'),
+        'code': Param('-'),
+        'alpha_v': Param('-', 0, 1, label='shear coefficient'),
+    },
     outputs={'capacity_kn': 'kN', 'n_shear_planes': '-'},
 )
 def bolt_shear_capacity(
@@ -124,7 +136,13 @@ def bolt_shear_capacity(
     owner='design',
     display_name='Fillet weld capacity',
     description='Design strength of a fillet weld over its length.',
-    inputs={'leg_size_mm': 'mm', 'length_mm': 'mm', 'electrode_strength_mpa': 'MPa', 'code': '-', 'beta_w': '-'},
+    inputs={
+        'leg_size_mm': Param('mm', 2, 100, label='weld leg size'),
+        'length_mm': Param('mm', 1, 100000, label='weld length'),
+        'electrode_strength_mpa': Param('MPa', 200, 1500, label='electrode strength'),
+        'code': Param('-'),
+        'beta_w': Param('-', 0.5, 1.5, label='weld correlation factor'),
+    },
     outputs={'capacity_kn': 'kN', 'capacity_per_mm_kn': 'kN', 'effective_throat_mm': 'mm'},
 )
 def weld_capacity(

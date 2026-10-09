@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 from typing import Dict
 
 
@@ -11,7 +11,10 @@ from typing import Dict
     owner='contracts',
     display_name='Risk score',
     description='Risk score and band from probability and impact ratings.',
-    inputs={'probability': '-', 'impact': '-'},
+    inputs={
+        'probability': Param('-', 1, 5),
+        'impact': Param('-', 1, 5),
+    },
     outputs={'probability': '-', 'impact': '-', 'score': '-', 'band': '-', 'requires_action': '-', 'description': '-'},
 )
 def score_risk(probability: int, impact: int) -> Dict:

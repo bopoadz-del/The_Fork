@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 # Typical clash tolerance by BIM LOD (mm). Project BEP governs — indicative only.
@@ -13,7 +13,9 @@ _LOD_CLASH_MM = {100: None, 200: 50.0, 300: 25.0, 350: 12.0, 400: 6.0, 500: 3.0}
     owner='qaqc',
     display_name='BIM clash tolerance',
     description="Clash tolerance for a model's level of development.",
-    inputs={'lod': '-'},
+    inputs={
+        'lod': Param('-', 100, 500, label='level of development (LOD)'),
+    },
     outputs={'lod': '-', 'clash_tolerance_mm': 'mm'},
 )
 def bim_clash_tolerance(lod: int = 350) -> dict:
@@ -38,7 +40,10 @@ def bim_clash_tolerance(lod: int = 350) -> dict:
     owner='qaqc',
     display_name='Laser scan accuracy at range',
     description="A scanner's stated ranging accuracy scaled to a working range, for comparison with the tolerance.",
-    inputs={'range_m': 'm', 'accuracy_at_10m_mm': 'mm'},
+    inputs={
+        'range_m': Param('m', 0, 2000, label='scan range'),
+        'accuracy_at_10m_mm': Param('mm', 0, 100, label='scanner accuracy at 10 m'),
+    },
     outputs={'range_m': 'm', 'estimated_accuracy_mm': 'mm'},
 )
 def laser_scan_accuracy(range_m: float, accuracy_at_10m_mm: float = 2.0) -> dict:

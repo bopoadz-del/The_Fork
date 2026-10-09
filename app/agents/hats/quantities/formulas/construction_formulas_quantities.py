@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 
 
@@ -43,7 +43,16 @@ def _rebar_mass_kg(
     owner='quantities',
     display_name='Reinforcement weight',
     description='Mass of reinforcing bars from diameter and length, or the length from a mass.',
-    inputs={'bar_diameter_mm': 'mm', 'total_length_m': 'm', 'quantity': '-', 'density_kg_m3': 'kg/m3', 'total_weight_kg': 'kg', 'total_mass_kg': 'kg', 'total_mass_t': 't', 'mode': '-'},
+    inputs={
+        'bar_diameter_mm': Param('mm', 4, 60, label='bar diameter'),
+        'total_length_m': Param('m', 0, 1e8),
+        'quantity': Param('-', 1, 1e7, label='number of bars'),
+        'density_kg_m3': Param('kg/m3', 1000, 20000, label='steel density'),
+        'total_weight_kg': Param('kg', 0, 1e8),
+        'total_mass_kg': Param('kg', 0, 1e8),
+        'total_mass_t': Param('t', 0, 100000),
+        'mode': Param('-'),
+    },
     outputs={'unit_mass_kg_m': 'kg/m', 'total_mass_kg': 'kg', 'total_mass_t': 't', 'total_length_m': 'm', 'quantity': '-', 'metres_run': '-', 'mode': '-'},
 )
 def rebar_weight(
@@ -141,7 +150,13 @@ def rebar_weight(
     owner='quantities',
     display_name='Reinforcement mass by area',
     description='Reinforcement mass for a slab or wall area from bar diameter and spacing.',
-    inputs={'area_m2': 'm2', 'spacing_mm': 'mm', 'bar_diameter_mm': 'mm', 'both_ways': '-', 'density_kg_m3': 'kg/m3'},
+    inputs={
+        'area_m2': Param('m2', 0, 1e8),
+        'spacing_mm': Param('mm', 10, 2000, label='bar spacing'),
+        'bar_diameter_mm': Param('mm', 4, 60, label='bar diameter'),
+        'both_ways': Param('-'),
+        'density_kg_m3': Param('kg/m3', 1000, 20000, label='steel density'),
+    },
     outputs={'bars_per_m': 'm', 'total_bar_length_m': 'm', 'total_mass_kg': 'kg', 'both_ways': '-'},
 )
 def rebar_by_area(
@@ -174,7 +189,17 @@ def rebar_by_area(
     owner='quantities',
     display_name='Interior finishes take-off',
     description='Interior finish quantities (wall, ceiling, skirting) from a room take-off and the floor-to-ceiling height.',
-    inputs={'floor_area_m2': 'm2', 'perimeter_m': 'm', 'room_count': '-', 'floor_to_ceiling_m': 'm', 'door_width_m': 'm', 'door_height_m': 'm', 'doors_per_room': '-', 'shared_wall_fraction': '-', 'window_deduction_m2': 'm2'},
+    inputs={
+        'floor_area_m2': Param('m2', 0, 1e8),
+        'perimeter_m': Param('m', 0, 100000),
+        'room_count': Param('-', 1, 100000, label='number of rooms'),
+        'floor_to_ceiling_m': Param('m', 0, 20, label='floor-to-ceiling height'),
+        'door_width_m': Param('m', 0, 10),
+        'door_height_m': Param('m', 0, 10),
+        'doors_per_room': Param('-', 0, 50),
+        'shared_wall_fraction': Param('-', 0, 1, label='shared-wall fraction'),
+        'window_deduction_m2': Param('m2', 0, 1e7),
+    },
     outputs={'floor_screed_m2': 'm2', 'floor_tiling_m2': 'm2', 'ceiling_finish_m2': 'm2', 'skirting_m': 'm', 'wall_paint_m2': 'm2', 'blockwork_m2': 'm2', 'gross_wall_face_m2': 'm2', 'door_deduction_m2': 'm2'},
 )
 def interior_finishes_takeoff(
@@ -253,14 +278,20 @@ def interior_finishes_takeoff(
     owner='quantities',
     display_name='Estimate line cost split',
     description='Material, labour and plant split of one estimate line.',
-    inputs={'quantity': '-', 'daily_output': '-', 'day_rate': '-', 'material_rate_per_unit': '-', 'plant_fraction_of_labour': '-'},
+    inputs={
+        'quantity': Param('-', 0, 1e12),
+        'daily_output': Param('-', 0, 1e9),
+        'day_rate': Param('-', 0, 1e9),
+        'material_rate_per_unit': Param('-', 0, 1e9, label='material rate per unit'),
+        'plant_fraction_of_labour': Param('-', 0, 10, label='plant cost as a fraction of labour'),
+    },
     outputs={'quantity': '-', 'crew_days': 'days', 'labour_cost': 'currency', 'plant_cost': 'currency', 'material_cost': 'currency', 'total_cost': 'currency', 'total_is_partial': '-'},
 )
 def resource_line_cost(
     quantity: float,
     daily_output: float,
     day_rate: float,
-    material_rate_per_unit: float = -1.0,
+    material_rate_per_unit: float | None = None,
     plant_fraction_of_labour: float = 0.0,
 ) -> dict:
     """Material / labour / plant split for one estimate line -- PROCESS only.
@@ -268,7 +299,7 @@ def resource_line_cost(
     The productivity (daily output per tradesman) and the day rate vary per
     market, project, and even floor: both are required inputs, never
     defaults. Labour = quantity / daily_output x day_rate. Material rate is
-    optional; when absent (< 0) the material cell is reported as
+    optional; when absent the material cell is reported as
     NO SOURCED RATE rather than a number, mirroring the estimating rule that
     a missing rate is a refusal, not an invention. Plant is modelled as a
     declared fraction of labour (small plant and scaffold allowance).
@@ -285,7 +316,7 @@ def resource_line_cost(
     crew_days = q / float(daily_output)
     labour = crew_days * float(day_rate)
     plant = labour * float(plant_fraction_of_labour)
-    has_material = float(material_rate_per_unit) >= 0
+    has_material = material_rate_per_unit is not None and float(material_rate_per_unit) >= 0
     material = q * float(material_rate_per_unit) if has_material else None
     total = labour + plant + (material or 0.0)
     return {

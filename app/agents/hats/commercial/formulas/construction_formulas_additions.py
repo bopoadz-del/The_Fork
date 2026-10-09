@@ -3,14 +3,17 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 @formula(
     owner='commercial',
     display_name='Interim payment',
     description='Net interim payment from a gross valuation and a retention percentage.',
-    inputs={'gross_valuation': 'currency', 'retention_percent': '%'},
+    inputs={
+        'gross_valuation': Param('currency', 0, 1e13),
+        'retention_percent': Param('%', 0, 100, label='retention'),
+    },
     outputs={'gross_valuation': 'currency', 'retention_percent': '%', 'retention_amount': 'currency', 'net_payment': 'currency'},
 )
 def calculate_interim_payment(

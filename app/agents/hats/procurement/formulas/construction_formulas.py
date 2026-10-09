@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 from typing import Any, Dict
 
@@ -12,7 +12,15 @@ from typing import Any, Dict
     owner='procurement',
     display_name='Number of cranes needed',
     description='Number of cranes needed for a lifting demand and crane cycle capacity.',
-    inputs={'total_lift_demand_tons': '-', 'crane_capacity_tons': '-', 'utilization_pct': '%', 'shifts_per_day': '-', 'hours_per_shift': '-', 'cycle_time_minutes': '-', 'working_days': 'days'},
+    inputs={
+        'total_lift_demand_tons': Param('-', 0, 1e8, label='total lift demand'),
+        'crane_capacity_tons': Param('-', 0, 10000, label='crane capacity'),
+        'utilization_pct': Param('%', 0, 100, label='crane utilisation'),
+        'shifts_per_day': Param('-', 1, 3),
+        'hours_per_shift': Param('-', 1, 24),
+        'cycle_time_minutes': Param('-', 1, 600, label='lift cycle time'),
+        'working_days': Param('days', 1, 31, label='working days per month'),
+    },
     outputs={'total_lift_demand_tons': '-', 'crane_capacity_tons': '-', 'utilization_pct': '%', 'shifts_per_day': '-', 'hours_per_shift': '-', 'cycle_time_minutes': '-', 'lifts_per_hour_per_crane': '-', 'daily_tonnage_per_crane': '-', 'cranes_required': '-', 'monthly_rate_sar': 'currency', 'total_monthly_cost_sar': 'currency'},
 )
 def crane_planning(

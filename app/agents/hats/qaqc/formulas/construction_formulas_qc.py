@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 
 
@@ -11,7 +11,10 @@ import math
     owner='qaqc',
     display_name='Concrete cylinder strength',
     description='Compressive strength from a cylinder test load and diameter.',
-    inputs={'failure_load_kn': 'kN', 'cylinder_diameter_mm': 'mm'},
+    inputs={
+        'failure_load_kn': Param('kN', 0, 100000, label='failure load'),
+        'cylinder_diameter_mm': Param('mm', 25, 500),
+    },
     outputs={'compressive_strength_mpa': 'MPa', 'cylinder_area_mm2': 'mm2'},
 )
 def concrete_cylinders(failure_load_kn: float, cylinder_diameter_mm: float = 150.0) -> dict:
@@ -36,7 +39,11 @@ def concrete_cylinders(failure_load_kn: float, cylinder_diameter_mm: float = 150
     owner='qaqc',
     display_name='Concrete drying shrinkage',
     description='Drying shrinkage strain of concrete at a given age.',
-    inputs={'time_days': 'days', 'ultimate_shrinkage_microstrain': '-', 'time_constant_days': 'days'},
+    inputs={
+        'time_days': Param('days', 0, 36500, label='age'),
+        'ultimate_shrinkage_microstrain': Param('-', 0, 3000, label='ultimate shrinkage'),
+        'time_constant_days': Param('days', 1, 3650, label='shrinkage time constant'),
+    },
     outputs={'shrinkage_microstrain': '-', 'shrinkage_strain': '-', 'fraction_of_ultimate': '-'},
 )
 def concrete_shrinkage(
@@ -67,7 +74,11 @@ def concrete_shrinkage(
     owner='qaqc',
     display_name='Concrete curing time',
     description='Days of curing for concrete to reach a fraction of its 28-day strength.',
-    inputs={'target_strength_fraction': '-', 'gain_a': '-', 'gain_b': '-'},
+    inputs={
+        'target_strength_fraction': Param('-', 0, 1, label='target fraction of 28-day strength'),
+        'gain_a': Param('-', 0, 50, label='strength-gain constant a'),
+        'gain_b': Param('-', 0, 1, label='strength-gain constant b'),
+    },
     outputs={'days_to_target': 'days', 'target_fraction': '-'},
 )
 def concrete_curing_time(

@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 # LEED v4 BD+C certification thresholds (points out of 110).
@@ -13,7 +13,9 @@ _LEED_LEVELS = [(80, "Platinum"), (60, "Gold"), (50, "Silver"), (40, "Certified"
     owner='commercial',
     display_name='LEED certification level',
     description='Maps a LEED point total to its certification level.',
-    inputs={'points': '-'},
+    inputs={
+        'points': Param('-', 0, 110, label='LEED points'),
+    },
     outputs={'points': '-', 'certification_level': '-'},
 )
 def leed_points_estimate(points: float) -> dict:

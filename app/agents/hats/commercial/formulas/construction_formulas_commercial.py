@@ -3,14 +3,17 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 
 
 @formula(
     owner='commercial',
     display_name='Return on investment',
     description='Return on investment as a percentage of cost.',
-    inputs={'gain': '-', 'cost': 'currency'},
+    inputs={
+        'gain': Param('-', -1e13, 1e13, label='gain'),
+        'cost': Param('currency', 0, 1e13, label='investment cost'),
+    },
     outputs={'net_profit': '-', 'roi_percent': '%'},
 )
 def roi_calculator(gain: float, cost: float) -> dict:

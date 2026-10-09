@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 import re
 
@@ -22,7 +22,14 @@ def _norm_code(code: str) -> str:
     owner='design',
     display_name='Concrete beam bending capacity',
     description='Design flexural capacity of a singly reinforced rectangular concrete beam.',
-    inputs={'steel_area_mm2': 'mm2', 'fy_mpa': 'MPa', 'width_mm': 'mm', 'eff_depth_mm': 'mm', 'fc_mpa': 'MPa', 'code': '-'},
+    inputs={
+        'steel_area_mm2': Param('mm2', 0, 1e7, label='steel area'),
+        'fy_mpa': Param('MPa', 100, 1500, label='reinforcement yield strength', grade='rebar'),
+        'width_mm': Param('mm', 50, 10000, label='section width'),
+        'eff_depth_mm': Param('mm', 20, 10000, label='effective depth'),
+        'fc_mpa': Param('MPa', 5, 150, label='concrete compressive strength', grade='concrete'),
+        'code': Param('-'),
+    },
     outputs={'moment_capacity_kn_m': 'kN.m'},
 )
 def rc_beam_moment_capacity(
@@ -68,7 +75,13 @@ def rc_beam_moment_capacity(
     owner='design',
     display_name='Concrete section shear capacity',
     description='Shear capacity of a concrete section without shear reinforcement.',
-    inputs={'width_mm': 'mm', 'eff_depth_mm': 'mm', 'fc_mpa': 'MPa', 'code': '-', 'rho_l': '-'},
+    inputs={
+        'width_mm': Param('mm', 50, 10000, label='section width'),
+        'eff_depth_mm': Param('mm', 20, 10000, label='effective depth'),
+        'fc_mpa': Param('MPa', 5, 150, label='concrete compressive strength', grade='concrete'),
+        'code': Param('-'),
+        'rho_l': Param('-', 0, 0.1, label='longitudinal reinforcement ratio'),
+    },
     outputs={'shear_capacity_kn': 'kN'},
 )
 def rc_beam_shear_capacity(
@@ -120,7 +133,12 @@ _EC_RATIOS = {"simply_supported": 20.0, "one_end_continuous": 26.0,
     owner='design',
     display_name='Minimum slab thickness',
     description='Minimum one-way slab thickness for deflection control, from span and support condition.',
-    inputs={'span_mm': 'mm', 'support_condition': '-', 'code': '-', 'fy_mpa': 'MPa'},
+    inputs={
+        'span_mm': Param('mm', 100, 200000),
+        'support_condition': Param('-'),
+        'code': Param('-'),
+        'fy_mpa': Param('MPa', 100, 1500, label='reinforcement yield strength', grade='rebar'),
+    },
     outputs={'min_thickness_mm': 'mm', 'support_condition': '-'},
 )
 def slab_thickness_min(
@@ -342,7 +360,13 @@ def answer_states_slab_thickness_result(ask: str, answer: str) -> bool:
     owner='design',
     display_name='Reinforcement lap length',
     description='Tension lap-splice length of a deformed reinforcing bar.',
-    inputs={'bar_diameter_mm': 'mm', 'fy_mpa': 'MPa', 'fc_mpa': 'MPa', 'code': '-', 'confinement_ratio': '-'},
+    inputs={
+        'bar_diameter_mm': Param('mm', 4, 60, label='bar diameter'),
+        'fy_mpa': Param('MPa', 100, 1500, label='reinforcement yield strength', grade='rebar'),
+        'fc_mpa': Param('MPa', 5, 150, label='concrete compressive strength', grade='concrete'),
+        'code': Param('-'),
+        'confinement_ratio': Param('-', 1, 2.5, label='confinement term'),
+    },
     outputs={'lap_length_mm': 'mm'},
 )
 def rebar_lap_length(

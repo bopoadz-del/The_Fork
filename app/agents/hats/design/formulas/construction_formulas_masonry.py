@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import Param, formula
 import math
 
 
@@ -21,7 +21,21 @@ def _norm_code(code: str) -> str:
     owner='design',
     display_name='Masonry wall capacity',
     description='Axial compressive capacity of a masonry wall, allowing for slenderness.',
-    inputs={'masonry_strength_mpa': 'MPa', 'net_area_mm2': 'mm2', 'height_mm': 'mm', 'thickness_mm': 'mm', 'code': '-', 'radius_gyration_mm': 'mm', 'steel_area_mm2': 'mm2', 'steel_stress_mpa': 'MPa', 'gamma_m': 'm', 'eccentricity_mm': 'mm', 'ke': '-', 'eff_height_mm': 'mm', 'eff_thickness_mm': 'mm'},
+    inputs={
+        'masonry_strength_mpa': Param('MPa', 0.5, 100, label='masonry compressive strength'),
+        'net_area_mm2': Param('mm2', 1, 1e8, label='net area'),
+        'height_mm': Param('mm', 50, 50000, label='wall height'),
+        'thickness_mm': Param('mm', 25, 5000, label='wall thickness'),
+        'code': Param('-'),
+        'radius_gyration_mm': Param('mm', 1, 10000, label='radius of gyration'),
+        'steel_area_mm2': Param('mm2', 0, 1e7, label='steel area'),
+        'steel_stress_mpa': Param('MPa', 0, 1500, label='steel stress'),
+        'gamma_m': Param('m', 1, 5, label='partial safety factor for masonry'),
+        'eccentricity_mm': Param('mm', 0, 10000),
+        'ke': Param('-', 100, 2000, label='masonry modulus factor'),
+        'eff_height_mm': Param('mm', 50, 50000, label='effective height'),
+        'eff_thickness_mm': Param('mm', 25, 5000, label='effective thickness'),
+    },
     outputs={'capacity_kn': 'kN', 'slenderness_reduction_R': '-', 'h_over_r': '-', 'phi_reduction': '-', 'slenderness_lambda_c': 'degC'},
 )
 def masonry_wall_capacity(
