@@ -945,7 +945,7 @@ class TestPeUnitConvert:
         assert r["value_out"] == pytest.approx(expected, rel=1e-8, abs=1e-8)
 
     def test_unsupported_pair(self):
-        env = _err("pe_unit_convert", value=10, from_unit="kg", to_unit="lb")
+        env = _err("pe_unit_convert", value=10, from_unit="m", to_unit="kg")
         assert "Unsupported" in env["error"]
 
 

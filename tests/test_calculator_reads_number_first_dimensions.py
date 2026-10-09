@@ -68,7 +68,11 @@ def test_a_figures_unit_is_matched_against_the_formula_declaration():
 
 @pytest.mark.parametrize("num,unit,dest,expected", [
     (2.0e-4, "m4", "i_mm4", 2.0e8), (200, "GPa", "ec_mpa", 200000.0), (30, "N/mm2", "fck_mpa", 30.0),
-    (200, "mm", "thickness_m", 0.2), (5, "kN", "thickness_m", 5),
+    (200, "mm", "thickness_m", 0.2),
 ])
 def test_figures_convert_within_their_unit_family(num, unit, dest, expected):
     assert cf._to_param_unit(num, unit, dest) == pytest.approx(expected)
+
+
+def test_a_figure_of_another_kind_keeps_its_unit_for_the_input_check():
+    assert cf._to_param_unit(5, "kN", "thickness_m") == "5 kN"
