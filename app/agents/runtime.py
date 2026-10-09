@@ -5442,16 +5442,26 @@ def _nonblank_after_empty_synthesis(
     than an empty end event.
     """
     raw = (text or "").strip()
-    if raw and raw != _EMPTY_RESPONSE_FALLBACK:
+    body = _strip_coverage_footer(raw)
+    if body and body != _EMPTY_RESPONSE_FALLBACK:
         return text
-    priced = _graft_composed_user_priced_takeoff(raw, messages)
+    # A coverage footer alone is not an answer: the answer goes above it.
+    footer = "\n".join(m.group(0).strip() for m in _COVERAGE_FOOTER_RE.finditer(raw))
+
+    def _with_footer(answer: str) -> str:
+        return f"{answer}\n{footer}" if footer else answer
+
+    priced = _graft_composed_user_priced_takeoff(body, messages)
     if priced.strip() and priced.strip() != _EMPTY_RESPONSE_FALLBACK:
-        return priced
+        return _with_footer(priced)
+    recovered = _recover_answer_from_tool_messages("", messages).strip()
+    if recovered:
+        return _with_footer(recovered)
     if _turn_already_ran_construction_calc(messages) or _construction_calc_from_messages(
         messages,
     ):
-        return _SYNTH_CUTOFF_NOTICE
-    return text or _EMPTY_RESPONSE_FALLBACK
+        return _with_footer(_SYNTH_CUTOFF_NOTICE)
+    return _with_footer(body or _EMPTY_RESPONSE_FALLBACK)
 
 
 def _construction_calc_tool_schema() -> dict[str, Any]:
@@ -8633,6 +8643,7 @@ def _postprocess_answer(
     # credit path can name it. Runs before the cost gate so that result
     # is what the gate sees.
     text = _graft_supplied_input_calculation(text, messages, rag_sys_msg)
+    gated = text
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     text = _calc_figure_grounding_gate(text, messages)
     # Citation provenance: an attribution no evidence record backs is removed
@@ -8642,6 +8653,10 @@ def _postprocess_answer(
     # template scheduler that has no BOQ input at all).
     from app.agents.citation_provenance import gate as _citation_provenance_gate
     text = _citation_provenance_gate(text, rag_sys_msg, messages)
+    # A gate that removes every clause of an answer leaves the turn's own
+    # tool result, never an empty answer for the footers to dress.
+    if gated.strip() and not text.strip():
+        text = _recover_answer_from_tool_messages("", messages)
     # Figure provenance (same evidence objects): every figure credited to user
     # input, calculator, project document or general knowledge; a figure with
     # no source is not stated. Enforced on turns that ran a need plan.

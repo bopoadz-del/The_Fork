@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from app.lib.formula_registry import SIGNED_FIGURE, formula
 
+import functools
+
 import logging
 
 import math
@@ -57,13 +59,41 @@ _DOCUMENTED_WASTE_ASK_RE = re.compile(
 )
 
 # "30x20x1.5", "15 m x 8 m x 0.2 m", "15 m by 8 m by -0.2 m", "1200 x 600 x
-# 200 mm". A unit written after the last figure only is the chain's unit.
-_CHAIN_DIM = rf"({SIGNED_FIGURE})(?:\s*(mm|cm|m)(?![A-WYZa-wyz0-9]))?"
+# 200 mm", "50 ft by 20 ft by 8 in". Each figure keeps the length unit written
+# after it; a figure written bare takes the nearest unit written in the chain.
 _CHAIN_SEP = r"\s*(?:[x×*]|by(?![A-Za-z]))\s*"
-_LWT_CHAIN_RE = re.compile(
-    rf"(?<![A-Za-z0-9]){_CHAIN_DIM}{_CHAIN_SEP}{_CHAIN_DIM}{_CHAIN_SEP}{_CHAIN_DIM}",
-    re.IGNORECASE,
-)
+
+
+@functools.lru_cache(maxsize=1)
+def _lwt_chain_re() -> re.Pattern[str]:
+    from app.agents.base.formulas.construction_formulas_planning import _FAMILIES
+
+    units = "|".join(re.escape(u) for u in sorted(_FAMILIES["length"], key=len, reverse=True))
+    dim = rf"({SIGNED_FIGURE})(?:\s*({units})(?![A-WYZa-wyz0-9]))?"
+    return re.compile(rf"(?<![A-Za-z0-9]){dim}{_CHAIN_SEP}{dim}{_CHAIN_SEP}{dim}", re.IGNORECASE)
+
+
+def _chain_units(units: list[str | None]) -> list[str | None]:
+    """A bare figure in a chain takes the nearest unit written to its right,
+    else to its left."""
+    out = list(units)
+    for i, unit in enumerate(units):
+        if unit:
+            continue
+        right = next((u for u in units[i + 1:] if u), None)
+        left = next((u for u in reversed(units[:i]) if u), None)
+        out[i] = right or left
+    return out
+
+
+def dimension_chains(text: str) -> list[list[tuple[float, str | None]]]:
+    """Every L×W×T chain in ``text`` as (figure, unit written for it)."""
+    chains = []
+    for match in _lwt_chain_re().finditer(text or ""):
+        groups = match.groups()
+        numbers = [float(groups[i].replace(",", "")) for i in (0, 2, 4)]
+        chains.append(list(zip(numbers, _chain_units([groups[i] for i in (1, 3, 5)]))))
+    return chains
 
 # A waste percentage the operator stated out loud. The number has to BELONG to
 # the waste -- a contract full of percentages (retention 5%, advance recovery
@@ -184,16 +214,11 @@ def parse_lwt_metres(text: str) -> tuple[float, float, float] | None:
     """First L×W×T (or L×W×D) chain in ``text``, in metres, sign kept."""
     from app.agents.base.formulas.construction_formulas_planning import convert_units
 
-    match = _LWT_CHAIN_RE.search(text or "")
-    if not match:
+    chains = dimension_chains(text)
+    if not chains:
         return None
-    groups = match.groups()
-    numbers = [float(groups[i].replace(",", "")) for i in (0, 2, 4)]
-    units = [groups[i] for i in (1, 3, 5)]
-    if not units[0] and not units[1] and units[2]:
-        units = [units[2]] * 3
     return tuple(  # type: ignore[return-value]
-        convert_units(n, u, "m")["value_out"] if u else n for n, u in zip(numbers, units)
+        convert_units(n, u, "m")["value_out"] if u else n for n, u in chains[0]
     )
 
 # "24 pile caps" / "18 pad footings". The count belongs to the element, not
