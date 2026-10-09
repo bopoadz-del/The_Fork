@@ -715,6 +715,13 @@ _TOOL_ERROR_NUDGE = (
     "work, state plainly what failed and answer with what you have."
 )
 _TOOL_ERROR_NUDGE_CAP = 2
+# The calculator held a supplied value to its declared type and range and
+# did not run. Only the user can give the value: retrying with one the
+# model chose would be an invented input.
+_INPUT_QUESTION_NUDGE = (
+    "The calculator did not run because a supplied value is outside what it "
+    "accepts. Do not call it again with a value you chose. Ask the user: {question}"
+)
 # construction_calc "Unknown calculation" means the formula is not in the
 # registry. Retrying another calculator name loops; self-coding writes
 # Python once and returns. Only injected when the agent can delegate.
@@ -7543,6 +7550,16 @@ def _boq_scope_wbs_compose_enabled() -> bool:
     )
 
 
+def _calc_input_question(pre: dict[str, Any] | None) -> str:
+    """The pre-dispatched calculator's question for inputs it would not run, or ''."""
+    if not pre or pre.get("name") != "construction_calc":
+        return ""
+    result = pre.get("result")
+    if not isinstance(result, dict) or not result.get("needs_input"):
+        return ""
+    return str(result.get("question") or "")
+
+
 def _compose_boq_scope_wbs_answer(
     pre: dict[str, Any] | None,
     user_message: str,
@@ -11853,6 +11870,8 @@ def _nudge_for_failed_tool(tool_result: dict[str, Any], agent: "Agent") -> str:
     err = ""
     if isinstance(inner, dict):
         err = str(inner.get("error") or "")
+        if inner.get("needs_input") and inner.get("question"):
+            return _INPUT_QUESTION_NUDGE.format(question=inner["question"])
     if (
         agent.can_delegate
         and agent.name != "self-coding"
