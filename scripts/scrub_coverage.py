@@ -32,6 +32,8 @@ SECRET_NAME = "RAG_SCRUB_RULES"
 DB_NAME = "DATABASE_URL"
 #: Characters of text kept either side of a match when it is scrubbed in place.
 CONTEXT = 80
+#: Names (never values) the live task carries as secrets, for the report.
+_SECRET_NAMES: set = set()
 
 
 class CoverageError(RuntimeError):
@@ -144,6 +146,8 @@ def live_values(cluster: str, service: str, names: Sequence[str]) -> Dict[str, s
             elif row.get("name"):
                 os.environ[str(row["name"])] = str(row.get("value") or "")
         for row in container.get("secrets") or []:
+            if row.get("name") and row["name"] not in names:
+                _SECRET_NAMES.add(str(row["name"]))
             if row.get("name") in names and row["name"] not in out:
                 out[row["name"]] = _resolve(str(row.get("valueFrom") or ""))
     return out
@@ -183,6 +187,18 @@ def live_corpus(sample_chunks: int, counts: Optional[Dict[str, object]] = None) 
                 counts["chunk_rows"] += 1
                 if body:
                     texts.append(str(body))
+        # Where the indexed text actually lives, by rank -- counts and flags
+        # only, never an id: tells a misconfigured source from an empty one.
+        top = session.execute(sql(
+            "SELECT project_id, COUNT(*) AS n FROM chunks GROUP BY project_id ORDER BY n DESC LIMIT 8"
+        )).all()
+        counts["chunk_holders"] = [
+            {"rank": i + 1, "chunks": int(n), "scrubbed": pid in ids}
+            for i, (pid, n) in enumerate(top)
+        ]
+    counts["source_id_from_task_env"] = "MASTER_CORPUS_SOURCE_PROJECT_ID" in os.environ
+    counts["source_id_is_a_task_secret"] = "MASTER_CORPUS_SOURCE_PROJECT_ID" in _SECRET_NAMES
+    counts["gk_ids_is_a_task_secret"] = "RAG_GENERAL_KNOWLEDGE_PROJECTS" in _SECRET_NAMES
     return texts, len(ids)
 
 
