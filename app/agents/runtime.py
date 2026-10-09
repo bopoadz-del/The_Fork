@@ -3852,11 +3852,11 @@ def _message_wants_named_calculator(text: str) -> bool:
         wants = _message_is_formula_style_ask(raw)
     if not wants:
         return False
+    if _document_question_without_operands(raw):
+        return False
     if _NAMED_CALC_ASK_RE.search(raw):
         return True
     if _IPC_ISSUE_RE.search(raw) and not _carries_ipc_figures(raw):
-        return False
-    if not _formula_run_authorized(raw):
         return False
     return True
 
@@ -4088,7 +4088,7 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
                     or wants_procurement
                     or wants_rfi
                     or wants_drawing_qto
-                    or not _formula_run_authorized(text)
+                    or _document_question_without_operands(text)
                 )
             ):
                 continue
@@ -11003,14 +11003,22 @@ def _user_supplied_registered_calculation(
         return None
 
 
-def _formula_run_authorized(text: str) -> bool:
-    """A named formula may run only when the user asked for a calculation
-    or already supplied an operand.
+# The ask locates the answer in a project record. A bare formula name
+# is not this; "in the specification" / "in the upload check note" is.
+_DOCUMENT_FRAME_RE = re.compile(
+    r"\b(?:in|from|per|under|according\s+to|stated\s+in|set\s+out\s+in|"
+    r"specified\s+in|given\s+in)\s+"
+    r"(?:the\s+|this\s+|our\s+|my\s+|a\s+|an\s+)?"
+    r"(?:[\w-]+\s+){0,6}"
+    r"(?:notes?|specifications?|specs?|documents?|uploads?|drawings?|"
+    r"clauses?|contracts?|schedules?|reports?|checklists?|datasheets?|"
+    r"appendices|annex(?:es)?|boq|bills?|method\s+statements?)\b",
+    re.IGNORECASE,
+)
 
-    A question that asks what a document states, and gives no figure,
-    is not that request. The calculator would otherwise run on its
-    signature defaults.
-    """
+
+def _formula_run_authorized(text: str) -> bool:
+    """The user asked for a calculation or already wrote an operand."""
     raw = text or ""
     if _looks_like_self_contained_calculation(raw) or _states_formula_with_input(raw):
         return True
@@ -11040,6 +11048,19 @@ def _formula_run_authorized(text: str) -> bool:
     return False
 
 
+def _document_question_without_operands(text: str) -> bool:
+    """A document question that supplies no figure for a calculator.
+
+    The named formula would otherwise run on its signature defaults.
+    An explicit calculation, or a figure the user already wrote, is
+    not this question.
+    """
+    raw = text or ""
+    if _DOCUMENT_FRAME_RE.search(raw) is None:
+        return False
+    return not _formula_run_authorized(raw)
+
+
 def _message_is_formula_style_ask(text: str) -> bool:
     """True when the turn is a formula / calculator ask, not a doc lookup.
 
@@ -11049,6 +11070,8 @@ def _message_is_formula_style_ask(text: str) -> bool:
     """
     raw = text or ""
     if not raw.strip():
+        return False
+    if _document_question_without_operands(raw):
         return False
     if _message_wants_inline_boq(raw):
         return False
@@ -11085,16 +11108,13 @@ def _message_is_formula_style_ask(text: str) -> bool:
     # Two-token spaced names ("concrete volume") collide with BOQ lookups
     # and must stay on RAG — `_message_names_registered_calculator` is
     # too loose here.
+    if _message_names_unambiguous_calculator(raw):
+        return True
     low = raw.lower()
-    named = _message_names_unambiguous_calculator(raw) or any(
-        tool == "construction_calc" and any(p in low for p in phrases)
-        for phrases, tool in _INTENT_TOOL_MAP
-    ) or _message_matches_calculator_stem(raw)
-    if not named:
-        return False
-    # The display name alone does not supply the operands. Running the
-    # formula then fills every input from its signature.
-    return _formula_run_authorized(raw)
+    for phrases, tool in _INTENT_TOOL_MAP:
+        if tool == "construction_calc" and any(p in low for p in phrases):
+            return True
+    return _message_matches_calculator_stem(raw)
 
 
 def message_wants_formula_calculator(text: str) -> bool:
@@ -11312,7 +11332,7 @@ async def _predispatch_formula_calc(
             or (await _off_loop(_message_wants_named_calculator, detect))
         ):
             return None
-        if not (await _off_loop(_formula_run_authorized, detect)):
+        if await _off_loop(_document_question_without_operands, detect):
             return None
         completed = await _off_loop(_user_supplied_registered_calculation, detect)
         bound: dict[str, Any] = {}

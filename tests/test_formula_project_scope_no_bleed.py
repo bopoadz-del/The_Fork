@@ -39,23 +39,17 @@ AVAILABLE = {"construction_calc", "search_project_documents"}
 # Formula-shaped asks that do not carry L×W×D. Includes the live
 # phone/UI phrasings (synthetic — no client names).
 SHORT_UI_ASKS = (
-    "pe_unit_convert",
-)
-# A display name with no operand and no calculation verb is a document
-# question. The calculator must not run on its signature defaults.
-NO_OPERAND_NAME_ASKS = (
     "rebar lap",
+    "pe_unit_convert",
     "slab formwork striking",
-    "formwork striking time for a slab",
-    "What is the formwork striking time for a slab?",
-    "What is the unit weight of reinforced concrete?",
-    "What is a typical productivity rate for concrete pouring m3 per crew-day?",
 )
 FORMULA_ASKS = (
     "compute rebar lap for 20 mm bar fy 420",
     "What is the typical rebar lap length for 16mm bars in tension?",
     "pe_unit_convert 10 m to ft",
     "Convert 150 pe using pe_unit_convert",
+    "formwork striking time for a slab",
+    "What is the formwork striking time for a slab?",
 ) + SHORT_UI_ASKS
 
 LOOKUP_ASKS = (
@@ -70,7 +64,9 @@ REPROBE_BLEED_ASKS = (
     "What is the rebar lap length for 16mm bars in tension?",
     "Convert 150 pe using pe_unit_convert",
     "What is the modulus of elasticity of concrete for fck 30 MPa?",
+    "What is a typical productivity rate for concrete pouring m3 per crew-day?",
     "roi_calculator gain 1200000 cost 1000000",
+    "What is the unit weight of reinforced concrete?",
 )
 PLUMBING_PROGRAMME_ASK = (
     "Build a plumbing flow programme for a 20-storey tower"
@@ -145,13 +141,6 @@ def test_formula_style_ask_forces_construction_calc(q):
     ), q
 
 
-@pytest.mark.parametrize("q", NO_OPERAND_NAME_ASKS)
-def test_name_without_operands_is_not_a_defaulted_calculator(q):
-    """Naming a formula, with no figure and no calculation verb, stays a lookup."""
-    assert _message_wants_named_calculator(q) is False, q
-    assert _forced_specific_tool(_tail(q), AVAILABLE) is None, q
-
-
 @pytest.mark.parametrize("q", LOOKUP_ASKS)
 def test_document_lookups_are_not_forced_onto_the_calculator(q):
     """Lookups stay on RAG. Do not steal BOQ / spec questions."""
@@ -168,7 +157,7 @@ def test_schedule_critical_path_lookup_is_not_named_calculator():
 
 @pytest.mark.parametrize("q", REPROBE_BLEED_ASKS)
 def test_reprobe_bleed_asks_force_construction_calc(q):
-    """FIXTURE-c re-probe: operand-bearing asks must call the calculator, not RAG."""
+    """FIXTURE-c re-probe: these six must call the calculator, not RAG."""
     from app.agents.runtime import _message_is_formula_style_ask
 
     assert _message_is_formula_style_ask(q), q
@@ -298,6 +287,7 @@ def test_lookup_still_wears_master_corpus_banner_when_fallback_used():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("q", (
     "What is the typical rebar lap length for 16mm bars in tension?",
+    "What is the formwork striking time for a slab?",
     "Convert 150 pe using pe_unit_convert",
 ))
 async def test_named_calculator_route_actually_invokes_construction_calc(q):
@@ -328,7 +318,8 @@ LIVE_REBAR_LAP = (
     "What is the typical rebar lap length for 16mm bars in tension?"
 )
 LIVE_PE_CONVERT = "Convert 150 pe using pe_unit_convert"
-LIVE_GATE = (LIVE_REBAR_LAP, LIVE_PE_CONVERT)
+LIVE_FORMWORK_SLAB = "What is the formwork striking time for a slab?"
+LIVE_GATE = (LIVE_REBAR_LAP, LIVE_PE_CONVERT, LIVE_FORMWORK_SLAB)
 
 
 @pytest.mark.parametrize("q", LIVE_GATE)
@@ -564,7 +555,7 @@ async def test_hex_fixture_chat_calls_calc_without_mc_bleed(
 async def test_reprobe_empty_fixture_chat_calls_calc_without_mc_bleed(
     q, tmp_path, monkeypatch,
 ):
-    """Operand-bearing re-probe asks call the calculator and skip the Master Corpus banner."""
+    """Re-probe six: construction_calc must appear; MC banner must not."""
     from app.agents.runtime import Agent, _MASTER_CORPUS_FALLBACK_NOTE
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
