@@ -253,7 +253,7 @@ def test_answer_that_already_credits_the_calculation_is_unchanged():
     answer = (
         "Dewatering cannot stop. The factor of safety is 0.380.\n"
         "Source: Uplift check for stopping dewatering — platform calculator "
-        "(water depth 23, raft thickness 2, floor count 5)\n"
+        "(water depth 23 m, raft thickness 2 m, floor count 5)\n"
     )
     assert gate(answer, _dewater_rag(), _dewater_messages()) is answer
 
@@ -262,7 +262,7 @@ def test_credit_line_carrying_result_notes_is_reduced_to_the_label():
     notes = "; ".join(_DEWATER_ENV["result"]["notes"])
     label = (
         "Source: Uplift check for stopping dewatering — platform calculator "
-        "(water depth 23, raft thickness 2, floor count 5)"
+        "(water depth 23 m, raft thickness 2 m, floor count 5)"
     )
     answer = (
         "Dewatering cannot stop. The factor of safety is 0.380.\n"

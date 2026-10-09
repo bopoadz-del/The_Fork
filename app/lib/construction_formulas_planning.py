@@ -6,7 +6,7 @@ conversions, and material/concrete-mix helpers that refuse invented rates.
 """
 from __future__ import annotations
 
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import SIGNED_FIGURE, formula
 
 import logging
 
@@ -17,11 +17,6 @@ from typing import Any, Dict, Optional, Tuple
 # Formulas (and the helpers only they use) live in their owner's package;
 # imported back so existing imports of this module keep working.
 from app.agents.base.formulas.construction_formulas_planning import (  # noqa: F401 -- moved
-    _AREA_TO_M2,
-    _LENGTH_TO_M,
-    _PRESSURE_TO_KPA,
-    _TIME_TO_HOUR,
-    _VOLUME_TO_M3,
     pe_unit_convert,
 )
 from app.agents.hats.planning.formulas.construction_formulas_planning import (  # noqa: F401 -- moved
@@ -44,15 +39,15 @@ _PROD_COST_ASK_RE = re.compile(
     r"\b(gang|crew).{0,40}\b(cost|price|sar|aed|usd)"
 )
 
-_QTY_M2_RE = re.compile(r"(?i)(\d[\d,]*(?:\.\d+)?)\s*m2\b")
+_QTY_M2_RE = re.compile(rf"(?i)({SIGNED_FIGURE})\s*m2\b")
 
 _PER_GANG_DAY_RE = re.compile(
-    r"(?i)(\d[\d,]*(?:\.\d+)?)\s*m2\s+per\s+(?:gang|crew)[- ]?day"
+    rf"(?i)({SIGNED_FIGURE})\s*m2\s+per\s+(?:gang|crew)[- ]?day"
 )
 
 _GANG_DAY_COST_RE = re.compile(
     r"(?i)(?:(?:gang|crew).{0,32}(?:costs?|at)\s*)?(?:SAR|AED|USD|GBP|EUR)\s*"
-    r"(\d[\d,]*(?:\.\d+)?)\s*per\s+day"
+    rf"({SIGNED_FIGURE})\s*per\s+day"
     r"|(?:gang|crew).{0,24}(?:costs?|at)\s*(\d[\d,]*(?:\.\d+)?)"
 )
 

@@ -27,10 +27,10 @@ class DewateringResult:
     display_name='Uplift check for stopping dewatering',
     description="Whether dewatering can stop: factor of safety of the structure's weight against groundwater uplift.",
     inputs={
-        'water_depth': Param('-', 0, 200, label='groundwater head'),
-        'raft_thickness': Param('-', 0, 20),
+        'water_depth': Param('m', 0, 200, label='groundwater head'),
+        'raft_thickness': Param('m', 0, 20),
         'floor_count': Param('-', 0, 300, label='number of floors'),
-        'floor_thickness': Param('-', 0, 5),
+        'floor_thickness': Param('m', 0, 5),
         'concrete_unit_weight': Param('-', 1, 5),
         'water_unit_weight': Param('-', 0.9, 1.1),
         'required_fos': Param('-', 1, 5, label='required factor of safety'),
@@ -372,7 +372,7 @@ def beam_deflection_ss_point_load_midspan(p_kn: float, span_m: float, ec_mpa: fl
     description='Converts a shrinkage strain to the equivalent temperature drop.',
     inputs={
         'shrinkage_strain': Param('-', 0, 0.01),
-        'alpha_c': Param('degC', 0, 0.001, label='coefficient of thermal expansion'),
+        'alpha_c': Param('1/degC', 0, 0.001, label='coefficient of thermal expansion'),
     },
     outputs={'shrinkage_strain': '-', 'equivalent_temp_drop_c': 'degC'},
 )

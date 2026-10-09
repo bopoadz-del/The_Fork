@@ -12,9 +12,9 @@ from typing import Dict
     display_name='Diaphragm wall panel volume',
     description='Concrete volume of diaphragm wall panels, with an allowance for tremie overbreak.',
     inputs={
-        'panel_length': Param('-', 0, 100),
-        'wall_thickness': Param('-', 0, 5),
-        'excavation_depth': Param('-', 0, 200),
+        'panel_length': Param('m', 0, 100),
+        'wall_thickness': Param('m', 0, 5),
+        'excavation_depth': Param('m', 0, 200),
         'panel_count': Param('-', 1, 10000, label='number of panels'),
     },
     outputs={'panel_count': '-', 'volume_per_panel_m3': 'm3', 'total_volume_m3': 'm3', 'volume_with_waste_m3': 'm3', 'waste_factor': '-'},

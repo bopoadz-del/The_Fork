@@ -406,7 +406,7 @@ def test_explicit_calculation_may_run_on_defaults_and_labels_them(name, display)
     """An explicit calculation with no figures may use defaults, and says so."""
     from app.lib.construction_formulas import CALCULATORS
     from app.lib.formula_registry import get
-    from app.lib.source_labels import _user_states_value, input_phrase
+    from app.lib.source_labels import _user_states_value, default_sentence
 
     from app.agents.runtime import (
         _forced_specific_tool,
@@ -425,7 +425,6 @@ def test_explicit_calculation_may_run_on_defaults_and_labels_them(name, display)
     assert figure is not None, name
     signature = inspect.signature(CALCULATORS[name])
     spec = get(name)
-    spec_inputs = spec.inputs if spec else {}
     notes = result.get("notes") if isinstance(result.get("notes"), list) else []
     blob = " ".join(str(item) for item in notes)
     blob += " " + " ".join(str(val) for val in result.values() if not isinstance(val, list))
@@ -452,7 +451,7 @@ def test_explicit_calculation_may_run_on_defaults_and_labels_them(name, display)
             continue
         if not _user_states_value(blob, default):
             continue
-        phrase = input_phrase(key, default, spec_inputs.get(key, ""))
+        phrase = default_sentence(name, key, default)
         assert phrase in out, (name, phrase)
         labelled = True
     if labelled:

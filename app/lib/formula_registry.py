@@ -357,6 +357,179 @@ def scale_hint(spec: ParamSpec, number: float) -> Optional[Dict[str, Any]]:
     return best
 
 
+#: A signed figure as people write it: "-0.2", "1,250", ".5", "3e-4".
+SIGNED_NUMBER = r"[-+]?(?:\d[\d,]*(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+
+#: The sign of a figure inside a sentence. A hyphen after a digit or a word
+#: is a range or a compound ("10-12", "B-12"), not a minus; after a space,
+#: an "x" or "by" it is the figure's sign ("15 x 8 x -0.2").
+FIGURE_SIGN = r"(?:(?<![0-9.,])(?<![A-WYZa-wyz])[-+])?"
+
+#: A figure inside a sentence, with its sign: "-0.2", "1,250", "8".
+SIGNED_FIGURE = FIGURE_SIGN + r"\d[\d,]*(?:\.\d+)?"
+
+_VALUE_UNIT_RE = re.compile(
+    rf"^\s*({SIGNED_NUMBER})\s*((?:1\s*/|[A-Za-z%°µμ‰'\"]).*?)?\s*[.,;]?\s*$")
+_UNIT_VALUE_RE = re.compile(rf"^\s*([A-Z]{{3}})\s*({SIGNED_NUMBER})\s*$")
+
+
+def _unit_head(text: str) -> str:
+    """The unit at the start of ``text``: "m long" -> "m"; the whole text
+    when no leading run of words is a unit the converter knows."""
+    from app.agents.base.formulas.construction_formulas_planning import parse_unit
+
+    words = text.split()
+    for end in range(len(words), 0, -1):
+        head = " ".join(words[:end])
+        if parse_unit(head) is not None:
+            return head
+    return text.strip()
+
+
+def value_and_unit(value: Any) -> Optional[Tuple[float, str]]:
+    """``"20 ft"`` -> (20.0, "ft"); ``{"value": 20, "unit": "ft"}`` likewise;
+    ``"AED 5,000"`` -> (5000.0, "AED"). None for anything without a written unit."""
+    if isinstance(value, dict) and "value" in value and value.get("unit"):
+        number = _number(value["value"])
+        if number is None and isinstance(value["value"], str):
+            parsed = value_and_unit(value["value"])
+            number = parsed[0] if parsed else None
+        return (number, str(value["unit"]).strip()) if number is not None else None
+    if not isinstance(value, str):
+        return None
+    m = _UNIT_VALUE_RE.match(value)
+    if m:
+        return float(m.group(2).replace(",", "")), m.group(1)
+    m = _VALUE_UNIT_RE.match(value)
+    if not m or not m.group(2):
+        return None
+    return float(m.group(1).replace(",", "")), _unit_head(m.group(2))
+
+
+def conversion_context(values: Dict[str, Any]) -> Dict[str, Any]:
+    """Crew size, working hours per day and working days per week, as numbers, when given."""
+    from app.agents.base.formulas.construction_formulas_planning import CONVERSION_CONTEXT
+
+    out: Dict[str, Any] = {}
+    for key in CONVERSION_CONTEXT:
+        raw = values.get(key)
+        number = _number(raw)
+        if number is None:
+            parsed = value_and_unit(raw)
+            number = parsed[0] if parsed else None
+            if number is None and isinstance(raw, str):
+                try:
+                    number = float(raw.replace(",", ""))
+                except ValueError:
+                    number = None
+        if number is not None:
+            out[key] = number
+    return out
+
+
+def written_number(number: float) -> str:
+    """``number`` as a person writes it: "3,200,000", "0.00001", "6.3"."""
+    if float(number).is_integer() and abs(number) < 1e15:
+        return f"{int(number):,}"
+    text = f"{number:.6g}"
+    if "e" in text:
+        text = f"{number:.12f}".rstrip("0").rstrip(".")
+    return text
+
+
+def _unit_rejection(spec: ParamSpec, value: Any, reason: str, **extra: Any) -> Dict[str, Any]:
+    row = _rejection(spec, value, reason)
+    row.update(extra)
+    return row
+
+
+def convert_figure(spec: ParamSpec, number: float, unit: str,
+                   context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """One figure written in ``unit``, put into the unit ``spec`` declares by
+    the base unit-conversion tool. Returns ``value`` (and ``conversion`` when
+    the unit changed) or ``rejection``."""
+    from app.agents.base.formulas.construction_formulas_planning import parse_unit, pe_unit_convert
+
+    shown = f"{written_number(number)} {unit}"
+    declared, written = parse_unit(spec.unit), parse_unit(unit)
+    if declared is None:
+        # No unit of its own: a count, a factor, or a figure in whatever unit
+        # its companions use. The written number stands; a percentage only
+        # becomes a fraction for an input whose range is a fraction.
+        if (written is not None and written.dimension == "fraction"
+                and spec.hi is not None and spec.hi <= 1):
+            value = number * written.scale
+            return {"value": value,
+                    "conversion": {"parameter": spec.name, "value_in": number, "from_unit": unit,
+                                   "to_unit": "fraction", "value_out": value, "note": ""}}
+        return {"value": number}
+    if written is None:
+        if declared.dimension == "currency" or unit.strip().lower() == spec.unit.strip().lower():
+            return {"value": number}
+        return {"rejection": _unit_rejection(spec, shown, "unknown_unit", given_unit=unit)}
+    if written.dimension == "currency" and declared.dimension == "currency":
+        return {"value": number}
+    ctx = dict(context or {})
+    out = pe_unit_convert(number, unit, spec.unit, **ctx)
+    if "needs_input" in out:
+        return {"rejection": _unit_rejection(spec, shown, "needs_conversion_input", given_unit=unit,
+                                             needs=list(out["needs_input"]))}
+    if "error" in out:
+        return {"rejection": _unit_rejection(spec, shown, "wrong_unit", given_unit=unit,
+                                             given_dimension=written.dimension,
+                                             expected_dimension=declared.dimension)}
+    value = out["value_out"]
+    if written.scale == declared.scale and written.dimension == declared.dimension \
+            and written.offset == declared.offset and not written.needs:
+        return {"value": value}
+    return {"value": value,
+            "conversion": {"parameter": spec.name, "value_in": number, "from_unit": unit,
+                           "to_unit": spec.unit, "value_out": value, "note": out.get("note", "")}}
+
+
+def convert_written_units(name: str, values: Dict[str, Any],
+                          context: Optional[Dict[str, Any]] = None,
+                          ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Every value supplied with a unit, converted to its input's declared
+    unit. Returns the values, the conversions made, and a rejection for each
+    unit that is not the same kind of quantity or needs a value not given.
+    A rejected value is left as supplied, so it is not also reported missing."""
+    spec = get(name)
+    if spec is None:
+        return dict(values), [], []
+    params = parameters(spec)
+    stated = conversion_context(values)
+    out = dict(values)
+    conversions: List[Dict[str, Any]] = []
+    rejected: List[Dict[str, Any]] = []
+    for key, value in values.items():
+        p = params.get(key)
+        if p is None or p.kind not in NUMERIC_KINDS:
+            continue
+        # A context value being converted is not its own context.
+        ctx = {k: v for k, v in {**stated, **(context or {})}.items() if k != key}
+        items = value if p.kind == "series" and isinstance(value, (list, tuple)) else [value]
+        converted: List[Any] = []
+        failed = False
+        for item in items:
+            parsed = value_and_unit(item)
+            if parsed is None:
+                converted.append(item)
+                continue
+            got = convert_figure(p, parsed[0], parsed[1], ctx)
+            if "rejection" in got:
+                rejected.append(got["rejection"])
+                failed = True
+                break
+            converted.append(got["value"])
+            if "conversion" in got:
+                conversions.append(got["conversion"])
+        if failed:
+            continue
+        out[key] = converted if p.kind == "series" and isinstance(value, (list, tuple)) else converted[0]
+    return out, conversions, rejected
+
+
 def check_inputs(name: str, values: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """Supplied ``values`` for formula ``name`` held to each input's declared
     type and range. Returns the values as the formula receives them and one

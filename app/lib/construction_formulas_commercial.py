@@ -1441,14 +1441,6 @@ _FOOTING_COUNT_RE = re.compile(
     r"(?i)(\d+)\s+(?:pad\s+)?footings?\b",
 )
 
-_LWT_CHAIN_RE = re.compile(
-    r"(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
-    r"(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
-    r"(\d[\d,]*(?:\.\d+)?)"
-    r"(?:\s*(?:mm|cm|m)\b)?",
-    re.IGNORECASE,
-)
-
 _WASTE_PCT_RE = re.compile(r"(?i)(\d+(?:\.\d+)?)\s*%\s*waste")
 
 _CONTINGENCY_PCT_RE = re.compile(r"(?i)(\d+(?:\.\d+)?)\s*%\s*contingenc")
@@ -1469,10 +1461,9 @@ def query_asks_user_priced_takeoff(query: str) -> bool:
     return bool(_USER_UNIT_RATE_RE.search(q))
 
 def _parse_lwt_metres(text: str) -> tuple[float, float, float] | None:
-    match = _LWT_CHAIN_RE.search(text or "")
-    if not match:
-        return None
-    return tuple(float(g.replace(",", "")) for g in match.groups())  # type: ignore[return-value]
+    from app.lib.construction_formulas_quantities import parse_lwt_metres
+
+    return parse_lwt_metres(text)
 
 def _parse_footing_count(text: str) -> int:
     match = _FOOTING_COUNT_RE.search(text or "")

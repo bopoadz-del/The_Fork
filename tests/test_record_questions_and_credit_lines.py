@@ -424,7 +424,7 @@ def test_shown_currency_default_is_stated(name, display, code, inputs, env):
     figure = _first_figure(env["result"])
     answer = f"The {display.lower()} is {code} {_shown(figure)}."
     out = gate(answer, None, _calc_turn(name, inputs, env, ask))
-    assert f"currency {code} is the platform calculator's default" in out, out
+    assert f"The currency used, {code}, is the platform calculator's default" in out, out
 
 
 @pytest.mark.parametrize("name,display,code,inputs,env", CURRENCY, ids=[r[0] for r in CURRENCY])

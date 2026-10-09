@@ -7,7 +7,7 @@ parameters; arithmetic shown in ``note``.
 """
 from __future__ import annotations
 
-from app.lib.formula_registry import formula
+from app.lib.formula_registry import SIGNED_FIGURE, formula
 
 import logging
 
@@ -56,11 +56,12 @@ _DOCUMENTED_WASTE_ASK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "30x20x1.5", "15 m x 8 m x 0.2 m", "15 m by 8 m by -0.2 m", "1200 x 600 x
+# 200 mm". A unit written after the last figure only is the chain's unit.
+_CHAIN_DIM = rf"({SIGNED_FIGURE})(?:\s*(mm|cm|m)(?![A-WYZa-wyz0-9]))?"
+_CHAIN_SEP = r"\s*(?:[x×*]|by(?![A-Za-z]))\s*"
 _LWT_CHAIN_RE = re.compile(
-    r"(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
-    r"(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
-    r"(\d[\d,]*(?:\.\d+)?)"
-    r"(?:\s*(?:mm|cm|m)\b)?",
+    rf"(?<![A-Za-z0-9]){_CHAIN_DIM}{_CHAIN_SEP}{_CHAIN_DIM}{_CHAIN_SEP}{_CHAIN_DIM}",
     re.IGNORECASE,
 )
 
@@ -180,11 +181,20 @@ def looks_like_concrete_volume_ask(text: str) -> bool:
     return bool(_CONCRETE_VOLUME_ASK_RE.search(text or ""))
 
 def parse_lwt_metres(text: str) -> tuple[float, float, float] | None:
-    """First L×W×T (or L×W×D) chain in ``text``, in metres."""
+    """First L×W×T (or L×W×D) chain in ``text``, in metres, sign kept."""
+    from app.agents.base.formulas.construction_formulas_planning import convert_units
+
     match = _LWT_CHAIN_RE.search(text or "")
     if not match:
         return None
-    return tuple(float(g.replace(",", "")) for g in match.groups())  # type: ignore[return-value]
+    groups = match.groups()
+    numbers = [float(groups[i].replace(",", "")) for i in (0, 2, 4)]
+    units = [groups[i] for i in (1, 3, 5)]
+    if not units[0] and not units[1] and units[2]:
+        units = [units[2]] * 3
+    return tuple(  # type: ignore[return-value]
+        convert_units(n, u, "m")["value_out"] if u else n for n, u in zip(numbers, units)
+    )
 
 # "24 pile caps" / "18 pad footings". The count belongs to the element, not
 # to a nearby percentage or a unit rate. A bare "2.5 m" must not match.
@@ -192,14 +202,6 @@ _ELEMENT_COUNT_RE = re.compile(
     r"(?i)(?<!\d)(?<!\d\.)(\d+)\s+"
     r"(?:(?:pad|strip|isolated)\s+)?"
     r"(?:pile[\s-]?caps?|footings?|pads?|bases?|columns?|piers?)\b",
-)
-
-# "3 m by 2 m by 0.9 m" — a dimension chain. The x-chain above
-# does not see "by".
-_BY_CHAIN_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)\s*m\s+by\s+"
-    r"(\d[\d,]*(?:\.\d+)?)\s*m\s+by\s+"
-    r"(\d[\d,]*(?:\.\d+)?)\s*m\b",
 )
 
 _THAT_TOTAL_RE = re.compile(r"(?i)\b(?:that|this|the)\s+total\b")
@@ -218,9 +220,6 @@ def element_count_from_text(text: str) -> int | None:
 
 def unit_dims_metres(text: str) -> tuple[float, float, float] | None:
     """Per-element L×W×D. ``m by m by m`` or an ``x`` chain. None if absent."""
-    match = _BY_CHAIN_RE.search(text or "")
-    if match:
-        return tuple(float(g.replace(",", "")) for g in match.groups())  # type: ignore[return-value]
     return parse_lwt_metres(text)
 
 def follow_up_refers_to_stated_total(text: str) -> bool:
@@ -713,9 +712,9 @@ _Y_BAR_RE = re.compile(r"(?i)\b[YTH](\d{1,2})\b")
 
 _DIA_MM_RE = re.compile(r"(?i)(\d{1,2})\s*mm\b")
 
-_TONNES_RE = re.compile(r"(?i)(\d[\d,]*(?:\.\d+)?)\s*(?:tonnes?|tons?|t)\b")
+_TONNES_RE = re.compile(rf"(?i)({SIGNED_FIGURE})\s*(?:tonnes?|tons?|t)\b")
 
-_KG_MASS_RE = re.compile(r"(?i)(\d[\d,]*(?:\.\d+)?)\s*kg\b")
+_KG_MASS_RE = re.compile(rf"(?i)({SIGNED_FIGURE})\s*kg\b")
 
 def looks_like_rebar_metres_run_ask(text: str) -> bool:
     """True when the operator asked for metres run from a bar mass."""

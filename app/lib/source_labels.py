@@ -26,11 +26,30 @@ _LOG = logging.getLogger(__name__)
 CALCULATOR_SUFFIX = "platform calculator"
 
 #: Units that carry no reading of their own after a number.
-_UNITLESS = frozenset({"", "-", "currency", "ratio", "count", "no", "nr"})
+_UNITLESS = frozenset({"", "-", "currency", "ratio", "count", "no", "nr", "fraction"})
 
 
 def _norm(unit: str) -> str:
     return re.sub(r"[^a-z0-9%]", "", (unit or "").lower())
+
+
+def unit_words(unit: str) -> str:
+    """A declared unit as a reader writes it after a figure: "currency/t" is "per t"."""
+    raw = (unit or "").strip()
+    if raw.lower().startswith("currency/"):
+        return "per " + raw.split("/", 1)[1]
+    return raw
+
+
+def _is_fraction(unit: str) -> bool:
+    return (unit or "").strip().lower() == "fraction"
+
+
+def readable_value(value: Any) -> str:
+    """A code-style value as words: "simply_supported" is "simply supported"."""
+    if isinstance(value, str):
+        return re.sub(r"[_\s]+", " ", value).strip()
+    return _fmt_value(value)
 
 
 def formula_display_name(calculation: str) -> Optional[str]:
@@ -61,22 +80,26 @@ def parameter_words(key: str, unit: str = "") -> str:
     """``length_m`` with unit "m" -> "length": the name without the unit it spells."""
     words = [w for w in str(key).split("_") if w]
     norm = _norm(unit)
+    percent = norm == "%" or _is_fraction(unit)
     if len(words) > 1 and norm and (_norm(words[-1]) == norm
-                                    or (norm == "%" and words[-1].lower() in ("pct", "percent"))):
+                                    or (percent and words[-1].lower() in ("pct", "percent"))):
         words = words[:-1]
     return " ".join(words)
 
 
 def input_phrase(key: str, value: Any, unit: str = "") -> str:
     """``contract_amount, 50000000`` -> "contract amount 50,000,000";
-    ``length_m, 12, "m"`` -> "length 12 m"; ``rate_percent, 0.1, "%"`` -> "rate 0.1%"."""
+    ``length_m, 12, "m"`` -> "length 12 m"; ``rate_percent, 0.1, "%"`` -> "rate 0.1%";
+    ``waste_pct, 0.05, "fraction"`` -> "waste 5%"."""
     words = parameter_words(key, unit).split()
     norm = _norm(unit)
     shown = _fmt_value(value)
     if norm == "%":
         shown += "%"
+    elif _is_fraction(unit) and isinstance(value, (int, float)) and not isinstance(value, bool):
+        shown = f"{_fmt_value(_rounded(value * 100))}%"
     elif norm not in _UNITLESS and not isinstance(value, (bool, str)):
-        shown += f" {unit}"
+        shown += f" {unit_words(unit)}"
     return f"{' '.join(words)} {shown}".strip()
 
 
@@ -84,16 +107,21 @@ def parameter_label(calculation: str, key: str) -> str:
     """The words a user reads for one input: its declared label, else its name as words."""
     from app.lib import formula_registry
 
+    from app.agents.base.formulas.construction_formulas_planning import CONVERSION_CONTEXT
+
     spec = formula_registry.get(calculation or "")
     declared = spec.params.get(key) if spec else None
     if declared is not None and declared.label:
         return declared.label
+    if declared is None and key in CONVERSION_CONTEXT:
+        return CONVERSION_CONTEXT[key]
     return parameter_words(key, declared.unit if declared is not None else "")
 
 
 def _is_fraction_percent(row: Dict[str, Any]) -> bool:
     hi = row.get("hi")
-    return _norm(row.get("unit") or "") == "%" and hi is not None and hi <= 1
+    unit = row.get("unit") or ""
+    return _is_fraction(unit) or (_norm(unit) == "%" and hi is not None and hi <= 1)
 
 
 def _shown_quantity(value: Any, row: Dict[str, Any]) -> str:
@@ -109,7 +137,7 @@ def _shown_quantity(value: Any, row: Dict[str, Any]) -> str:
         return shown + "%"
     if _norm(unit) in _UNITLESS:
         return shown
-    return f"{shown} {unit}"
+    return f"{shown} {unit_words(unit)}"
 
 
 def _accepted_range(row: Dict[str, Any]) -> str:
@@ -124,10 +152,25 @@ def input_question(calculation: str, rejected: List[Dict[str, Any]],
     labels: List[str] = []
     for row in rejected:
         label = parameter_label(calculation, row["parameter"])
-        labels.append(label)
         value = row.get("value")
         reason = row.get("reason")
-        if reason == "out_of_range":
+        if reason == "needs_conversion_input":
+            needs = [parameter_label(calculation, key) for key in row.get("needs") or ()]
+            sentences.append(f"To use {value} as the {label}, I need the {_joined(needs)}.")
+            labels.extend(n for n in needs if n not in labels)
+            continue
+        labels.append(label)
+        if reason == "wrong_unit":
+            expected = row.get("expected_dimension")
+            wanted = unit_words(row.get("unit") or "")
+            sentences.append(
+                f"The {label} is {_with_article(_dimension_words(expected))} in {wanted}, and {value} is "
+                f"{_with_article(_dimension_words(row.get('given_dimension')))}, so it does not convert."
+                if expected else f"The {label} needs a figure in {wanted}, not {value}.")
+        elif reason == "unknown_unit":
+            sentences.append(f"I do not recognise the unit in {value}; the {label} is in "
+                             f"{unit_words(row.get('unit') or '')}.")
+        elif reason == "out_of_range":
             verb = "are" if row.get("kind") == "series" else "is"
             sentences.append(f"The {label} given ({_shown_quantity(value, row)}) {verb} outside what the "
                              f"{display} calculator accepts ({_accepted_range(row)}).")
@@ -145,9 +188,11 @@ def input_question(calculation: str, rejected: List[Dict[str, Any]],
             sentences.append(f"The {label} needs a yes or a no, not \u201c{value}\u201d.")
         else:
             sentences.append(f"The {label} needs a number, not {_shown_quantity(value, row)}.")
-    needed = [parameter_label(calculation, key) for key in missing]
+    needed = [label for label in (parameter_label(calculation, key) for key in missing)
+              if label not in labels]
     if needed:
-        sentences.append(f"The {display} calculator also needs the {_joined(needed)}.")
+        also = " also" if sentences else ""
+        sentences.append(f"The {display} calculator{also} needs the {_joined(needed)}.")
     asked = labels + needed
     if len(asked) == 1:
         sentences.append(f"What {asked[0]} should I use?")
@@ -158,6 +203,16 @@ def input_question(calculation: str, rejected: List[Dict[str, Any]],
 
 def _rounded(number: float) -> float:
     return float(f"{number:.6g}")
+
+
+def _dimension_words(dimension: Any) -> str:
+    """"currency/mass" is "price per mass"; "force/length" is "force per length"."""
+    parts = [("price" if part == "currency" else part) for part in str(dimension or "").split("/")]
+    return " per ".join(p for p in parts if p) or "quantity"
+
+
+def _with_article(words: str) -> str:
+    return ("an " if words[:1].lower() in "aeiou" else "a ") + words
 
 
 def _joined(words: List[str]) -> str:
@@ -338,13 +393,22 @@ def calculator_default_lines(
                 continue
         else:
             continue
-        unit = (spec.inputs or {}).get(key, "")
-        phrase = input_phrase(key, default if isinstance(default, str) else echoed, unit)
-        lines.append(
-            f"{phrase} is the platform calculator's default, "
-            "not a figure from the project documents."
-        )
+        lines.append(default_sentence(calculation, key, default if isinstance(default, str) else echoed))
     return lines
+
+
+def default_sentence(calculation: str, key: str, value: Any) -> str:
+    """One sentence naming a default the calculator used, by the input's label
+    and a value as a reader writes it: "The shape used, rectangular, is ..."."""
+    from app.lib import formula_registry
+
+    spec = formula_registry.get(calculation or "")
+    declared = formula_registry.parameters(spec).get(key) if spec else None
+    row = {"unit": declared.unit if declared else (spec.inputs or {}).get(key, "") if spec else "",
+           "hi": declared.hi if declared else None}
+    shown = readable_value(value) if isinstance(value, str) else _shown_quantity(value, row)
+    return (f"The {parameter_label(calculation, key)} used, {shown}, is the platform "
+            "calculator's default, not a figure from the project documents.")
 
 
 def calculator_currency_defaults(
@@ -384,12 +448,7 @@ def calculator_currency_defaults(
             continue
         if any(_user_states_value(user_text, c) for c in _CURRENCY_CODES):
             continue
-        unit = (spec.inputs or {}).get(key, "")
-        phrase = input_phrase(key, code, unit)
-        found.append((code, (
-            f"{phrase} is the platform calculator's default, "
-            "not a figure from the project documents."
-        )))
+        found.append((code, default_sentence(calculation, key, code)))
     return found
 
 
@@ -566,11 +625,13 @@ def _registry_maps() -> Tuple[Dict[str, str], Dict[str, str], set]:
     for spec in formula_registry.all_specs():
         if spec.name and spec.display_name and "_" in spec.name:
             displays[spec.name.lower()] = spec.display_name
-        declared = dict(spec.inputs or {})
-        declared.update(spec.outputs or {})
-        for key, unit in declared.items():
+        unitless = {_norm(item) for item in _UNITLESS}
+        declared = list((spec.inputs or {}).items()) + list((spec.outputs or {}).items())
+        for key, unit in declared:
             if "_" in key:
-                params.setdefault(key.lower(), unit or "")
+                held = params.get(key.lower())
+                if held is None or (_norm(held) in unitless and _norm(unit or "") not in unitless):
+                    params[key.lower()] = unit or ""
             norm = _norm(unit)
             raw = (unit or "").strip()
             if raw and norm and norm not in {_norm(item) for item in _UNITLESS}:
