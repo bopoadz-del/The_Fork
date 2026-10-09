@@ -3852,6 +3852,8 @@ def _message_wants_named_calculator(text: str) -> bool:
         wants = _message_is_formula_style_ask(raw)
     if not wants:
         return False
+    if _document_question_without_operands(raw):
+        return False
     if _NAMED_CALC_ASK_RE.search(raw):
         return True
     if _IPC_ISSUE_RE.search(raw) and not _carries_ipc_figures(raw):
@@ -4086,6 +4088,7 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
                     or wants_procurement
                     or wants_rfi
                     or wants_drawing_qto
+                    or _document_question_without_operands(text)
                 )
             ):
                 continue
@@ -8337,7 +8340,7 @@ def _graft_supplied_input_calculation(
     invented = _invented_project_assumption(text or "", user, retrieval)
     if not missing and not invented:
         return text
-    replacement = format_user_calculation_answer(name, bound, env)
+    replacement = format_user_calculation_answer(name, bound, env, user_text=user)
     return replacement if replacement.strip() else text
 
 
@@ -8730,18 +8733,18 @@ def _platform_calculator_source(final_text: str) -> dict[str, Any] | None:
     raw = final_text or ""
     if CALCULATOR_SUFFIX.lower() not in raw.lower():
         return None
+    # The title is the registry label only: display name, the suffix, and
+    # the inputs in parentheses. Model prose that merely contains the
+    # suffix is not a title.
     match = re.search(
-        rf"(?im)^\s*Source:\s*(.+?{re.escape(CALCULATOR_SUFFIX)}\b.*)$",
+        rf"(?im)^[ \t]*Source:\s*"
+        rf"(?P<label>[^\n]+?{re.escape('— ' + CALCULATOR_SUFFIX)}"
+        rf"(?:\s*\([^)\n]*\))?)",
         raw,
     )
     if match is None:
-        match = re.search(
-            rf"(?i)Source:\s*(.+?{re.escape(CALCULATOR_SUFFIX)}\b[^\n]*)",
-            raw,
-        )
-    if match is None:
         return None
-    label = match.group(1).strip().rstrip(".")
+    label = match.group("label").strip().rstrip(".")
     return {
         "doc_id": "",
         "doc_name": label,
@@ -8985,11 +8988,6 @@ def _build_sources_from_audit(
             rows = ([calc_row] + matched) if calc_row else matched
             return _sources_one_contract(rows)
 
-    # A calculator credit is the source of the figure. Do not fill the
-    # panel with a filename mention or the top retrieved chunks.
-    if calc_row:
-        return [calc_row]
-
     # 2) Filename-mention fallback: the model may have named a source in
     #    prose without a formal citation marker. If any injected filename
     #    appears in the answer, surface the highest-scoring chunk of that
@@ -9014,8 +9012,16 @@ def _build_sources_from_audit(
             if mentioned and doc_id not in seen_mentions:
                 seen_mentions.add(doc_id)
                 mention_hits.append(_format(c, name))
+        if calc_row:
+            # The calculator is the source of the figure. A document the
+            # answer actually names stays beside it. Unnamed retrieval
+            # does not fill the panel.
+            return _sources_one_contract([calc_row] + mention_hits[:3])
         if mention_hits:
             return _sources_one_contract(mention_hits[:3])
+
+    if calc_row:
+        return [calc_row]
 
     # 3) Final fallback: top-3 retrieved chunks by score.
     # Deterministic total order: score desc, then chunk_id asc so two chunks
@@ -10997,6 +11003,64 @@ def _user_supplied_registered_calculation(
         return None
 
 
+# The ask locates the answer in a project record. A bare formula name
+# is not this; "in the specification" / "in the upload check note" is.
+_DOCUMENT_FRAME_RE = re.compile(
+    r"\b(?:in|from|per|under|according\s+to|stated\s+in|set\s+out\s+in|"
+    r"specified\s+in|given\s+in)\s+"
+    r"(?:the\s+|this\s+|our\s+|my\s+|a\s+|an\s+)?"
+    r"(?:[\w-]+\s+){0,6}"
+    r"(?:notes?|specifications?|specs?|documents?|uploads?|drawings?|"
+    r"clauses?|contracts?|schedules?|reports?|checklists?|datasheets?|"
+    r"appendices|annex(?:es)?|boq|bills?|method\s+statements?)\b",
+    re.IGNORECASE,
+)
+
+
+def _formula_run_authorized(text: str) -> bool:
+    """The user asked for a calculation or already wrote an operand."""
+    raw = text or ""
+    if _looks_like_self_contained_calculation(raw) or _states_formula_with_input(raw):
+        return True
+    if _NAMED_CALC_ASK_RE.search(raw):
+        return True
+    try:
+        from app.lib.construction_formulas import (
+            explicit_calculation_request,
+            message_names_registry_id,
+            named_formula_operands,
+        )
+        if explicit_calculation_request(raw):
+            return True
+        if message_names_registry_id(raw):
+            return True
+        if named_formula_operands(raw):
+            return True
+        from app.lib.construction_formulas_structural_rc import (
+            looks_like_slab_thickness_min_ask,
+        )
+        # That detector already requires a span the user wrote.
+        if looks_like_slab_thickness_min_ask(raw):
+            return True
+    except Exception:  # noqa: BLE001 — routing must still classify
+        _LOG.exception("formula authorization check failed")
+        return True
+    return False
+
+
+def _document_question_without_operands(text: str) -> bool:
+    """A document question that supplies no figure for a calculator.
+
+    The named formula would otherwise run on its signature defaults.
+    An explicit calculation, or a figure the user already wrote, is
+    not this question.
+    """
+    raw = text or ""
+    if _DOCUMENT_FRAME_RE.search(raw) is None:
+        return False
+    return not _formula_run_authorized(raw)
+
+
 def _message_is_formula_style_ask(text: str) -> bool:
     """True when the turn is a formula / calculator ask, not a doc lookup.
 
@@ -11006,6 +11070,8 @@ def _message_is_formula_style_ask(text: str) -> bool:
     """
     raw = text or ""
     if not raw.strip():
+        return False
+    if _document_question_without_operands(raw):
         return False
     if _message_wants_inline_boq(raw):
         return False
@@ -11265,6 +11331,8 @@ async def _predispatch_formula_calc(
             (await _off_loop(_message_is_formula_style_ask, detect))
             or (await _off_loop(_message_wants_named_calculator, detect))
         ):
+            return None
+        if await _off_loop(_document_question_without_operands, detect):
             return None
         completed = await _off_loop(_user_supplied_registered_calculation, detect)
         bound: dict[str, Any] = {}

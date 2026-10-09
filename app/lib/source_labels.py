@@ -16,8 +16,11 @@ calculator result actually state it.
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+_LOG = logging.getLogger(__name__)
 
 #: Shown after a formula's display name, so the reader knows it was computed.
 CALCULATOR_SUFFIX = "platform calculator"
@@ -80,6 +83,175 @@ def calculator_label(calculation: str, inputs: Optional[Dict[str, Any]] = None) 
     shown = ", ".join(input_phrase(k, v, units.get(k, "")) for k, v in (inputs or {}).items()
                       if v not in (None, ""))
     return f"{name} — {CALCULATOR_SUFFIX}" + (f" ({shown})" if shown else "")
+
+
+def _same_value(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return abs(float(left) - float(right)) <= 1e-9
+    if isinstance(left, str) and isinstance(right, str):
+        return left.strip().casefold() == right.strip().casefold()
+    return False
+
+
+def _user_states_value(user: str, value: Any) -> bool:
+    """True when the user's own words already carry this input's value."""
+    text = user or ""
+    if isinstance(value, str):
+        token = value.strip()
+        if len(token) < 2:
+            return False
+        return re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])",
+            text,
+            re.IGNORECASE,
+        ) is not None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    target = float(value)
+    for match in re.finditer(r"\d[\d,]*(?:\.\d+)?", text):
+        try:
+            found = float(match.group(0).replace(",", ""))
+        except ValueError:
+            continue
+        if abs(found - target) <= max(1e-9, abs(target) * 1e-9):
+            return True
+        window = text[max(0, match.start() - 1):match.end() + 1]
+        if 0 < abs(target) < 1 and "%" in window and abs(found - target * 100.0) <= 1e-6:
+            return True
+    return False
+
+
+def stated_calculator_inputs(
+    calculation: str,
+    inputs: Optional[Dict[str, Any]],
+    user_text: str = "",
+) -> Dict[str, Any]:
+    """Inputs the user stated.
+
+    A value equal to the formula's signature default, which the user did
+    not write, is the calculator's own default and is not an input.
+    """
+    raw = dict(inputs or {})
+    from app.lib import formula_registry
+
+    spec = formula_registry.get(calculation or "")
+    if spec is None:
+        return raw
+    try:
+        signature = inspect.signature(spec.fn)
+    except (TypeError, ValueError):
+        return raw
+    stated: Dict[str, Any] = {}
+    for key, val in raw.items():
+        param = signature.parameters.get(key)
+        if (
+            param is not None
+            and param.default is not inspect.Parameter.empty
+            and _same_value(val, param.default)
+            and not _user_states_value(user_text, val)
+        ):
+            continue
+        stated[key] = val
+    return stated
+
+
+def _result_mentions(result: Any, value: Any) -> bool:
+    """True when this result's figures or notes already show ``value``."""
+    parts: List[str] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, str):
+            parts.append(obj)
+        elif isinstance(obj, dict):
+            for item in obj.values():
+                walk(item)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+        elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
+            parts.append(str(obj))
+
+    walk(result)
+    return _user_states_value("\n".join(parts), value)
+
+
+def _call_supplied_an_operand(
+    signature: inspect.Signature,
+    stated_keys: Iterable[str],
+    given: Dict[str, Any],
+) -> bool:
+    """True when the call carried a figure the user, not the signature, chose."""
+    if stated_keys:
+        return True
+    for key, val in given.items():
+        param = signature.parameters.get(key)
+        if param is None:
+            continue
+        if param.default is inspect.Parameter.empty or not _same_value(val, param.default):
+            return True
+    return False
+
+
+def calculator_default_lines(
+    calculation: str,
+    result: Any,
+    user_text: str = "",
+    stated_keys: Optional[Iterable[str]] = None,
+    passed: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """One sentence per signature default this result used and the user did not state.
+
+    A zero default is the absence of a figure. A currency the formula
+    inserts only because the parameter was left blank is not restated.
+    When the call carried no figure of the user's, a default the result
+    shows under any field is still that default.
+    """
+    from app.lib import formula_registry
+
+    spec = formula_registry.get(calculation or "")
+    if spec is None or not isinstance(result, dict):
+        return []
+    try:
+        signature = inspect.signature(spec.fn)
+    except (TypeError, ValueError):
+        _LOG.debug("signature unreadable for %s", calculation, exc_info=True)
+        return []
+    known = set(stated_keys or ())
+    given = dict(passed or {})
+    supplied = _call_supplied_an_operand(signature, known, given)
+    lines: List[str] = []
+    for key, param in signature.parameters.items():
+        if param.default is inspect.Parameter.empty or key in known:
+            continue
+        default = param.default
+        if isinstance(default, bool):
+            continue
+        echoed = result.get(key) if key in result else given.get(key)
+        shown = echoed is not None and _same_value(echoed, default)
+        if not shown:
+            if supplied or not _result_mentions(result, default):
+                continue
+            echoed = default
+        if _user_states_value(user_text, default):
+            continue
+        if isinstance(default, (int, float)):
+            if float(default) == 0.0:
+                continue
+        elif isinstance(default, str):
+            token = default.strip()
+            if not token or token.upper() in _CURRENCY_CODES:
+                continue
+        else:
+            continue
+        unit = (spec.inputs or {}).get(key, "")
+        phrase = input_phrase(key, default if isinstance(default, str) else echoed, unit)
+        lines.append(
+            f"{phrase} is the platform calculator's default, "
+            "not a figure from the project documents."
+        )
+    return lines
 
 
 def tool_label(tool: str, inputs: Optional[Dict[str, Any]] = None) -> str:

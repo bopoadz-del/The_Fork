@@ -543,6 +543,7 @@ class _CalculatorCredit:
     notes: list[str]
     inputs: dict[str, Any]
     result_numbers: list[float]
+    default_lines: list[str] = field(default_factory=list)
 
 
 def _parse_dict(raw: str) -> dict | None:
@@ -637,12 +638,19 @@ def _calculator_credits(ev: Evidence) -> list[_CalculatorCredit]:
             [str(note) for note in notes_raw if str(note).strip()]
             if isinstance(notes_raw, list) else []
         )
+        from app.lib.source_labels import calculator_default_lines, stated_calculator_inputs
+
+        user_text = "\n".join(r.text for r in ev.records if r.kind == "user")
+        raw_inputs = _governing_inputs(rec.inputs)
         credits.append(_CalculatorCredit(
             tool=rec.tool or "construction_calc",
             calculation=calculation,
             notes=notes,
-            inputs=_governing_inputs(rec.inputs),
+            inputs=stated_calculator_inputs(calculation, raw_inputs, user_text),
             result_numbers=numbers,
+            default_lines=calculator_default_lines(
+                calculation, result, user_text, passed=raw_inputs,
+            ),
         ))
     return credits
 
@@ -856,7 +864,27 @@ def _strip_source_lines(
         # invention -- and R3 requires exactly that self-declaration from the
         # template scheduler. Never strip it. The name a user reads (the
         # tool's or the formula's declared display name) is the same citation.
-        from app.lib.source_labels import formula_display_name, tool_display_name
+        # The rendered line is the registry label. A Source line the model
+        # wrote in its own words, which merely contains that display name,
+        # is not the credit.
+        from app.lib.source_labels import (
+            calculator_label,
+            formula_display_name,
+            tool_display_name,
+        )
+
+        if credits:
+            labels = [calculator_label(c.calculation, c.inputs).lower() for c in credits]
+            if any(label and label in low for label in labels):
+                return m.group(0)
+            displays = [formula_display_name(c.calculation) for c in credits]
+            shown_now = [t for t in displays if t]
+            shown_now.extend(tool_display_name(t) for t in tools)
+            if "platform calculator" in low or any(
+                name and name.lower() in low for name in shown_now
+            ):
+                removed.append(m.group(0).strip())
+                return SENTINEL
 
         shown = [*tools, *(tool_display_name(t) for t in tools),
                  *(formula_display_name(c.calculation) for c in credits)]
@@ -871,6 +899,94 @@ def _strip_source_lines(
         return SENTINEL
 
     return _SOURCE_LINE_RE.sub(repl, text), removed
+
+
+# A sentence that points at retrieved material as the authority for a claim.
+# The noun is the kind of source; the verb is the claim that it said so.
+_RETRIEVAL_AUTHORITY_RE = re.compile(
+    r"\b(?:retrieved|excerpts?|commentary|knowledge[-\s]?base|project documents)\b",
+    re.IGNORECASE,
+)
+_CITE_VERB_RE = re.compile(
+    r"\b(?:indicates?|shows?|states?|says|said|provides?|specifies|requires?|"
+    r"suggests?|according\s+to|as\s+stated|as\s+set\s+out)\b",
+    re.IGNORECASE,
+)
+_DENIAL_RE = re.compile(
+    r"\b(?:not|no|never|isn['’]t|aren['’]t|wasn['’]t|weren['’]t|doesn['’]t|"
+    r"don['’]t|cannot|can['’]t|without)\b",
+    re.IGNORECASE,
+)
+
+
+def _sentence_names_evidence(sentence: str, ev: Evidence) -> bool:
+    low = (sentence or "").lower()
+    for name in ev.source_names():
+        if name and name in low:
+            return True
+    return False
+
+
+def _unbacked_retrieval_sentence(sentence: str, ev: Evidence) -> bool:
+    """A retrieval citation that names no document this turn actually read."""
+    if _RETRIEVAL_AUTHORITY_RE.search(sentence or "") is None:
+        return False
+    if _CITE_VERB_RE.search(sentence or "") is None:
+        return False
+    if _DENIAL_RE.search(sentence or ""):
+        return False
+    return not _sentence_names_evidence(sentence, ev)
+
+
+def _strip_unbacked_retrieval_prose(
+    text: str,
+    ev: Evidence,
+    credits: list[_CalculatorCredit],
+    answer: str,
+) -> tuple[str, list[str]]:
+    """Drop a retrieval attribution the Sources panel cannot show.
+
+    When a calculator is the credited source of the figure, a sentence that
+    cites retrieved material without naming an evidence document is an
+    attribution with nothing behind it. A sentence that names a document
+    the turn read stays; that document is a source beside the calculator.
+    """
+    if not any(_answer_commits(answer, credit) for credit in credits):
+        return text, []
+    removed: list[str] = []
+    lines: list[str] = []
+    for line in (text or "").split("\n"):
+        parts = re.split(r"((?<=[.!?])\s+)", line)
+        kept: list[str] = []
+        for part in parts:
+            if re.fullmatch(r"\s+", part or ""):
+                kept.append(part)
+                continue
+            if _unbacked_retrieval_sentence(part, ev):
+                removed.append(part.strip())
+                if kept and re.fullmatch(r"\s+", kept[-1] or ""):
+                    kept.pop()
+                continue
+            kept.append(part)
+        lines.append("".join(kept).strip())
+    if not removed:
+        return text, []
+    return "\n".join(line for line in lines if line.strip()), removed
+
+
+def _missing_default_lines(
+    out: str,
+    credits: list[_CalculatorCredit],
+    answer: str,
+) -> str:
+    lines: list[str] = []
+    for credit in credits:
+        if not _answer_commits(answer, credit):
+            continue
+        for line in credit.default_lines:
+            if line and line not in (out or ""):
+                lines.append(line)
+    return "\n".join(lines)
 
 
 def gate(
@@ -895,6 +1011,8 @@ def gate(
         out, r = _strip_boq_attributions(text, ev)
         removed += r
         out, r = _strip_source_lines(out, ev, credits, text)
+        removed += r
+        out, r = _strip_unbacked_retrieval_prose(out, ev, credits, text)
         removed += r
         out, r = _strip_inline_chunk_credits(out, ev, credits, text)
         removed += r
@@ -924,15 +1042,17 @@ def gate(
                 _REMOVED_IN_PIECE.set(True)
             return out if removed else text
         credit = _missing_calculator_credit(out, credits, text)
-        if not removed and not credit:
+        defaults = _missing_default_lines(out, credits, text)
+        extra = "\n".join(part for part in (defaults, credit) if part)
+        if not removed and not extra:
             return text
         if removed:
             _LOG.warning(
                 "citation_provenance: removed %d unbacked attribution(s): %s",
                 len(removed), removed[:5],
             )
-        if credit:
-            out = out.rstrip() + "\n\n" + credit
+        if extra:
+            out = out.rstrip() + "\n\n" + extra
         if removed:
             out += UNVERIFIED_NOTE
         return out
@@ -954,11 +1074,15 @@ def closing_notes(answer: str, messages: list[dict[str, Any]] | None, *,
     does not already carry, and the note when any piece lost an attribution."""
     try:
         ev = build_evidence(None, messages, tool_passages=tool_passages)
-        credit = _missing_calculator_credit(answer, _calculator_credits(ev), answer)
+        credits = _calculator_credits(ev)
+        credit = _missing_calculator_credit(answer, credits, answer)
+        defaults = _missing_default_lines(answer, credits, answer)
     except Exception:  # noqa: BLE001 -- a gate must never break an answer
         _LOG.exception("closing_notes failed; no credit appended")
         credit = ""
-    out = ("\n\n" + credit) if credit else ""
+        defaults = ""
+    extra = "\n".join(part for part in (defaults, credit) if part)
+    out = ("\n\n" + extra) if extra else ""
     if removed:
         out += UNVERIFIED_NOTE
     return out
