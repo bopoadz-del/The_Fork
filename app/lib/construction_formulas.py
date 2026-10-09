@@ -1941,6 +1941,76 @@ def named_formula_operands(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     return name, numeric
 
 
+def _operand_value(raw: Any) -> Any:
+    """A number or a non-empty string a call passed, else None."""
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        parsed = _parse_text_number(raw.strip())
+        return parsed if parsed is not None else raw.strip()
+    return None
+
+
+def _is_signature_default(param: Any, value: Any) -> bool:
+    if param is None or param.default is _inspect.Parameter.empty:
+        return False
+    default = param.default
+    if isinstance(default, bool):
+        return False
+    if isinstance(value, (int, float)) and isinstance(default, (int, float)):
+        return abs(float(value) - float(default)) <= 1e-9
+    if isinstance(value, str) and isinstance(default, str):
+        return value.strip().casefold() == default.strip().casefold()
+    return False
+
+
+def run_carries_operand(
+    name: str,
+    params: Optional[Dict[str, Any]] = None,
+    text: str = "",
+) -> bool:
+    """True when a call gives this calculator a figure it did not default.
+
+    A passed value equal to the signature default is that default, not an
+    operand. A figure the ask text binds counts the same as a passed one.
+    An unknown calculator is left to ``run_calculation`` to report.
+    """
+    fn = CALCULATORS.get(str(name or "").strip())
+    if fn is None:
+        return True
+    try:
+        signature = _inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    raw = dict(params or {}) if isinstance(params, dict) else {}
+    flat = _flatten_calc_kwargs(raw)
+    junk = {_snake_key(j) for j in _BIND_JUNK_KEYS}
+    for key, val in flat.items():
+        if _snake_key(key) in junk:
+            continue
+        value = _operand_value(val)
+        if value is None:
+            continue
+        if not _is_signature_default(signature.parameters.get(key), value):
+            return True
+    blob = " ".join(
+        str(part) for part in (
+            text, raw.get("text"), raw.get("formula"), raw.get("message"),
+        ) if isinstance(part, str) and part.strip()
+    )
+    if not blob:
+        return False
+    for key, val in extract_calculation_params_from_text(fn, blob).items():
+        value = _operand_value(val)
+        if value is None:
+            continue
+        if not _is_signature_default(signature.parameters.get(key), value):
+            return True
+    return False
+
+
 def formula_completed_by_user_text(
     text: str,
 ) -> Optional[Tuple[str, Dict[str, Any]]]:

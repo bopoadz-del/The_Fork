@@ -249,6 +249,7 @@ async def handle_construction_calc(call: ToolCall) -> dict:
     """construction_calc (deterministic formula library)"""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time
         _ask_is_ipc_certificate,
+        _defaulted_run_refusal,
         _dispatch_payment_certificate,
         _formula_calculator_name_from_message,
         _inject_user_ask_into_construction_calc_args,
@@ -312,6 +313,9 @@ async def handle_construction_calc(call: ToolCall) -> dict:
         if val is None or val == "":
             continue
         calc_params[key] = val
+    refusal = _defaulted_run_refusal(calc_name, calc_params, user_message)
+    if refusal is not None:
+        return {"name": "construction_calc", "ok": True, "result": refusal}
     result = _cf.run_calculation(
         calc_name,
         calc_params,

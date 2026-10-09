@@ -12,6 +12,7 @@ import re
 from typing import Iterable, List
 
 FILE_NAME_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_.\-]{11,}")
+_FILE_LIKE_RE = re.compile(r"[_.\-0-9]")
 
 
 def user_names_project_file(user_low: str, original_name: str) -> bool:
@@ -34,6 +35,10 @@ def user_names_project_file(user_low: str, original_name: str) -> bool:
         return False
     for m in FILE_NAME_TOKEN_RE.finditer(user_low):
         token_stem = os.path.splitext(m.group(0).rstrip(".,;:)"))[0]
+        # A plain word ("specification") is language, not a file name; a
+        # stem the user typed joins words or carries a digit.
+        if not _FILE_LIKE_RE.search(token_stem):
+            continue
         if len(token_stem) >= 12 and token_stem in stem:
             return True
     return False

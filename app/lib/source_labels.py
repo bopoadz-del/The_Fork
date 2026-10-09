@@ -57,14 +57,21 @@ def _fmt_value(value: Any) -> str:
     return str(value)
 
 
-def input_phrase(key: str, value: Any, unit: str = "") -> str:
-    """``contract_amount, 50000000`` -> "contract amount 50,000,000";
-    ``length_m, 12, "m"`` -> "length 12 m"; ``rate_percent, 0.1, "%"`` -> "rate 0.1%"."""
+def parameter_words(key: str, unit: str = "") -> str:
+    """``length_m`` with unit "m" -> "length": the name without the unit it spells."""
     words = [w for w in str(key).split("_") if w]
     norm = _norm(unit)
     if len(words) > 1 and norm and (_norm(words[-1]) == norm
                                     or (norm == "%" and words[-1].lower() in ("pct", "percent"))):
         words = words[:-1]
+    return " ".join(words)
+
+
+def input_phrase(key: str, value: Any, unit: str = "") -> str:
+    """``contract_amount, 50000000`` -> "contract amount 50,000,000";
+    ``length_m, 12, "m"`` -> "length 12 m"; ``rate_percent, 0.1, "%"`` -> "rate 0.1%"."""
+    words = parameter_words(key, unit).split()
+    norm = _norm(unit)
     shown = _fmt_value(value)
     if norm == "%":
         shown += "%"
@@ -252,6 +259,141 @@ def calculator_default_lines(
             "not a figure from the project documents."
         )
     return lines
+
+
+def calculator_currency_defaults(
+    calculation: str,
+    result: Any,
+    user_text: str = "",
+    passed: Optional[Dict[str, Any]] = None,
+) -> List[Tuple[str, str]]:
+    """``(code, default line)`` for each currency the formula filled in itself.
+
+    The parameter was left blank and the user's words name no currency, so
+    the code is the signature default. ``calculator_default_lines`` does
+    not restate it, because an answer that shows no currency rests on no
+    currency; the caller states it when the answer does show it.
+    """
+    from app.lib import formula_registry
+
+    spec = formula_registry.get(calculation or "")
+    if spec is None:
+        return []
+    try:
+        signature = inspect.signature(spec.fn)
+    except (TypeError, ValueError):
+        _LOG.debug("signature unreadable for %s", calculation, exc_info=True)
+        return []
+    given = dict(passed or {})
+    found: List[Tuple[str, str]] = []
+    for key, param in signature.parameters.items():
+        default = param.default
+        if not isinstance(default, str):
+            continue
+        code = default.strip().upper()
+        if code not in _CURRENCY_CODES:
+            continue
+        chosen = given.get(key)
+        if chosen not in (None, "") and not _same_value(chosen, default):
+            continue
+        if any(_user_states_value(user_text, c) for c in _CURRENCY_CODES):
+            continue
+        unit = (spec.inputs or {}).get(key, "")
+        phrase = input_phrase(key, code, unit)
+        found.append((code, (
+            f"{phrase} is the platform calculator's default, "
+            "not a figure from the project documents."
+        )))
+    return found
+
+
+def calculator_parameter_words(
+    calculation: str,
+    stated: Optional[Dict[str, Any]] = None,
+) -> List[Tuple[str, str, bool]]:
+    """``(parameter, words, defaulted)`` for each input the formula takes.
+
+    ``words`` is the parameter read as a user would write it ("contract
+    amount" for ``contract_amount``); ``defaulted`` is True when the user
+    did not state it.
+    """
+    from app.lib import formula_registry
+
+    spec = formula_registry.get(calculation or "")
+    if spec is None:
+        return []
+    try:
+        signature = inspect.signature(spec.fn)
+    except (TypeError, ValueError):
+        _LOG.debug("signature unreadable for %s", calculation, exc_info=True)
+        return []
+    known = set((stated or {}).keys())
+    units = spec.inputs or {}
+    out: List[Tuple[str, str, bool]] = []
+    for key, param in signature.parameters.items():
+        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+        words = parameter_words(key, units.get(key, "")).lower()
+        out.append((key, words, key not in known))
+    return out
+
+
+#: Stands where a removal took text out, until the line is tidied.
+_REMOVED_MARK = "\x00"
+#: Brackets around nothing but separators and space.
+_EMPTY_BRACKETS_RE = re.compile(r"[ \t]*(?:\([\s,;:/–—-]*\)|\[[\s,;:/–—-]*\])")
+#: A word that only makes sense attached to what follows it.
+_HEAD_PREPOSITION = (
+    r"(?:on|under|using|via|by|per|in|of|from|to|at|see|with|and|or)"
+)
+
+
+def tidy_removal_debris(line: str, mark: str = "\x00") -> str:
+    """The line with the debris a removal left behind cleaned up.
+
+    ``mark`` sits where text was removed. A list element the removal emptied,
+    or cut down to a lone word, goes with its separator ("rate, Sub-Clause
+    8.8 basis" -> "rate"); a preposition left pointing at nothing goes; then
+    brackets left empty, separators left doubled or dangling inside a
+    bracket or before a sentence end.
+    """
+    if not line:
+        return line
+    m = re.escape(mark)
+    element_end = r"(?=[ \t]*(?:[),;\]]|$))"
+    # Element reduced to the removed span, a preposition, and/or one word.
+    line = re.sub(
+        rf"[ \t]*[,;][ \t]*(?:{_HEAD_PREPOSITION}[ \t]+)?{m}(?:[ \t]*{m})*"
+        rf"(?:[ \t]+[A-Za-z][\w-]*)?{element_end}",
+        "",
+        line,
+        flags=re.IGNORECASE,
+    )
+    line = re.sub(
+        rf"(?<=[(\[])[ \t]*(?:{_HEAD_PREPOSITION}[ \t]+)?{m}(?:[ \t]*{m})*"
+        rf"(?:[ \t]+[A-Za-z][\w-]*)?[ \t]*(?:[,;][ \t]*|(?=[)\]]))",
+        "",
+        line,
+        flags=re.IGNORECASE,
+    )
+    # A preposition whose object was the removed span.
+    line = re.sub(
+        rf"[ \t]+{_HEAD_PREPOSITION}[ \t]*{m}(?=[ \t]*(?:[),;:.?!\]]|$))",
+        "",
+        line,
+        flags=re.IGNORECASE,
+    )
+    line = line.replace(mark, "")
+    line = _EMPTY_BRACKETS_RE.sub("", line)
+    line = re.sub(r"([(\[])[ \t]*[,;:][ \t]*", r"\1", line)
+    line = re.sub(r"[ \t]*[,;:][ \t]*([)\]])", r"\1", line)
+    line = re.sub(r"([,;])(?:[ \t]*[,;])+", r"\1", line)
+    line = re.sub(r"[ \t]*[,;:][ \t]*(?=[.?!](?:\s|$))", "", line)
+    line = re.sub(r"[ \t]*[,;][ \t]*$", "", line)
+    line = re.sub(r"[ \t]{2,}", " ", line)
+    line = re.sub(r"[ \t]+([.,;:!?)\]])", r"\1", line)
+    line = re.sub(r"([(\[])[ \t]+", r"\1", line)
+    return line.rstrip()
 
 
 def tool_label(tool: str, inputs: Optional[Dict[str, Any]] = None) -> str:
@@ -643,12 +785,12 @@ def _strip_ungrounded_citations(text: str, user: str, retrieval: str, result: An
         for start, end, span in reversed(spans):
             if _citation_stated(span, user, retrieval, result, supplied):
                 continue
-            line = line[:start] + line[end:]
+            line = line[:start] + _REMOVED_MARK + line[end:]
             removed = True
         if not removed:
             kept.append(line)
             continue
-        line = re.sub(r"[ \t]{2,}", " ", line).strip()
+        line = tidy_removal_debris(line, _REMOVED_MARK).strip()
         line = _BASIS_TAIL_RE.sub("", line)
         line = _DANGLING_PREP_RE.sub("", line)
         line = re.sub(r"[ \t]{2,}", " ", line).strip()
@@ -725,11 +867,16 @@ def guard_supplied_input_wording(
     bound = dict(supplied or {})
     _displays, _params, known = _registry_maps()
     text = _strip_ungrounded_citations(text, user, retrieval, result, bound)
+    allowed_ccy = _allowed_currencies(user, retrieval, bound, result, calculation)
     text = _strip_ungrounded_qualifiers(
         text,
-        _allowed_currencies(user, retrieval, bound, result, calculation),
+        allowed_ccy,
         _allowed_units(user, retrieval, calculation, result, known),
         known,
     )
+    for code, line in calculator_currency_defaults(calculation, result, user, bound):
+        if not _currency_allowed(code, allowed_ccy):
+            # The figures no longer show this currency, so nothing rests on it.
+            text = "\n".join(ln for ln in text.split("\n") if ln.strip() != line)
     text = _drop_dangling_comparisons(text, user, retrieval)
     return _tidy_wording(text)
