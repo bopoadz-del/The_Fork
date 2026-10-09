@@ -80,6 +80,92 @@ def input_phrase(key: str, value: Any, unit: str = "") -> str:
     return f"{' '.join(words)} {shown}".strip()
 
 
+def parameter_label(calculation: str, key: str) -> str:
+    """The words a user reads for one input: its declared label, else its name as words."""
+    from app.lib import formula_registry
+
+    spec = formula_registry.get(calculation or "")
+    declared = spec.params.get(key) if spec else None
+    if declared is not None and declared.label:
+        return declared.label
+    return parameter_words(key, declared.unit if declared is not None else "")
+
+
+def _is_fraction_percent(row: Dict[str, Any]) -> bool:
+    hi = row.get("hi")
+    return _norm(row.get("unit") or "") == "%" and hi is not None and hi <= 1
+
+
+def _shown_quantity(value: Any, row: Dict[str, Any]) -> str:
+    unit = row.get("unit") or ""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(_shown_quantity(v, row) for v in value)
+    if _is_fraction_percent(row) and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{_fmt_value(value * 100 if abs(value) <= 1 else value)}%"
+    if isinstance(value, str):
+        return f"\u201c{value}\u201d"
+    shown = _fmt_value(value)
+    if _norm(unit) == "%":
+        return shown + "%"
+    if _norm(unit) in _UNITLESS:
+        return shown
+    return f"{shown} {unit}"
+
+
+def _accepted_range(row: Dict[str, Any]) -> str:
+    return f"{_shown_quantity(row['lo'], row)} to {_shown_quantity(row['hi'], row)}"
+
+
+def input_question(calculation: str, rejected: List[Dict[str, Any]],
+                   missing: Iterable[str] = ()) -> str:
+    """Ask the user again for inputs the calculator would not run, by their labels."""
+    display = formula_display_name(calculation) or "calculation"
+    sentences: List[str] = []
+    labels: List[str] = []
+    for row in rejected:
+        label = parameter_label(calculation, row["parameter"])
+        labels.append(label)
+        value = row.get("value")
+        reason = row.get("reason")
+        if reason == "out_of_range":
+            verb = "are" if row.get("kind") == "series" else "is"
+            sentences.append(f"The {label} given ({_shown_quantity(value, row)}) {verb} outside what the "
+                             f"{display} calculator accepts ({_accepted_range(row)}).")
+            scale = row.get("scale")
+            if scale:
+                exponent = scale["exponent"]
+                step = (f"multiply by 1e{exponent}" if exponent > 0 else f"divide by 1e{-exponent}")
+                sentences.append(f"If that figure is in {scale['unit']}, it is "
+                                 f"{_shown_quantity(_rounded(scale['value']), row)} ({step}).")
+        elif reason == "not_whole":
+            sentences.append(f"The {label} needs a whole number, not {_fmt_value(value)}.")
+        elif reason == "empty":
+            sentences.append(f"The {label} needs at least one number.")
+        elif reason == "not_yes_no":
+            sentences.append(f"The {label} needs a yes or a no, not \u201c{value}\u201d.")
+        else:
+            sentences.append(f"The {label} needs a number, not {_shown_quantity(value, row)}.")
+    needed = [parameter_label(calculation, key) for key in missing]
+    if needed:
+        sentences.append(f"The {display} calculator also needs the {_joined(needed)}.")
+    asked = labels + needed
+    if len(asked) == 1:
+        sentences.append(f"What {asked[0]} should I use?")
+    elif asked:
+        sentences.append(f"What values should I use for the {_joined(asked)}?")
+    return " ".join(sentences)
+
+
+def _rounded(number: float) -> float:
+    return float(f"{number:.6g}")
+
+
+def _joined(words: List[str]) -> str:
+    if len(words) <= 1:
+        return "".join(words)
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
 def calculator_label(calculation: str, inputs: Optional[Dict[str, Any]] = None) -> str:
     """"Delay damages per day -- platform calculator (rate 0.1%, contract amount 50,000,000)"."""
     from app.lib import formula_registry
