@@ -122,19 +122,26 @@ def translated(rules: Sequence[Tuple[str, str]]) -> List[Tuple[str, str, str]]:
 
 def previous_rules() -> List[Tuple[str, str]]:
     """The rule list from the previous version of the live task's shared
-    secret. In memory only."""
-    import boto3
+    secret, through the AWS CLI (stdout captured, never forwarded). In
+    memory only."""
+    import subprocess
 
-    region = os.getenv("AWS_REGION", "us-west-2")
-    ecs = boto3.client("ecs", region_name=region)
-    svc = ecs.describe_services(cluster=os.environ["ECS_CLUSTER"],
-                                services=[os.environ["ECS_SERVICE"]])["services"][0]
-    td = ecs.describe_task_definition(taskDefinition=svc["taskDefinition"])["taskDefinition"]
+    def aws(*args: str) -> object:
+        proc = subprocess.run(["aws", *args, "--output", "json"], check=False,
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            code = re.search(r"\(([A-Za-z]+(?:Exception)?)\)", proc.stderr or "")
+            raise Refused("aws_failed", **({"aws_code": code.group(1)} if code else {}))
+        return json.loads(proc.stdout or "null")
+
+    svc = aws("ecs", "describe-services", "--cluster", os.environ["ECS_CLUSTER"],
+              "--services", os.environ["ECS_SERVICE"])["services"][0]
+    td = aws("ecs", "describe-task-definition", "--task-definition", svc["taskDefinition"])["taskDefinition"]
     ids = {":".join(s["valueFrom"].split(":")[:7]) for c in td["containerDefinitions"]
            for s in c.get("secrets", []) if s["valueFrom"].split(":")[5:6] == ["secret"]}
-    sm = boto3.client("secretsmanager", region_name=region)
     for sid in sorted(ids):
-        blob = json.loads(sm.get_secret_value(SecretId=sid, VersionStage="AWSPREVIOUS")["SecretString"])
+        got = aws("secretsmanager", "get-secret-value", "--secret-id", sid, "--version-stage", "AWSPREVIOUS")
+        blob = json.loads(got["SecretString"])
         if RULES_KEY in blob:
             return parse_rules(blob[RULES_KEY])
     raise Refused("rules_not_found_in_previous_version")
