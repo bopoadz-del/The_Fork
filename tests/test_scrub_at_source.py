@@ -213,3 +213,95 @@ def test_postgres_refuses_a_rule_it_cannot_run_exactly(pg_scrub_env, monkeypatch
     out = capsys.readouterr().out
     assert "error=rules_unsupported" in out and "rules_unsupported=1" in out
     assert "ZXQ9PGMARK" not in out
+
+
+def test_count_and_dryrun_never_load_the_embedder(scrub_env, monkeypatch):
+    _index("syn_shared_gk", "g1", "shared ZXQ9QUORUM row")
+    from app.core.rag import embeddings, vector_store
+    vector_store.reset_store_cache()
+
+    def _no_model(*_a, **_k):
+        raise AssertionError("count loaded an embedding model")
+    monkeypatch.setattr(embeddings, "get_embedder", _no_model)
+    monkeypatch.setattr(vector_store, "get_embedder", _no_model)
+    mod = _load()
+    assert mod.run("count")["shared_matches"] == 1
+    assert mod.run("dryrun")["shared_matches"] == 1
+
+
+def test_a_corpus_every_user_can_open_is_shared_and_cleaned(scrub_env):
+    """Shared is the platform's access rule, not the general-knowledge list:
+    an approved Drive-imported corpus is readable by every user, so its rows
+    are cleaned; a user's own project is not."""
+    from app.core import projects
+
+    projects.create_project("Synthetic shared corpus", project_id="syn_drive_corpus",
+                            origin="admin_drive_approved", is_approved=True)
+    projects.create_project("Synthetic own project", project_id="syn_user_proj",
+                            origin="user_create")
+    _index("syn_drive_corpus", "d1", "corpus ZXQ9QUORUM row")
+    _index("syn_user_proj", "u1", "own ZXQ9QUORUM row")
+    mod = _load()
+    assert "syn_drive_corpus" in mod.shared_project_ids()
+    assert "syn_user_proj" not in mod.shared_project_ids()
+    counts = mod.run("count")
+    assert counts["shared_matches"] == 1 and counts["project_own_matches"] == 1
+    mod.run("clean", confirm="CLEAN")
+    after = mod.run("count")
+    assert after["shared_matches"] == 0 and after["project_own_matches"] == 1
+
+
+def test_the_master_corpus_every_user_opens_is_shared(scrub_env, monkeypatch):
+    """The master-corpus alias is open to every signed-in user when its
+    backing project is approved, so the backing project's rows are shared."""
+    from app.core import projects
+
+    monkeypatch.setattr(projects, "MASTER_CORPUS_PROJECT_ID", "syn_alias")
+    monkeypatch.setattr(projects, "MASTER_CORPUS_SOURCE_PROJECT_ID", "syn_backing")
+    projects.create_project("Synthetic backing corpus", project_id="syn_backing",
+                            origin="user_create", is_approved=True)
+    _index("syn_backing", "b1", "backing ZXQ9QUORUM row")
+    mod = _load()
+    assert "syn_backing" in mod.shared_project_ids()
+    assert mod.run("count")["shared_matches"] == 1
+
+
+def test_postgres_reembed_resumes_from_the_queue_and_drops_it(pg_scrub_env):
+    from sqlalchemy import text as sql
+
+    from app.core.rag.embeddings import get_embedder
+    from app.core.rag.vector_store import get_store
+
+    mod = pg_scrub_env
+    _index("syn_pg_shared_gk", "g1", "shared ZXQ9PGMARK row")
+    store = get_store(dim=get_embedder().dim)
+    db = mod._Db()
+    # A clean interrupted after its text rewrite: the id is queued, the
+    # vector still belongs to the old text.
+    mod._pg_queue_create(db)
+    with db.session() as session:
+        session.execute(sql(f"UPDATE {db.table} SET text = 'shared the token row' "
+                            "WHERE chunk_id = 'syn_pg_shared_gk:g1:0'"))
+        session.execute(sql(f"INSERT INTO {mod._QUEUE} (chunk_id) VALUES ('syn_pg_shared_gk:g1:0')"))
+        session.commit()
+    counts = mod.run("reembed")
+    assert counts["embeddings_updated"] == 1 and counts["embeddings_pending"] == 0
+    emb = get_embedder()
+    with store._session_factory()() as session:
+        row = session.get(store._rag_chunk_cls, "syn_pg_shared_gk:g1:0")
+        assert list(row.embedding) == pytest.approx(list(emb.encode(["shared the token row"])[0]), abs=1e-5)
+    with db.session() as session:
+        assert session.execute(sql("SELECT to_regclass(:t)"), {"t": mod._QUEUE}).scalar() is None
+
+
+def test_a_clean_loads_the_embedder_before_any_rewrite(pg_scrub_env, monkeypatch):
+    mod = pg_scrub_env
+    _index("syn_pg_shared_gk", "g1", "shared ZXQ9PGMARK row")
+
+    def _broken():
+        raise OSError("model files unreadable")
+    monkeypatch.setattr(mod, "_store", _broken)
+    with pytest.raises(mod.Refused) as refused:
+        mod.run("clean", confirm="CLEAN")
+    assert refused.value.code == "embedder_unavailable"
+    assert mod.run("count")["shared_matches"] == 1  # nothing was rewritten

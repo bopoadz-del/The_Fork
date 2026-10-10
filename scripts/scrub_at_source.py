@@ -9,13 +9,15 @@ Modes:
   clean   -- requires confirm=CLEAN; rewrites the matching SHARED rows in
              place and re-embeds only the rows that changed. A project's own
              rows are never written.
+  reembed -- finish re-embedding rows a clean changed (resumable)
   dryrun  -- what the shared layer would expose with the serve-time list
              empty: the same match count, shared layer only. Zero is the bar
              for retiring RAG_SCRUB_RULES.
 
-Shared = the configured general-knowledge project ids. Everything else is a
-project's own and is kept from other projects by the retrieval scope
-(app.core.rag.retriever.retrievable_project_ids), not by rewriting it.
+Shared = every project users other than its owner can read, by the
+platform's own access rule (shared_project_ids). Everything else is a
+project's own, seen only by that project's users, and is kept from other
+projects by the retrieval scope (retriever.retrievable_project_ids).
 
 On PostgreSQL (live) every match and every rewrite runs inside the database:
 ``~*`` to find rows, ``regexp_replace`` to rewrite them, in keyset batches by
@@ -34,6 +36,13 @@ import argparse
 import re
 import sys
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from pathlib import Path
+
+# Run as ``python scripts/scrub_at_source.py``: the repository root, not
+# scripts/, must be importable for ``app``.
+_ROOT = str(Path(__file__).resolve().parents[1])
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 _PREFIX = "SCRUB_AT_SOURCE"
 _DOCUMENTS = "documents"
@@ -51,9 +60,30 @@ class Refused(Exception):
         self.code, self.fields = code, fields
 
 
+#: A user id that owns nothing: whatever it may read, every user may read.
+_NOBODY = "\x00scrub-at-source-non-owner"
+
+
 def shared_project_ids() -> List[str]:
-    from app.core.projects import general_knowledge_project_ids
-    return sorted(general_knowledge_project_ids())
+    """Every project whose rows a user who owns nothing can read -- asked of
+    the platform's own access check (projects.can_access_project), directly
+    and through an alias such as the master-corpus project. Whatever that
+    user may open, every user may open, so it is shared whatever its id;
+    reading only the general-knowledge list missed a corpus every user sees."""
+    from sqlalchemy import select
+
+    from app.core import projects
+    from app.core.models import Project
+
+    ids = set(projects.general_knowledge_project_ids())
+    projects._ensure_db()
+    with projects.SessionLocal() as session:
+        rows = list(session.scalars(select(Project.id)).all())
+    aliases = [projects.MASTER_CORPUS_PROJECT_ID]
+    for pid in rows + aliases:
+        if projects.can_access_project(pid, user_id=_NOBODY, include_admin_approved=True):
+            ids.add(projects._master_corpus_source(pid) or pid)
+    return sorted(ids)
 
 
 def ordered_rules() -> List[Tuple[str, str]]:
@@ -95,14 +125,35 @@ def pg_replacement(repl: str) -> Optional[str]:
 
 # ── stores ───────────────────────────────────────────────────────────────────
 def _store():
+    """The vector store and embedder, for re-embedding changed rows only."""
     from app.core.rag.embeddings import get_embedder
     from app.core.rag.vector_store import get_store
     emb = get_embedder()
     return get_store(dim=emb.dim), emb
 
 
-def _session(store):
-    return store._session_factory()()
+class _Db:
+    """The chunk table and a session on the configured database -- no
+    embedder: counting and rewriting text need none, and loading one on a
+    runner is a model download the count does not need."""
+
+    def __init__(self) -> None:
+        from app.core.db import _session_factory_for_url
+        from app.core.models import rag_chunk_table_name
+        from app.core.rag.vector_store import (
+            _database_url, _default_db_path, _rag_vector_namespace,
+        )
+        url = _database_url(_default_db_path())
+        self._factory = _session_factory_for_url(url)
+        self.is_postgres = url.startswith("postgresql")
+        self.table = rag_chunk_table_name(_rag_vector_namespace())
+
+    def session(self):
+        return self._factory()
+
+
+def _session(db):
+    return db.session()
 
 
 def _projects_session():
@@ -118,13 +169,13 @@ class Target:
         self.open_session, self.table, self.key, self.column = open_session, table, key, column
 
 
-def _pg_rules(rules: Sequence[Tuple[str, str]], store) -> List[Tuple[str, str]]:
+def _pg_rules(rules: Sequence[Tuple[str, str]], db) -> List[Tuple[str, str]]:
     """Translate every rule and let PostgreSQL compile it. Any refusal stops
     the run with a count."""
     from sqlalchemy import text as sql
 
     out, refused = [], 0
-    with _session(store) as session:
+    with _session(db) as session:
         for pat, repl in rules:
             p, r = pg_pattern(pat), pg_replacement(repl)
             if p is None or r is None:
@@ -162,12 +213,15 @@ def _pg_count(t: Target, rules, shared: Sequence[str]) -> Tuple[int, int]:
     return int(row[0] or 0), int(row[1] or 0)
 
 
-def _pg_rewrite(t: Target, rules, shared: Sequence[str], batch: int) -> Set[str]:
+def _pg_rewrite(t: Target, rules, shared: Sequence[str], batch: int,
+                queue: Optional[str] = None) -> Set[str]:
     """Rewrite ``column`` of shared rows, one rule at a time in the scrubber's
     order, in keyset batches by key (each row is visited once per rule, so a
     replacement that still matches cannot loop). Keys compare in byte order
     (COLLATE "C") so the batch boundary means the same in Python and in the
-    database. Returns the changed keys."""
+    database. With ``queue``, each changed key is also recorded in that table
+    in the same statement, so re-embedding can resume after an interruption.
+    Returns the changed keys."""
     from sqlalchemy import text as sql
 
     changed: Set[str] = set()
@@ -175,13 +229,23 @@ def _pg_rewrite(t: Target, rules, shared: Sequence[str], batch: int) -> Set[str]
     for p, r in rules:
         last = ""
         while True:
-            stmt = sql(
-                f"WITH picked AS (SELECT {key} FROM {t.table} "
-                f"  WHERE project_id = ANY(:shared) AND {key} COLLATE \"C\" > :last "
-                f"  AND {col} ~* :p ORDER BY {key} COLLATE \"C\" LIMIT :n) "
+            update = (
                 f"UPDATE {t.table} AS tgt SET {col} = regexp_replace(tgt.{col}, :p, :r, 'gi') "
                 f"FROM picked WHERE tgt.{key} = picked.{key} RETURNING tgt.{key}"
             )
+            picked = (
+                f"WITH picked AS (SELECT {key} FROM {t.table} "
+                f"  WHERE project_id = ANY(:shared) AND {key} COLLATE \"C\" > :last "
+                f"  AND {col} ~* :p ORDER BY {key} COLLATE \"C\" LIMIT :n)"
+            )
+            if queue:
+                stmt = sql(
+                    f"{picked}, upd AS ({update}), "
+                    f"q AS (INSERT INTO {queue} (chunk_id) SELECT {key} FROM upd "
+                    f"ON CONFLICT DO NOTHING) SELECT {key} FROM upd"
+                )
+            else:
+                stmt = sql(f"{picked} {update}")
             with t.open_session() as session:
                 ids = [str(x) for x in session.execute(
                     stmt, {"shared": list(shared), "last": last, "p": p, "r": r, "n": batch},
@@ -230,16 +294,87 @@ def _local_rewrite(t: Target, compiled, shared) -> Set[str]:
     return changed
 
 
-def _reembed(store, emb, ids: Sequence[str], batch: int) -> int:
-    """New embeddings for the changed chunks only, read back by id."""
+#: Changed chunk ids awaiting a new embedding. Created by a clean, drained by
+#: re-embedding, dropped when empty -- an operational table, not app schema.
+_QUEUE = "scrub_reembed_queue"
+
+
+def _embedder():
+    """The store and embedder, loaded BEFORE any text is rewritten: a clean
+    that rewrote rows and then could not embed them would leave stale vectors.
+    A load failure is reported by type and message (a model or path problem,
+    never row data)."""
+    try:
+        return _store()
+    except Exception as exc:  # noqa: BLE001 -- reported, the run stops
+        detail = re.sub(r"[^A-Za-z0-9 ._:/-]", " ", str(exc))[:160]
+        raise Refused("embedder_unavailable", type=type(exc).__name__, detail=detail.replace(" ", "_"))
+
+
+def _pg_queue_create(db) -> None:
+    from sqlalchemy import text as sql
+    with db.session() as session:
+        session.execute(sql(f"CREATE TABLE IF NOT EXISTS {_QUEUE} (chunk_id TEXT PRIMARY KEY)"))
+        session.commit()
+
+
+def _pg_queue_size(db) -> int:
+    from sqlalchemy import text as sql
+    with db.session() as session:
+        if session.execute(sql("SELECT to_regclass(:t)"), {"t": _QUEUE}).scalar() is None:
+            return 0
+        return int(session.execute(sql(f"SELECT COUNT(*) FROM {_QUEUE}")).scalar() or 0)
+
+
+def _pg_reembed(db, store, emb, batch: int) -> int:
+    """Drain the queue: read the text of a batch of changed chunks, embed it,
+    write the vectors back in one statement, remove those ids from the queue,
+    commit. Resumable -- an interrupted run leaves the rest queued. The queue
+    table is dropped once empty."""
+    from sqlalchemy import text as sql
+
+    if not _pg_queue_size(db):
+        return 0
+    done = 0
+    while True:
+        with db.session() as session:
+            rows = session.execute(sql(
+                f"SELECT c.chunk_id, c.text FROM {_QUEUE} q JOIN {db.table} c "
+                f"ON c.chunk_id = q.chunk_id ORDER BY q.chunk_id LIMIT :n"), {"n": batch}).all()
+            if not rows:
+                # Ids whose chunk is gone have nothing to embed.
+                session.execute(sql(f"DELETE FROM {_QUEUE}"))
+                session.commit()
+                break
+            vecs = emb.encode([r.text for r in rows])
+            session.execute(
+                sql(f"UPDATE {db.table} SET embedding = CAST(:e AS vector) WHERE chunk_id = :id"),
+                [{"id": r.chunk_id, "e": "[" + ",".join(f"{float(x):.7g}" for x in vecs[i]) + "]"}
+                 for i, r in enumerate(rows)],
+            )
+            session.execute(sql(f"DELETE FROM {_QUEUE} WHERE chunk_id = ANY(:ids)"),
+                            {"ids": [r.chunk_id for r in rows]})
+            session.commit()
+            done += len(rows)
+    with db.session() as session:
+        session.execute(sql(f"DROP TABLE IF EXISTS {_QUEUE}"))
+        session.commit()
+    return done
+
+
+def _reembed(ids: Sequence[str], batch: int) -> int:
+    """New embeddings for the changed chunks only, read back by id (local)."""
     from sqlalchemy import select
 
+    if not ids:
+        return 0
+    store, emb = _embedder()
     cls = store._rag_chunk_cls
     ids = sorted(ids)
     done = 0
     for i in range(0, len(ids), batch):
         part = ids[i:i + batch]
-        with _session(store) as session:
+        with store._session_factory()() as session:
             rows = session.execute(select(cls.chunk_id, cls.text).where(cls.chunk_id.in_(part))).all()
         vecs = emb.encode([r.text for r in rows])
         done += store.rewrite_chunks([(r.chunk_id, r.text, vecs[j]) for j, r in enumerate(rows)])
@@ -249,7 +384,7 @@ def _reembed(store, emb, ids: Sequence[str], batch: int) -> int:
 # ── run ──────────────────────────────────────────────────────────────────────
 def run(mode: str, confirm: str = "", batch_size: int = 200) -> Dict[str, int]:
     mode = (mode or "").strip().lower()
-    if mode not in {"count", "clean", "dryrun"}:
+    if mode not in {"count", "clean", "dryrun", "reembed"}:
         raise Refused("bad_mode")
     if mode == "clean" and confirm != "CLEAN":
         raise Refused("confirm_required")
@@ -260,13 +395,13 @@ def run(mode: str, confirm: str = "", batch_size: int = 200) -> Dict[str, int]:
         _emit(mode=mode, **counts)
         return counts
 
-    store, emb = _store()
+    db = _Db()
     shared = shared_project_ids()
-    chunks = Target(lambda: _session(store), store._table_name, "chunk_id", "text")
+    chunks = Target(db.session, db.table, "chunk_id", "text")
     names = Target(_projects_session, _DOCUMENTS, "id", "original_name")
 
-    if store._use_pgvector:
-        pg = _pg_rules(rules, store)
+    if db.is_postgres:
+        pg = _pg_rules(rules, db)
 
         def count(target):
             return _pg_count(target, pg, shared)
@@ -285,23 +420,39 @@ def run(mode: str, confirm: str = "", batch_size: int = 200) -> Dict[str, int]:
     if mode in ("count", "dryrun"):
         cs, co = count(chunks)
         ns, no = count(names)
-        counts.update(shared_matches=cs, shared_document_names=ns)
+        counts.update(shared_projects=len(shared), shared_matches=cs, shared_document_names=ns)
         if mode == "count":
             counts.update(project_own_matches=co, project_own_document_names=no)
         _emit(mode=mode, **counts)
         return counts
 
-    changed = rewrite(chunks)
-    renamed = rewrite(names)
-    counts.update(shared_rewritten=len(changed), shared_documents_renamed=len(renamed),
-                  embeddings_updated=_reembed(store, emb, sorted(changed), batch_size))
+    if not db.is_postgres:
+        if mode == "reembed":  # local cleans re-embed inline; nothing is queued
+            _emit(mode=mode, **counts)
+            return counts
+        changed = rewrite(chunks)
+        renamed = rewrite(names)
+        counts.update(shared_rewritten=len(changed), shared_documents_renamed=len(renamed),
+                      embeddings_updated=_reembed(sorted(changed), batch_size))
+        _emit(mode=mode, **counts)
+        return counts
+
+    # PostgreSQL: the embedder first, then the text, then the vectors.
+    store, emb = _embedder()
+    if mode == "clean":
+        _pg_queue_create(db)
+        changed = _pg_rewrite(chunks, pg, shared, batch_size, queue=_QUEUE)
+        renamed = _pg_rewrite(names, pg, shared, batch_size)
+        counts.update(shared_rewritten=len(changed), shared_documents_renamed=len(renamed))
+    counts.update(embeddings_updated=_pg_reembed(db, store, emb, batch_size),
+                  embeddings_pending=_pg_queue_size(db))
     _emit(mode=mode, **counts)
     return counts
 
 
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Clean the shared layer at source (counts only).")
-    parser.add_argument("--mode", required=True, choices=("count", "clean", "dryrun"))
+    parser.add_argument("--mode", required=True, choices=("count", "clean", "dryrun", "reembed"))
     parser.add_argument("--confirm", default="")
     parser.add_argument("--batch-size", type=int, default=200)
     args = parser.parse_args(argv)
@@ -311,7 +462,10 @@ def main(argv: List[str] | None = None) -> int:
         _emit(error=exc.code, **exc.fields)
         return 2
     except Exception as exc:  # noqa: BLE001 -- the type only: a message could quote a row
-        _emit(error="failed", type=type(exc).__name__)
+        # The type only: a message could quote a row. A missing module's name
+        # is code, not data, so it is shown.
+        missing = getattr(exc, "name", None) if isinstance(exc, ImportError) else None
+        _emit(error="failed", type=type(exc).__name__, **({"module": missing} if missing else {}))
         return 2
     return 0
 
