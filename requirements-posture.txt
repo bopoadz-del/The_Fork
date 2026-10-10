@@ -1,0 +1,11 @@
+# Posture client pin. Not pulled in by requirements.txt.
+#
+# cerebrum-slm is a private repo. Fork CI cannot fetch it with the
+# repository token that only has The_Fork. Install this file only where
+# that repo is reachable:
+#
+#   pip install -r requirements-posture.txt
+#
+# The Store block sha is separate and lives in locks/store_pins.lock.json.
+# It stays null until scripts/bump_store_pin.py records a certified sha.
+cerebrum-slm @ git+https://github.com/bopoadz-del/cerebrum-slm.git@4e167a7
