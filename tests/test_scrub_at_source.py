@@ -249,3 +249,18 @@ def test_a_corpus_every_user_can_open_is_shared_and_cleaned(scrub_env):
     mod.run("clean", confirm="CLEAN")
     after = mod.run("count")
     assert after["shared_matches"] == 0 and after["project_own_matches"] == 1
+
+
+def test_the_master_corpus_every_user_opens_is_shared(scrub_env, monkeypatch):
+    """The master-corpus alias is open to every signed-in user when its
+    backing project is approved, so the backing project's rows are shared."""
+    from app.core import projects
+
+    monkeypatch.setattr(projects, "MASTER_CORPUS_PROJECT_ID", "syn_alias")
+    monkeypatch.setattr(projects, "MASTER_CORPUS_SOURCE_PROJECT_ID", "syn_backing")
+    projects.create_project("Synthetic backing corpus", project_id="syn_backing",
+                            origin="user_create", is_approved=True)
+    _index("syn_backing", "b1", "backing ZXQ9QUORUM row")
+    mod = _load()
+    assert "syn_backing" in mod.shared_project_ids()
+    assert mod.run("count")["shared_matches"] == 1

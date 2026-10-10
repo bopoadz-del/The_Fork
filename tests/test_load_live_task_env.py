@@ -42,7 +42,8 @@ def test_workflow_declares_expected_inputs():
     assert "count" in text and "clean" in text and "dryrun" in text
     assert "aws-actions/configure-aws-credentials@v4" in text
     assert "AWS_ACCESS_KEY_ID" in text
-    assert "NEON_API_KEY" in text
+    assert "NEON_API" not in text  # the Neon key never comes to GitHub
+    assert "restore_branch_required" in text
     assert "set +x" in text
     assert "echo $" not in text
     assert "secrets.RAG_SCRUB_RULES" not in text

@@ -59,12 +59,16 @@ class Refused(Exception):
         self.code, self.fields = code, fields
 
 
+#: A user id that owns nothing: whatever it may read, every user may read.
+_NOBODY = "\x00scrub-at-source-non-owner"
+
+
 def shared_project_ids() -> List[str]:
-    """Every project whose rows users other than its owner can read: the
-    platform's own access rule (projects._is_shared_platform_grant --
-    approved Drive-imported and boot-seeded corpora, and the configured
-    general-knowledge ids). A corpus every user can open is shared whatever
-    its id; reading only the general-knowledge list missed one."""
+    """Every project whose rows a user who owns nothing can read -- asked of
+    the platform's own access check (projects.can_access_project), directly
+    and through an alias such as the master-corpus project. Whatever that
+    user may open, every user may open, so it is shared whatever its id;
+    reading only the general-knowledge list missed a corpus every user sees."""
     from sqlalchemy import select
 
     from app.core import projects
@@ -73,9 +77,11 @@ def shared_project_ids() -> List[str]:
     ids = set(projects.general_knowledge_project_ids())
     projects._ensure_db()
     with projects.SessionLocal() as session:
-        for row in session.scalars(select(Project)).all():
-            if row.status != "archived" and projects._is_shared_platform_grant(row):
-                ids.add(row.id)
+        rows = list(session.scalars(select(Project.id)).all())
+    aliases = [projects.MASTER_CORPUS_PROJECT_ID]
+    for pid in rows + aliases:
+        if projects.can_access_project(pid, user_id=_NOBODY, include_admin_approved=True):
+            ids.add(projects._master_corpus_source(pid) or pid)
     return sorted(ids)
 
 
