@@ -56,6 +56,14 @@ jobs:
       - name: Requirements
         run: python -m pip install -q -r requirements.txt
 
+      - name: Embedder stack (as the live image installs it)
+        # The live embedder is a dense sentence-transformers model; without
+        # this the loader falls back to model2vec, which cannot read it.
+        # Same pins and CPU index as the Dockerfile.
+        run: |
+          python -m pip install -q --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.5.1"
+          python -m pip install -q "sentence-transformers==5.5.1" "transformers==5.18.0"
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
