@@ -18,6 +18,9 @@ _PREFIX = "SCRUB_AT_SOURCE"
 _SKIP = {
     "PORT", "WORKER_COMMAND", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
     "P1B_KEEP_ALIVE",
+    # Container paths: a runner cannot write them, and the job needs none
+    # (the database is reached by DATABASE_URL, the embedder caches locally).
+    "HF_HOME", "DATA_DIR", "YOLO_CONFIG_DIR",
 }
 
 

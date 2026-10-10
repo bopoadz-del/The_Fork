@@ -1,38 +1,54 @@
 #!/usr/bin/env python3
-"""Rewrite matching SHARED-layer RAG rows in place. Counts only on stdout.
+"""Clean the shared knowledge layer of what the serve-time scrub list matches.
 
-Rules are read from RAG_SCRUB_RULES (and RAG_SCRUB_EXTRA_TERMS) the same
-way serve-time scrub reads them. This process never prints a rule, a
-match, or row text.
+Counts only on stdout. This process never prints a rule, a match or row text.
 
 Modes:
-  count   — matches split by layer (shared general-knowledge vs project-own)
-  clean   — requires confirm=CLEAN; rewrites shared matching rows only
-  dryrun  — shared-layer detector count (serve-time list treated as empty)
+  count   -- rows the rules match, by layer: shared general-knowledge versus
+             each project's own documents; chunk text and document names
+  clean   -- requires confirm=CLEAN; rewrites the matching SHARED rows in
+             place and re-embeds only the rows that changed. A project's own
+             rows are never written.
+  dryrun  -- what the shared layer would expose with the serve-time list
+             empty: the same match count, shared layer only. Zero is the bar
+             for retiring RAG_SCRUB_RULES.
 
-Project-own rows are never rewritten. Shared = configured general-knowledge
-project ids. Batched SQL UPDATE inside the DB; tsvector is generated;
-embeddings are rebuilt only for changed ids via the app embedder.
+Shared = the configured general-knowledge project ids. Everything else is a
+project's own and is kept from other projects by the retrieval scope
+(app.core.rag.retriever.retrievable_project_ids), not by rewriting it.
+
+On PostgreSQL (live) every match and every rewrite runs inside the database:
+``~*`` to find rows, ``regexp_replace`` to rewrite them, in keyset batches by
+chunk id. Only the ids of changed rows leave the database, and the text of
+those rows alone is read back to re-embed them. A rule PostgreSQL cannot run
+exactly as the scrubber does is refused (counted, never printed) -- the run
+stops rather than reading rows out to match them elsewhere. The tsvector
+column is GENERATED and recomputes on write.
+
+On SQLite (local and tests) the same steps run in process: the file is local,
+nothing crosses a network.
 """
 from __future__ import annotations
 
 import argparse
-import os
+import re
 import sys
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-# Counts-only stdout. Nothing else goes to stdout.
 _PREFIX = "SCRUB_AT_SOURCE"
+_DOCUMENTS = "documents"
 
 
 def _emit(**fields: object) -> None:
-    parts = [f"{key}={fields[key]}" for key in fields]
-    print(f"{_PREFIX} {' '.join(parts)}", flush=True)
+    print(f"{_PREFIX} " + " ".join(f"{k}={v}" for k, v in fields.items()), flush=True)
 
 
-def _fail(code: str, **fields: object) -> int:
-    _emit(error=code, **fields)
-    return 2
+class Refused(Exception):
+    """A stop the run reports by code and counts only."""
+
+    def __init__(self, code: str, **fields: object) -> None:
+        super().__init__(code)
+        self.code, self.fields = code, fields
 
 
 def shared_project_ids() -> List[str]:
@@ -40,6 +56,44 @@ def shared_project_ids() -> List[str]:
     return sorted(general_knowledge_project_ids())
 
 
+def ordered_rules() -> List[Tuple[str, str]]:
+    """The serve-time rules in the order the scrubber applies them
+    (identifier_scrub._compiled: longest source pattern first)."""
+    from app.core.identifier_scrub import _rules_from_env
+    rules = _rules_from_env()
+    rules.sort(key=lambda r: len(r[0]), reverse=True)
+    return rules
+
+
+# ── PostgreSQL translation ───────────────────────────────────────────────────
+# Python's \b and \B are PostgreSQL's \y and \Y (\b there is a backspace).
+_PY_ONLY = re.compile(r"\(\?P[<=]|\(\?[aiLmsux-]+[):]|\\[zZG]|[*+?}]\+")
+
+
+def pg_pattern(pattern: str) -> Optional[str]:
+    """The rule as a PostgreSQL ARE, or None when it uses Python-only syntax."""
+    if _PY_ONLY.search(pattern):
+        return None
+    out, i = [], 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < len(pattern):
+            nxt = pattern[i + 1]
+            out.append({"b": r"\y", "B": r"\Y"}.get(nxt, ch + nxt))
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def pg_replacement(repl: str) -> Optional[str]:
+    """Plain replacement text only: a backreference (or any backslash) means
+    the two engines could disagree, so the rule is refused."""
+    return None if "\\" in repl else repl
+
+
+# ── stores ───────────────────────────────────────────────────────────────────
 def _store():
     from app.core.rag.embeddings import get_embedder
     from app.core.rag.vector_store import get_store
@@ -47,202 +101,218 @@ def _store():
     return get_store(dim=emb.dim), emb
 
 
-def _rules():
-    from app.core.identifier_scrub import _rules_from_env, compiled_rules
-    raw = _rules_from_env()
-    return raw, compiled_rules()
+def _session(store):
+    return store._session_factory()()
 
 
-def _posix_pattern(python_pat: str) -> str:
-    # Word boundary only. Other Python-only constructs are skipped by the
-    # caller if Postgres rejects them — never logged.
-    return python_pat.replace(r"\b", r"\y")
+def _projects_session():
+    from app.core import projects
+    projects._ensure_db()
+    return projects.SessionLocal()
 
 
-def _iter_project_rows(
-    store, project_ids: Sequence[str], *, invert: bool, batch_size: int,
-) -> Iterable[Tuple[str, str]]:
-    """Yield (chunk_id, text) in id order. Caller must not print text."""
+class Target:
+    """One stored text column: where it lives and how its rows are keyed."""
+
+    def __init__(self, open_session, table: str, key: str, column: str) -> None:
+        self.open_session, self.table, self.key, self.column = open_session, table, key, column
+
+
+def _pg_rules(rules: Sequence[Tuple[str, str]], store) -> List[Tuple[str, str]]:
+    """Translate every rule and let PostgreSQL compile it. Any refusal stops
+    the run with a count."""
+    from sqlalchemy import text as sql
+
+    out, refused = [], 0
+    with _session(store) as session:
+        for pat, repl in rules:
+            p, r = pg_pattern(pat), pg_replacement(repl)
+            if p is None or r is None:
+                refused += 1
+                continue
+            try:
+                session.execute(sql("SELECT '' ~* :p"), {"p": p})
+            except Exception:  # noqa: BLE001 -- counted, never logged
+                session.rollback()
+                refused += 1
+                continue
+            out.append((p, r))
+    if refused:
+        raise Refused("rules_unsupported", rules_unsupported=refused, rules_loaded=len(rules))
+    return out
+
+
+def _pg_count(t: Target, rules, shared: Sequence[str]) -> Tuple[int, int]:
+    """(shared rows, project-own rows) whose ``column`` any rule matches --
+    counted in the database."""
+    from sqlalchemy import text as sql
+
+    params: Dict[str, object] = {"shared": list(shared)}
+    match = []
+    for i, (p, _r) in enumerate(rules):
+        params[f"p{i}"] = p
+        match.append(f"{t.column} ~* :p{i}")
+    stmt = sql(
+        f"SELECT COUNT(*) FILTER (WHERE project_id = ANY(:shared)), "
+        f"COUNT(*) FILTER (WHERE NOT (project_id = ANY(:shared))) "
+        f"FROM {t.table} WHERE {' OR '.join(match)}"
+    )
+    with t.open_session() as session:
+        row = session.execute(stmt, params).one()
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+def _pg_rewrite(t: Target, rules, shared: Sequence[str], batch: int) -> Set[str]:
+    """Rewrite ``column`` of shared rows, one rule at a time in the scrubber's
+    order, in keyset batches by key (each row is visited once per rule, so a
+    replacement that still matches cannot loop). Keys compare in byte order
+    (COLLATE "C") so the batch boundary means the same in Python and in the
+    database. Returns the changed keys."""
+    from sqlalchemy import text as sql
+
+    changed: Set[str] = set()
+    key, col = t.key, t.column
+    for p, r in rules:
+        last = ""
+        while True:
+            stmt = sql(
+                f"WITH picked AS (SELECT {key} FROM {t.table} "
+                f"  WHERE project_id = ANY(:shared) AND {key} COLLATE \"C\" > :last "
+                f"  AND {col} ~* :p ORDER BY {key} COLLATE \"C\" LIMIT :n) "
+                f"UPDATE {t.table} AS tgt SET {col} = regexp_replace(tgt.{col}, :p, :r, 'gi') "
+                f"FROM picked WHERE tgt.{key} = picked.{key} RETURNING tgt.{key}"
+            )
+            with t.open_session() as session:
+                ids = [str(x) for x in session.execute(
+                    stmt, {"shared": list(shared), "last": last, "p": p, "r": r, "n": batch},
+                ).scalars()]
+                session.commit()
+            if not ids:
+                break
+            changed.update(ids)
+            last = max(ids)
+    return changed
+
+
+# ── SQLite (local) ───────────────────────────────────────────────────────────
+def _local_rows(t: Target) -> Iterable[Tuple[str, str, str]]:
+    from sqlalchemy import text as sql
+    with t.open_session() as session:
+        return session.execute(sql(f"SELECT {t.key}, project_id, {t.column} FROM {t.table}")).all()
+
+
+def _local_count(t: Target, compiled, shared) -> Tuple[int, int]:
+    s = o = 0
+    for _k, pid, value in _local_rows(t):
+        if value and any(p.search(value) for p, _ in compiled):
+            if pid in shared:
+                s += 1
+            else:
+                o += 1
+    return s, o
+
+
+def _local_rewrite(t: Target, compiled, shared) -> Set[str]:
+    from sqlalchemy import text as sql
+    changed: Set[str] = set()
+    for k, pid, value in _local_rows(t):
+        if pid not in shared or not value:
+            continue
+        new = value
+        for pat, repl in compiled:
+            new = pat.sub(repl, new)
+        if new != value:
+            with t.open_session() as session:
+                session.execute(sql(f"UPDATE {t.table} SET {t.column} = :v WHERE {t.key} = :k"),
+                                {"v": new, "k": k})
+                session.commit()
+            changed.add(str(k))
+    return changed
+
+
+def _reembed(store, emb, ids: Sequence[str], batch: int) -> int:
+    """New embeddings for the changed chunks only, read back by id."""
     from sqlalchemy import select
 
     cls = store._rag_chunk_cls
-    last = ""
-    ids = list(project_ids)
-    while True:
-        with store._lock:
-            with store._session_factory()() as session:
-                stmt = select(cls.chunk_id, cls.text).where(cls.chunk_id > last)
-                if ids:
-                    pred = cls.project_id.in_(ids)
-                    stmt = stmt.where(~pred if invert else pred)
-                elif not invert:
-                    return
-                stmt = stmt.order_by(cls.chunk_id).limit(batch_size)
-                rows = session.execute(stmt).all()
-        if not rows:
-            return
-        for row in rows:
-            yield row.chunk_id, row.text
-            last = row.chunk_id
+    ids = sorted(ids)
+    done = 0
+    for i in range(0, len(ids), batch):
+        part = ids[i:i + batch]
+        with _session(store) as session:
+            rows = session.execute(select(cls.chunk_id, cls.text).where(cls.chunk_id.in_(part))).all()
+        vecs = emb.encode([r.text for r in rows])
+        done += store.rewrite_chunks([(r.chunk_id, r.text, vecs[j]) for j, r in enumerate(rows)])
+    return done
 
 
-def _count_python(store, project_ids: Sequence[str], *, invert: bool,
-                  compiled, batch_size: int) -> int:
-    n = 0
-    for _cid, text in _iter_project_rows(
-        store, project_ids, invert=invert, batch_size=batch_size,
-    ):
-        if text and any(pat.search(text) for pat, _ in compiled):
-            n += 1
-    return n
-
-
-def _count_own_sql(store, shared_ids: Sequence[str], raw_rules, compiled) -> int:
-    """In-DB count of project-own matches. Text never leaves the database."""
-    from sqlalchemy import text as sql_text
-
-    if not raw_rules:
-        return 0
-    table = store._table_name
-    clauses: List[str] = []
-    params: Dict[str, object] = {}
-    for i, (pat, _repl) in enumerate(raw_rules):
-        clauses.append(f"text ~* :p{i}")
-        params[f"p{i}"] = _posix_pattern(pat)
-    match = " OR ".join(clauses)
-    if shared_ids:
-        placeholders = ", ".join(f":s{i}" for i in range(len(shared_ids)))
-        own = f"project_id NOT IN ({placeholders})"
-        for i, sid in enumerate(shared_ids):
-            params[f"s{i}"] = sid
-    else:
-        own = "TRUE"
-    stmt = sql_text(
-        f"SELECT COUNT(*) FROM {table} WHERE ({own}) AND ({match})"
-    )
-    with store._lock:
-        with store._session_factory()() as session:
-            try:
-                return int(session.execute(stmt, params).scalar() or 0)
-            except Exception:  # noqa: BLE001 — POSIX mismatch: fall back
-                session.rollback()
-    return _count_python(
-        store, shared_ids, invert=True, compiled=compiled, batch_size=64,
-    )
-
-
-def _clean_shared(store, emb, shared_ids: Sequence[str], batch_size: int) -> Tuple[int, int]:
-    from app.core.identifier_scrub import scrub_identifiers, text_matches_rules
-
-    rewritten = 0
-    reembedded = 0
-    pending: List[Tuple[str, str]] = []
-
-    def _flush(batch: List[Tuple[str, str]]) -> None:
-        nonlocal rewritten, reembedded
-        if not batch:
-            return
-        texts = [t for _cid, t in batch]
-        vecs = emb.encode(texts)
-        updates = [
-            (cid, txt, vecs[i]) for i, (cid, txt) in enumerate(batch)
-        ]
-        n = store.rewrite_chunks(updates)
-        rewritten += n
-        reembedded += n
-
-    for cid, text in _iter_project_rows(
-        store, shared_ids, invert=False, batch_size=batch_size,
-    ):
-        if not text_matches_rules(text):
-            continue
-        new = scrub_identifiers(text)
-        if new == text:
-            continue
-        pending.append((cid, new))
-        if len(pending) >= batch_size:
-            _flush(pending)
-            pending = []
-    _flush(pending)
-    return rewritten, reembedded
-
-
-def run(mode: str, confirm: str = "", batch_size: int = 64) -> Dict[str, int]:
+# ── run ──────────────────────────────────────────────────────────────────────
+def run(mode: str, confirm: str = "", batch_size: int = 200) -> Dict[str, int]:
     mode = (mode or "").strip().lower()
     if mode not in {"count", "clean", "dryrun"}:
-        raise SystemExit(_fail("bad_mode"))
+        raise Refused("bad_mode")
     if mode == "clean" and confirm != "CLEAN":
-        raise SystemExit(_fail("confirm_required"))
+        raise Refused("confirm_required")
 
-    raw, compiled = _rules()
-    counts = {
-        "rules_loaded": len(raw),
-        "shared_matches": 0,
-        "project_own_matches": 0,
-        "shared_rewritten": 0,
-        "embeddings_updated": 0,
-    }
-    if not raw:
+    rules = ordered_rules()
+    counts = {"rules_loaded": len(rules)}
+    if not rules:
         _emit(mode=mode, **counts)
         return counts
 
     store, emb = _store()
     shared = shared_project_ids()
+    chunks = Target(lambda: _session(store), store._table_name, "chunk_id", "text")
+    names = Target(_projects_session, _DOCUMENTS, "id", "original_name")
 
-    if mode == "count":
-        counts["shared_matches"] = _count_python(
-            store, shared, invert=False, compiled=compiled, batch_size=batch_size,
-        )
-        if store._use_pgvector:
-            counts["project_own_matches"] = _count_own_sql(
-                store, shared, raw, compiled,
-            )
-        else:
-            counts["project_own_matches"] = _count_python(
-                store, shared, invert=True, compiled=compiled, batch_size=batch_size,
-            )
-        _emit(
-            mode=mode,
-            shared_matches=counts["shared_matches"],
-            project_own_matches=counts["project_own_matches"],
-            rules_loaded=counts["rules_loaded"],
-        )
+    if store._use_pgvector:
+        pg = _pg_rules(rules, store)
+
+        def count(target):
+            return _pg_count(target, pg, shared)
+
+        def rewrite(target):
+            return _pg_rewrite(target, pg, shared, batch_size)
+    else:
+        compiled = [(re.compile(p, re.IGNORECASE), r) for p, r in rules]
+
+        def count(target):
+            return _local_count(target, compiled, set(shared))
+
+        def rewrite(target):
+            return _local_rewrite(target, compiled, set(shared))
+
+    if mode in ("count", "dryrun"):
+        cs, co = count(chunks)
+        ns, no = count(names)
+        counts.update(shared_matches=cs, shared_document_names=ns)
+        if mode == "count":
+            counts.update(project_own_matches=co, project_own_document_names=no)
+        _emit(mode=mode, **counts)
         return counts
 
-    if mode == "dryrun":
-        counts["shared_matches"] = _count_python(
-            store, shared, invert=False, compiled=compiled, batch_size=batch_size,
-        )
-        _emit(
-            mode=mode,
-            shared_matches=counts["shared_matches"],
-            rules_loaded=counts["rules_loaded"],
-        )
-        return counts
-
-    # clean — shared layer only
-    rewritten, reembedded = _clean_shared(store, emb, shared, batch_size)
-    counts["shared_rewritten"] = rewritten
-    counts["embeddings_updated"] = reembedded
-    _emit(
-        mode=mode,
-        shared_rewritten=rewritten,
-        embeddings_updated=reembedded,
-        rules_loaded=counts["rules_loaded"],
-    )
+    changed = rewrite(chunks)
+    renamed = rewrite(names)
+    counts.update(shared_rewritten=len(changed), shared_documents_renamed=len(renamed),
+                  embeddings_updated=_reembed(store, emb, sorted(changed), batch_size))
+    _emit(mode=mode, **counts)
     return counts
 
 
 def main(argv: List[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Scrub matching shared-layer rows at source.")
+    parser = argparse.ArgumentParser(description="Clean the shared layer at source (counts only).")
     parser.add_argument("--mode", required=True, choices=("count", "clean", "dryrun"))
     parser.add_argument("--confirm", default="")
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--batch-size", type=int, default=200)
     args = parser.parse_args(argv)
     try:
         run(args.mode, confirm=args.confirm, batch_size=max(1, args.batch_size))
-    except SystemExit as exc:
-        return int(exc.code) if isinstance(exc.code, int) else 2
+    except Refused as exc:
+        _emit(error=exc.code, **exc.fields)
+        return 2
+    except Exception as exc:  # noqa: BLE001 -- the type only: a message could quote a row
+        _emit(error="failed", type=type(exc).__name__)
+        return 2
     return 0
 
 
