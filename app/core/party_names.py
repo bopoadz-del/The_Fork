@@ -3,12 +3,11 @@
 Owner ruling, 2026-09-19: "No names at all from this RAG. No employer, project
 name, no consultant, no contractor, no engineer."
 
-``app/core/identifier_scrub.py`` removes names from a denylist kept in the
-environment: whoever runs the deployment has to know every name in advance and
-type it in. That is the right tool for a project's NAME, which no document
-labels. It is the wrong tool for the PARTIES, because the documents label
-them: a contract says who the Employer, the Engineer and the Contractor are,
-in so many words. This module reads those labels out of the very excerpts the
+No list of names is kept anywhere. Another project's documents never reach
+an answer (retrieval is scoped to the project plus the shared layer, which
+holds no client's identifiers). The PARTIES need no list either, because the
+documents label them: a contract says who the Employer, the Engineer and the
+Contractor are, in so many words. This module reads those labels out of the very excerpts the
 answer was written from and replaces the names with the roles -- so the next
 contract is covered the day it is uploaded, with nobody maintaining a list.
 

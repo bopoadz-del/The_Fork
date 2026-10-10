@@ -628,22 +628,12 @@ def _indexed_text(owner_project_id: str, document_id: str) -> str:
     return "\n\n".join(t for t in chunks.get(document_id, []) or [] if t)
 
 
-def _from_other_layer(project_id: str, doc: Dict[str, Any]) -> bool:
-    """True when the document belongs to another project's layer (Master
-    Corpus, general knowledge) rather than the workspace itself."""
-    owner = str(doc.get("project_id") or "")
-    own = {project_id, store._master_corpus_source(project_id) or project_id}
-    return owner not in own
-
-
 def _display_filename(project_id: str, doc: Dict[str, Any]) -> str:
-    """The name a user sees for a document: its own name in its own project,
-    scrubbed like the Sources panel when it comes from another layer."""
-    from app.core.identifier_scrub import scrub_identifiers_filename
-
+    """The name a user sees for a document: its stored name. Another
+    project's documents are never served, and shared ones are cleaned at
+    source, so the stored name is the one to show."""
     name = str(doc.get("original_name") or doc.get("id") or "document")
-    name = os.path.basename(name.replace("\\", "/")) or "document"
-    return scrub_identifiers_filename(name) if _from_other_layer(project_id, doc) else name
+    return os.path.basename(name.replace("\\", "/")) or "document"
 
 
 def _content_disposition(filename: str) -> str:

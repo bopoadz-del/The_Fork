@@ -593,18 +593,16 @@ def test_the_end_event_lists_sources_and_the_calculation_credit(monkeypatch):
     assert "the ask" not in text
 
 
-def test_a_foreign_documents_name_is_scrubbed_in_sources(monkeypatch):
-    """Names outside the user's own project go through the configured
-    identifier scrub, as in the old path's panel."""
+def test_a_shared_documents_name_is_shown_as_stored(monkeypatch):
+    """The shared layer is cleaned at source; the panel shows its names as
+    stored, with the layer label."""
     from app.agents.driver import sources
-    from app.core import identifier_scrub
 
-    monkeypatch.setattr(identifier_scrub, "scrub_identifiers_filename", lambda n: "[scrubbed]")
     trail = [{"role": "tool", "name": "search_general_knowledge", "content": json.dumps(
-        {"ok": True, "result": {"results": [{"document_id": "g1", "filename": "AB-2021-777 Spec.pdf",
+        {"ok": True, "result": {"results": [{"document_id": "g1", "filename": "General Spec.pdf",
                                               "score": 0.9, "origin": "master_corpus", "snippet": "x"}]}})}]
     out = sources.panel(trail, [])
-    assert out and out[0]["doc_name"] == "[scrubbed]" and out[0]["layer"] == "master_corpus"
+    assert out and out[0]["doc_name"] == "General Spec.pdf" and out[0]["layer"] == "master_corpus"
 
 
 def test_streamed_pieces_keep_their_line_breaks(monkeypatch):

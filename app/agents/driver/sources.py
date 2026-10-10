@@ -57,8 +57,6 @@ def panel(
     hits the answer did not use are left out. With no such use, the best
     retrieved hits stay.
     """
-    from app.core.identifier_scrub import scrub_identifiers_filename
-
     backing = {str(e.get("doc_id") or "") for e in provenance if e.get("doc_id")}
     backing |= {str(e.get("doc_name") or "") for e in provenance if e.get("doc_name")}
     hits = _hits(trail)
@@ -91,7 +89,7 @@ def panel(
         score = float(h.get("score") or 0.0)
         out.append({
             "doc_id": doc_id,
-            "doc_name": name if layer == "own" else scrub_identifiers_filename(name),
+            "doc_name": name,
             "page_or_section": str(h.get("page") or h.get("page_or_section") or ""),
             "score": round(score, 3),
             "confidence": _confidence(score),
