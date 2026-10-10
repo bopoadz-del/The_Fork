@@ -18,10 +18,8 @@ Isolation is actually enforced one layer down, in the vector store, by
 the mechanism that would really let one client see another's drawings if it
 regressed.
 
-Known and deliberate exception, asserted explicitly below: an empty/thin
-project falls back to the Master Corpus (`retrieve_with_filter` STEP 0b) and
-labels those hits `master_corpus`. That is correct for a single-client
-deployment and is the reason `origin` exists on search results.
+Project-own rows of another project are never returned, including via the
+former master-corpus fallback. Shared general-knowledge stays readable.
 """
 from __future__ import annotations
 
@@ -85,6 +83,29 @@ def test_unknown_project_returns_nothing_rather_than_everything(store):
                      emb.encode_queries(["rebar"])[0], k=10)
 
     assert hits == [], f"unknown project scope returned {len(hits)} chunks — fails OPEN"
+
+
+def test_retrieve_does_not_return_another_projects_own_chunks(store, monkeypatch):
+    """Retrieve-level twin of store isolation: two synthetic projects.
+
+    The other project is configured as a fallback corpus so this fails if
+    retrieval ever queries a foreign project-own id.
+    """
+    st, emb = store
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "e2e_syn_gk")
+    monkeypatch.setenv("MASTER_CORPUS_SOURCE_PROJECT_ID", "client_a")
+    monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.99")
+    _add(st, emb, "client_a", "a_doc", "e2e-syn-token-alpha own row")
+    _add(st, emb, "e2e_syn_gk", "g_doc", "e2e-syn-token-gamma shared row")
+
+    from app.core.rag import retriever as ret
+    hits = ret.retrieve("e2e-syn-token-alpha own row", "client_b", k=10)
+    assert all(c.project_id != "client_a" for c in hits)
+
+    _add(st, emb, "client_b", "b_doc", "e2e-syn-token-beta own row")
+    shared = ret.retrieve("e2e-syn-token-gamma shared row", "client_b", k=10)
+    assert any(c.project_id == "e2e_syn_gk" for c in shared)
+    assert all(c.project_id != "client_a" for c in shared)
 
 
 def test_deleting_one_projects_doc_leaves_the_other_intact(store):
