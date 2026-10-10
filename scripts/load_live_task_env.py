@@ -74,6 +74,19 @@ def _aws_json(args: List[str]) -> object:
     return json.loads(proc.stdout or "null")
 
 
+def split_secret_ref(value_from: str) -> tuple:
+    """``(secret id, json key)`` from an ECS ``valueFrom``.
+
+    ``arn:aws:secretsmanager:<region>:<account>:secret:<name>[:<json-key>[:<stage>[:<version>]]]``
+    -- "secret" is the sixth field and the name the seventh, so anything after
+    the name selects a key of the secret's JSON, which get-secret-value does
+    not accept in the id."""
+    parts = value_from.split(":")
+    if len(parts) >= 7 and parts[2] == "secretsmanager" and parts[5] == "secret":
+        return ":".join(parts[:7]), (parts[7] if len(parts) > 7 else "")
+    return value_from, ""
+
+
 def _secret_string(value_from: str) -> str:
     """Resolve an ECS valueFrom ARN. stdout of aws is not forwarded."""
     if ":ssm:" in value_from and "parameter" in value_from:
@@ -88,26 +101,18 @@ def _secret_string(value_from: str) -> str:
         if proc.returncode != 0:
             raise RuntimeError("ssm_failed")
         return (proc.stdout or "").rstrip("\n")
-    # Secrets Manager. valueFrom may be arn:...:secret:name or arn:...:secret:name:key::
-    key = ""
-    arn = value_from
-    if arn.count(":") >= 7 and arn.rstrip(":").split(":")[-1] and not arn.endswith("::"):
-        # leave as-is
-        pass
-    parts = value_from.split(":")
-    if len(parts) >= 8 and parts[6] == "secret":
-        # arn:aws:secretsmanager:region:acct:secret:name[:jsonkey[:stage]]
-        rest = parts[7:]
-        if len(rest) >= 2 and rest[1]:
-            key = rest[1]
-            arn = ":".join(parts[:8])
+    arn, key = split_secret_ref(value_from)
     proc = subprocess.run(
         ["aws", "secretsmanager", "get-secret-value",
          "--secret-id", arn, "--query", "SecretString", "--output", "text"],
         check=False, capture_output=True, text=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError("secretsmanager_failed")
+        # The AWS error code only (AccessDeniedException, ResourceNotFound...):
+        # it names the failure, never the secret.
+        import re as _re
+        code = _re.search(r"\(([A-Za-z]+(?:Exception)?)\)", proc.stderr or "")
+        raise RuntimeError("secretsmanager_failed" + (f":{code.group(1)}" if code else ""))
     raw = proc.stdout or ""
     if raw.endswith("\n"):
         raw = raw[:-1]

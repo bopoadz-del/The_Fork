@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -44,3 +46,17 @@ def test_workflow_declares_expected_inputs():
     assert "set +x" in text
     assert "echo $" not in text
     assert "secrets.RAG_SCRUB_RULES" not in text
+
+
+@pytest.mark.parametrize("ref,expected", [
+    ("arn:aws:secretsmanager:us-west-2:111122223333:secret:app/env-AbC123:SOME_KEY::",
+     ("arn:aws:secretsmanager:us-west-2:111122223333:secret:app/env-AbC123", "SOME_KEY")),
+    ("arn:aws:secretsmanager:us-west-2:111122223333:secret:app/env-AbC123",
+     ("arn:aws:secretsmanager:us-west-2:111122223333:secret:app/env-AbC123", "")),
+    ("arn:aws:secretsmanager:us-west-2:111122223333:secret:app/env-AbC123:SOME_KEY:AWSCURRENT:",
+     ("arn:aws:secretsmanager:us-west-2:111122223333:secret:app/env-AbC123", "SOME_KEY")),
+    ("plain-secret-name", ("plain-secret-name", "")),
+])
+def test_an_ecs_secret_reference_splits_into_id_and_json_key(ref, expected):
+    from load_live_task_env import split_secret_ref
+    assert split_secret_ref(ref) == expected
