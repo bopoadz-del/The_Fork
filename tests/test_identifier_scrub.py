@@ -125,6 +125,12 @@ def test_enabled_with_no_rules_logs_loudly_and_passes_text_through(monkeypatch, 
     assert any("RAG_SCRUB_RULES is empty" in r.message for r in caplog.records)
 
 
+def test_text_matches_rules_is_boolean_only(scrub):
+    from app.core.identifier_scrub import text_matches_rules
+    assert text_matches_rules("the AG2 scope") is True
+    assert text_matches_rules("no identifiers here") is False
+
+
 def test_mutation_probe_a_hardcoded_default_rule_would_be_a_leak(monkeypatch):
     """MUTATION PROBE: the module must carry no client pattern of its own.
     Any rule present with the environment EMPTY is a rule that lives in git."""

@@ -2,18 +2,15 @@
 
 The invariants these lock (owner directive, 2026-07-17):
 
-  0a  A project-scoped query can NEVER surface another project's chunks, even
-      when that other project's chunk outscores everything the active project
-      has. Structural, not a ranking penalty: the retriever only ever *asks*
-      the vector store for the active project + the designated general-knowledge
-      projects + (when empty/thin) the one Master-Corpus fallback corpus. A
+  0a  A project-scoped query can NEVER surface another project's own chunks,
+      even when that other project's chunk outscores everything the active
+      project has. Structural: the retriever only ever *asks* the vector store
+      for the active project + the designated general-knowledge projects. A
       future "search every project, then rank" refactor must break these tests.
 
-  0b  An empty/thin project falls back to the Master Corpus — but NEVER silently.
-      The fallback chunks are tagged ``layer="master_corpus"``; rag_inject sets
-      ``fallback_used=True``; the answer gets a visible banner and each source
-      is layer-labelled. A *populated, strong* project does NOT pull the Master
-      Corpus even if it would outscore (the ha_long -> the client project leak).
+  0b  An empty/thin project does not receive another project's own documents.
+      Shared general-knowledge stays readable. When the operator selects the
+      Master Corpus itself, those chunks are OWN.
 
   regression  The live leak was a client corpus (drive_archive / example_infra_pack)
       listed in RAG_GENERAL_KNOWLEDGE_PROJECTS, silently merged into every other
@@ -104,32 +101,36 @@ def test_unrelated_project_never_queried_even_when_it_would_outscore(monkeypatch
 
 # ── 0b — labeled Master-Corpus fallback ───────────────────────────────────
 
-def test_empty_project_falls_back_to_master_corpus_labeled(monkeypatch):
-    """0b: an empty project answers from the Master Corpus, tagged as such."""
+def test_empty_project_does_not_receive_another_projects_own_chunks(monkeypatch):
+    """0b: an empty project must not be served another project's own rows."""
+    asked: list = []
     ret = _install(
         monkeypatch,
         {ACTIVE: [], MASTER: [_chunk("m1", MASTER, 0.90)], GK: []},
         master=MASTER,
+        record=asked,
     )
     chunks, _ = ret.retrieve_with_filter("neutral query", ACTIVE, k=5)
-    assert [c.chunk_id for c in chunks] == ["m1"]
-    assert chunks[0].layer == "master_corpus"
+    assert MASTER not in asked
+    assert all(c.project_id != MASTER for c in chunks)
+    assert chunks == []
 
 
-def test_thin_project_supplements_from_master_corpus(monkeypatch):
-    """0b: a project whose best own chunk can't clear the confidence bar is
-    'thin' — it still falls back, keeping its own weak chunk (tagged own) and
-    the Master-Corpus chunk (tagged master_corpus)."""
+def test_thin_project_does_not_pull_another_projects_own_chunks(monkeypatch):
+    """A weak own match is not an invitation to read another project."""
+    asked: list = []
     ret = _install(
         monkeypatch,
         {ACTIVE: [_chunk("a_weak", ACTIVE, 0.20)],
          MASTER: [_chunk("m1", MASTER, 0.90)], GK: []},
         master=MASTER,
+        record=asked,
     )
     chunks, _ = ret.retrieve_with_filter("neutral query", ACTIVE, k=5)
-    by_id = {c.chunk_id: c.layer for c in chunks}
-    assert by_id.get("m1") == "master_corpus"
-    assert by_id.get("a_weak") == "own"
+    assert MASTER not in asked
+    assert all(c.project_id != MASTER for c in chunks)
+    assert [c.chunk_id for c in chunks] == ["a_weak"]
+    assert chunks[0].layer == "own"
 
 
 def test_strong_project_does_not_pull_master_corpus(monkeypatch):
@@ -194,7 +195,7 @@ def test_no_master_env_preserves_empty_project_returns_nothing(monkeypatch):
 
 # ── disclosure wiring: inject audit + runtime banner + sources panel ──────
 
-def test_rag_inject_sets_fallback_used_and_layer(monkeypatch):
+def test_rag_inject_does_not_mark_foreign_own_rows_as_fallback(monkeypatch):
     ret = _install(
         monkeypatch,
         {ACTIVE: [], MASTER: [_chunk("m1", MASTER, 0.90)], GK: []},
@@ -207,9 +208,10 @@ def test_rag_inject_sets_fallback_used_and_layer(monkeypatch):
         user_message="neutral query", project_id=ACTIVE,
         conversation_id=None, user_id=None, agent_name="project-assistant",
     )
-    assert audit.get("fallback_used") is True
-    assert sys_msg and sys_msg.get("content")
-    assert any(c.get("layer") == "master_corpus" for c in audit.get("chunks", []))
+    assert audit.get("fallback_used") is not True
+    assert all(c.get("layer") != "master_corpus" for c in audit.get("chunks", []))
+    assert all(c.get("project_id") != MASTER for c in audit.get("chunks", []))
+    assert not sys_msg or "master_corpus" not in (sys_msg.get("content") or "").lower()
 
 
 def test_postprocess_prepends_fallback_banner():

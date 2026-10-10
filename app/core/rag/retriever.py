@@ -980,6 +980,24 @@ def retrieve(
     return chunks
 
 
+def retrievable_project_ids(project_id: str) -> List[str]:
+    """Project ids a retrieval for ``project_id`` may read.
+
+    The active project plus configured general-knowledge projects. Another
+    project's own documents are never in this set. Shared general-knowledge
+    stays readable by every project. Scope is the query's project-id list,
+    not a name denylist.
+    """
+    pid = (project_id or "").strip()
+    ids: List[str] = []
+    if pid:
+        ids.append(pid)
+    for gk in _general_knowledge_project_ids():
+        if gk and gk not in ids:
+            ids.append(gk)
+    return ids
+
+
 def _general_knowledge_project_ids() -> List[str]:
     """Project ids whose chunks count as cross-project general knowledge —
     queried alongside the active project on every retrieval.
@@ -6401,10 +6419,9 @@ def _late_scan_project_ids(
 
     _add(project_id)
     try:
-        _add(_master_corpus_fallback_id() or "")
-    except Exception:  # noqa: BLE001 — extras are optional
-        logger.debug("e1 master-corpus source pid unavailable", exc_info=True)
-    try:
+        # Alias remap only: when the operator is ON the master-corpus
+        # project, read its backing source. Do not add a foreign project's
+        # own id just because it is configured as a fallback corpus.
         from app.core.projects import _master_corpus_source
         _add(_master_corpus_source(project_id) or "")
     except Exception:  # noqa: BLE001 — alias remap is optional
@@ -9654,15 +9671,6 @@ def retrieve_with_filter(
     if numeric_extra:
         raw_active = list(raw_active) + numeric_extra
 
-    # STEP 0b — empty/thin detection for the labeled Master-Corpus fallback.
-    # "Thin" reuses RAG_CONFIDENCE_THRESHOLD (the same bar rag_inject applies):
-    # a project whose best own chunk can't clear it has nothing usable of its
-    # own, so we disclose-and-fall-back to the Master Corpus rather than answer
-    # from thin air. Empty (no own chunks) is the degenerate thin case.
-    own_top = max((c.score or 0.0) for c in raw_active) if raw_active else 0.0
-    fallback_min = float(os.getenv("RAG_CONFIDENCE_THRESHOLD", "0.4"))
-    own_thin = own_top < fallback_min
-
     # General-knowledge projects (cross-project background context).
     # Only merge GK when the active project already has indexed chunks.
     # An empty/unindexed project must return [] — not general-knowledge
@@ -9688,37 +9696,12 @@ def retrieve_with_filter(
                 gk_pid, exc,
             )
 
-    # STEP 0b — labeled Master-Corpus fallback. Queried ONLY when the active
-    # project is empty/thin, and NEVER silently: the chunks are tagged
-    # ``layer="master_corpus"`` so the chat runtime discloses the fallback in
-    # the answer and the sources panel. The fallback corpus is barred from the
-    # GK merge (see _general_knowledge_project_ids), so this is the ONLY way it
-    # can surface for another project — and only with disclosure.
+    # Project-own rows of another project are never fetched. Shared
+    # general-knowledge stays in gk_ids. The former master-corpus fallback
+    # queried a foreign project_id; that is the leak this scope closes.
     fb_id = _master_corpus_fallback_id()
-    use_fallback = (
-        own_thin
-        and bool(fb_id)
-        and fb_id != project_id
-        and fb_id not in gk_ids
-        and not _skip_master_fallback_for_formula_ask(
-            query, project_id, fb_id, operator_text=operator_text,
-        )
-    )
+    use_fallback = False
     raw_fb: List[Chunk] = []
-    if use_fallback:
-        try:
-            # Dual-query applies here too: a client's contract in the Master
-            # Corpus has the same declarative prose the alt variant rescues.
-            raw_fb = _dual_search(
-                store, fb_id, query_vec, query, alt_vec, alt_query, k=over_fetch,
-            )
-        except Exception as exc:  # noqa: BLE001 — fallback must never break the turn
-            logger.warning(
-                "master-corpus fallback retrieval for %s failed: %s", fb_id, exc,
-            )
-            raw_fb = []
-        if not raw_fb:
-            use_fallback = False
 
     # Identifier-aware lexical rescue for exact reference lookups.
     identifiers = extract_query_identifiers(query)

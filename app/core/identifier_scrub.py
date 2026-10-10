@@ -62,6 +62,18 @@ def rules_loaded() -> int:
     return len(_rules_from_env())
 
 
+def compiled_rules() -> List[Tuple[Pattern[str], str]]:
+    """Env-fed rules, compiled. Callers must not log the patterns."""
+    return _compiled()
+
+
+def text_matches_rules(text: str) -> bool:
+    """True when any env-fed rule matches ``text``. Does not return the match."""
+    if not text:
+        return False
+    return any(pat.search(text) for pat, _ in _compiled())
+
+
 def _enabled() -> bool:
     return os.getenv("RAG_SCRUB_IDENTIFIERS", "true").strip().lower() in {
         "1", "true", "yes", "on"

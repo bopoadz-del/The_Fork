@@ -1,0 +1,80 @@
+# Clean stored RAG text that the serve-time identifier scrub would match,
+# then (later) retire RAG_SCRUB_RULES. Rules stay in the AWS secret.
+# This job never prints a rule, a match, or row text — counts only.
+#
+# Modes (workflow_dispatch):
+#   count   — matches split by layer (shared general-knowledge vs project-own)
+#   clean   — requires confirm=CLEAN; Neon restore-point branch, then rewrite
+#             matching SHARED rows in place (batched SQL UPDATE), regenerate
+#             tsvector, re-embed changed ids. Never touches project-own rows.
+#   dryrun  — shared-layer detector count (as if the serve-time list were empty)
+#
+# Reuses the AWS credentials deploy-aws uses. The live web task's env and
+# secrets are loaded only inside this job and masked. No bulk data leaves
+# the database (counts only).
+name: scrub-at-source
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "count | clean | dryrun"
+        type: choice
+        options: [count, clean, dryrun]
+        default: count
+      confirm:
+        description: "Must be CLEAN when mode is clean"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  ECS_CLUSTER: cerebrum
+  ECS_SERVICE: the-fork
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  scrub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Requirements
+        run: python -m pip install -q -r requirements.txt
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Load live task env (values masked, never printed)
+        run: |
+          set +x
+          python scripts/load_live_task_env.py --github-env "$GITHUB_ENV"
+
+      - name: Restore-point branch
+        if: ${{ inputs.mode == 'clean' }}
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_API_TOKEN: ${{ secrets.NEON_API_TOKEN }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+        run: |
+          set +x
+          python scripts/neon_restore_branch.py --name "scrub-restore-${{ github.run_id }}"
+
+      - name: Run (counts only)
+        env:
+          SCRUB_MODE: ${{ inputs.mode }}
+          SCRUB_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set +x
+          python scripts/scrub_at_source.py --mode "$SCRUB_MODE" --confirm "$SCRUB_CONFIRM"

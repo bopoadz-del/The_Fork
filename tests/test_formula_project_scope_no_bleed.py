@@ -220,13 +220,14 @@ def test_rag_inject_formula_ask_on_fixture_does_not_bleed_master(monkeypatch, q)
         assert "master_corpus" not in (sys_msg.get("content") or "").lower()
 
 
-def test_document_lookup_on_empty_project_still_may_use_master_fallback(monkeypatch):
-    """STEP 0b stays for lookups. Only formula asks drop the fallback."""
+def test_document_lookup_on_empty_project_does_not_use_master_fallback(monkeypatch):
+    """Project-own rows of another project are never fetched, lookups included."""
     asked: list = []
     ret = _install_empty_fixture_with_master(monkeypatch, record=asked)
     chunks, _ = ret.retrieve_with_filter(LOOKUP_ASKS[0], FIXTURE_PID, k=5)
-    assert MASTER_PID in asked
-    assert chunks and chunks[0].layer == "master_corpus"
+    assert MASTER_PID not in asked
+    assert all(c.project_id != MASTER_PID for c in chunks)
+    assert all(getattr(c, "layer", "own") != "master_corpus" for c in chunks)
 
 
 # ── 3. RAG fold must not clamp a formula ask to corpus-only / no-tool ─────
