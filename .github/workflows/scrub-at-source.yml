@@ -8,6 +8,7 @@
 #             branch the operator took first; then rewrite
 #             matching SHARED rows in place (batched SQL UPDATE), regenerate
 #             tsvector, re-embed changed ids. Never touches project-own rows.
+#   reembed — finish re-embedding rows a clean changed (resumable)
 #   dryrun  — shared-layer detector count (as if the serve-time list were empty)
 #
 # Reuses the AWS credentials deploy-aws uses. The live web task's env and
@@ -19,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "count | clean | dryrun"
+        description: "count | clean | reembed | dryrun"
         type: choice
-        options: [count, clean, dryrun]
+        options: [count, clean, reembed, dryrun]
         default: count
       confirm:
         description: "Must be CLEAN when mode is clean"

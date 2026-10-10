@@ -264,3 +264,44 @@ def test_the_master_corpus_every_user_opens_is_shared(scrub_env, monkeypatch):
     mod = _load()
     assert "syn_backing" in mod.shared_project_ids()
     assert mod.run("count")["shared_matches"] == 1
+
+
+def test_postgres_reembed_resumes_from_the_queue_and_drops_it(pg_scrub_env):
+    from sqlalchemy import text as sql
+
+    from app.core.rag.embeddings import get_embedder
+    from app.core.rag.vector_store import get_store
+
+    mod = pg_scrub_env
+    _index("syn_pg_shared_gk", "g1", "shared ZXQ9PGMARK row")
+    store = get_store(dim=get_embedder().dim)
+    db = mod._Db()
+    # A clean interrupted after its text rewrite: the id is queued, the
+    # vector still belongs to the old text.
+    mod._pg_queue_create(db)
+    with db.session() as session:
+        session.execute(sql(f"UPDATE {db.table} SET text = 'shared the token row' "
+                            "WHERE chunk_id = 'syn_pg_shared_gk:g1:0'"))
+        session.execute(sql(f"INSERT INTO {mod._QUEUE} (chunk_id) VALUES ('syn_pg_shared_gk:g1:0')"))
+        session.commit()
+    counts = mod.run("reembed")
+    assert counts["embeddings_updated"] == 1 and counts["embeddings_pending"] == 0
+    emb = get_embedder()
+    with store._session_factory()() as session:
+        row = session.get(store._rag_chunk_cls, "syn_pg_shared_gk:g1:0")
+        assert list(row.embedding) == pytest.approx(list(emb.encode(["shared the token row"])[0]), abs=1e-5)
+    with db.session() as session:
+        assert session.execute(sql("SELECT to_regclass(:t)"), {"t": mod._QUEUE}).scalar() is None
+
+
+def test_a_clean_loads_the_embedder_before_any_rewrite(pg_scrub_env, monkeypatch):
+    mod = pg_scrub_env
+    _index("syn_pg_shared_gk", "g1", "shared ZXQ9PGMARK row")
+
+    def _broken():
+        raise OSError("model files unreadable")
+    monkeypatch.setattr(mod, "_store", _broken)
+    with pytest.raises(mod.Refused) as refused:
+        mod.run("clean", confirm="CLEAN")
+    assert refused.value.code == "embedder_unavailable"
+    assert mod.run("count")["shared_matches"] == 1  # nothing was rewritten
