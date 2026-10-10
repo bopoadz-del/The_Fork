@@ -61,6 +61,6 @@ def test_postgres_whole_word_never_cuts_into_a_word():
             {"t": "labelled ABEL cable", "p": p, "w": sv.whole_word(p)}).one()
         counts = s.execute(sql("SELECT regexp_count(:t, :p, 1, 'i'), regexp_count(:t, :w, 1, 'i')"),
                            {"t": "labelled ABEL cable", "p": p, "w": sv.whole_word(p)}).one()
-    assert as_run == "lX X cX"
+    assert as_run == "lXled X cable"
     assert whole == "labelled X cable"
-    assert tuple(counts) == (3, 1)
+    assert tuple(counts) == (2, 1)
