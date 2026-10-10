@@ -1282,6 +1282,38 @@ class VectorStore:
                 session.commit()
         return len(chunks)
 
+    def rewrite_chunks(
+        self,
+        updates: List[Tuple[str, str, np.ndarray]],
+    ) -> int:
+        """In-place text + embedding rewrite for existing rows.
+
+        ``updates`` is ``(chunk_id, new_text, embedding)``. The PostgreSQL
+        ``text_search`` tsvector is GENERATED ALWAYS and recomputes on
+        write. Returns how many rows were actually updated. Unknown ids
+        are skipped.
+        """
+        if not updates:
+            return 0
+        written = 0
+        with self._lock:
+            with self._session_factory()() as session:
+                for chunk_id, txt, vec in updates:
+                    row = session.get(self._rag_chunk_cls, chunk_id)
+                    if row is None:
+                        continue
+                    clean = (txt or "").replace("\x00", "")
+                    emb = np.asarray(vec, dtype=np.float32)
+                    if emb.ndim != 1 or emb.shape[0] != self.dim:
+                        raise ValueError(
+                            f"embedding shape {emb.shape} != ({self.dim},)"
+                        )
+                    row.text = clean
+                    row.embedding = emb
+                    written += 1
+                session.commit()
+        return written
+
     def delete_doc(self, project_id: str, doc_id: str) -> int:
         with self._lock:
             with self._session_factory()() as session:
