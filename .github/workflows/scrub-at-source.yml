@@ -4,7 +4,8 @@
 #
 # Modes (workflow_dispatch):
 #   count   — matches split by layer (shared general-knowledge vs project-own)
-#   clean   — requires confirm=CLEAN; Neon restore-point branch, then rewrite
+#   clean   — requires confirm=CLEAN and the name of a Neon restore-point
+#             branch the operator took first; then rewrite
 #             matching SHARED rows in place (batched SQL UPDATE), regenerate
 #             tsvector, re-embed changed ids. Never touches project-own rows.
 #   dryrun  — shared-layer detector count (as if the serve-time list were empty)
@@ -24,6 +25,10 @@ on:
         default: count
       confirm:
         description: "Must be CLEAN when mode is clean"
+        type: string
+        default: ""
+      restore_branch:
+        description: "Name of the Neon restore-point branch taken before a clean"
         type: string
         default: ""
 
@@ -61,15 +66,18 @@ jobs:
           set +x
           python scripts/load_live_task_env.py --github-env "$GITHUB_ENV"
 
-      - name: Restore-point branch
+      - name: Restore point required for clean
         if: ${{ inputs.mode == 'clean' }}
         env:
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          NEON_API_TOKEN: ${{ secrets.NEON_API_TOKEN }}
-          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          RESTORE_BRANCH: ${{ inputs.restore_branch }}
         run: |
-          set +x
-          python scripts/neon_restore_branch.py --name "scrub-restore-${{ github.run_id }}"
+          # The Neon restore-point branch is made by the operator before a
+          # clean (the Neon key never comes to GitHub). Its name is recorded
+          # here; a clean without one does not start.
+          if [ -z "$RESTORE_BRANCH" ]; then
+            echo "SCRUB_AT_SOURCE error=restore_branch_required"; exit 2
+          fi
+          echo "SCRUB_AT_SOURCE restore_branch=$RESTORE_BRANCH"
 
       - name: Run (counts only)
         env:

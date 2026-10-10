@@ -227,3 +227,25 @@ def test_count_and_dryrun_never_load_the_embedder(scrub_env, monkeypatch):
     mod = _load()
     assert mod.run("count")["shared_matches"] == 1
     assert mod.run("dryrun")["shared_matches"] == 1
+
+
+def test_a_corpus_every_user_can_open_is_shared_and_cleaned(scrub_env):
+    """Shared is the platform's access rule, not the general-knowledge list:
+    an approved Drive-imported corpus is readable by every user, so its rows
+    are cleaned; a user's own project is not."""
+    from app.core import projects
+
+    projects.create_project("Synthetic shared corpus", project_id="syn_drive_corpus",
+                            origin="admin_drive_approved", is_approved=True)
+    projects.create_project("Synthetic own project", project_id="syn_user_proj",
+                            origin="user_create")
+    _index("syn_drive_corpus", "d1", "corpus ZXQ9QUORUM row")
+    _index("syn_user_proj", "u1", "own ZXQ9QUORUM row")
+    mod = _load()
+    assert "syn_drive_corpus" in mod.shared_project_ids()
+    assert "syn_user_proj" not in mod.shared_project_ids()
+    counts = mod.run("count")
+    assert counts["shared_matches"] == 1 and counts["project_own_matches"] == 1
+    mod.run("clean", confirm="CLEAN")
+    after = mod.run("count")
+    assert after["shared_matches"] == 0 and after["project_own_matches"] == 1

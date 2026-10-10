@@ -13,9 +13,10 @@ Modes:
              empty: the same match count, shared layer only. Zero is the bar
              for retiring RAG_SCRUB_RULES.
 
-Shared = the configured general-knowledge project ids. Everything else is a
-project's own and is kept from other projects by the retrieval scope
-(app.core.rag.retriever.retrievable_project_ids), not by rewriting it.
+Shared = every project users other than its owner can read, by the
+platform's own access rule (shared_project_ids). Everything else is a
+project's own, seen only by that project's users, and is kept from other
+projects by the retrieval scope (retriever.retrievable_project_ids).
 
 On PostgreSQL (live) every match and every rewrite runs inside the database:
 ``~*`` to find rows, ``regexp_replace`` to rewrite them, in keyset batches by
@@ -59,8 +60,23 @@ class Refused(Exception):
 
 
 def shared_project_ids() -> List[str]:
-    from app.core.projects import general_knowledge_project_ids
-    return sorted(general_knowledge_project_ids())
+    """Every project whose rows users other than its owner can read: the
+    platform's own access rule (projects._is_shared_platform_grant --
+    approved Drive-imported and boot-seeded corpora, and the configured
+    general-knowledge ids). A corpus every user can open is shared whatever
+    its id; reading only the general-knowledge list missed one."""
+    from sqlalchemy import select
+
+    from app.core import projects
+    from app.core.models import Project
+
+    ids = set(projects.general_knowledge_project_ids())
+    projects._ensure_db()
+    with projects.SessionLocal() as session:
+        for row in session.scalars(select(Project)).all():
+            if row.status != "archived" and projects._is_shared_platform_grant(row):
+                ids.add(row.id)
+    return sorted(ids)
 
 
 def ordered_rules() -> List[Tuple[str, str]]:
@@ -316,7 +332,7 @@ def run(mode: str, confirm: str = "", batch_size: int = 200) -> Dict[str, int]:
     if mode in ("count", "dryrun"):
         cs, co = count(chunks)
         ns, no = count(names)
-        counts.update(shared_matches=cs, shared_document_names=ns)
+        counts.update(shared_projects=len(shared), shared_matches=cs, shared_document_names=ns)
         if mode == "count":
             counts.update(project_own_matches=co, project_own_document_names=no)
         _emit(mode=mode, **counts)
