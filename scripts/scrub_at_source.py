@@ -34,6 +34,13 @@ import argparse
 import re
 import sys
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from pathlib import Path
+
+# Run as ``python scripts/scrub_at_source.py``: the repository root, not
+# scripts/, must be importable for ``app``.
+_ROOT = str(Path(__file__).resolve().parents[1])
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 _PREFIX = "SCRUB_AT_SOURCE"
 _DOCUMENTS = "documents"
@@ -311,7 +318,10 @@ def main(argv: List[str] | None = None) -> int:
         _emit(error=exc.code, **exc.fields)
         return 2
     except Exception as exc:  # noqa: BLE001 -- the type only: a message could quote a row
-        _emit(error="failed", type=type(exc).__name__)
+        # The type only: a message could quote a row. A missing module's name
+        # is code, not data, so it is shown.
+        missing = getattr(exc, "name", None) if isinstance(exc, ImportError) else None
+        _emit(error="failed", type=type(exc).__name__, **({"module": missing} if missing else {}))
         return 2
     return 0
 
