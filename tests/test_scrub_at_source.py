@@ -213,3 +213,17 @@ def test_postgres_refuses_a_rule_it_cannot_run_exactly(pg_scrub_env, monkeypatch
     out = capsys.readouterr().out
     assert "error=rules_unsupported" in out and "rules_unsupported=1" in out
     assert "ZXQ9PGMARK" not in out
+
+
+def test_count_and_dryrun_never_load_the_embedder(scrub_env, monkeypatch):
+    _index("syn_shared_gk", "g1", "shared ZXQ9QUORUM row")
+    from app.core.rag import embeddings, vector_store
+    vector_store.reset_store_cache()
+
+    def _no_model(*_a, **_k):
+        raise AssertionError("count loaded an embedding model")
+    monkeypatch.setattr(embeddings, "get_embedder", _no_model)
+    monkeypatch.setattr(vector_store, "get_embedder", _no_model)
+    mod = _load()
+    assert mod.run("count")["shared_matches"] == 1
+    assert mod.run("dryrun")["shared_matches"] == 1

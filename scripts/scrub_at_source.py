@@ -102,14 +102,35 @@ def pg_replacement(repl: str) -> Optional[str]:
 
 # ── stores ───────────────────────────────────────────────────────────────────
 def _store():
+    """The vector store and embedder, for re-embedding changed rows only."""
     from app.core.rag.embeddings import get_embedder
     from app.core.rag.vector_store import get_store
     emb = get_embedder()
     return get_store(dim=emb.dim), emb
 
 
-def _session(store):
-    return store._session_factory()()
+class _Db:
+    """The chunk table and a session on the configured database -- no
+    embedder: counting and rewriting text need none, and loading one on a
+    runner is a model download the count does not need."""
+
+    def __init__(self) -> None:
+        from app.core.db import _session_factory_for_url
+        from app.core.models import rag_chunk_table_name
+        from app.core.rag.vector_store import (
+            _database_url, _default_db_path, _rag_vector_namespace,
+        )
+        url = _database_url(_default_db_path())
+        self._factory = _session_factory_for_url(url)
+        self.is_postgres = url.startswith("postgresql")
+        self.table = rag_chunk_table_name(_rag_vector_namespace())
+
+    def session(self):
+        return self._factory()
+
+
+def _session(db):
+    return db.session()
 
 
 def _projects_session():
@@ -125,13 +146,13 @@ class Target:
         self.open_session, self.table, self.key, self.column = open_session, table, key, column
 
 
-def _pg_rules(rules: Sequence[Tuple[str, str]], store) -> List[Tuple[str, str]]:
+def _pg_rules(rules: Sequence[Tuple[str, str]], db) -> List[Tuple[str, str]]:
     """Translate every rule and let PostgreSQL compile it. Any refusal stops
     the run with a count."""
     from sqlalchemy import text as sql
 
     out, refused = [], 0
-    with _session(store) as session:
+    with _session(db) as session:
         for pat, repl in rules:
             p, r = pg_pattern(pat), pg_replacement(repl)
             if p is None or r is None:
@@ -237,16 +258,19 @@ def _local_rewrite(t: Target, compiled, shared) -> Set[str]:
     return changed
 
 
-def _reembed(store, emb, ids: Sequence[str], batch: int) -> int:
+def _reembed(ids: Sequence[str], batch: int) -> int:
     """New embeddings for the changed chunks only, read back by id."""
     from sqlalchemy import select
 
+    if not ids:
+        return 0
+    store, emb = _store()
     cls = store._rag_chunk_cls
     ids = sorted(ids)
     done = 0
     for i in range(0, len(ids), batch):
         part = ids[i:i + batch]
-        with _session(store) as session:
+        with store._session_factory()() as session:
             rows = session.execute(select(cls.chunk_id, cls.text).where(cls.chunk_id.in_(part))).all()
         vecs = emb.encode([r.text for r in rows])
         done += store.rewrite_chunks([(r.chunk_id, r.text, vecs[j]) for j, r in enumerate(rows)])
@@ -267,13 +291,13 @@ def run(mode: str, confirm: str = "", batch_size: int = 200) -> Dict[str, int]:
         _emit(mode=mode, **counts)
         return counts
 
-    store, emb = _store()
+    db = _Db()
     shared = shared_project_ids()
-    chunks = Target(lambda: _session(store), store._table_name, "chunk_id", "text")
+    chunks = Target(db.session, db.table, "chunk_id", "text")
     names = Target(_projects_session, _DOCUMENTS, "id", "original_name")
 
-    if store._use_pgvector:
-        pg = _pg_rules(rules, store)
+    if db.is_postgres:
+        pg = _pg_rules(rules, db)
 
         def count(target):
             return _pg_count(target, pg, shared)
@@ -301,7 +325,7 @@ def run(mode: str, confirm: str = "", batch_size: int = 200) -> Dict[str, int]:
     changed = rewrite(chunks)
     renamed = rewrite(names)
     counts.update(shared_rewritten=len(changed), shared_documents_renamed=len(renamed),
-                  embeddings_updated=_reembed(store, emb, sorted(changed), batch_size))
+                  embeddings_updated=_reembed(sorted(changed), batch_size))
     _emit(mode=mode, **counts)
     return counts
 
