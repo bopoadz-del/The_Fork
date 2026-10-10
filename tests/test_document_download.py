@@ -127,28 +127,20 @@ def test_download_of_a_foreign_private_document_is_404(client):
     assert r.status_code == 404
 
 
-def test_download_of_a_cited_document_from_another_layer_scrubs_its_name(
+def test_download_of_a_cited_document_from_another_layer_keeps_its_stored_name(
     client, monkeypatch
 ):
+    """A cited shared document downloads under its stored name: the shared
+    layer is cleaned at source, so no serve-time list rewrites it."""
     workspace = _new_project(client, "Download Cite Workspace")
     corpus = _new_project(client, "Download Cite Corpus")
-    doc = _upload(client, corpus["id"], "ZQX_method_statement.txt", b"Method.")
+    doc = _upload(client, corpus["id"], "shared_method_statement.txt", b"Method.")
     monkeypatch.setattr(
         "app.routers.projects._preview_citeable_owner_ids",
         lambda pid: {pid, corpus["id"]},
     )
-    monkeypatch.setenv("RAG_SCRUB_IDENTIFIERS", "1")
-    monkeypatch.setenv("RAG_SCRUB_EXTRA_TERMS", "ZQX")
     r = client.get(
         f"/v1/projects/{workspace['id']}/documents/{doc['id']}/download", headers=H
     )
     assert r.status_code == 200, r.text
-    disposition = r.headers["content-disposition"]
-    assert "ZQX" not in disposition
-    assert "method statement.txt" in disposition
-    # The workspace's own document keeps its real name.
-    own = _upload(client, workspace["id"], "ZQX_own_note.txt", b"Own.")
-    r = client.get(
-        f"/v1/projects/{workspace['id']}/documents/{own['id']}/download", headers=H
-    )
-    assert "ZQX_own_note.txt" in r.headers["content-disposition"]
+    assert "shared_method_statement.txt" in r.headers["content-disposition"]

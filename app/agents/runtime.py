@@ -3259,11 +3259,10 @@ def _withhold_names_in_streamed_segment(
     straddle two of them. Never raises into the stream.
     """
     try:
-        from app.core.identifier_scrub import scrub_identifiers
         from app.core.party_names import withhold_party_names
 
         return withhold_party_names(
-            scrub_identifiers(seg),
+            seg,
             (rag_sys_msg or {}).get("content", "") if rag_sys_msg else "",
         )
     except Exception:  # noqa: BLE001 — a scrub failure must not break a turn
@@ -8723,12 +8722,10 @@ def _postprocess_answer(
     # before the attribution graft, which must leave the calculator line.
     text = _graft_computed_slab_thickness(text, messages)
     text = _graft_named_standard_attribution(text, rag_sys_msg, messages)
-    # Confidentiality stopgap: scrub known project/client names from the final
-    # answer so one client's project identity can't leak via general-knowledge
-    # retrieval. Runs LAST so it catches names in any appended note too.
-    from app.core.identifier_scrub import scrub_identifiers
-    text = scrub_identifiers(text)
-    # ...and the PARTIES, which need no list: the excerpts this answer was
+    # Another project's documents never reach this answer (retrieval is
+    # scoped to the project plus the shared layer, and the shared layer was
+    # cleaned at source). The PARTIES
+    # need no list either: the excerpts this answer was
     # written from say who the Employer, Engineer and Contractor are, so their
     # names are read from there and replaced by the role. Owner ruling
     # 2026-09-19: "No names at all from this RAG."
@@ -9247,15 +9244,7 @@ def _build_sources_from_audit(
         label = _LAYER_LABELS.get(layer, "Knowledge base")
         if chunk_meta.get("knowledge_layer") == "user_session":
             label = "Your upload"
-        # Confidentiality: the answer TEXT is scrubbed in _finalize, but this
-        # panel used to ship the original filename verbatim -- a Master-Corpus
-        # or knowledge-base chunk named after another client leaked the
-        # identity through the Sources tab. The user's own project documents
-        # keep their real names.
         display_name = _clean_path_label(doc_name)
-        if layer != "own":
-            from app.core.identifier_scrub import scrub_identifiers_filename
-            display_name = scrub_identifiers_filename(display_name)
         # Consume #468's class. Prefer the tag the injector already wrote;
         # fall back to classify() on the same inputs it uses. Do not invent
         # a fifth class here.
