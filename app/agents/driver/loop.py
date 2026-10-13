@@ -94,6 +94,18 @@ def _tidy(text: str) -> str:
     return _EMPTY_BRACKETS.sub("", text)
 
 
+def _calc_verdict(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """A calculator run as the trace records it: its status, whether it asked,
+    and which inputs it was missing or used a default for (names only)."""
+    env = result.get("result") if isinstance(result, dict) else None
+    if not isinstance(env, dict):
+        return None
+    inner = env.get("result") if isinstance(env.get("result"), dict) else {}
+    return {"status": env.get("status"), "asked": bool(env.get("needs_input") or env.get("question")),
+            "missing": list(env.get("missing") or [])[:8],
+            "defaults": sorted(str(k) for k in (inner.get("defaults_used") or env.get("defaults_used") or {}))[:8]}
+
+
 def _offered_workflows(offered: List[Dict[str, Any]]) -> int:
     """How many workflows the run_workflow tool offered this step (0: none)."""
     for t in offered:
@@ -349,6 +361,8 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 "tool": name, "workflow": args.get("workflow") if name == routes.RUN_WORKFLOW else None,
                 "calculation": args.get("calculation") if name == "construction_calc" else None,
                 "ok": ok, "missing": bool(result_of_call.get("missing") or result_of_call.get("needs_input")),
+                # A calculator's own verdict: success, or needs_input and which inputs.
+                "result": _calc_verdict(result_of_call) if name == "construction_calc" else None,
             })
             if name != tools.SELECT_HAT:
                 if ok:
