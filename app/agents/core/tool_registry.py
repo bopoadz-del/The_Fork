@@ -50,13 +50,17 @@ class ToolSpec:
     display_name: str = ""
     #: The tool's function schema, when it declares one where it is defined.
     schema: Optional[Dict[str, Any]] = None
+    #: Each parameter as declared (app.lib.formula_registry.Param: label,
+    #: kind, unit, range, required). None until the tool declares them.
+    params: Optional[Dict[str, Any]] = None
 
 
 _TOOLS: Dict[str, ToolSpec] = {}
 
 
 def tool(name: str, *, owner: str, display_name: str,
-         schema: Optional[Dict[str, Any]] = None) -> Callable[[Handler], Handler]:
+         schema: Optional[Dict[str, Any]] = None,
+         params: Optional[Dict[str, Any]] = None) -> Callable[[Handler], Handler]:
     if owner not in OWNERS:
         raise ValueError(f"unknown tool owner {owner!r}; one of {OWNERS}")
     if not (display_name or "").strip():
@@ -66,7 +70,8 @@ def tool(name: str, *, owner: str, display_name: str,
         existing = _TOOLS.get(name)
         if existing is not None and existing.handler is not fn:
             raise ValueError(f"tool {name!r} is registered twice")
-        _TOOLS[name] = ToolSpec(name, owner, fn, display_name.strip(), schema)
+        _TOOLS[name] = ToolSpec(name, owner, fn, display_name.strip(), schema,
+                                dict(params) if params is not None else None)
         return fn
     return register
 
