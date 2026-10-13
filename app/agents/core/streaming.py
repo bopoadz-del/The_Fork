@@ -198,20 +198,23 @@ async def _chat_stream_impl(
         agent_name=self.name,
         history=effective_history,
     )
+    # The message preparation below scans the question and the excerpts with
+    # many patterns: in a worker thread, like retrieval (CI: 125-203 ms loop
+    # stalls here at 15 users). Only this turn's coroutine touches `messages`.
     if _rag_sys_msg and _rag_sys_msg.get("content"):
-        _apply_rag_context(
-            messages, _rag_sys_msg,
+        await _off_loop(
+            _apply_rag_context, messages, _rag_sys_msg,
             user_data_authoritative=self.user_data_authoritative,
         )
 
-    _apply_hat_activation(messages, user_message, self.name)
+    await _off_loop(_apply_hat_activation, messages, user_message, self.name)
 
     # Capability / self-introspection short-circuit: a question ABOUT this
     # agent (its tools, abilities, accessible documents) is answered from the
     # REAL tool roster + REAL document list, bypassing the grounded-RAG clamp
     # that would otherwise answer it from matched document text (e.g. "what
     # tools do you have" -> construction power saws). See _is_capability_request.
-    if _is_capability_request(user_message):
+    if await _off_loop(_is_capability_request, user_message):
         answer = _build_capability_answer(self, project_id)
         if conversation_id:
             from app.core import agent_memory
