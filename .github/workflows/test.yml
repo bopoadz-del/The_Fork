@@ -151,13 +151,23 @@ jobs:
         # here, from the whole suite.
         run: >
           pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120
-          -m serial
+          -m "serial and not timing"
           --cov=app --cov-append --cov-report=term-missing --cov-report=xml
           --cov-report=json:coverage.json
           --cov-fail-under=25
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data-serial
+          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
+          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
+
+      - name: Run the timing tests (no coverage instrumentation)
+        # Same assertions, same limits; only the coverage tracer is off, so
+        # the measurement is the event loop's, not the tracer's lock.
+        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data-timing
           CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
           CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
 
@@ -329,10 +339,21 @@ jobs:
 
       - name: Run the serial tests (shard 1, alone)
         if: matrix.shard == 1
-        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m serial --cov=app --cov-append --cov-report=
+        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m "serial and not timing" --cov=app --cov-append --cov-report=
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data-serial
+          CEREBRUM_VIRGIN: "true"
+          CEREBRUM_DOMAIN_KITS: ""
+          RAG_EMBEDDING_MODEL: fake
+          COVERAGE_FILE: .coverage.shard${{ matrix.shard }}
+
+      - name: Run the timing tests (shard 1, no coverage instrumentation)
+        if: matrix.shard == 1
+        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data-timing
           CEREBRUM_VIRGIN: "true"
           CEREBRUM_DOMAIN_KITS: ""
           RAG_EMBEDDING_MODEL: fake
