@@ -158,6 +158,23 @@ def test_wind_load_derives_area_from_width_and_height():
     assert r["overturning_moment_kn_m"] == pytest.approx(34.48, abs=0.01)
 
 
+def test_load_above_chart_fails_with_a_reason_and_no_silent_limit():
+    env = run_calculation("crane_lift_capacity", {
+        "chart_capacity_t": 10, "deductions_t": 0, "load_t": 15,
+    })
+    assert env["status"] == "success", env
+    r = env["result"]
+    assert r["passed"] is False
+    reason = str(r.get("reason") or "")
+    assert reason
+    assert "15" in reason
+    assert re.search(r"capacit", reason, re.I)
+    assert "85" not in reason
+    blob = " ".join(f"{key} {r.get(key)}" for key in r)
+    if r.get("max_utilization_percent") is not None:
+        assert "default" in blob.lower()
+
+
 def test_lane_source_names_no_company_or_client():
     named = []
     for path in _LANE_ROOT.rglob("*.py"):

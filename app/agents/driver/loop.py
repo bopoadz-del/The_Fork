@@ -10,7 +10,7 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.agents import driver
-from app.agents.driver import context, llm, routes, sources, tools
+from app.agents.driver import context, llm, render, routes, sources, tools
 from app.core import turn_progress
 from app.core.offload import off_loop
 
@@ -19,6 +19,8 @@ _LOG = logging.getLogger(__name__)
 #: Where a streamed answer may be cut into checkable pieces: after a
 #: sentence's closing mark, or at a line break (list items, table rows).
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n")
+_HEADING = re.compile(r"^\s*#{1,6}\s+\S")
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
 #: How much of one tool result the model is given.
 _TOOL_RESULT_CHARS = 20000
@@ -33,7 +35,7 @@ _FINISH = ("No more tool calls are available for this question. Answer the user 
            "user would need to provide.")
 
 
-def exit_check(answer: str, msgs: List[Dict[str, Any]]) -> tuple:
+def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False) -> tuple:
     """The one check before a driver answer leaves: an attribution no
     evidence record backs is removed (citation_provenance.gate), and every
     figure is credited to the user's words, a tool run or a retrieved
@@ -43,11 +45,27 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]]) -> tuple:
     figures removed and counts the passages read, for the end event."""
     from app.agents import citation_provenance as cp
 
+    # No registry identifier leaves: each becomes the name a user reads.
+    answer, identifiers = render.readable(answer)
+    if shared:
+        # The model's words also pass the platform's shared exit
+        # (answer_exit) here, so the stream shows what the final answer
+        # shows: no chunk numbers, ids or markers that point at nothing.
+        from app.agents import answer_exit
+
+        answer = answer_exit.check_text(answer)
     checked = cp.gate(answer, None, msgs, tool_passages=True, annotate=False)
     _, every = cp.figure_provenance(checked, None, msgs, enforce=False, tool_passages=True)
     out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
     out = _tidy(out)
+    if shared:
+        # A library file the turn read is named by its title, never by its
+        # stored file name -- after the gate, which matches citations
+        # against the stored names the evidence carries.
+        for stored, title in sorted(sources.library_names(msgs).items(), key=lambda kv: -len(kv[0])):
+            out = out.replace(stored, title)
     report = {
+        "identifiers_replaced": identifiers,
         "figures_removed": [e["figure"] for e in every if not e.get("source")],
         "passages_read": sum(1 for r in cp.build_evidence(None, msgs, tool_passages=True).records
                              if r.kind == "retrieval"),
@@ -76,6 +94,38 @@ def _tidy(text: str) -> str:
     return _EMPTY_BRACKETS.sub("", text)
 
 
+def _offered_workflows(offered: List[Dict[str, Any]]) -> int:
+    """How many workflows the run_workflow tool offered this step (0: none)."""
+    for t in offered:
+        fn = t.get("function") or {}
+        if fn.get("name") == routes.RUN_WORKFLOW:
+            return len(((fn.get("parameters") or {}).get("properties") or {}).get("workflow", {}).get("enum") or [])
+    return 0
+
+
+def _named_calculator_note(user_message: str) -> str:
+    """When the ask names one platform calculator by its declared name, say
+    so before the model chooses: a figure that calculator computes comes
+    from running it, never from the model's own knowledge. The model still
+    chooses; this only tells it what the ask named."""
+    try:
+        from app.lib import formula_registry
+        from app.lib.construction_formulas import calculator_name_from_text
+
+        name = calculator_name_from_text(user_message or "")
+        spec = formula_registry.get(name) if name else None
+    except Exception:  # noqa: BLE001 -- a note is help, never a failure
+        _LOG.debug("named-calculator lookup failed", exc_info=True)
+        return ""
+    if spec is None:
+        return ""
+    where = "" if spec.owner == "base" else f" It is in the {spec.owner} hat."
+    return (f"This ask names the platform calculator {spec.display_name} (construction_calc, "
+            f"calculation \"{spec.name}\").{where} A figure, level or result it computes comes from "
+            "running it with the user's inputs, not from your own knowledge; if it cannot run, "
+            "say what it needs.")
+
+
 def _args(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     raw = (tool_call.get("function") or {}).get("arguments") or "{}"
     try:
@@ -98,8 +148,16 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     # loop (live: 0.4-1.1 s stalls at 5 driver users).
     msgs: List[Dict[str, Any]] = await off_loop(context.messages, user_message, history,
                                                  project_id, user_id, hat)
+    note = await off_loop(_named_calculator_note, user_message)
+    if note:
+        msgs.insert(len(msgs) - 1, {"role": "system", "content": note})
     used: List[str] = []
     ran: List[tuple] = []  # (tool, arguments) of every tool run, for the credit lines
+    computed: List[tuple] = []  # (envelope, inputs) of every calculation that succeeded
+    model_answered = False
+    failed: List[tuple] = []  # (tool, its own error) of every run that failed
+    succeeded = False  # any tool run this turn came back ok
+    user_numbers = set(_NUMBER.findall(user_message or ""))
     evidence: List[Dict[str, Any]] = []  # tool results, whole, for the exit check
     exports: List[Dict[str, Any]] = []
     yield {"type": "start", "mode": "driver", "agent": agent.name}
@@ -114,12 +172,18 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
 
     sent: List[str] = []
 
-    def _release(piece: str) -> Optional[Dict[str, Any]]:
-        """Exit-check one finished piece of the answer and hand it out."""
+    def _release(piece: str, model_text: bool = True) -> Optional[Dict[str, Any]]:
+        """Exit-check one finished piece of the answer and hand it out.
+        ``model_text`` False: the platform's own words (a calculator's
+        question, a computed result), which no failed run makes unbacked."""
         if not piece.strip():  # layout only (a blank line): nothing to check
             sent.append(piece)
             return {"type": "token", "content": piece}
-        checked, trail, report = exit_check(piece, _trail())
+        if model_text and failed and not succeeded and set(_NUMBER.findall(piece)) - user_numbers:
+            # Every tool this turn failed: nothing backs a number the user
+            # did not write, bare counts included ("0 items were found").
+            return None
+        checked, trail, report = exit_check(piece, _trail(), shared=model_text)
         # The checks tidy whitespace; the piece's own ending (a line break
         # between list items or paragraphs) belongs to the answer's layout.
         ending = piece[len(piece.rstrip()):]
@@ -128,23 +192,36 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         sent.append(checked)
         provenance.extend(trail)
         check["figures_removed"].extend(report["figures_removed"])
+        check["identifiers_replaced"] = check.get("identifiers_replaced", 0) + report["identifiers_replaced"]
         check["passages_read"] = report["passages_read"]
         return {"type": "token", "content": checked} if checked.strip() else None
 
+    # One trace line per turn: what the model was offered and chose, and how
+    # each step ended. Tool and workflow names only -- never the user's words.
+    trace: List[Dict[str, Any]] = []
+    # Workflows that refused for a missing input and have not run since. While
+    # one is open, the model's next reply is held until it is complete: a
+    # reply that only answers would be the workflow's deliverable written by
+    # hand, so the workflow's own request for its inputs is given instead.
+    refused: Dict[str, Dict[str, Any]] = {}
+    reminded = False  # the model was told once to call a refused workflow again
     step = 0
     for step in range(driver.max_steps()):
         offered = tools.offered(agent, project_id, hat, disciplines)
+        trace.append({"step": step + 1, "hat": hat, "offered": len(offered),
+                      "workflows": _offered_workflows(offered), "calls": []})
         # Streamed: each finished sentence is checked and sent while the model
         # is still writing. One sentence is held back, so a short preamble
         # ("Let me look that up.") is dropped when the reply turns out to be
         # tool calls.
         buffer, held, result = "", None, None
+        hold_reply = bool(refused)
         async for kind, value in llm.stream(agent, msgs, offered, model=driver.model()):
             if kind == "done":
                 result = value
                 break
             buffer += value
-            while True:
+            while not hold_reply:
                 cut = _SENTENCE_END.search(buffer)
                 if cut is None:
                     break
@@ -159,15 +236,33 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             return
         message = result["message"]
         calls = message.get("tool_calls") or []
+        if not calls and refused and not reminded:
+            # The model answered while a refused workflow is still open. Its
+            # reply is not shown; it is told once to call the workflow again
+            # with the inputs the user's words and the documents give.
+            reminded = True
+            msgs.append({"role": "system", "content": routes.call_again_note(refused)})
+            continue
+        if not calls and refused:
+            # Reminded once and still answering: the deliverable comes from
+            # the workflow, so the turn asks for what the workflow needs
+            # instead of showing a hand-written one.
+            for request in dict.fromkeys(routes.input_request(w, r) for w, r in refused.items()):
+                event = _release(request + "\n", model_text=False)
+                if event:
+                    yield event
+            answer_done = True
+            break
         if not calls:
             for piece in (held, buffer):
                 if piece:
                     event = _release(piece)
                     if event:
                         yield event
-            answer_done = True
+            answer_done = model_answered = True
             break
         msgs.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
+        questions: List[str] = []  # calculators that need an input this round
         for call in calls:
             name = (call.get("function") or {}).get("name") or ""
             args = _args(call)
@@ -185,20 +280,76 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 used.append(f"{name}:{args.get('workflow')}")
                 result_of_call = await routes.run(args, user_message, project_id, user_id, conversation_id)
                 exports.extend(result_of_call.get("exports") or [])
+                workflow = str(args.get("workflow") or "")
+                if result_of_call.get("ok"):
+                    refused.pop(workflow, None)
+                elif result_of_call.get("missing"):
+                    refused[workflow] = result_of_call
             else:
                 used.append(name)
-                ran.append((name, args))
                 result_of_call = await agent._run_tool_call(call, api_key, project_id, conversation_id,
                                                             user_message=user_message, history=history)
-            yield {"type": "tool_result", "tool": name, "name": name, "ok": bool(result_of_call.get("ok", True))}
+                if result_of_call.get("ok", True):
+                    ran.append((name, args))  # a failed run is credited with nothing
+            ok = bool(result_of_call.get("ok", True))
+            # The platform's shared exit check replaces a tool's internal error
+            # text copied into the answer, for the errors this turn recorded.
+            from app.agents import answer_exit
+            answer_exit.note_tool_result(name, result_of_call)
+            trace[-1]["calls"].append({
+                "tool": name, "workflow": args.get("workflow") if name == routes.RUN_WORKFLOW else None,
+                "calculation": args.get("calculation") if name == "construction_calc" else None,
+                "ok": ok, "missing": bool(result_of_call.get("missing") or result_of_call.get("needs_input")),
+            })
+            if name != tools.SELECT_HAT:
+                if ok:
+                    succeeded = True
+                else:
+                    from app.lib.source_labels import tool_label
+
+                    shown_name = (str(args.get("workflow") or "").replace("_", " ").capitalize()
+                                  if name == routes.RUN_WORKFLOW else tool_label(name))
+                    error = str(result_of_call.get("error") or result_of_call.get("missing") or "").strip()
+                    failed.append((shown_name, error or "it returned no result"))
+            yield {"type": "tool_result", "tool": name, "name": name, "ok": ok}
             full = json.dumps(result_of_call, default=str)
             tool_msg = {"role": "tool", "name": name, "tool_call_id": call.get("id") or name}
             # The model gets at most _TOOL_RESULT_CHARS of a result; the exit
             # check reads it whole -- cut, the JSON no longer parses and every
             # figure it backs looks unsourced (live: 23 figures removed).
-            msgs.append({**tool_msg, "content": json.dumps(_without_missing_pages(result_of_call),
-                                                           default=str)[:_TOOL_RESULT_CHARS]})
+            # A calculation reaches the model as prose in the registry's own
+            # words (render.render_calculation), never as raw keys it could
+            # copy into the answer; the exit check still reads the full result.
+            envelope = result_of_call.get("result") if isinstance(result_of_call, dict) else None
+            if isinstance(envelope, dict) and envelope.get("calculation"):
+                inputs = args.get("params") if isinstance(args.get("params"), dict) else args
+                shown = render.render_calculation(envelope, inputs)
+                if envelope.get("status") == "success":
+                    computed.append((envelope, inputs))
+                if envelope.get("status") != "success" and str(envelope.get("question") or "").strip():
+                    questions.append(str(envelope["question"]).strip())
+            else:
+                shown = json.dumps(_without_missing_pages(result_of_call), default=str)[:_TOOL_RESULT_CHARS]
+            msgs.append({**tool_msg, "content": shown})
             evidence.append({**tool_msg, "content": full})
+        # A calculator that rejected or lacks an input ends the turn with its
+        # own question: the model is never given the chance to compute a
+        # figure the calculator refused (lane 2: it did).
+        if questions:
+            for question in dict.fromkeys(questions):
+                event = _release(question + "\n", model_text=False)
+                if event:
+                    yield event
+            answer_done = True
+            break
+    if not answer_done and refused:
+        # Out of steps with a workflow still refusing: its deliverable comes
+        # from the workflow, so the turn asks for what it needs.
+        for request in dict.fromkeys(routes.input_request(w, r) for w, r in refused.items()):
+            event = _release(request + "\n", model_text=False)
+            if event:
+                yield event
+        answer_done = True
     if not answer_done:
         # Out of steps: answer from the evidence already gathered, no tools.
         msgs.append({"role": "system", "content": _FINISH})
@@ -223,8 +374,46 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             if event:
                 finished = True
                 yield event
+        model_answered = finished
         if not finished or not "".join(sent).strip():
             event = _release(_STOP)
+            if event:
+                yield event
+    if model_answered and failed and not succeeded:
+        # The failure itself, in the tool's own words, when the answer does
+        # not already say it: the user learns what could not be done and why.
+        written = "".join(sent)
+        for shown_name, error in dict.fromkeys(failed):
+            if error.lower() in written.lower():
+                continue
+            from app.agents import answer_exit
+
+            # The tool's own words, unless they carry internal tokens: the
+            # shared exit check gives those as one plain sentence.
+            line = answer_exit.check_text(f"{shown_name} could not complete: {error}")
+            if not line.strip() or line.strip().lower() in written.lower():
+                continue
+            sent.append(("\n\n" if written.strip() else "") + line + "\n")
+            yield {"type": "token", "content": sent[-1]}
+            written = "".join(sent)
+    if model_answered:
+        # A result the platform computed reaches the user even when the
+        # model's words stop short of it (a table header with no rows, a
+        # heading with nothing under it): what the answer does not carry is
+        # added in the renderer's words, under a heading left empty.
+        for envelope, inputs in computed:
+            written = "".join(sent)
+            if render.carried(envelope, inputs, written):
+                continue
+            block = "\n".join(render.result_lines(envelope, inputs))
+            if not block:
+                continue
+            last = written.rstrip("\n").rsplit("\n", 1)[-1]
+            if _HEADING.match(last):
+                piece = ("" if written.endswith("\n") else "\n") + block + "\n"
+            else:
+                piece = "\n\n" + block + "\n"
+            event = _release(piece, model_text=False)
             if event:
                 yield event
     from app.agents import citation_provenance as cp
@@ -238,6 +427,10 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         notes = "\n\n" + credit + notes
     if notes.strip():
         yield {"type": "token", "content": notes}
+    _LOG.info("DRIVER_TURN %s", json.dumps({
+        "steps": trace, "ended": ("answer" if model_answered else "question" if answer_done else "step_limit"),
+        "figures_removed": check["figures_removed"], "identifiers_replaced": check.get("identifiers_replaced", 0),
+        "elapsed_s": round(time.monotonic() - t0, 2)}, default=str))
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "provenance": provenance, "exit_check": check,
            "sources": sources.panel(_trail(), provenance, "".join(sent),
