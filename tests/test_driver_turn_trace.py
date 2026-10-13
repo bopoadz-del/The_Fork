@@ -39,6 +39,7 @@ def test_a_driver_turn_leaves_a_trace_without_the_users_words(monkeypatch):
         drive(monkeypatch, "Register the qxsecret widgets please", [
             {"content": "", "tool_calls": [call("run_workflow", {"workflow": "widget_register"}, "w1")]},
             {"content": "Which widgets?"},
+            {"content": "Which widgets?"},  # after the one reminder to call the workflow again
         ])
     finally:
         log.removeHandler(seen)
@@ -46,7 +47,7 @@ def test_a_driver_turn_leaves_a_trace_without_the_users_words(monkeypatch):
     assert len(lines) == 1
     assert "qxsecret" not in lines[0]
     trace = json.loads(lines[0][len("DRIVER_TURN "):])
-    assert trace["ended"] == "answer"
+    assert trace["ended"] == "question"  # the refused workflow asks for its inputs
     assert trace["figures_removed"] == []
     first = trace["steps"][0]
     assert first["workflows"] == 1

@@ -1571,8 +1571,10 @@ def _coerce_list(val: Any) -> Any:
         return [coerced]
     return val
 
-def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
-    """Strip unit suffixes from numeric strings; wrap list-typed scalars."""
+def _coerce_bound_values(fn: Any, bound: Dict[str, Any], converted: frozenset = frozenset()) -> Dict[str, Any]:
+    """Strip unit suffixes from numeric strings; wrap list-typed scalars.
+    ``converted``: inputs the unit converter already put in their declared
+    unit (150% already became 1.5); they are not re-read as percentages."""
     try:
         sig = _inspect.signature(fn)
     except (TypeError, ValueError):
@@ -1600,6 +1602,8 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
         # Values in (1, 100] are percents; 1.25 stays a multiplier. An input
         # declared as a fraction whose name says it is a percentage
         # (waste_pct, markup_pct) reads a bare 10 as 10% the same way.
+        if key in converted:
+            continue
         if key in {"bulking_factor", "swell_factor"} or _percent_named_fraction(key, declared.get(key)):
             number = out[key]
             # A figure already inside the input's declared range is taken as
@@ -2701,7 +2705,7 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         params = _attach_written_units(str(name), fn, params, caller_figures, ask_text, call_unit)
     params, conversions, unit_rejected = formula_registry.convert_written_units(
         str(name), params, context)
-    params = _coerce_bound_values(fn, params)
+    params = _coerce_bound_values(fn, params, frozenset(c.get("parameter") for c in conversions))
     params, rejected = formula_registry.check_inputs(str(name), params)
     refused = {row["parameter"] for row in unit_rejected}
     rejected = unit_rejected + [row for row in rejected if row["parameter"] not in refused]
