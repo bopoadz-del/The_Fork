@@ -3,6 +3,8 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
+from typing import Optional
+
 from app.lib.formula_registry import Param, formula
 
 
@@ -97,6 +99,9 @@ def fall_arrest_force(
         ),
     }
 
+_DEFAULT_MAX_UTILIZATION = 0.85
+
+
 @formula(
     owner='safety',
     display_name='Crane lift capacity and utilisation',
@@ -113,11 +118,15 @@ def crane_lift_capacity(
     chart_capacity_t: float,
     deductions_t: float,
     load_t: float,
-    max_utilization: float = 0.85,
+    max_utilization: Optional[float] = None,
 ) -> dict:
     """Net crane capacity after rigging/block/jib deductions, and the lift
-    utilisation. Net = chart - deductions; util = load/net; pass if <= max
-    (typical lift-plan limit 85% of chart)."""
+    utilisation. Net = chart - deductions; util = load/net.
+
+    A load above net capacity fails with a reason and stops. A utilisation
+    limit the caller did not give is not treated as a project figure; the
+    built-in guide is labelled as a default when it is used.
+    """
     if float(chart_capacity_t) <= 0:
         return {"error": "chart_capacity_t must be > 0."}
     if float(deductions_t) < 0 or float(load_t) < 0:
@@ -125,21 +134,49 @@ def crane_lift_capacity(
     net = float(chart_capacity_t) - float(deductions_t)
     if net <= 0:
         return {"error": "deductions_t must be less than chart_capacity_t (net capacity would be <= 0)."}
-    util = float(load_t) / net
-    passed = util <= max_utilization
-    return {
+    load = float(load_t)
+    util = load / net
+    limit_given = max_utilization is not None
+    limit = float(max_utilization) if limit_given else _DEFAULT_MAX_UTILIZATION
+    if load > net:
+        out = {
+            "net_capacity_t": round(net, 2),
+            "utilization_percent": round(util * 100.0, 2),
+            "passed": False,
+            "reason": (
+                f"The load {load:g} t exceeds the net capacity {net:g} t."
+            ),
+            "max_utilization_percent": round(limit * 100.0, 1),
+            "standard": "crane lift plan (de-rated chart)",
+            "note": (
+                f"The load {load:g} t exceeds the net capacity {net:g} t."
+            ),
+        }
+        if not limit_given:
+            out["max_utilization_is_default"] = True
+        return out
+    passed = util <= limit
+    limit_words = (
+        f"the default {limit*100:.0f}% limit"
+        if not limit_given
+        else f"the {limit*100:.0f}% limit"
+    )
+    out = {
         "net_capacity_t": round(net, 2),
         "utilization_percent": round(util * 100.0, 2),
         "passed": passed,
-        "max_utilization_percent": round(max_utilization * 100.0, 1),
+        "max_utilization_percent": round(limit * 100.0, 1),
         "standard": "crane lift plan (de-rated chart)",
         "note": (
             f"Net = {chart_capacity_t} − {deductions_t} = {net:.1f} t; "
             f"utilisation = {load_t}/{net:.1f} = {util*100:.1f}%, "
             f"which {'is within' if passed else 'exceeds'} "
-            f"the {max_utilization*100:.0f}% limit."
+            f"{limit_words}."
         ),
     }
+    if not limit_given:
+        out["max_utilization_is_default"] = True
+    return out
 
 ADDITIONAL_CALCULATORS = {
     "scaffold_load_capacity": scaffold_load_capacity,
