@@ -18,6 +18,18 @@ def _norm_code(code: str) -> str:
         return _EC
     return _ACI
 
+
+# ACI 318-19 Table 25.4.2.5. ψg holds for fy up to the stated limit.
+_GRADE_FACTOR = ((420.0, 1.0), (550.0, 1.15), (float("inf"), 1.3))
+
+
+def _grade_factor(fy_mpa: float) -> float:
+    fy = float(fy_mpa)
+    for limit, factor in _GRADE_FACTOR:
+        if fy <= limit:
+            return factor
+    return _GRADE_FACTOR[-1][1]
+
 @formula(
     owner='design',
     display_name='Concrete beam bending capacity',
@@ -93,7 +105,10 @@ def rc_beam_shear_capacity(
 ) -> dict:
     """Concrete shear capacity (no shear reinforcement).
 
-    ACI 318-19 §22.5: phi.Vc = 0.75 * 0.17 * sqrt(fc) * bw * d (SI, N).
+    ACI 318-19 Table 22.5.5.1, Av < Av,min: Vc = 0.66*λs*(ρw)^(1/3)*√fc'*bw*d,
+    λs = √(2/(1+0.004*d)) ≤ 1 (d in mm), √fc' ≤ 8.3 MPa, and Vc not above
+    0.42*√fc'*bw*d. φ = 0.75. The 0.17√fc' equation is the row for members
+    that already have Av ≥ Av,min, which this calculator does not.
     EN 1992-1-1 §6.2.2: VRd,c = CRd,c*k*(100*rho_l*fck)^(1/3)*bw*d,
     CRd,c=0.12, k=1+sqrt(200/d)<=2.0, rho_l<=0.02.
     """
@@ -110,10 +125,15 @@ def rc_beam_shear_capacity(
                 f"= {vrd_n/1000.0:.2f} kN")
         cap = vrd_n / 1000.0
     else:
-        vc_n = 0.75 * 0.17 * math.sqrt(fc_mpa) * bw * d
-        std = "ACI 318-19 §22.5 (phi=0.75)"
-        note = (f"phi.Vc=0.75*0.17*sqrt(fc)*bw*d=0.75*0.17*{math.sqrt(fc_mpa):.3f}"
-                f"*{bw}*{d} = {vc_n/1000.0:.2f} kN")
+        sqrt_fc = min(math.sqrt(fc_mpa), 8.3)
+        lam_s = min(1.0, math.sqrt(2.0 / (1.0 + 0.004 * d)))
+        rho = max(float(rho_l), 0.0)
+        vc = 0.66 * lam_s * (rho ** (1.0 / 3.0)) * sqrt_fc
+        vc = min(vc, 0.42 * sqrt_fc)
+        vc_n = 0.75 * vc * bw * d
+        std = "ACI 318-19 Table 22.5.5.1 (Av < Av,min, phi=0.75)"
+        note = (f"phi.Vc=0.75*0.66*lambda_s*(rho)^(1/3)*sqrt(fc)*bw*d "
+                f"(lambda_s={lam_s:.3f}) = {vc_n/1000.0:.2f} kN")
         cap = vc_n / 1000.0
     return {
         "code": cc,
@@ -138,6 +158,8 @@ _EC_RATIOS = {"simply_supported": 20.0, "one_end_continuous": 26.0,
         'support_condition': Param('-'),
         'code': Param('-'),
         'fy_mpa': Param('MPa', 100, 1500, label='reinforcement yield strength', grade='rebar'),
+        'cover_mm': Param('mm', 0, 200, label='nominal cover'),
+        'bar_diameter_mm': Param('mm', 0, 60, label='bar diameter'),
     },
     outputs={'min_thickness_mm': 'mm', 'support_condition': '-'},
 )
@@ -146,21 +168,30 @@ def slab_thickness_min(
     support_condition: str = "simply_supported",
     code: str = _ACI,
     fy_mpa: float = 420.0,
+    cover_mm: float = 25.0,
+    bar_diameter_mm: float = 0.0,
 ) -> dict:
     """Minimum one-way slab thickness for deflection control (span/ratio).
 
     ACI 318-19 Table 7.3.1.1 (fy=420): SS L/20, one-end L/24, both-ends L/28,
-    cantilever L/10; x(0.4 + fy/700) for other fy.
-    EN 1992-1-1 §7.4.2 basic span/depth: SS 20, end 26, interior 30, cantilever 8.
+    cantilever L/10; x(0.4 + fy/700) for other fy. Those ratios are overall
+    thickness.
+    EN 1992-1-1 §7.4.2 basic span/depth (effective depth): SS 20, end 26,
+    interior 30, cantilever 8. Thickness is that depth plus nominal cover
+    plus half the bar diameter. Cover defaults to §4.4.1 XC1 class S4:
+    cmin,dur 15 mm + Δcdev 10 mm.
     """
     cc = _norm_code(code)
     L = float(span_mm)
     sc = (support_condition or "simply_supported").strip().lower()
     if cc == _EC:
         ratio = _EC_RATIOS.get(sc, 20.0)
-        t = L / ratio
-        std = "EN 1992-1-1 §7.4.2 (basic span/depth)"
-        note = f"L/{ratio:.0f} = {L}/{ratio:.0f} = {t:.1f} mm"
+        depth = L / ratio
+        t = depth + float(cover_mm) + float(bar_diameter_mm) / 2.0
+        std = "EN 1992-1-1 §7.4.2 (basic span/depth) + §4.4.1 cover"
+        note = (f"d=L/{ratio:.0f}={depth:.1f} mm; h=d+cover+φ/2 "
+                f"= {depth:.1f}+{float(cover_mm):.1f}+{float(bar_diameter_mm)/2:.1f} "
+                f"= {t:.1f} mm")
     else:
         ratio = _ACI_RATIOS.get(sc, 20.0)
         fy_mod = 0.4 + fy_mpa / 700.0
@@ -378,9 +409,11 @@ def rebar_lap_length(
 ) -> dict:
     """Tension lap-splice length for a deformed bar.
 
-    ACI 318-19 §25.4.2: ld = (fy*ψs/(1.1*sqrt(fc)*((cb+Ktr)/db)))*db;
-    ψs = 0.8 for No. 19 and smaller, else 1.0. Other ψ and λ stay 1 when
-    the ask does not state top-bar, coating, or lightweight concrete.
+    ACI 318-19 §25.4.2: ld = (fy*ψt*ψe*ψs*ψg/(1.1*λ*sqrt(fc)*((cb+Ktr)/db)))*db;
+    ψs = 0.8 for No. 19 and smaller, else 1.0. Table 25.4.2.5: ψg = 1.0 for
+    fy ≤ 420 MPa, 1.15 above that up to 550 MPa, and 1.3 above 550 MPa.
+    Other ψ and λ stay 1 when the ask does not state top-bar, coating, or
+    lightweight concrete.
     Class B lap = 1.3*ld. ``confinement_ratio`` = (cb+Ktr)/db, capped 2.5.
     EN 1992-1-1 §8.4/8.7: lb,rqd = (db/4)*(fyd/fbd), fbd=2.25*η1*η2*fctd,
     η1 = 1 (good bond unless stated otherwise), η2 = 1 for db ≤ 32 mm and
@@ -403,11 +436,12 @@ def rebar_lap_length(
     else:
         conf = min(confinement_ratio, 2.5)
         psi_s = 0.8 if db <= 19.0 else 1.0
-        ld = (fy_mpa * psi_s / (1.1 * math.sqrt(fc_mpa) * conf)) * db
+        psi_g = _grade_factor(fy_mpa)
+        ld = (fy_mpa * psi_s * psi_g / (1.1 * math.sqrt(fc_mpa) * conf)) * db
         lap = 1.3 * ld
         std = "ACI 318-19 §25.4.2 (Class B lap)"
-        note = (f"ld=(fy*psi_s/(1.1*sqrt(fc)*{conf}))*db={ld:.1f} mm "
-                f"(psi_s={psi_s}); lap=1.3*ld={lap:.1f} mm")
+        note = (f"ld=(fy*ψs*ψg/(1.1*sqrt(fc)*{conf}))*db={ld:.1f} mm "
+                f"(ψs={psi_s}, ψg={psi_g}); lap=1.3*ld={lap:.1f} mm")
     return {
         "code": cc,
         "lap_length_mm": round(lap, 1),

@@ -148,7 +148,10 @@ def _shown_quantity(value: Any, row: Dict[str, Any]) -> str:
     if isinstance(value, (list, tuple)):
         return ", ".join(_shown_quantity(v, row) for v in value)
     if _is_fraction_percent(row) and isinstance(value, (int, float)) and not isinstance(value, bool):
-        return f"{_fmt_value(value * 100 if abs(value) <= 1 else value)}%"
+        # A fraction input's value is a fraction by the time it is checked
+        # (150% arrives as 1.5) and reads as a percentage; a figure above 100
+        # can only be a percentage the caller wrote unscaled (150).
+        return f"{_fmt_value(value * 100 if abs(value) <= 100 else value)}%"
     if isinstance(value, str):
         return f"\u201c{value}\u201d"
     shown = _fmt_value(value)

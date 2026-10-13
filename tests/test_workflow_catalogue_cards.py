@@ -68,6 +68,7 @@ def test_a_workflow_that_refuses_is_not_reported_as_done(monkeypatch, status, ok
     from app.core import predefined_reasoning
 
     monkeypatch.setattr(routes, "catalogue", lambda: ["widget_register"])
+    monkeypatch.setattr(routes, "cards", lambda: {"widget_register": _GOOD})
 
     async def fake_run_workflow(action, ctx, session):
         return {"handled": True, "status": status,
@@ -79,6 +80,10 @@ def test_a_workflow_that_refuses_is_not_reported_as_done(monkeypatch, status, ok
     if not ok:
         assert out["missing"] == "No widget list supplied: cannot build a widget register."
         assert "documents" in out["next"] and "params" in out["next"]
+        # The refusal names the workflow's own inputs, so the model can gather
+        # them and call again instead of writing the deliverable itself.
+        assert out["inputs"] == {"widgets": "Widgets"} and out["needs"]
+        assert "yourself" in out["next"]
 
 
 @construction_kit_markers[0]

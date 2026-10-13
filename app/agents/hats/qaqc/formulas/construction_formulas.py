@@ -3,6 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
+from app.agents.hats.qaqc.results import qaqc_calculator
 from app.lib.formula_registry import Param, formula, grade_label
 import json
 import math
@@ -66,7 +67,7 @@ class FormworkStrikingResult:
     display_name='Formwork striking time',
     description='Earliest formwork striking time from element type, temperature and test strength.',
     inputs={
-        'concrete_strength_7h': Param('N/mm2', 0, 150, label='cube strength at striking'),
+        'concrete_strength_7h': Param('N/mm2', 0, 150, label='concrete strength at striking'),
         'design_required_strength': Param('N/mm2', 0, 150, label='required striking strength'),
         'ciria_surface_strength': Param('N/mm2', 0, 150, label='CIRIA surface strength'),
         'bs8110_minimum_hours': Param('h', 0, 1000, label='minimum striking time'),
@@ -74,6 +75,7 @@ class FormworkStrikingResult:
     },
     outputs={'recommended_hours': 'h', 'bs8110_minimum_hours': 'h', 'ciria_minimum_strength_n_mm2': 'N/mm2', 'design_required_strength_n_mm2': 'N/mm2', 'actual_early_strength_n_mm2': 'N/mm2'},
 )
+@qaqc_calculator
 def formwork_striking_time(
     concrete_strength_7h: float = 7.0,
     design_required_strength: float = 0.332,
@@ -86,16 +88,16 @@ def formwork_striking_time(
         f"BS 8110 asks for at least {bs8110_minimum_hours} hours for wall formwork.",
         f"CIRIA asks for a surface strength of at least {ciria_surface_strength} N/mm².",
         f"The design required strength is {design_required_strength} N/mm².",
-        f"The cube test recorded {concrete_strength_7h} N/mm² at striking.",
+        f"The concrete strength at striking is {concrete_strength_7h} N/mm².",
     ]
     if concrete_strength_7h >= ciria_surface_strength:
         notes.append(
-            f"The cube strength {concrete_strength_7h} N/mm² meets the CIRIA "
+            f"The concrete strength at striking {concrete_strength_7h} N/mm² meets the CIRIA "
             f"surface minimum of {ciria_surface_strength} N/mm²."
         )
     else:
         notes.append(
-            f"The cube strength {concrete_strength_7h} N/mm² is below the CIRIA "
+            f"The concrete strength at striking {concrete_strength_7h} N/mm² is below the CIRIA "
             f"surface minimum of {ciria_surface_strength} N/mm²."
         )
     strength_ok = (
@@ -109,12 +111,12 @@ def formwork_striking_time(
     if strength_ok:
         verdict = (
             f"Formwork may be struck after {recommended_hours} hours; "
-            "the cube strength meets both minima."
+            "the concrete strength at striking meets both minima."
         )
     else:
         verdict = (
             f"Formwork should stay in place for {recommended_hours} hours; "
-            "the cube strength does not yet meet both minima."
+            "the concrete strength at striking does not yet meet both minima."
         )
     notes.append(verdict)
     return FormworkStrikingResult(
@@ -137,6 +139,7 @@ def formwork_striking_time(
     },
     outputs={'fineness_modulus': '-'},
 )
+@qaqc_calculator
 def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     """FM = (cumulative % retained on all sieves) / 100."""
     figures = _series_figures(sieve_retained_percentages)
@@ -162,6 +165,7 @@ def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     },
     outputs={'fck_n_mm2': 'N/mm2', 'value': 'currency', 'unit': '-', 'modulus_of_rupture_n_mm2': 'N/mm2', 'split_cylinder_aci_n_mm2': 'N/mm2', 'tensile_pct_of_compressive': '-'},
 )
+@qaqc_calculator
 def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict[str, float]:
     """Tensile strength. Two forms, and the caller's code decides which.
 
@@ -213,6 +217,7 @@ def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict
     },
     outputs={'core_temp_c': 'degC', 'surface_temp_c': 'degC', 'delta_t_c': 'degC', 'core_ok': '-', 'delta_ok': '-', 'thermal_cracking_risk': '-'},
 )
+@qaqc_calculator
 def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -> Dict[str, Any]:
     """Mass concrete limits: core <= 70C, delta_T <= 20C."""
     delta_t = core_temp_c - surface_temp_c
@@ -247,6 +252,7 @@ def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -
     },
     outputs={'duct_area_mm2': 'mm2', 'grout_volume_l_m': 'm', 'pressure_n_mm2': 'N/mm2', 'pressure_kg_cm2': '-', 'pressure_psi': '-', 'strength_28d_n_mm2': 'N/mm2', 'strength_7d_n_mm2': 'N/mm2', 'mixing_time_min': '-'},
 )
+@qaqc_calculator
 def grout_pressure_calc(
     tendon_duct_diameter_mm: float,
     required_pressure_n_mm2: float = 0.5,
@@ -282,8 +288,9 @@ def grout_pressure_calc(
         'gain_a': Param('-', 0, 50, label='strength-gain constant a'),
         'gain_b': Param('-', 0, 1, label='strength-gain constant b'),
     },
-    outputs={'maturity_index_c_hrs': 'degC.h', 'equivalent_age_days': 'days', 'predicted_strength_n_mm2': 'N/mm2', 'percent_of_28d': '%'},
+    outputs={'predicted_strength_n_mm2': 'N/mm2', 'percent_of_28d': '%', 'maturity_index_c_hrs': 'degC.h', 'equivalent_age_days': 'days'},
 )
+@qaqc_calculator
 def concrete_maturity_strength(
     temperature_history_c: List[float],
     time_intervals_hours: List[float],
