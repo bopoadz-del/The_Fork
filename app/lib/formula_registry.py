@@ -26,6 +26,20 @@ the material whose grade label states it ("C30" states a concrete strength
 of 30 MPa). The input's type is its annotation in the function signature.
 A supplied value of the wrong type or outside the range is never run; the
 user is asked for it by its label.
+
+The schema every registry entry carries (formulas here, tools in
+app.agents.core.tool_registry), enforced by tests/test_registry_schema.py:
+
+* the entry: ``display_name``;
+* each parameter: ``label`` (its display label -- the words a user reads),
+  type (a formula's from its signature annotation; a tool's declared as
+  ``kind``), ``unit`` and an inclusive range ``lo``..``hi`` for a numeric
+  input, and required / optional (a formula's from whether its signature
+  gives a default; a tool's declared as ``required``).
+
+``schema_gaps()`` lists what an entry is still missing. The model fills a
+calculator's arguments from these declarations, never from per-formula
+phrase lists.
 """
 from __future__ import annotations
 
@@ -55,6 +69,16 @@ class Param:
     hi: Optional[float] = None
     label: str = ""
     grade: str = ""
+    #: A tool parameter's type (``number``, ``integer``, ``series``, ``text``,
+    #: ``boolean``, ``list``, ``object``); a formula's comes from its signature.
+    kind: str = ""
+    #: A tool parameter's required / optional; a formula's comes from its
+    #: signature (no default = required).
+    required: Optional[bool] = None
+
+    @property
+    def display_label(self) -> str:
+        return self.label
 
 
 @dataclass(frozen=True)
@@ -68,6 +92,10 @@ class ParamSpec:
     grade: str
     required: bool
     default: Any = None
+
+    @property
+    def display_label(self) -> str:
+        return self.label
 
 
 @dataclass(frozen=True)
@@ -581,3 +609,49 @@ def check_inputs(name: str, values: Dict[str, Any]) -> Tuple[Dict[str, Any], Lis
                 row["scale"] = hint
             rejected.append(row)
     return out, rejected
+
+
+#: Kinds a tool parameter may declare.
+TOOL_KINDS = NUMERIC_KINDS + ("text", "boolean", "list", "object")
+
+
+def _param_gaps(where: str, kind: str, p: Any, required: Optional[bool]) -> List[str]:
+    gaps = []
+    if not (p.label or "").strip():
+        gaps.append(f"{where}:label")
+    if not kind:
+        gaps.append(f"{where}:type")
+    if required is None:
+        gaps.append(f"{where}:required")
+    if kind in NUMERIC_KINDS:
+        if not p.unit or p.unit == "-":
+            gaps.append(f"{where}:unit")
+        if p.lo is None or p.hi is None:
+            gaps.append(f"{where}:range")
+    return gaps
+
+
+def schema_gaps() -> List[str]:
+    """Every field a registry entry is still missing, as
+    ``formula:<name>.<param>:<field>`` / ``tool:<name>[.<param>]:<field>``.
+    A dimensionless numeric input declares its unit as ``ratio`` or ``count``,
+    never ``-``."""
+    from app.agents.core import tool_registry
+
+    gaps: List[str] = []
+    for spec in all_specs():
+        if not spec.display_name.strip():
+            gaps.append(f"formula:{spec.name}:display_name")
+        for key, p in parameters(spec).items():
+            gaps += _param_gaps(f"formula:{spec.name}.{key}", p.kind, p, p.required)
+    tool_registry.load()
+    for name, t in sorted(tool_registry._TOOLS.items()):
+        if not t.display_name.strip():
+            gaps.append(f"tool:{name}:display_name")
+        if t.params is None:
+            gaps.append(f"tool:{name}:params")
+            continue
+        for key, p in t.params.items():
+            kind = p.kind if p.kind in TOOL_KINDS else ""
+            gaps += _param_gaps(f"tool:{name}.{key}", kind, p, p.required)
+    return sorted(gaps)
