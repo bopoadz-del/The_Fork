@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import functools
 import inspect
+import logging
 import re
 from dataclasses import asdict, is_dataclass, replace
 from typing import Any, Callable, Dict, List
+
+_LOG = logging.getLogger(__name__)
 
 from app.lib.formula_registry import NUMERIC_KINDS
 
@@ -69,6 +72,7 @@ def applied_defaults(fn: Callable[..., Any], given: Dict[str, Any]) -> Dict[str,
     try:
         sig = inspect.signature(fn)
     except (TypeError, ValueError):
+        _LOG.warning("signature unreadable for %s; no defaults named", getattr(fn, "__name__", fn), exc_info=True)
         return {}
     supplied = set(given or ())
     out: Dict[str, Any] = {}
@@ -128,6 +132,7 @@ def disclose_defaults(fn: Callable[..., Any]) -> Callable[..., Any]:
     try:
         sig = inspect.signature(fn)
     except (TypeError, ValueError):
+        _LOG.warning("signature unreadable for %s; disclosure wrap skipped", getattr(fn, "__name__", fn), exc_info=True)
         return fn
 
     @functools.wraps(fn)
