@@ -82,6 +82,7 @@ def wind_pressure(
         'soil_factor_s': Param('-', 1, 2, label='soil factor'),
         'behaviour_factor_q': Param('-', 1, 8, label='behaviour factor'),
         'lambda_factor': Param('-', 0.5, 1, label='correction factor'),
+        'seismic_coefficient': Param('-', 0, 5, label='seismic coefficient'),
     },
     outputs={'base_shear_kn': 'kN', 'seismic_response_coefficient_cs': '-'},
 )
@@ -95,16 +96,22 @@ def seismic_base_shear(
     soil_factor_s: float = 1.2,
     behaviour_factor_q: float = 3.9,
     lambda_factor: float = 0.85,
+    seismic_coefficient: float = None,
 ) -> dict:
     """Equivalent lateral-force base shear V = Cs * W.
 
+    A seismic coefficient the caller states is Cs. Otherwise
     ASCE 7-16 §12.8.1: Cs = SDS * Ie / R.
     EN 1998-1 §4.3.3.2: Cs = (ag/g * S * 2.5 / q) * lambda  (design spectral
     acceleration on the plateau, as a fraction of g).
     """
     cc = _norm_code(code)
     w = float(seismic_weight_kn)
-    if cc == _EC:
+    if seismic_coefficient is not None:
+        cs = float(seismic_coefficient)
+        std = "supplied seismic coefficient"
+        expr = f"Cs = {cs}"
+    elif cc == _EC:
         cs = (ag_g * soil_factor_s * 2.5 / behaviour_factor_q) * lambda_factor
         std = "EN 1998-1 §4.3.3.2 (plateau Sd, lambda)"
         expr = (f"Cs = (ag/g*S*2.5/q)*lambda = ({ag_g}*{soil_factor_s}*2.5/"
