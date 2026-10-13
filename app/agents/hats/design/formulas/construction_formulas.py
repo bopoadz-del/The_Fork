@@ -511,7 +511,10 @@ def foundation_bearing_pressure(
     column_load_kn: float, soil_bearing_capacity_kn_m2: float,
     foundation_depth_m: float = 0.0,
 ) -> Dict[str, float]:
-    """q = P/A, FOS vs soil capacity."""
+    """q = P/A. The soil value is an allowable pressure, so it already
+    includes the factor of safety. The foundation is adequate when the net
+    pressure does not exceed that allowable (FOS >= 1). Requiring FOS >= 2
+    applies a second factor."""
     if foundation_width_m <= 0 or foundation_length_m <= 0:
         return {"error": "foundation_width_m and foundation_length_m must be > 0"}
     area = foundation_width_m * foundation_length_m
@@ -522,7 +525,7 @@ def foundation_bearing_pressure(
         "bearing_pressure_kn_m2": round(q, 2),
         "net_pressure_kn_m2": round(net_q, 2),
         "fos_against_bearing": round(fos, 2),
-        "bearing_ok": fos >= 2.0,
+        "bearing_ok": fos >= 1.0,
     }
 
 @formula(
