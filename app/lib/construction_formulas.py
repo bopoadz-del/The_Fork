@@ -2524,6 +2524,10 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         for key, val in _bind_sequence_params(fn, positional, name).items():
             if params.get(key) in (None, ""):
                 params[key] = val
+    # The registry's own declarations first: a key written as the input's
+    # label or its name in words, and a figure with a magnitude word.
+    from app.lib import formula_registry as _registry
+    params = _registry.bind_declared(str(name), params)
     # Signature-derived bind (case-insensitive + unit-suffix synonyms).
     # Generalises #636's calculate_evm PMI aliases — do not re-add a
     # name-specific filter here (Agent C / DIR7 share this path).
