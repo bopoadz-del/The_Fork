@@ -281,19 +281,17 @@ class TestMobilizationCostEstimate:
 
 
 class TestModulusOfElasticityConcrete:
-    """Older kg/cm² form Ec = 15_000 √(f'c) with f'c = 10×fck (N/mm²→kg/cm²).
-    ≈ ACI 318 Ec = 4700 √f'c MPa (40 MPa → 29.7 GPa vs 30.0×10⁴ kg/cm²).
+    """kg/cm² form Ec = 15_000 √(f'c) with f'c = 10.197×fck (N/mm²→kg/cm²).
     """
 
     def test_c40(self):
-        # f'c = 400 kg/cm²; √400 = 20; Ec = 15_000×20 = 300_000 kg/cm².
+        # f'c = 40×10.197 kg/cm²; Ec = 15_000×√(that) = 302_941 kg/cm².
         r = _ok("modulus_of_elasticity_concrete", fck_n_mm2=40)
-        assert r["value"] == pytest.approx(300_000.0, abs=0.5)
+        assert r["value"] == pytest.approx(round(15_000 * math.sqrt(40 * 10.197)), abs=0.5)
 
     def test_c25_and_zero(self):
-        # f'c=250; √250=15.8114; Ec=237_171 → rounds to 237171.
         r = _ok("modulus_of_elasticity_concrete", fck_n_mm2=25)
-        assert r["value"] == pytest.approx(round(15_000 * math.sqrt(250)), abs=0.5)
+        assert r["value"] == pytest.approx(round(15_000 * math.sqrt(25 * 10.197)), abs=0.5)
         z = _err("modulus_of_elasticity_concrete", fck_n_mm2=0)
         assert z["needs_input"] is True
         assert "characteristic concrete strength" in z["question"]
