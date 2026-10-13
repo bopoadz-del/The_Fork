@@ -3,6 +3,8 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
+from app.agents.hats.qaqc.results import qaqc_calculator
+from app.agents.hats.qaqc.validation import STANDARD_SPECIMEN_MM
 from app.lib.formula_registry import Param, formula
 import math
 
@@ -13,10 +15,11 @@ import math
     description='Compressive strength from a cylinder test load and diameter.',
     inputs={
         'failure_load_kn': Param('kN', 0, 100000, label='failure load'),
-        'cylinder_diameter_mm': Param('mm', 25, 500, label='cylinder diameter'),
+        'cylinder_diameter_mm': Param('mm', STANDARD_SPECIMEN_MM[0], STANDARD_SPECIMEN_MM[1], label='cylinder diameter'),
     },
     outputs={'compressive_strength_mpa': 'MPa', 'cylinder_area_mm2': 'mm2'},
 )
+@qaqc_calculator
 def concrete_cylinders(failure_load_kn: float, cylinder_diameter_mm: float = 150.0) -> dict:
     """Compressive strength from a cylinder test: f = P / A, A = pi/4 * d^2.
     Standard cylinder is 150 mm dia x 300 mm."""
@@ -46,6 +49,7 @@ def concrete_cylinders(failure_load_kn: float, cylinder_diameter_mm: float = 150
     },
     outputs={'shrinkage_microstrain': '-', 'shrinkage_strain': '-', 'fraction_of_ultimate': '-'},
 )
+@qaqc_calculator
 def concrete_shrinkage(
     time_days: float,
     ultimate_shrinkage_microstrain: float = 780.0,
@@ -81,6 +85,7 @@ def concrete_shrinkage(
     },
     outputs={'days_to_target': 'days', 'target_fraction': '-'},
 )
+@qaqc_calculator
 def concrete_curing_time(
     target_strength_fraction: float = 0.70,
     gain_a: float = 4.0,

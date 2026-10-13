@@ -93,6 +93,31 @@ def card_overlaps(declared: Dict[str, Dict[str, Any]], limit: float = OVERLAP_LI
     return out
 
 
+def call_again_note(refused: Dict[str, Dict[str, Any]]) -> str:
+    """The one reminder a model gets when it answers while a workflow it
+    called is still refusing for a missing input."""
+    parts = []
+    for workflow, refusal in refused.items():
+        inputs = ", ".join(f"{key} ({label})" for key, label in (refusal.get("inputs") or {}).items())
+        parts.append(f"{workflow}: {str(refusal.get('missing') or '').strip()} Inputs: {inputs or 'see its entry'}.")
+    return ("A workflow you called has not run yet, so it has produced nothing. Call run_workflow "
+            "for it again now, with params filled from the user's own words and the documents you read, "
+            "keyed as listed. Do not write the deliverable yourself. " + " ".join(parts))
+
+
+def input_request(workflow: str, refusal: Dict[str, Any]) -> str:
+    """What the user is asked when a workflow cannot run for a missing input:
+    what it produces and what it needs, in its card's words."""
+    card = cards().get(workflow) or {}
+    produces = card.get("produces")
+    needs = card.get("needs")
+    if produces and needs:
+        return (f"To produce {_lower_first(produces)}, I need {_lower_first(needs)}. "
+                "Please provide them, or tell me which project document holds them.")
+    return (f"The {workflow.replace('_', ' ')} workflow could not run: "
+            f"{str(refusal.get('missing') or 'an input it needs is missing').strip()}")
+
+
 def _lower_first(text: str) -> str:
     return text[:1].lower() + text[1:]
 
@@ -197,9 +222,12 @@ async def run(args: Dict[str, Any], user_message: str, project_id: Optional[str]
     if out.get("status") == "error":
         # The workflow ran and refused: an input it needs is missing. Its own
         # words say which; the documents may hold it.
+        card = cards().get(action) or {}
         return {"ok": False, "workflow": action, "missing": out.get("answer"),
+                "needs": card.get("needs"), "inputs": card.get("inputs") or {},
                 "next": "Find these inputs in the project's documents (search them, then read the "
-                        "passages), and call run_workflow again with them in params. Ask the user "
-                        "only for what the documents do not hold."}
+                        "passages), and call run_workflow again with them in params, keyed as "
+                        "listed in inputs. Do not write this workflow's deliverable yourself. "
+                        "Ask the user only for what the documents do not hold."}
     return {"ok": True, "workflow": action, "answer": out.get("answer"),
             "exports": out.get("exports") or []}
