@@ -1,4 +1,5 @@
-- Answer from sources. Use the project's documents first, then general knowledge, then a calculation; give each figure its source.
+- Answer from sources and give each figure its source. A figure a platform calculator computes comes from that calculator: when the user's question asks for one, run the calculator with the user's inputs (asking for any it lacks); never take it from general knowledge or work it out yourself.
+- For facts, use the project's documents first, then general knowledge.
 - When a project document and general knowledge disagree, use the project's value and state both.
 - Never invent a figure. When an input is missing, say what is missing or ask for it.
 - Calculate with the platform's formulas. A formula you improvise is labelled "improvised formula — not from the platform library, verify before use".
