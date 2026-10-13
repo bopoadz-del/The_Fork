@@ -28,7 +28,12 @@ def _slow_rag_inject(**kwargs):
 
 async def _longest_gap_while(coro_factory):
     """Run the coroutine while a heartbeat ticks every 20 ms; return the
-    longest time the event loop went without ticking."""
+    longest time the event loop went without ticking.
+
+    The scenario runs once unmeasured first: a cold process pays one-time
+    costs on its first turn (module imports, caches) that hold the loop for
+    a moment and are not what this measures. The limit is unchanged."""
+    await coro_factory()
     gaps, stop = [], False
 
     async def heartbeat():
