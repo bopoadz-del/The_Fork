@@ -135,3 +135,13 @@ def test_a_rejected_input_ends_the_turn_with_the_calculators_question(monkeypatc
     assert "1500" not in text
     assert "widget width" in text and "?" in text
     assert "widget_width_m" not in text
+
+
+def test_the_standing_rules_send_computed_figures_to_the_calculator():
+    """Lane 4 CORE: a plain-words calculation was answered from general
+    knowledge; the rules ranked general knowledge before a calculation."""
+    from pathlib import Path
+
+    rules = (Path(__file__).resolve().parents[1] / "config" / "driver_standing_rules.md").read_text(encoding="utf-8")
+    assert "A figure a platform calculator computes comes from that calculator" in rules
+    assert "then general knowledge, then a calculation" not in rules
