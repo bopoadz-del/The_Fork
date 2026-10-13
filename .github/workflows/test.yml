@@ -149,12 +149,12 @@ jobs:
         # alone, not beside xdist workers competing for the runner's cores.
         # Coverage appends to the parallel run's and every report is written
         # here, from the whole suite.
-        run: >
-          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120
-          -m "serial and not timing"
-          --cov=app --cov-append --cov-report=term-missing --cov-report=xml
-          --cov-report=json:coverage.json
-          --cov-fail-under=25
+        # Exit 5 is "nothing selected": in a profile where every serial test
+        # is a timing test, they all run in the timing step instead.
+        run: |
+          rc=0
+          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120             -m "serial and not timing"             --cov=app --cov-append --cov-report=term-missing --cov-report=xml             --cov-report=json:coverage.json             --cov-fail-under=25 || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data-serial
@@ -339,7 +339,10 @@ jobs:
 
       - name: Run the serial tests (shard 1, alone)
         if: matrix.shard == 1
-        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m "serial and not timing" --cov=app --cov-append --cov-report=
+        run: |
+          rc=0
+          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m "serial and not timing" --cov=app --cov-append --cov-report= || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data-serial
