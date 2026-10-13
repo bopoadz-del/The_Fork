@@ -16,17 +16,41 @@ def catalogue() -> List[str]:
     return sorted(set(WORKFLOW_REGISTRY) | container_action_names())
 
 
+def _summary(name: str) -> str:
+    """What a workflow produces, in its own words: the first sentence of its
+    docstring (a container action's or a plan builder's)."""
+    from app.core.predefined_reasoning import WORKFLOW_REGISTRY
+
+    fn = WORKFLOW_REGISTRY.get(name)
+    if fn is None:
+        # A construction container action: its method documents it.
+        try:
+            from app.dependencies import get_block_instance
+            fn = getattr(get_block_instance("construction"), name, None)
+        except Exception:  # noqa: BLE001 -- a description is best-effort
+            fn = None
+    doc = " ".join(((getattr(fn, "__doc__", "") or "") if fn else "").split())
+    if doc:
+        return doc.split(". ")[0].rstrip(".")
+    # No docstring: the action's name in words still says what it produces.
+    return name.replace("_", " ").capitalize()
+
+
 def schema(workflows: List[str]) -> Optional[Dict[str, Any]]:
+    """The route catalogue as one tool, every workflow described by what it
+    produces -- so the model can tell a deliverable from a calculation."""
     if not workflows:
         return None
+    lines = [f"- {w}: {_summary(w)}." if _summary(w) else f"- {w}" for w in workflows]
     return {
         "type": "function",
         "function": {
             "name": RUN_WORKFLOW,
-            "description": "Run one of the platform's predefined workflows (deliverables such as a "
-                           "WBS, a resource histogram, an RFI, a daily site report). Use it when the "
-                           "user wants that deliverable; it returns the workflow's answer and any "
-                           "export offers.",
+            "description": "Run one of the platform's predefined workflows. Use one only when the user "
+                           "asks for the deliverable it produces. A figure, duration or programme that a "
+                           "calculator computes from the user's own inputs goes to that calculator, "
+                           "not to a workflow. It returns the workflow's answer and any export offers.\n"
+                           + "\n".join(lines),
             "parameters": {
                 "type": "object",
                 "properties": {
