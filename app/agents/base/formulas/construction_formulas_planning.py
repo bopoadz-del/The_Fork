@@ -95,6 +95,11 @@ _FAMILIES: Dict[str, Dict[str, Any]] = {
     "fraction": {
         "fraction": 1.0, "%": 0.01, "percent": 0.01, "pct": 0.01, "‰": 0.001,
     },
+    # A count of things. "nr" is the mark on a quantity that is not a length,
+    # an area or a mass; "count" is the same unit written as a word.
+    "count": {"nr": 1.0, "count": 1.0},
+    # A pure number whose dimension is named by another input.
+    "ratio": {"ratio": 1.0},
     "labour effort": {
         "man-hour": 1.0, "man-hours": 1.0, "manhour": 1.0, "manhours": 1.0,
         "mh": 1.0, "mhr": 1.0, "mhrs": 1.0, "man-hr": 1.0, "man-hrs": 1.0,
@@ -289,7 +294,8 @@ def text_unit_tokens() -> List[str]:
     are also ordinary words or abbreviations ("in", "d", "s", "l", "mo",
     "c", "cc", "md", "mh", "sf", "cf") are left out: in prose they are not units."""
     skip = {"in", "d", "s", "l", "mo", "c", "cc", "md", "mh", "sf", "cf", "n", "g", "pct",
-            "fraction", "hr", "sec", "min", "mins", "second", "seconds", "minute", "minutes"}
+            "fraction", "count", "ratio", "hr", "sec", "min", "mins", "second", "seconds",
+            "minute", "minutes"}
     tokens = [raw for _f, table in _FAMILIES.items() for raw in table if unit_key(raw) not in skip]
     tokens += ["°c", "°f", "degc", "degf", "min", "hr"]
     tokens += _co2e_forms()
@@ -332,12 +338,12 @@ def text_unit_pattern() -> str:
                  'temperature, percentages, ratios of these (kN/m, kg/m3, price per t), '
                  'and labour effort to working time given the crew size and working hours.'),
     inputs={
-        'value': Param('-', -1e13, 1e13, label='value to convert'),
+        'value': Param('ratio', -1e13, 1e13, label='value to convert'),
         'from_unit': Param('-', label='unit to convert from'),
         'to_unit': Param('-', label='unit to convert to'),
-        'crew_size': Param('-', 1, 100000, label=CONVERSION_CONTEXT['crew_size']),
+        'crew_size': Param('nr', 1, 100000, label=CONVERSION_CONTEXT['crew_size']),
         'hours_per_day': Param('h', 1, 24, label=CONVERSION_CONTEXT['hours_per_day']),
-        'days_per_week': Param('-', 1, 7, label=CONVERSION_CONTEXT['days_per_week']),
+        'days_per_week': Param('nr', 1, 7, label=CONVERSION_CONTEXT['days_per_week']),
     },
     outputs={'value_in': '-', 'from_unit': '-', 'to_unit': '-', 'value_out': '-', 'dimension': '-', 'formula_used': '-'},
 )
