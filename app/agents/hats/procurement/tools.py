@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from app.agents.core.tool_registry import ToolCall, tool
+from app.lib.formula_registry import Param
 
 # A plain number, after thousands separators are removed. Rejects anything
 # float() would also reject, without catching the exception.
@@ -77,7 +78,24 @@ def _normalise_boq_lists(payload: dict) -> None:
         ]
 
 
-@tool("procurement_list_generator", owner="procurement", display_name='Procurement list')
+@tool(
+    "procurement_list_generator",
+    owner="procurement",
+    display_name="Procurement list",
+    params={
+        "boq": Param(label="bill of quantities", kind="list", required=False),
+        "quantities": Param(label="measured quantities", kind="object", required=False),
+        "budget": Param(
+            label="project budget", kind="number", unit="currency",
+            lo=0, hi=1e12, required=False,
+        ),
+        "location": Param(label="site location", kind="text", required=False),
+        "project_type": Param(label="project type", kind="text", required=False),
+        "schedule_start_date": Param(
+            label="schedule start", kind="text", required=False,
+        ),
+    },
+)
 async def handle_procurement_list_generator(call: ToolCall) -> dict:
     """The ``procurement_list_generator`` tool."""
     from app.agents.runtime import (  # noqa: F401 -- runtime helpers, imported at call time

@@ -269,6 +269,26 @@ def test_procurement_list_boq_field_table_does_not_clobber(monkeypatch):
     assert lines["unit_price"] == 6
 
 
+def test_procurement_list_parameters_are_fully_declared():
+    from app.agents.core.tool_registry import get
+    from app.lib.formula_registry import TOOL_KINDS, schema_gaps
+
+    spec = get("procurement_list_generator")
+    assert spec is not None and spec.params
+    for name, param in spec.params.items():
+        assert (param.label or "").strip(), name
+        assert param.kind in TOOL_KINDS, name
+        assert param.required is not None, name
+        if param.kind in ("number", "integer"):
+            assert param.unit and param.unit != "-", name
+            assert param.lo is not None and param.hi is not None, name
+            assert param.lo < param.hi, name
+    assert not [
+        gap for gap in schema_gaps()
+        if gap.startswith("tool:procurement_list_generator")
+    ]
+
+
 def test_synthetic_tool_refuses_without_construction_block():
     r = _call(_agent([]), "procurement_list_generator", {})
     assert r["ok"] is False
