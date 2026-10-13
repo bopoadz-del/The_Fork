@@ -4,12 +4,50 @@ Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
 from app.lib.formula_registry import Param, formula
+import json
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 from app.agents.base.formulas.construction_formulas_shared import (  # noqa: F401
     _is_aci_code,
 )
+
+_SERIES_FIGURE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+
+
+def _series_figures(value: Any) -> List[float]:
+    """Every figure written in a series: a list, a JSON array, or numbers
+    separated by commas or spaces. One figure is one reading."""
+    if value is None:
+        return []
+    if isinstance(value, bool):
+        return []
+    if isinstance(value, (int, float)):
+        return [float(value)]
+    if isinstance(value, (list, tuple)):
+        out: List[float] = []
+        for item in value:
+            out.extend(_series_figures(item))
+        return out
+    text = str(value).strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            obj = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            obj = None
+        if isinstance(obj, (list, tuple)):
+            return _series_figures(obj)
+    return [float(match.group(0)) for match in re.finditer(_SERIES_FIGURE, text)]
+
+
+def _rupture_form(code: Any) -> str:
+    """The ACI form when the code names it; otherwise the default form."""
+    if _is_aci_code(code):
+        return "aci"
+    return "metric_technical"
 
 
 @dataclass
@@ -21,15 +59,16 @@ class FormworkStrikingResult:
     actual_early_strength_n_mm2: float
     based_on: str
     notes: List[str] = field(default_factory=list)
+    verdict: str = ""
 
 @formula(
     owner='qaqc',
     display_name='Formwork striking time',
     description='Earliest formwork striking time from element type, temperature and test strength.',
     inputs={
-        'concrete_strength_7h': Param('-', 0, 150, label='concrete strength at striking'),
-        'design_required_strength': Param('-', 0, 150, label='required striking strength'),
-        'ciria_surface_strength': Param('-', 0, 150, label='CIRIA surface strength'),
+        'concrete_strength_7h': Param('N/mm2', 0, 150, label='cube strength at striking'),
+        'design_required_strength': Param('N/mm2', 0, 150, label='required striking strength'),
+        'ciria_surface_strength': Param('N/mm2', 0, 150, label='CIRIA surface strength'),
         'bs8110_minimum_hours': Param('h', 0, 1000, label='minimum striking time'),
         'proposed_hours': Param('h', 0, 1000, label='proposed striking time'),
     },
@@ -44,15 +83,21 @@ def formwork_striking_time(
 ) -> FormworkStrikingResult:
     """Safe formwork striking per BS 8110 + CIRIA + cube test data."""
     notes = [
-        f"BS 8110: min {bs8110_minimum_hours}h for wall formwork",
-        f"CIRIA: need >= {ciria_surface_strength} N/mm2 for surface protection",
-        f"Design check: required = {design_required_strength} N/mm2",
-        f"Cube test: {concrete_strength_7h} N/mm2 at 7 hours",
+        f"BS 8110 asks for at least {bs8110_minimum_hours} hours for wall formwork.",
+        f"CIRIA asks for a surface strength of at least {ciria_surface_strength} N/mm².",
+        f"The design required strength is {design_required_strength} N/mm².",
+        f"The cube test recorded {concrete_strength_7h} N/mm² at striking.",
     ]
     if concrete_strength_7h >= ciria_surface_strength:
-        notes.append(f"OK - {concrete_strength_7h} >= CIRIA min {ciria_surface_strength}")
+        notes.append(
+            f"The cube strength {concrete_strength_7h} N/mm² meets the CIRIA "
+            f"surface minimum of {ciria_surface_strength} N/mm²."
+        )
     else:
-        notes.append(f"NG - {concrete_strength_7h} < CIRIA min {ciria_surface_strength}")
+        notes.append(
+            f"The cube strength {concrete_strength_7h} N/mm² is below the CIRIA "
+            f"surface minimum of {ciria_surface_strength} N/mm²."
+        )
     strength_ok = (
         concrete_strength_7h >= ciria_surface_strength
         and concrete_strength_7h >= design_required_strength
@@ -61,7 +106,17 @@ def formwork_striking_time(
     recommended_hours = (
         proposed_hours if strength_ok else max(proposed_hours, bs8110_minimum_hours)
     )
-    notes.append(f"Recommended: {recommended_hours}h after pour")
+    if strength_ok:
+        verdict = (
+            f"Formwork may be struck after {recommended_hours} hours; "
+            "the cube strength meets both minima."
+        )
+    else:
+        verdict = (
+            f"Formwork should stay in place for {recommended_hours} hours; "
+            "the cube strength does not yet meet both minima."
+        )
+    notes.append(verdict)
     return FormworkStrikingResult(
         recommended_hours=recommended_hours,
         bs8110_minimum_hours=bs8110_minimum_hours,
@@ -70,6 +125,7 @@ def formwork_striking_time(
         actual_early_strength_n_mm2=concrete_strength_7h,
         based_on=based_on,
         notes=notes,
+        verdict=verdict,
     )
 
 @formula(
@@ -83,9 +139,18 @@ def formwork_striking_time(
 )
 def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     """FM = (cumulative % retained on all sieves) / 100."""
-    if not sieve_retained_percentages:
+    figures = _series_figures(sieve_retained_percentages)
+    if not figures:
         return 0.0
-    return round(sum(sieve_retained_percentages) / 100.0, 2)
+    outside = next((value for value in figures if value < 0.0 or value > 100.0), None)
+    if outside is not None:
+        return {
+            "error": (
+                "Each cumulative percentage retained must be between 0 and 100, "
+                f"not {outside}."
+            ),
+        }
+    return round(sum(figures) / 100.0, 2)
 
 @formula(
     owner='qaqc',
@@ -93,7 +158,7 @@ def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     description='Flexural tensile strength (modulus of rupture) of concrete, to the selected code.',
     inputs={
         'fck_n_mm2': Param('N/mm2', 5, 150, label='characteristic concrete strength', grade='concrete'),
-        'code': Param('-'),
+        'code': Param('-', label='design code'),
     },
     outputs={'fck_n_mm2': 'N/mm2', 'value': 'currency', 'unit': '-', 'modulus_of_rupture_n_mm2': 'N/mm2', 'split_cylinder_aci_n_mm2': 'N/mm2', 'tensile_pct_of_compressive': '-'},
 )
@@ -112,9 +177,11 @@ def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict
     answer with no sign that the code had been ignored.
     """
     # Not _norm_code: it defaults every unknown string to ACI, which would
-    # silently change this function's default form.
+    # silently change this function's default form. An unknown code keeps
+    # the metric-technical form (the signature default).
+    form = _rupture_form(code)
     fck = float(fck_n_mm2)
-    if _is_aci_code(code):
+    if form == "aci":
         fr_mpa = round(0.62 * math.sqrt(fck), 3)
         return {
             "fck_n_mm2": fck_n_mm2,
@@ -152,9 +219,15 @@ def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -
     core_ok = core_temp_c <= 70
     delta_ok = delta_t <= 20
     notes = []
-    if not core_ok: notes.append(f"Core temp {core_temp_c}C > limit 70C")
-    if not delta_ok: notes.append(f"Delta T = {delta_t}C > limit 20C")
-    if core_ok and delta_ok: notes.append(f"OK - core={core_temp_c}C, dT={delta_t}C")
+    if not core_ok:
+        notes.append(f"The core temperature {core_temp_c} °C is above the 70 °C limit.")
+    if not delta_ok:
+        notes.append(f"The core-to-surface difference {delta_t} °C is above the 20 °C limit.")
+    if core_ok and delta_ok:
+        notes.append(
+            f"The core temperature {core_temp_c} °C and the difference {delta_t} °C "
+            "are within the limits."
+        )
     return {
         "core_temp_c": core_temp_c, "surface_temp_c": surface_temp_c,
         "delta_t_c": round(delta_t, 1), "core_ok": core_ok, "delta_ok": delta_ok,
@@ -166,7 +239,7 @@ def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -
     display_name='Post-tensioning grout checks',
     description='Grouting pressure and strength checks for post-tensioning ducts.',
     inputs={
-        'tendon_duct_diameter_mm': Param('mm', 10, 300),
+        'tendon_duct_diameter_mm': Param('mm', 10, 300, label='duct diameter'),
         'required_pressure_n_mm2': Param('N/mm2', 0, 10, label='grout pressure'),
         'strength_28d_n_mm2': Param('N/mm2', 1, 150, label='28-day strength'),
         'strength_7d_n_mm2': Param('N/mm2', 1, 150, label='7-day strength'),
