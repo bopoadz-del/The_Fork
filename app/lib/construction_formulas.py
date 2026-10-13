@@ -1602,7 +1602,12 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
         # (waste_pct, markup_pct) reads a bare 10 as 10% the same way.
         if key in {"bulking_factor", "swell_factor"} or _percent_named_fraction(key, declared.get(key)):
             number = out[key]
-            if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0:
+            # A figure already inside the input's declared range is taken as
+            # given (150% bound as 1.5 on a 0..2 fraction is not divided again).
+            declared_param = spec.params.get(key) if spec else None
+            hi = getattr(declared_param, "hi", None)
+            in_range = hi is not None and isinstance(number, (int, float)) and float(number) <= float(hi)
+            if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0 and not in_range:
                 out[key] = float(number) / 100.0
     return out
 
@@ -1648,6 +1653,20 @@ def _norm_unit_token(raw: Any) -> str:
 # A declared unit that is not written next to the figure. A bare number
 # can bind to one of these, and only when it is the only one still missing.
 _BARE_KINDS = frozenset({"", "-", "currency", "ratio", "count", "no", "nr"})
+
+
+def _same_kind(written: str, declared: str) -> bool:
+    """A written unit measures what the declared unit measures (kg and t
+    are both a mass)."""
+    try:
+        from app.agents.base.formulas.construction_formulas_planning import parse_unit
+
+        a, b = parse_unit(written), parse_unit(declared)
+        if a is not None and b is not None:
+            return a.dimension == b.dimension
+    except Exception:  # noqa: BLE001 -- fall back to the token rule
+        logger.debug("unit dimension lookup failed", exc_info=True)
+    return binding_kind(written) == binding_kind(declared)
 
 
 def binding_kind(unit: str) -> str:
@@ -1725,6 +1744,14 @@ def _text_label_map(fn: Any) -> Dict[str, str]:
         dest = _unique_semantic_dest(_snake_key(incoming), accepted_norm)
         if dest:
             add(incoming, dest)
+    # The registry's declared labels are the words a user reads: each names
+    # its own input, over any word built from a signature name.
+    spec = _formula_spec(fn)
+    for dest, param in (spec.params.items() if spec else ()):
+        key = _norm_label(param.label or "")
+        if key and dest in accepted_list:
+            out[key] = dest
+            ambiguous.discard(key)
     return out
 
 # English dimension adjectives written after the figure ("12 m long",
@@ -1787,6 +1814,39 @@ def _bind_grade_labels(fn: Any, grades: List[Tuple[Tuple[int, int], str, float, 
             found[owners[0]] = formula_registry.grade_value(params[owners[0]], strength, label)
 
 
+#: Currency codes and symbols written in front of a figure ("USD 150000",
+#: "$5,000"). Only these are dropped: three capitals before a number are
+#: otherwise a standard ("ACI 318") or a code and stay as written.
+_CURRENCY_CODES = ("USD", "EUR", "GBP", "SAR", "AED", "QAR", "KWD", "OMR", "BHD", "EGP", "JOD", "INR",
+                   "PKR", "CNY", "JPY", "KRW", "AUD", "NZD", "CAD", "CHF", "SGD", "HKD", "ZAR", "TRY",
+                   "MYR", "IDR", "THB", "PHP", "BRL", "MXN", "SEK", "NOK", "DKK", "PLN", "RUB", "NGN", "KES")
+_CURRENCY_BEFORE_RE = re.compile(r"(?<![A-Za-z])(?:(?:" + "|".join(_CURRENCY_CODES) + r")\s*|[$€£¥]\s*)(?=[+-]?\d)")
+_SPELLED_MAGNITUDE_RE = re.compile(r"(?<![\d.])([+-]?\d[\d,]*(?:\.\d+)?)\s*(thousand|million|billion)\b", re.IGNORECASE)
+_SPELLED_MAGNITUDE = {"thousand": 1e3, "million": 1e6, "billion": 1e9}
+_AREA_WORD_RE = (
+    (re.compile(r"\b(?:sq\.?|square)\s*(?:ft|feet|foot)\b", re.IGNORECASE), "ft2"),
+    (re.compile(r"\b(?:sq\.?|square)\s*(?:m|metres?|meters?)\b", re.IGNORECASE), "m2"),
+)
+
+
+def _normalize_ask(raw: str) -> str:
+    """The ask as the binder reads it: a written minus is a sign, an area
+    written in words is a unit, a spelled-out magnitude is part of its figure
+    (it scales any figure: "1.5 million m"), and a currency code or symbol in
+    front of a figure is dropped. Abbreviated magnitudes (k, mn, bn) are left
+    as written: after an engineering figure "MN" is a meganewton."""
+    text = raw.replace("−", "-")
+    text = re.sub(r"(?i)\bminus\s+(?=\d)", "-", text)
+    for rx, unit in _AREA_WORD_RE:
+        text = rx.sub(unit, text)
+
+    def _scale(m: "re.Match[str]") -> str:
+        value = float(m.group(1).replace(",", "")) * _SPELLED_MAGNITUDE[m.group(2).lower()]
+        return f"{int(value) if value.is_integer() else value}"
+    text = _SPELLED_MAGNITUDE_RE.sub(_scale, text)
+    return _CURRENCY_BEFORE_RE.sub("", text)
+
+
 def extract_calculation_params_from_text(
     fn: Any,
     text: str,
@@ -1798,7 +1858,7 @@ def extract_calculation_params_from_text(
     A bare number binds when exactly one still-missing required input
     declares no unit of its own. Two figures of one kind bind to neither.
     """
-    raw = str(text or "").strip()
+    raw = _normalize_ask(str(text or "").strip())
     if not raw or fn is None:
         return {}
     labels = _text_label_map(fn)
@@ -1840,7 +1900,7 @@ def extract_calculation_params_from_text(
             match = _first_open(rx, raw, _overlaps) or _first_open(glued, raw, _overlaps)
         else:
             rx = re.compile(
-                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+(?:is|of|equals)\s+|\s+)({_TEXT_NUM_RE})"
+                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+(?:is|of|equals|at)\s+|\s+)({_TEXT_NUM_RE})"
                 rf"(?:\s*({_TEXT_UNIT_RE}))?",
                 re.IGNORECASE,
             )
@@ -1880,6 +1940,41 @@ def extract_calculation_params_from_text(
         noun = _DIMENSION_ADJECTIVES[match.group(3).lower()]
         dest = labels.get(_norm_label(noun))
         if not dest or dest in found:
+            continue
+        num = _parse_text_number(match.group(1))
+        if num is None:
+            continue
+        found[dest] = _to_param_unit(num, match.group(2), dest, declared_units.get(dest, ""))
+        consumed.append(match.span())
+
+    # Figure first, label after: "120,000 m3 of concrete", "6,000 t steel".
+    # The label may be written by its last word when no other label ends
+    # with that word ("steel" for structural steel), and the figure's unit
+    # must be the kind of unit that input declares, so a figure never binds
+    # to an input of another kind on a word alone.
+    label_after = re.compile(
+        rf"{number}\s*({_TEXT_UNIT_RE})\s+(?:of\s+)?([A-Za-z][A-Za-z ]{{0,48}})",
+        re.IGNORECASE,
+    )
+
+    def _named(words: List[str]) -> Optional[str]:
+        for n in range(min(3, len(words)), 0, -1):
+            key = _norm_label(" ".join(words[:n]))
+            if key in labels:
+                return labels[key]
+            tails = {dest for lab, dest in labels.items() if lab.endswith("_" + key)}
+            if len(tails) == 1:
+                return tails.pop()
+        return None
+
+    for match in label_after.finditer(raw):
+        if _overlaps(match.span()):
+            continue
+        dest = _named(match.group(3).lower().split())
+        if not dest or dest in found:
+            continue
+        declared = str(declared_units.get(dest) or _unit_from_name(dest) or "")
+        if not declared or not _same_kind(match.group(2), declared):
             continue
         num = _parse_text_number(match.group(1))
         if num is None:
@@ -2363,6 +2458,73 @@ def _with_input_question(env: Dict[str, Any], name: str, missing: List[str]) -> 
     return env
 
 
+_WRITTEN_FIGURE_RE = re.compile(
+    r"(?<![\w.,])(-?\d[\d,]*(?:\.\d+)?)\s*([A-Za-z%/][A-Za-z0-9/%.]*)")
+
+
+def _place_written_figures(name: str, fn: Any, text: str,
+                           params: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+    """Every figure the user wrote with a unit goes to an input, or is asked.
+
+    A figure whose unit measures what exactly one still-open input measures
+    is that input's, required or not. A figure that fits several open
+    inputs, and none of the inputs it fits already holds it, is asked: the
+    calculator never quietly runs on a default the user's figure may have
+    been meant to replace. Returns (params, question or "")."""
+    from app.lib import formula_registry
+    from app.agents.base.formulas.construction_formulas_planning import parse_unit
+
+    spec = formula_registry.get(name)
+    if spec is None or not text:
+        return params, ""
+    inputs = formula_registry.parameters(spec)
+    out = dict(params)
+    unclear: List[Tuple[str, List[str]]] = []
+    for m in _WRITTEN_FIGURE_RE.finditer(_normalize_ask(text)):
+        written = parse_unit(m.group(2))
+        number = _parse_text_number(m.group(1))
+        if written is None or number is None:
+            continue
+        fits = [k for k, p in inputs.items()
+                if (parse_unit(p.unit) is not None and parse_unit(p.unit).dimension == written.dimension)]
+        if not fits:
+            continue  # a figure for something this calculator does not take
+        held = False
+        for key in fits:
+            if out.get(key) in (None, ""):
+                continue
+            conv = formula_registry.convert_figure(inputs[key], number, m.group(2))
+            value = conv.get("value") if isinstance(conv, dict) else None
+            current = out[key] if isinstance(out[key], (list, tuple)) else [out[key]]
+            try:  # held as the input's value, or as one of a series' values
+                if value is not None and any(
+                        abs(float(v) - float(value)) <= 1e-9 * max(1.0, abs(float(value)))
+                        or abs(float(v) - number) <= 1e-9 * max(1.0, abs(number)) for v in current):
+                    held = True
+                    break
+            except (TypeError, ValueError):
+                continue
+        if held:
+            continue
+        open_fits = [k for k in fits if out.get(k) in (None, "")]
+        if len(open_fits) == 1:
+            conv = formula_registry.convert_figure(inputs[open_fits[0]], number, m.group(2))
+            if isinstance(conv, dict) and "value" in conv:
+                out[open_fits[0]] = conv["value"]
+                continue
+        if len(open_fits) > 1:
+            labels = [inputs[k].display_label for k in open_fits]
+            unclear.append((m.group(0).strip(), labels))
+    if not unclear:
+        return out, ""
+    from app.lib.source_labels import _joined
+
+    parts = [f"which input {fig} is: the {_joined(labels).replace(' and ', ' or ')}" for fig, labels in unclear]
+    display = spec.display_name or name
+    return out, (f"The {display} calculator could not tell " + "; and ".join(parts)
+                 + ". Which is it?")
+
+
 def _input_rejection_envelope(
     name: str, rejected: List[Dict[str, Any]], missing: List[str],
 ) -> Dict[str, Any]:
@@ -2404,9 +2566,11 @@ def _call_unit(params: Dict[str, Any]) -> Optional[str]:
 
 
 def _units_written_for(figure: float, text: str) -> List[str]:
-    """Every unit the ask writes for this figure, a chain's shared unit included."""
+    """Every unit the ask writes for this figure, a chain's shared unit included.
+    Read from the ask with its written units normalised ("sq ft" is ft2)."""
     from app.lib.construction_formulas_quantities import dimension_chains
 
+    text = _normalize_ask(text or "")
     found = [unit for chain in dimension_chains(text) for num, unit in chain
              if unit and _numbers_agree(num, figure)]
     written = re.compile(rf"(?<![\w.,])({_TEXT_NUM_RE})\s*({_TEXT_UNIT_RE})(?![A-Za-z0-9])", re.IGNORECASE)
@@ -2574,6 +2738,10 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         for key, val in extract_calculation_params_from_text(fn, text_blob).items():
             if params.get(key) in (None, ""):
                 params[key] = val
+        params, unclear = _place_written_figures(str(name), fn, text_blob, params)
+        if unclear:
+            return {"status": "error", "needs_input": True, "calculation": str(name),
+                    "error": unclear, "question": unclear, "rejected": [], "missing": []}
     # Re-run the symbol alias AFTER both text extractors. The ask sentence rides
     # along in ``text`` / ``query`` and both extractors above pull "E = 200",
     # "I = 2.0e-4" (and a shortened ``c``) back out of it as bare keys — after
