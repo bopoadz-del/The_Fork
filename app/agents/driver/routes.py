@@ -100,7 +100,7 @@ def call_again_note(refused: Dict[str, Dict[str, Any]]) -> str:
     for workflow, refusal in refused.items():
         inputs = ", ".join(f"{key} ({label})" for key, label in (refusal.get("inputs") or {}).items())
         parts.append(f"{workflow}: {str(refusal.get('missing') or '').strip()} Inputs: {inputs or 'see its entry'}.")
-    return ("A workflow you called has not run yet, so its deliverable does not exist. Call run_workflow "
+    return ("A workflow you called has not run yet, so it has produced nothing. Call run_workflow "
             "for it again now, with params filled from the user's own words and the documents you read, "
             "keyed as listed. Do not write the deliverable yourself. " + " ".join(parts))
 
