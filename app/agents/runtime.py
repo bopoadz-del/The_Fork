@@ -9740,6 +9740,8 @@ def _llm_config() -> dict[str, Any]:
             "url": OPENROUTER_API_URL,
             "env_key": "OPENROUTER_API_KEY",
             "default_model": _resolve_openrouter_model(os.getenv("OPENROUTER_MODEL")),
+            # OpenRouter passes a request seed to the models that take one.
+            "supports_seed": True,
         }
     # Default / fallthrough = DeepSeek (primary). No fixed_temperature:
     # DeepSeek accepts the agent's temperature on deepseek-chat and ignores

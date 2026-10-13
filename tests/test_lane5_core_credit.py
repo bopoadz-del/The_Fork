@@ -1,4 +1,4 @@
-"""CORE credit line: display labels and no dumped defaults."""
+"""CORE credit line: display labels, the user's units, and no dumped defaults."""
 from __future__ import annotations
 
 import json
@@ -16,7 +16,12 @@ def _driver_stream(monkeypatch):
 
 
 def _echo_value(messages):
-    payload = json.loads(messages[-1]["content"])
+    try:
+        payload = json.loads(messages[-1]["content"])
+    except ValueError:  # the model reads a calculation as prose: take the run's own result
+        from tests.lane5_core_support import _TOOL_RESULTS
+
+        payload = _TOOL_RESULTS[-1]
     result = payload.get("result") or {}
     inner = result.get("result") if isinstance(result, dict) else None
     value = (inner or {}).get("value")
@@ -65,3 +70,24 @@ def test_the_credit_line_does_not_dump_a_signature_default(monkeypatch):
     text = answer_text(events)
     assert "factor" not in text
     assert "default" not in text.lower()
+
+
+@pytest.mark.xfail(strict=True, reason="CORE: 37 credit echoes converted internal units instead of the user's units")
+def test_the_credit_line_keeps_the_users_unit(monkeypatch):
+    name = "lane5_credit_unit"
+
+    def fn(span_m: float) -> dict:
+        return {"value": span_m}
+
+    user = "calculate the qxnet credit length clear span 10 ft"
+    with registered(name, fn, "Qxnet credit length", {
+        "span_m": Param("m", lo=0, hi=1e6, label="clear span"),
+    }, {"value": "m"}):
+        events, _seen = drive(monkeypatch, user, [
+            {"content": "", "tool_calls": [call("construction_calc", {
+                "calculation": name, "text": user,
+            }, "c1")]},
+            _echo_value,
+        ])
+    text = answer_text(events)
+    assert "10" in text and "ft" in text

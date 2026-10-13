@@ -159,8 +159,16 @@ def _shown_quantity(value: Any, row: Dict[str, Any]) -> str:
     return f"{shown} {unit_words(unit)}"
 
 
+# Unitless kinds of input a range still names, so "0 to 1" reads as a ratio.
+_NAMED_KINDS = frozenset({"ratio", "count", "fraction"})
+
+
 def _accepted_range(row: Dict[str, Any]) -> str:
-    return f"{_shown_quantity(row['lo'], row)} to {_shown_quantity(row['hi'], row)}"
+    shown = f"{_shown_quantity(row['lo'], row)} to {_shown_quantity(row['hi'], row)}"
+    kind = _norm(row.get("unit") or "")
+    if kind in _NAMED_KINDS and not _is_fraction_percent(row):
+        shown += f", as a {kind}"
+    return shown
 
 
 def input_question(calculation: str, rejected: List[Dict[str, Any]],

@@ -58,7 +58,6 @@ def test_a_raw_source_marker_and_a_false_note_do_not_reach_the_answer(monkeypatc
     assert "Unverified attribution removed" not in text
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 31 chunk N visible in the stream before the final rewrite")
 def test_a_chunk_marker_is_not_visible_in_the_stream(monkeypatch):
     events, _seen = drive(
         monkeypatch,
@@ -98,7 +97,6 @@ def test_empty_model_recovery_does_not_name_the_tool_or_dump_a_signature(monkeyp
     assert "12" in text
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 32 a signature the model echoes is not what the user reads")
 def test_an_echoed_signature_is_rewritten_to_the_display_name(monkeypatch):
     name = "lane5_render_sig"
 
@@ -140,7 +138,6 @@ def _search(monkeypatch, hit, answer):
     return run_driver(probe, user_message="State the stored total.")
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 17 answer shows raw project file names instead of a plain title")
 def test_a_source_is_shown_by_its_title(monkeypatch):
     events = _search(monkeypatch, {
         "text": "The stored total is 42 m.",
@@ -156,7 +153,6 @@ def test_a_source_is_shown_by_its_title(monkeypatch):
     assert all("alpha_store_9f3a" not in name for name in names)
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 28 credit line shows underscored KB file ids instead of a plain name")
 def test_a_credit_line_uses_the_plain_name(monkeypatch):
     events = _search(monkeypatch, {
         "text": "The stored total is 42 m.",
