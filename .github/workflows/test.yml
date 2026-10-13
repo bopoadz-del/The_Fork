@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.diff.outputs.docs_only }}
+      scope: ${{ steps.scope.outputs.scope }}
+      tests: ${{ steps.scope.outputs.tests }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,6 +41,20 @@ jobs:
           else
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           fi
+      # Path-scoped tests: a pull request entirely inside one owner package
+      # runs that package's tests plus the driver smoke test; anything else,
+      # and every push to main, runs the full suite (scripts/ci_scope.py).
+      - id: scope
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python3 scripts/ci_scope.py "$BASE" "$HEAD" >> "$GITHUB_OUTPUT"
+          else
+            echo "scope=full" >> "$GITHUB_OUTPUT"; echo "tests=" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
 
   test:
     needs: changes
@@ -128,7 +144,8 @@ jobs:
         # pytest-cov merges the workers' coverage, so the gates below read
         # the same reports as before.
         run: >
-          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120
+          pytest ${{ needs.changes.outputs.scope == 'scoped' && needs.changes.outputs.tests || 'tests/' }}
+          --ignore=tests/browser -v --tb=short --timeout=120
           -n auto --dist loadfile -m "not serial"
           --cov=app --cov-report=
         env:
@@ -145,6 +162,7 @@ jobs:
           RAG_EMBEDDING_MODEL: fake
 
       - name: Run the serial tests (timing under their own load)
+        if: needs.changes.outputs.scope != 'scoped'
         # These measure the event loop under a simulated load, so they run
         # alone, not beside xdist workers competing for the runner's cores.
         # Coverage appends to the parallel run's and every report is written
@@ -174,7 +192,7 @@ jobs:
         # a build that is behaving correctly. The production-like profile is
         # the one that mirrors the deployed configuration, so it is the one
         # whose dead functions actually matter.
-        if: matrix.cerebrum_virgin == 'false'
+        if: needs.changes.outputs.scope != 'scoped' && (matrix.cerebrum_virgin == 'false')
         run: python scripts/audit_dead_functions.py coverage.json
 
       - name: Mutation probes (decision code)
@@ -185,7 +203,7 @@ jobs:
         # Production-like profile only, same reason the dead-function audit is:
         # the virgin profile does not load the construction container, so some
         # targets are not importable there.
-        if: matrix.cerebrum_virgin == 'false'
+        if: needs.changes.outputs.scope != 'scoped' && (matrix.cerebrum_virgin == 'false')
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/mutation-data
@@ -205,7 +223,7 @@ jobs:
         # the rollout plan this gate is enforced — a PR whose newly-changed
         # lines are <50% covered fails, keeping new code from ratcheting
         # coverage down during the pilot.
-        if: github.event_name == 'pull_request'
+        if: needs.changes.outputs.scope != 'scoped' && (github.event_name == 'pull_request')
         continue-on-error: false
         run: |
           # The summary must print even when the gate FAILS -- that is the
@@ -245,7 +263,7 @@ jobs:
     # this replaces -- none skipped, none optional.
     name: test-postgres (shard ${{ matrix.shard }}/4)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.scope != 'scoped'
     runs-on: ubuntu-latest
     # Same hard cap as the matrix job. This job was the 6h0m zombie in every
     # stuck run on 2026-07-05 (hung inside "Run tests (PostgreSQL)").
@@ -356,7 +374,7 @@ jobs:
     name: test-postgres
     runs-on: ubuntu-latest
     needs: [changes, test-postgres-shard]
-    if: always() && needs.changes.outputs.docs_only != 'true'
+    if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.scope != 'scoped'
     timeout-minutes: 10
     steps:
       - name: Every shard passed
