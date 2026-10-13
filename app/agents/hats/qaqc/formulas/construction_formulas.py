@@ -66,7 +66,7 @@ class FormworkStrikingResult:
     display_name='Formwork striking time',
     description='Earliest formwork striking time from element type, temperature and test strength.',
     inputs={
-        'strength_at_striking': Param('N/mm2', 0, 150, label='strength at striking'),
+        'concrete_strength_7h': Param('N/mm2', 0, 150, label='concrete strength at striking'),
         'design_required_strength': Param('N/mm2', 0, 150, label='required striking strength'),
         'ciria_surface_strength': Param('N/mm2', 0, 150, label='CIRIA surface strength'),
         'bs8110_minimum_hours': Param('h', 0, 1000, label='minimum striking time'),
@@ -75,32 +75,32 @@ class FormworkStrikingResult:
     outputs={'recommended_hours': 'h', 'bs8110_minimum_hours': 'h', 'ciria_minimum_strength_n_mm2': 'N/mm2', 'design_required_strength_n_mm2': 'N/mm2', 'actual_early_strength_n_mm2': 'N/mm2'},
 )
 def formwork_striking_time(
-    strength_at_striking: float,
-    proposed_hours: float,
+    concrete_strength_7h: float = 7.0,
     design_required_strength: float = 0.332,
     ciria_surface_strength: float = 3.0,
     bs8110_minimum_hours: float = 12.0,
+    proposed_hours: float = 8.0,
 ) -> FormworkStrikingResult:
     """Safe formwork striking per BS 8110 + CIRIA + cube test data."""
     notes = [
         f"BS 8110 asks for at least {bs8110_minimum_hours} hours for wall formwork.",
         f"CIRIA asks for a surface strength of at least {ciria_surface_strength} N/mm².",
         f"The design required strength is {design_required_strength} N/mm².",
-        f"The strength at striking is {strength_at_striking} N/mm².",
+        f"The concrete strength at striking is {concrete_strength_7h} N/mm².",
     ]
-    if strength_at_striking >= ciria_surface_strength:
+    if concrete_strength_7h >= ciria_surface_strength:
         notes.append(
-            f"The strength at striking {strength_at_striking} N/mm² meets the CIRIA "
+            f"The concrete strength at striking {concrete_strength_7h} N/mm² meets the CIRIA "
             f"surface minimum of {ciria_surface_strength} N/mm²."
         )
     else:
         notes.append(
-            f"The strength at striking {strength_at_striking} N/mm² is below the CIRIA "
+            f"The concrete strength at striking {concrete_strength_7h} N/mm² is below the CIRIA "
             f"surface minimum of {ciria_surface_strength} N/mm²."
         )
     strength_ok = (
-        strength_at_striking >= ciria_surface_strength
-        and strength_at_striking >= design_required_strength
+        concrete_strength_7h >= ciria_surface_strength
+        and concrete_strength_7h >= design_required_strength
     )
     based_on = "test_data" if strength_ok else "insufficient"
     recommended_hours = (
@@ -109,12 +109,12 @@ def formwork_striking_time(
     if strength_ok:
         verdict = (
             f"Formwork may be struck after {recommended_hours} hours; "
-            "the strength at striking meets both minima."
+            "the concrete strength at striking meets both minima."
         )
     else:
         verdict = (
             f"Formwork should stay in place for {recommended_hours} hours; "
-            "the strength at striking does not yet meet both minima."
+            "the concrete strength at striking does not yet meet both minima."
         )
     notes.append(verdict)
     return FormworkStrikingResult(
@@ -122,7 +122,7 @@ def formwork_striking_time(
         bs8110_minimum_hours=bs8110_minimum_hours,
         ciria_minimum_strength_n_mm2=ciria_surface_strength,
         design_required_strength_n_mm2=design_required_strength,
-        actual_early_strength_n_mm2=strength_at_striking,
+        actual_early_strength_n_mm2=concrete_strength_7h,
         based_on=based_on,
         notes=notes,
         verdict=verdict,

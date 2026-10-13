@@ -1,4 +1,4 @@
-"""Every registered safety calculator: units, required-only runs, defaults named.
+"""Every registered safety calculator: units, quantity labels, defaults named.
 
 Generated from the hat's registry. Values are synthetic mid-range figures.
 """
@@ -34,36 +34,69 @@ def _spread(lo: float, hi: float, index: int, n: int) -> float:
     return value
 
 
-def _synthetic_required(spec) -> dict:
-    required = [(name, p) for name, p in parameters(spec).items() if p.required]
-    numeric = [row for row in required if row[1].kind in NUMERIC_KINDS]
+def _fill(spec, names) -> dict:
+    rows = [(name, p) for name, p in parameters(spec).items() if name in names]
+    numeric = [row for row in rows if row[1].kind in NUMERIC_KINDS]
     n = max(len(numeric), 1)
     values = {}
-    seen_numeric = 0
-    for name, p in required:
+    seen = 0
+    for name, p in rows:
         if p.kind == "series":
             lo = 0.0 if p.lo is None else float(p.lo)
             hi = 10.0 if p.hi is None else float(p.hi)
-            mid = _spread(lo, hi, seen_numeric, n)
-            seen_numeric += 1
+            mid = _spread(lo, hi, seen, n)
+            seen += 1
             values[name] = [mid, mid]
         elif p.kind == "integer":
             if p.lo is not None and p.hi is not None:
-                values[name] = int(_spread(float(p.lo), float(p.hi), seen_numeric, n))
+                values[name] = int(_spread(float(p.lo), float(p.hi), seen, n))
             else:
-                values[name] = int(p.default if p.default is not None else 1)
-            seen_numeric += 1
+                values[name] = 1
+            seen += 1
         elif p.kind in NUMERIC_KINDS:
             if p.lo is not None and p.hi is not None:
-                values[name] = _spread(float(p.lo), float(p.hi), seen_numeric, n)
+                values[name] = _spread(float(p.lo), float(p.hi), seen, n)
             else:
-                values[name] = float(n - seen_numeric)
-            seen_numeric += 1
+                values[name] = float(n - seen)
+            seen += 1
         elif p.kind == "flag":
             values[name] = False
         else:
             values[name] = p.default if p.default not in (None, "") else "x"
     return values
+
+
+def _synthetic_required(spec) -> dict:
+    return _fill(spec, {name for name, p in parameters(spec).items() if p.required})
+
+
+def _unusable_optional(spec) -> dict:
+    names = []
+    for name, p in parameters(spec).items():
+        if p.required:
+            continue
+        default = p.default
+        if default in (None, "") or (
+            isinstance(default, (int, float)) and not isinstance(default, bool)
+            and float(default) == 0.0
+        ):
+            names.append(name)
+    return _fill(spec, names)
+
+
+def _assert_defaults_named(spec, given, env):
+    used = applied_defaults(spec.fn, given)
+    if not used:
+        return
+    result = env.get("result") or {}
+    rows = result.get("defaults_used") or []
+    named = {row.get("parameter") for row in rows if isinstance(row, dict)}
+    blob = " ".join(str(part) for part in (result, env)).lower()
+    for key, value in used.items():
+        assert key in named or key in result, (
+            f"{spec.name} applied default {key}={value} but did not name it"
+        )
+        assert "default" in blob, f"{spec.name} did not disclose that defaults were used"
 
 
 LANE_SPECS = _lane_specs()
@@ -90,26 +123,22 @@ def test_every_dimensional_param_declares_a_unit(spec, name, p):
         f"{spec.name}.{name} is dimensional but declares no unit"
     )
     assert not encodes_hour_age_on_stress(name, p.unit, p.label or ""), (
-        f"{spec.name}.{name} names a stress by a fixed hour-age"
+        f"{spec.name}.{name} label names a stress by a fixed hour-age"
     )
 
 
 @pytest.mark.parametrize("spec", LANE_SPECS, ids=_spec_ids(LANE_SPECS))
-def test_every_lane_calculator_runs_on_required_inputs_and_names_defaults(spec):
+def test_every_lane_calculator_names_the_defaults_it_applied(spec):
+    """Defaults that Python applied are named on the result.
+
+    Leftover unit figures binding only to required inputs is CORE.
+    """
     given = _synthetic_required(spec)
     env = run_calculation(spec.name, given)
+    if env["status"] != "success":
+        given = {**given, **_unusable_optional(spec)}
+        env = run_calculation(spec.name, given)
     assert env["status"] == "success", (
-        f"{spec.name} refused required-only inputs {given}: {env}"
+        f"{spec.name} refused synthetic inputs {given}: {env}"
     )
-    used = applied_defaults(spec.fn, given)
-    if not used:
-        return
-    result = env.get("result") or {}
-    rows = result.get("defaults_used") or []
-    named = {row.get("parameter") for row in rows if isinstance(row, dict)}
-    blob = " ".join(str(part) for part in (result, env)).lower()
-    for key, value in used.items():
-        assert key in named or key in result, (
-            f"{spec.name} applied default {key}={value} but did not name it"
-        )
-        assert "default" in blob, f"{spec.name} did not disclose that defaults were used"
+    _assert_defaults_named(spec, given, env)

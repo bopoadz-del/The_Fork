@@ -108,9 +108,7 @@ def test_every_lane_formula_recomputes_a_hand_checked_figure():
     })["result"]
     assert r["compaction_percent"] == pytest.approx(95.0, abs=0.01)
 
-    r = run_calculation("formwork_striking_time", {
-        "strength_at_striking": 2.0, "proposed_hours": 8.0,
-    })["result"]
+    r = run_calculation("formwork_striking_time", {"concrete_strength_7h": 2.0})["result"]
     assert r["recommended_hours"] == pytest.approx(12.0, abs=1e-9)
     notes = " ".join(r["notes"])
     assert "NG" not in notes

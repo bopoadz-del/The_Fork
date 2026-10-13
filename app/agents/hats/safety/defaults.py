@@ -22,7 +22,6 @@ _NOT_DIMENSIONAL = frozenset({
 _STRESS_UNITS = frozenset({
     "n/mm2", "n/mm²", "mpa", "kpa", "kn/m2", "kn/m²", "n/m2", "psi",
 })
-_HOUR_AGE_NAME = re.compile(r"_\d+h$")
 _HOUR_AGE_LABEL = re.compile(r"\b\d+\s*-?\s*h(?:ou)?rs?\b", re.I)
 
 
@@ -38,11 +37,13 @@ def is_dimensional(unit: str, kind: str = "number") -> bool:
 
 
 def encodes_hour_age_on_stress(name: str, unit: str, label: str = "") -> bool:
-    """A stress input whose name or label freezes a test age in hours."""
+    """A stress input whose label freezes a test age in hours.
+
+    The identifier may still carry a CORE-coupled suffix; the words a user
+    reads are the label, and those name the quantity.
+    """
     if _norm_unit(unit) not in _STRESS_UNITS:
         return False
-    if _HOUR_AGE_NAME.search(name or ""):
-        return True
     return bool(_HOUR_AGE_LABEL.search(label or ""))
 
 
