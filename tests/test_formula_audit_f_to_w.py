@@ -136,12 +136,12 @@ class TestFormworkStrikingTime:
 
 class TestFoundationBearingPressure:
     """q = P/A (kN/m²). Net = q − γD with γ = 18 kN/m³ (unsourced default).
-    FOS = q_allow / q_net; bearing_ok iff FOS ≥ 2.
+    The soil value is allowable, so bearing_ok iff FOS ≥ 1.
     """
 
     def test_3m_square_2000kn(self):
         # A = 3×3 = 9 m²; q = 2000/9 = 222.222… kN/m²; D=0 → net=q;
-        # FOS = 300/222.222 = 1.35; 1.35 < 2 → not OK.
+        # FOS = 300/222.222 = 1.35 ≥ 1 → within the allowable.
         r = _ok(
             "foundation_bearing_pressure",
             foundation_width_m=3, foundation_length_m=3,
@@ -150,11 +150,11 @@ class TestFoundationBearingPressure:
         assert r["bearing_pressure_kn_m2"] == pytest.approx(222.22, abs=0.01)
         assert r["net_pressure_kn_m2"] == pytest.approx(222.22, abs=0.01)
         assert r["fos_against_bearing"] == pytest.approx(1.35, abs=0.01)
-        assert r["bearing_ok"] is False
+        assert r["bearing_ok"] is True
 
     def test_overburden_reduces_net_pressure(self):
         # D=2 m → surcharge = 2×18 = 36; net = 222.22−36 = 186.22;
-        # FOS = 300/186.22 = 1.611.
+        # FOS = 300/186.22 = 1.611 ≥ 1.
         r = _ok(
             "foundation_bearing_pressure",
             foundation_width_m=3, foundation_length_m=3,
@@ -163,7 +163,7 @@ class TestFoundationBearingPressure:
         )
         assert r["net_pressure_kn_m2"] == pytest.approx(186.22, abs=0.01)
         assert r["fos_against_bearing"] == pytest.approx(1.61, abs=0.01)
-        assert r["bearing_ok"] is False
+        assert r["bearing_ok"] is True
 
     def test_zero_width_is_error(self):
         _err(

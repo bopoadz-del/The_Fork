@@ -550,7 +550,10 @@ def foundation_bearing_pressure(
     column_load_kn: float, soil_bearing_capacity_kn_m2: float,
     foundation_depth_m: float = 0.0,
 ) -> Dict[str, float]:
-    """q = P/A, FOS vs soil capacity."""
+    """q = P/A. The soil value is an allowable pressure, so it already
+    includes the factor of safety. The foundation is adequate when the net
+    pressure does not exceed that allowable (FOS >= 1). Requiring FOS >= 2
+    applies a second factor."""
     if foundation_width_m <= 0 or foundation_length_m <= 0:
         return {"error": "foundation_width_m and foundation_length_m must be > 0"}
     area = foundation_width_m * foundation_length_m
@@ -561,20 +564,24 @@ def foundation_bearing_pressure(
         "bearing_pressure_kn_m2": round(q, 2),
         "net_pressure_kn_m2": round(net_q, 2),
         "fos_against_bearing": round(fos, 2),
-        "bearing_ok": fos >= 2.0,
+        "bearing_ok": fos >= 1.0,
     }
 
 @formula(
     owner='design',
-    display_name='Precast beam lifting check',
-    description='Crane load for lifting a precast beam: beam plus rigging with a dynamic factor, against crane capacity.',
+    display_name='Precast member erection demand',
+    description=(
+        'Erection demand of a precast member: member weight plus rigging, '
+        'times the dynamic allowance, as a share of the allowable pick weight '
+        'at the stated radius.'
+    ),
     inputs={
-        'beam_weight_t': Param('t', 0, 1000),
-        'beam_length_m': Param('m', 0, 200),
-        'crane_capacity_t': Param('t', 0, 10000),
-        'lift_radius_m': Param('m', 0, 200),
-        'rigging_weight_t': Param('t', 0, 500),
-        'dynamic_factor': Param('-', 1, 3),
+        'beam_weight_t': Param('t', 0, 1000, label='member weight'),
+        'beam_length_m': Param('m', 0, 200, label='member length'),
+        'crane_capacity_t': Param('t', 0, 10000, label='allowable pick weight'),
+        'lift_radius_m': Param('m', 0, 200, label='pick radius'),
+        'rigging_weight_t': Param('t', 0, 500, label='rigging weight'),
+        'dynamic_factor': Param('-', 1, 3, label='dynamic allowance'),
     },
     outputs={'effective_lift_weight_t': 't', 'utilization_pct': '%', 'is_safe': '-'},
 )
@@ -583,7 +590,7 @@ def precast_beam_erection_check(
     crane_capacity_t: float, lift_radius_m: float,
     rigging_weight_t: float = 0.5, dynamic_factor: float = 1.25,
 ) -> Dict[str, Any]:
-    """Crane lift check: effective = (beam + rigging) x 1.25 dynamic."""
+    """Member weight plus rigging, times the dynamic allowance."""
     effective = (beam_weight_t + rigging_weight_t) * dynamic_factor
     util = effective / crane_capacity_t * 100
     return {

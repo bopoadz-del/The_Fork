@@ -106,25 +106,82 @@ def steel_tension_capacity(
         ),
     }
 
+# ISO 898-1 coarse-pitch tensile stress areas, mm². A nominal size is this
+# area; a caller who already has an area passes that number.
+_ISO_TENSILE_STRESS_AREA_MM2 = {
+    "M10": 58.0, "M12": 84.3, "M14": 115.0, "M16": 157.0, "M18": 192.0,
+    "M20": 245.0, "M22": 303.0, "M24": 353.0, "M27": 459.0, "M30": 561.0,
+    "M33": 694.0, "M36": 817.0, "M39": 976.0, "M42": 1120.0, "M45": 1300.0,
+    "M48": 1470.0, "M52": 1760.0, "M56": 2030.0, "M60": 2360.0, "M64": 2680.0,
+}
+# ISO 898-1 nominal tensile strength, and EN 1993-1-8 Table 3.4 αv.
+_BOLT_FUB_MPA = {
+    "4.6": 400.0, "4.8": 400.0, "5.6": 500.0, "5.8": 500.0,
+    "6.8": 600.0, "8.8": 800.0, "10.9": 1000.0, "12.9": 1200.0,
+}
+_BOLT_ALPHA_V = {
+    "4.6": 0.6, "5.6": 0.6, "8.8": 0.6,
+    "4.8": 0.5, "5.8": 0.5, "6.8": 0.5, "10.9": 0.5, "12.9": 0.5,
+}
+
+
+def _bolt_tensile_area_mm2(value):
+    """Tensile stress area (mm²) from a number or a nominal metric designation."""
+    if isinstance(value, str):
+        token = "".join(value.split()).upper()
+        if token in _ISO_TENSILE_STRESS_AREA_MM2:
+            return _ISO_TENSILE_STRESS_AREA_MM2[token], None
+        try:
+            area = float(token)
+        except ValueError:
+            return None, (
+                f"Bolt size {value} is not a tensile stress area or a "
+                "nominal metric size."
+            )
+    else:
+        try:
+            area = float(value)
+        except (TypeError, ValueError):
+            return None, (
+                "bolt_area_mm2 must be a tensile stress area or a "
+                "nominal metric size."
+            )
+    return area, None
+
+
+def _bolt_class_key(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return f"{float(value):.1f}"
+    text = str(value).strip().lower()
+    try:
+        return f"{float(text):.1f}"
+    except ValueError:
+        return text
+
+
 @formula(
     owner='design',
     display_name='Bolt shear capacity',
-    description='Design shear capacity of a bolt over its shear planes, to the selected code.',
+    description='Design shear capacity of a bolt over its shear planes, to the selected code. A nominal metric size is the tensile stress area.',
     inputs={
         'bolt_area_mm2': Param('mm2', 1, 20000, label='bolt area'),
         'shear_strength_mpa': Param('MPa', 10, 2000, label='bolt shear strength'),
         'n_shear_planes': Param('-', 1, 4, label='number of shear planes'),
         'code': Param('-'),
         'alpha_v': Param('-', 0, 1, label='shear coefficient'),
+        'grade': Param('-', label='bolt property class'),
     },
     outputs={'capacity_kn': 'kN', 'n_shear_planes': '-'},
 )
 def bolt_shear_capacity(
-    bolt_area_mm2: float,
+    bolt_area_mm2: str,
     shear_strength_mpa: float = 372.0,
     n_shear_planes: int = 1,
     code: str = _ACI,
     alpha_v: float = 0.6,
+    grade: str = None,
 ) -> dict:
     """Design shear strength of ONE bolt (all shear planes).
 
@@ -135,22 +192,34 @@ def bolt_shear_capacity(
     ``shear_strength_mpa`` carries fub for the Eurocode branch.
     """
     cc = _norm_code(code)
-    ab = float(bolt_area_mm2)
+    ab, area_error = _bolt_tensile_area_mm2(bolt_area_mm2)
+    if area_error:
+        return {"error": area_error}
     n = int(n_shear_planes)
     if ab <= 0:
         return {"error": "bolt_area_mm2 must be > 0."}
     if n <= 0:
         return {"error": "n_shear_planes must be >= 1."}
-    if shear_strength_mpa <= 0:
+    fub = float(shear_strength_mpa)
+    alpha = float(alpha_v)
+    if fub <= 0:
         return {"error": "shear_strength_mpa must be > 0."}
+    if grade not in (None, "") and cc == _EC:
+        key = _bolt_class_key(grade)
+        if key not in _BOLT_FUB_MPA:
+            return {"error": f"Bolt property class {grade} is not tabulated."}
+        if shear_strength_mpa == 372.0:
+            fub = _BOLT_FUB_MPA[key]
+        if alpha_v == 0.6:
+            alpha = _BOLT_ALPHA_V[key]
     if cc == _EC:
-        cap_n = alpha_v * shear_strength_mpa * ab * n / 1.25
+        cap_n = alpha * fub * ab * n / 1.25
         std = "EN 1993-1-8 Table 3.4 (gM2=1.25)"
-        expr = f"alpha_v*fub*A*n/gM2 = {alpha_v}*{shear_strength_mpa}*{ab}*{n}/1.25"
+        expr = f"alpha_v*fub*A*n/gM2 = {alpha}*{fub}*{ab}*{n}/1.25"
     else:
-        cap_n = 0.75 * shear_strength_mpa * ab * n
+        cap_n = 0.75 * fub * ab * n
         std = "AISC 360-16 §J3.6 (LRFD, phi=0.75)"
-        expr = f"0.75*Fnv*Ab*n = 0.75*{shear_strength_mpa}*{ab}*{n}"
+        expr = f"0.75*Fnv*Ab*n = 0.75*{fub}*{ab}*{n}"
     cap_kn = cap_n / 1000.0
     return {
         "code": cc,

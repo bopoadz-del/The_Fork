@@ -197,9 +197,12 @@ async def run(args: Dict[str, Any], user_message: str, project_id: Optional[str]
     if out.get("status") == "error":
         # The workflow ran and refused: an input it needs is missing. Its own
         # words say which; the documents may hold it.
+        card = cards().get(action) or {}
         return {"ok": False, "workflow": action, "missing": out.get("answer"),
+                "needs": card.get("needs"), "inputs": card.get("inputs") or {},
                 "next": "Find these inputs in the project's documents (search them, then read the "
-                        "passages), and call run_workflow again with them in params. Ask the user "
-                        "only for what the documents do not hold."}
+                        "passages), and call run_workflow again with them in params, keyed as "
+                        "listed in inputs. Do not write this workflow's deliverable yourself. "
+                        "Ask the user only for what the documents do not hold."}
     return {"ok": True, "workflow": action, "answer": out.get("answer"),
             "exports": out.get("exports") or []}
