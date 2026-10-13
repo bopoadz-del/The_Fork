@@ -14,7 +14,7 @@ _LOD_CLASH_MM = {100: None, 200: 50.0, 300: 25.0, 350: 12.0, 400: 6.0, 500: 3.0}
     display_name='BIM clash tolerance',
     description="Clash tolerance for a model's level of development.",
     inputs={
-        'lod': Param('-', 100, 500, label='level of development (LOD)'),
+        'lod': Param('-', 100, 500, label='level of development'),
     },
     outputs={'lod': '-', 'clash_tolerance_mm': 'mm'},
 )
@@ -23,7 +23,10 @@ def bim_clash_tolerance(lod: int = 350) -> dict:
     BEP convention, NOT a standard constant — confirm in the project BEP."""
     if int(lod) not in _LOD_CLASH_MM:
         return {
-            "error": f"Unknown LOD {lod}. Known values: {sorted(_LOD_CLASH_MM)}.",
+            "error": (
+                "The level of development must be 100, 200, 300, 350, 400 or 500, "
+                f"not {lod}."
+            ),
         }
     tol = _LOD_CLASH_MM.get(int(lod))
     return {
@@ -41,8 +44,8 @@ def bim_clash_tolerance(lod: int = 350) -> dict:
     display_name='Laser scan accuracy at range',
     description="A scanner's stated ranging accuracy scaled to a working range, for comparison with the tolerance.",
     inputs={
-        'range_m': Param('m', 0, 2000, label='scan range'),
-        'accuracy_at_10m_mm': Param('mm', 0, 100, label='scanner accuracy at 10 m'),
+        'range_m': Param('m', 0, 2000, label='distance'),
+        'accuracy_at_10m_mm': Param('mm', 0, 100, label='stated accuracy'),
     },
     outputs={'range_m': 'm', 'estimated_accuracy_mm': 'mm'},
 )
