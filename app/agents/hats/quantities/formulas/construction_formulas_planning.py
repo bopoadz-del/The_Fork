@@ -88,8 +88,10 @@ def concrete_mix_proportions(
     """Concrete mix by caller-supplied cement:sand:aggregate proportions.
 
     Dry Volume = Wet Volume × dry_volume_factor (default 1.54 from PE sheets).
-    Each constituent = Dry Volume × (parts / sum of parts). Refuses when wet
-    volume or any mix part is missing — does not invent a design mix.
+    ``waste_factor`` is a fraction from 0 to 1, so dry volume is increased by
+    that share: ×(1 + waste_factor). Each constituent = Dry Volume × (parts /
+    sum of parts). Refuses when wet volume or any mix part is missing — does
+    not invent a design mix.
     """
     missing = [
         n for n, v in (
@@ -120,7 +122,7 @@ def concrete_mix_proportions(
         }
     dry = wet * float(dry_volume_factor)
     if waste_factor is not None:
-        dry = dry * float(waste_factor)
+        dry = dry * (1.0 + float(waste_factor))
     total_parts = c + s + a
     cement_vol = dry * (c / total_parts)
     sand_vol = dry * (s / total_parts)
@@ -130,7 +132,7 @@ def concrete_mix_proportions(
         "Constituent = Dry Volume × (parts / total parts)",
     ]
     if waste_factor is not None:
-        formulas.append(f"Dry Volume × waste_factor ({waste_factor})")
+        formulas.append(f"Dry Volume × (1 + waste_factor) ({waste_factor})")
     return {
         "wet_volume": wet,
         "dry_volume": round(dry, 6),
