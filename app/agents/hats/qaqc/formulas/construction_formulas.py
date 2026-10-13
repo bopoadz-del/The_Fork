@@ -67,7 +67,7 @@ class FormworkStrikingResult:
     display_name='Formwork striking time',
     description='Earliest formwork striking time from element type, temperature and test strength.',
     inputs={
-        'concrete_strength_7h': Param('N/mm2', 0, 150, label='cube strength at striking'),
+        'concrete_strength_7h': Param('N/mm2', 0, 150, label='concrete strength at striking'),
         'design_required_strength': Param('N/mm2', 0, 150, label='required striking strength'),
         'ciria_surface_strength': Param('N/mm2', 0, 150, label='CIRIA surface strength'),
         'bs8110_minimum_hours': Param('h', 0, 1000, label='minimum striking time'),
@@ -88,16 +88,16 @@ def formwork_striking_time(
         f"BS 8110 asks for at least {bs8110_minimum_hours} hours for wall formwork.",
         f"CIRIA asks for a surface strength of at least {ciria_surface_strength} N/mm².",
         f"The design required strength is {design_required_strength} N/mm².",
-        f"The cube test recorded {concrete_strength_7h} N/mm² at striking.",
+        f"The concrete strength at striking is {concrete_strength_7h} N/mm².",
     ]
     if concrete_strength_7h >= ciria_surface_strength:
         notes.append(
-            f"The cube strength {concrete_strength_7h} N/mm² meets the CIRIA "
+            f"The concrete strength at striking {concrete_strength_7h} N/mm² meets the CIRIA "
             f"surface minimum of {ciria_surface_strength} N/mm²."
         )
     else:
         notes.append(
-            f"The cube strength {concrete_strength_7h} N/mm² is below the CIRIA "
+            f"The concrete strength at striking {concrete_strength_7h} N/mm² is below the CIRIA "
             f"surface minimum of {ciria_surface_strength} N/mm²."
         )
     strength_ok = (
@@ -111,12 +111,12 @@ def formwork_striking_time(
     if strength_ok:
         verdict = (
             f"Formwork may be struck after {recommended_hours} hours; "
-            "the cube strength meets both minima."
+            "the concrete strength at striking meets both minima."
         )
     else:
         verdict = (
             f"Formwork should stay in place for {recommended_hours} hours; "
-            "the cube strength does not yet meet both minima."
+            "the concrete strength at striking does not yet meet both minima."
         )
     notes.append(verdict)
     return FormworkStrikingResult(
