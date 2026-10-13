@@ -180,3 +180,56 @@ def test_synthetic_tool_refuses_without_construction_block():
     r = _call(_agent([]), "procurement_list_generator", {})
     assert r["ok"] is False
     assert "allowed_blocks" in (r["result"].get("error") or "").lower()
+
+
+# ── Tender evaluation keys ──────────────────────────────────────────────────
+
+
+def test_evaluate_tender_reads_bare_criterion_keys():
+    from app.agents.hats.procurement.formulas.construction_knowledge import (
+        evaluate_tender,
+    )
+    r = evaluate_tender([
+        {"name": "A", "technical": 80, "commercial": 70, "hse": 90},
+        {"name": "B", "technical": 70, "commercial": 85, "hse": 80},
+    ])
+    assert r["recommended"]["name"] == "B"
+    assert [t["weighted_total"] for t in r["ranked_tenderers"]] == [75.35, 73.8]
+
+
+def test_evaluate_tender_refuses_when_no_criterion_scored():
+    from app.agents.hats.procurement.formulas.construction_knowledge import (
+        evaluate_tender,
+    )
+    r = evaluate_tender([{"name": "A"}, {"name": "B"}])
+    assert "error" in r
+    assert "ranked_tenderers" not in r
+
+
+def test_evaluate_tender_one_rule_for_every_weight():
+    """Caller-supplied criteria use the same ``<c>_score`` or bare ``<c>`` rule.
+
+    A suffixed key wins when both forms are present. A criterion the weights
+    do not name is ignored. An explicit zero is a score, so the panel is ranked.
+    """
+    from app.agents.hats.procurement.formulas.construction_knowledge import (
+        evaluate_tender,
+    )
+    r = evaluate_tender(
+        [
+            {"name": "A", "quality_score": 40, "quality": 99, "price": 80},
+            {"name": "B", "quality": 90, "price_score": 70, "ignored": 100},
+        ],
+        weights={"quality": 0.5, "price": 0.5},
+    )
+    assert r["recommended"]["name"] == "B"
+    assert [t["weighted_total"] for t in r["ranked_tenderers"]] == [80.0, 60.0]
+
+    zeros = evaluate_tender([
+        {"name": "A", "technical": 0, "commercial": 0, "hse": 0},
+    ])
+    assert "ranked_tenderers" in zeros
+    assert zeros["ranked_tenderers"][0]["weighted_total"] == 0.0
+
+    only_local = evaluate_tender([{"name": "A", "local_content": 100}])
+    assert only_local["ranked_tenderers"][0]["weighted_total"] == 3.0

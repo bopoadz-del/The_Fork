@@ -12,11 +12,15 @@
 # (the service's desired count is pinned to 0 below).
 #
 # This does NOT touch DNS. theshovel.ai moves only when a human moves it.
+#
+# Started by hand only (workflow_dispatch), never by a merge: several lanes
+# merge to main while others are testing on live, and a deploy on every merge
+# restarted live under their tests. Merged changes are deployed in batches,
+# by one owner, when no test run is in flight; each run deploys main as it
+# stands, so one run carries every merge since the last.
 name: deploy-aws
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 env:

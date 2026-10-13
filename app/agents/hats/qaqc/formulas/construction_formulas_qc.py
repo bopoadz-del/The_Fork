@@ -13,7 +13,7 @@ import math
     description='Compressive strength from a cylinder test load and diameter.',
     inputs={
         'failure_load_kn': Param('kN', 0, 100000, label='failure load'),
-        'cylinder_diameter_mm': Param('mm', 25, 500),
+        'cylinder_diameter_mm': Param('mm', 25, 500, label='cylinder diameter'),
     },
     outputs={'compressive_strength_mpa': 'MPa', 'cylinder_area_mm2': 'mm2'},
 )
@@ -75,7 +75,7 @@ def concrete_shrinkage(
     display_name='Concrete curing time',
     description='Days of curing for concrete to reach a fraction of its 28-day strength.',
     inputs={
-        'target_strength_fraction': Param('-', 0, 1, label='target fraction of 28-day strength'),
+        'target_strength_fraction': Param('fraction', 0, 1, label='target fraction of 28-day strength'),
         'gain_a': Param('-', 0, 50, label='strength-gain constant a'),
         'gain_b': Param('-', 0, 1, label='strength-gain constant b'),
     },
