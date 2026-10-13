@@ -219,8 +219,9 @@ def lookup_question_hijack(message: str, confidence: float) -> bool:
 
 
 def build_schedule_plan(context: Dict[str, Any]) -> ExecutionPlan:
-    """Fixed compute template for the schedule workflow: extract (if docs) ->
-    build_wbs -> cost_load. No render step here — materialization is an
+    """A work breakdown structure and baseline schedule for a whole project
+    brief, as an exportable deliverable. Fixed compute template: extract (if
+    docs) -> build_wbs -> cost_load. No render step here — materialization is an
     intent-gated export descriptor built in run_workflow (endpoints are the
     render mechanism / API calls)."""
     p = context.get("params") or {}
