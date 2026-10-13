@@ -237,7 +237,6 @@
  "tool:generate_wbs:params",
  "tool:look_ahead:params",
  "tool:payment_certificate:params",
- "tool:procurement_list_generator:params",
  "tool:resource_histogram:params",
  "tool:rfi_generator:params"
 ]
