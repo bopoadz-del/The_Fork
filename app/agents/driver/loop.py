@@ -491,6 +491,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     if notes.strip():
         yield {"type": "token", "content": notes}
     _LOG.info("DRIVER_TURN %s", json.dumps({
+        "conversation": str(conversation_id or ""),  # an id, never the user's words
         "steps": trace, "ended": ("answer" if model_answered else "question" if answer_done else "step_limit"),
         "figures_removed": check["figures_removed"], "identifiers_replaced": check.get("identifiers_replaced", 0),
         "elapsed_s": round(time.monotonic() - t0, 2)}, default=str))
