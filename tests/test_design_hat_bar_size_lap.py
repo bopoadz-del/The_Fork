@@ -44,3 +44,13 @@ def test_a_large_bar_keeps_psi_s_at_one():
 def test_a_bar_above_32_mm_reduces_eurocode_bond_stress():
     r = rebar_lap_length(bar_diameter_mm=40, fy_mpa=420, fc_mpa=30, code="eurocode")
     assert r["lap_length_mm"] == pytest.approx(_ec_lap(40), abs=0.5)
+
+
+def test_fy_above_420_mpa_includes_the_grade_factor():
+    """ACI 318-19 Table 25.4.2.5: ψg steps with fy (1, 1.15, then 1.3)."""
+    db, fc, conf, psi_s = 16.0, 30.0, 1.5, 0.8
+    for fy, psi_g in ((420.0, 1.0), (500.0, 1.15), (550.0, 1.15), (690.0, 1.3)):
+        ld = (fy * psi_s * psi_g / (1.1 * math.sqrt(fc) * conf)) * db
+        r = rebar_lap_length(bar_diameter_mm=db, fy_mpa=fy, fc_mpa=fc, code="aci")
+        assert r["lap_length_mm"] == pytest.approx(1.3 * ld, abs=0.2)
+        assert f"ψg={psi_g}" in r["note"]

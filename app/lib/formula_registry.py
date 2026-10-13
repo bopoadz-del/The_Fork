@@ -471,6 +471,10 @@ def _unit_rejection(spec: ParamSpec, value: Any, reason: str, **extra: Any) -> D
     return row
 
 
+# Declared units that carry no dimension: a figure in them is a plain number.
+_DIMENSIONLESS = frozenset({"count", "ratio"})
+
+
 def convert_figure(spec: ParamSpec, number: float, unit: str,
                    context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """One figure written in ``unit``, put into the unit ``spec`` declares by
@@ -480,10 +484,15 @@ def convert_figure(spec: ParamSpec, number: float, unit: str,
 
     shown = f"{written_number(number)} {unit}"
     declared, written = parse_unit(spec.unit), parse_unit(unit)
-    if declared is None:
-        # No unit of its own: a count, a factor, or a figure in whatever unit
-        # its companions use. The written number stands; a percentage only
-        # becomes a fraction for an input whose range is a fraction.
+    dimensionless = declared is not None and declared.dimension in _DIMENSIONLESS
+    if declared is None or (dimensionless and (written is None or written.dimension
+                                                in (declared.dimension, "fraction"))):
+        # No unit of its own: a count, a ratio, a factor, or a figure in
+        # whatever unit its companions use. The written number stands (an
+        # unrecognised word after a count names what is counted; a known
+        # unit of another kind, "5 m" for a count, is refused below); a
+        # percentage only becomes a fraction for an input whose range is a
+        # fraction.
         if (written is not None and written.dimension == "fraction"
                 and spec.hi is not None and spec.hi <= 1):
             value = number * written.scale

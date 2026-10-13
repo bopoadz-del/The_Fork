@@ -148,7 +148,9 @@ def _shown_quantity(value: Any, row: Dict[str, Any]) -> str:
     if isinstance(value, (list, tuple)):
         return ", ".join(_shown_quantity(v, row) for v in value)
     if _is_fraction_percent(row) and isinstance(value, (int, float)) and not isinstance(value, bool):
-        return f"{_fmt_value(value * 100 if abs(value) <= 1 else value)}%"
+        # A fraction input's value is a fraction by the time it is checked
+        # (150% arrives as 1.5), in range or not: it reads as a percentage.
+        return f"{_fmt_value(value * 100)}%"
     if isinstance(value, str):
         return f"\u201c{value}\u201d"
     shown = _fmt_value(value)
@@ -159,8 +161,16 @@ def _shown_quantity(value: Any, row: Dict[str, Any]) -> str:
     return f"{shown} {unit_words(unit)}"
 
 
+# Unitless kinds of input a range still names, so "0 to 1" reads as a ratio.
+_NAMED_KINDS = frozenset({"ratio", "count", "fraction"})
+
+
 def _accepted_range(row: Dict[str, Any]) -> str:
-    return f"{_shown_quantity(row['lo'], row)} to {_shown_quantity(row['hi'], row)}"
+    shown = f"{_shown_quantity(row['lo'], row)} to {_shown_quantity(row['hi'], row)}"
+    kind = _norm(row.get("unit") or "")
+    if kind in _NAMED_KINDS and not _is_fraction_percent(row):
+        shown += f", as a {kind}"
+    return shown
 
 
 def input_question(calculation: str, rejected: List[Dict[str, Any]],
