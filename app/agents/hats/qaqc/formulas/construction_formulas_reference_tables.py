@@ -63,3 +63,8 @@ def laser_scan_accuracy(range_m: float, accuracy_at_10m_mm: float = 2.0) -> dict
         "note": (f"{accuracy_at_10m_mm} mm at 10 m scaled to {r} m ~= {acc:.2f} mm "
                  "(linear approx.; use the instrument datasheet)."),
     }
+
+
+from app.agents.hats.qaqc.defaults import install_default_disclosure
+
+install_default_disclosure()
