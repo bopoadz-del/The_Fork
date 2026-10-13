@@ -2566,9 +2566,11 @@ def _call_unit(params: Dict[str, Any]) -> Optional[str]:
 
 
 def _units_written_for(figure: float, text: str) -> List[str]:
-    """Every unit the ask writes for this figure, a chain's shared unit included."""
+    """Every unit the ask writes for this figure, a chain's shared unit included.
+    Read from the ask with its written units normalised ("sq ft" is ft2)."""
     from app.lib.construction_formulas_quantities import dimension_chains
 
+    text = _normalize_ask(text or "")
     found = [unit for chain in dimension_chains(text) for num, unit in chain
              if unit and _numbers_agree(num, figure)]
     written = re.compile(rf"(?<![\w.,])({_TEXT_NUM_RE})\s*({_TEXT_UNIT_RE})(?![A-Za-z0-9])", re.IGNORECASE)
