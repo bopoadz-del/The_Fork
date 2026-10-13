@@ -22,8 +22,18 @@ def _summary(name: str) -> str:
     from app.core.predefined_reasoning import WORKFLOW_REGISTRY
 
     fn = WORKFLOW_REGISTRY.get(name)
+    if fn is None:
+        # A construction container action: its method documents it.
+        try:
+            from app.dependencies import get_block_instance
+            fn = getattr(get_block_instance("construction"), name, None)
+        except Exception:  # noqa: BLE001 -- a description is best-effort
+            fn = None
     doc = " ".join(((getattr(fn, "__doc__", "") or "") if fn else "").split())
-    return doc.split(". ")[0].rstrip(".") if doc else ""
+    if doc:
+        return doc.split(". ")[0].rstrip(".")
+    # No docstring: the action's name in words still says what it produces.
+    return name.replace("_", " ").capitalize()
 
 
 def schema(workflows: List[str]) -> Optional[Dict[str, Any]]:
