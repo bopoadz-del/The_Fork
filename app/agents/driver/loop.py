@@ -29,7 +29,7 @@ _STOP = ("I could not finish this answer within the steps a turn may take. "
          "Please narrow the question or split it into parts.")
 
 
-def exit_check(answer: str, msgs: List[Dict[str, Any]]) -> tuple:
+def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False) -> tuple:
     """The one check before a driver answer leaves: an attribution no
     evidence record backs is removed (citation_provenance.gate), and every
     figure is credited to the user's words, a tool run or a retrieved
@@ -41,6 +41,13 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]]) -> tuple:
 
     # No registry identifier leaves: each becomes the name a user reads.
     answer, identifiers = render.readable(answer)
+    if shared:
+        # The model's words also pass the platform's shared exit
+        # (answer_exit) here, so the stream shows what the final answer
+        # shows: no chunk numbers, ids or markers that point at nothing.
+        from app.agents import answer_exit
+
+        answer = answer_exit.check_text(answer)
     checked = cp.gate(answer, None, msgs, tool_passages=True, annotate=False)
     _, every = cp.figure_provenance(checked, None, msgs, enforce=False, tool_passages=True)
     out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
@@ -129,7 +136,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             # Every tool this turn failed: nothing backs a number the user
             # did not write, bare counts included ("0 items were found").
             return None
-        checked, trail, report = exit_check(piece, _trail())
+        checked, trail, report = exit_check(piece, _trail(), shared=model_text)
         # The checks tidy whitespace; the piece's own ending (a line break
         # between list items or paragraphs) belongs to the answer's layout.
         ending = piece[len(piece.rstrip()):]

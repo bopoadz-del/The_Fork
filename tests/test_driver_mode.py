@@ -306,9 +306,9 @@ def test_a_driver_answer_passes_the_exit_check_before_it_streams(monkeypatch):
     calls = []
     real = loop.exit_check
 
-    def spy(answer, msgs):
+    def spy(answer, msgs, **kw):
         calls.append(answer)
-        return real(answer, msgs)
+        return real(answer, msgs, **kw)
 
     monkeypatch.setattr(loop, "exit_check", spy)
     events = _run(_agent(), user_message="How many bags of cement?")
