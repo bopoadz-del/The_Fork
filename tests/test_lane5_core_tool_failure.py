@@ -15,7 +15,6 @@ def _driver_stream(monkeypatch):
     install_driver_stream(monkeypatch)
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 38 driver narrates tool failures (comma list split into characters, zero items)")
 def test_a_failed_tool_is_narrated_with_its_items_whole(monkeypatch):
     name = "lane5_item_check"
 

@@ -79,8 +79,8 @@ def panel(
         if used_rows:
             def _hit_used(hit: Dict[str, Any]) -> bool:
                 doc_id = str(hit.get("document_id") or hit.get("doc_id") or "")
-                name = str(hit.get("filename") or hit.get("doc_name") or "")
-                if doc_id in backing or name in backing:
+                name = _hit_name(hit)
+                if doc_id in backing or name in backing or str(hit.get("filename") or "") in backing:
                     return True
                 snippet = str(hit.get("snippet") or hit.get("text") or "")
                 return bool(snippet) and _answer_quotes_passage(answer, snippet)
@@ -93,9 +93,9 @@ def panel(
 
         def _backs(hit: Dict[str, Any]) -> bool:
             doc_id = str(hit.get("document_id") or hit.get("doc_id") or "")
-            name = str(hit.get("filename") or hit.get("doc_name") or "")
+            name = _hit_name(hit)
             snippet = str(hit.get("snippet") or hit.get("text") or "")
-            return bool({doc_id, name} & backing) or (bool(snippet) and _answer_quotes_passage(answer, snippet))
+            return bool({doc_id, name, str(hit.get("filename") or "")} & backing) or (bool(snippet) and _answer_quotes_passage(answer, snippet))
         hits = [hit for hit in hits if _backs(hit)]
     hits.sort(key=lambda h: (
         not ({str(h.get("document_id") or h.get("doc_id") or ""), str(h.get("filename") or "")} & backing),
@@ -103,7 +103,7 @@ def panel(
     seen, out = set(), []
     for h in hits:
         doc_id = str(h.get("document_id") or h.get("doc_id") or "")
-        name = str(h.get("source_label") or h.get("filename") or h.get("doc_name") or doc_id)
+        name = _hit_name(h) or doc_id
         if not name or (doc_id or name) in seen:
             continue
         seen.add(doc_id or name)
@@ -130,6 +130,16 @@ def panel(
         ]
         out = [*extra, *out][:_MAX_SOURCES]
     return out
+
+
+def _hit_name(hit: Dict[str, Any]) -> str:
+    """What a reader calls a passage's document: its title when the hit
+    carries one, then its source label, then the stored file name."""
+    for key in ("title", "source_label", "original_name", "filename", "doc_name"):
+        value = str(hit.get(key) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def tool_credit_lines(calls: List[Dict[str, Any]]) -> str:

@@ -1403,6 +1403,15 @@ _HEADLESS_SENTENCE_RE = re.compile(
 )
 
 
+# A source or page marker whose reference is not a page (-1, 0, none, n/a)
+# points at nothing a reader can open: it goes, silently -- it names no source.
+_NO_PAGE_MARKER_RE = re.compile(
+    r"[ \t]*[(\[]\s*(?:source|src|page|pg|p)\.?\s*[:#=]?\s*"
+    r"(?:-\d+|0+|none|null|nil|n/?a|unknown|undefined)\s*[)\]]",
+    re.IGNORECASE,
+)
+
+
 def _tidy(text: str) -> str:
     if _MARK not in text:
         return text
@@ -1440,7 +1449,8 @@ def check_text(
         turn = turn if turn is not None else _TURN.get()
         index = index or build_index(turn, sources)
         trailing = text[len(text.rstrip()):]
-        out = _rewrite_source_mentions(text, index)
+        out = _NO_PAGE_MARKER_RE.sub("", text)
+        out = _rewrite_source_mentions(out, index)
         out = _rewrite_brackets(out, index)
         out = _rewrite_inline(out, index)
         out = _replace_tool_errors(out, turn)

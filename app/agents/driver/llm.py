@@ -5,31 +5,48 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
+# A call that offers tools is a decision: which hat, tool or workflow comes
+# next. The same question must choose the same way every time, so decision
+# calls are not sampled. A call with no tools only writes prose and keeps the
+# agent's own temperature.
+DECISION_TEMPERATURE = 0.0
+DECISION_SEED = 7
+
+
+def _payload(cfg: Dict[str, Any], agent: Any, messages: List[Dict[str, Any]],
+             tools: Optional[List[Dict[str, Any]]], model: str, stream: bool) -> Dict[str, Any]:
+    from app.agents.runtime import (
+        _provider_max_tokens, _provider_temperature, _resolve_attempt_model,
+        _sanitize_messages_for_provider,
+    )
+
+    payload: Dict[str, Any] = {
+        "model": model or _resolve_attempt_model(cfg, agent.model),
+        "messages": _sanitize_messages_for_provider(messages),
+        "temperature": _provider_temperature(cfg, DECISION_TEMPERATURE if tools else agent.temperature),
+        "max_tokens": _provider_max_tokens(cfg, agent.max_tokens),
+        "stream": stream,
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+        if cfg.get("supports_seed"):
+            payload["seed"] = DECISION_SEED
+    return payload
+
 
 async def call(agent: Any, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]],
                model: str = "", timeout: float = 120.0) -> Dict[str, Any]:
     """``{"status": "success", "message": {...}}`` or ``{"status": "error", "error": ...}``."""
     import httpx
 
-    from app.agents.runtime import (
-        _llm_config, _provider_max_tokens, _provider_temperature, _resolve_attempt_model,
-        _sanitize_messages_for_provider,
-    )
+    from app.agents.runtime import _llm_config
 
     cfg = _llm_config()
     key = os.getenv(cfg["env_key"]) or ""
     if not key:
         return {"status": "error", "error": "The language model is not configured."}
-    payload: Dict[str, Any] = {
-        "model": model or _resolve_attempt_model(cfg, agent.model),
-        "messages": _sanitize_messages_for_provider(messages),
-        "temperature": _provider_temperature(cfg, agent.temperature),
-        "max_tokens": _provider_max_tokens(cfg, agent.max_tokens),
-        "stream": False,
-    }
-    if tools:
-        payload["tools"] = tools
-        payload["tool_choice"] = "auto"
+    payload = _payload(cfg, agent, messages, tools, model, stream=False)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(cfg["url"], json=payload,
@@ -52,26 +69,14 @@ async def stream(agent: Any, messages: List[Dict[str, Any]], tools: Optional[Lis
 
     import httpx
 
-    from app.agents.runtime import (
-        _llm_config, _provider_max_tokens, _provider_temperature, _resolve_attempt_model,
-        _sanitize_messages_for_provider,
-    )
+    from app.agents.runtime import _llm_config
 
     cfg = _llm_config()
     key = os.getenv(cfg["env_key"]) or ""
     if not key:
         yield "done", {"status": "error", "error": "The language model is not configured."}
         return
-    payload: Dict[str, Any] = {
-        "model": model or _resolve_attempt_model(cfg, agent.model),
-        "messages": _sanitize_messages_for_provider(messages),
-        "temperature": _provider_temperature(cfg, agent.temperature),
-        "max_tokens": _provider_max_tokens(cfg, agent.max_tokens),
-        "stream": True,
-    }
-    if tools:
-        payload["tools"] = tools
-        payload["tool_choice"] = "auto"
+    payload = _payload(cfg, agent, messages, tools, model, stream=True)
     content: List[str] = []
     calls: Dict[int, Dict[str, Any]] = {}
     try:

@@ -92,8 +92,18 @@ def answer_text(events: List[Dict[str, Any]]) -> str:
     return "".join(event.get("content", "") for event in events if event.get("type") == "token")
 
 
+_TOOL_RESULTS: List[Dict[str, Any]] = []  # what each tool returned in the last drive()
+
+
 def tool_envelope(seen) -> Dict[str, Any]:
-    """The calculator envelope the driver handed back to the model."""
+    """The calculator envelope the last tool run returned. The model reads a
+    calculation as prose, so the envelope is taken from the run itself."""
+    if _TOOL_RESULTS:
+        payload = _TOOL_RESULTS[-1]
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if isinstance(result, dict) and ("status" in result or "calculation" in result):
+            return result
+        return payload if isinstance(payload, dict) else {}
     for message in reversed(seen[-1]["messages"]):
         if message.get("role") != "tool":
             continue
@@ -162,7 +172,17 @@ def drive(monkeypatch, user: str, replies, *, project_id: Optional[str] = None,
     no_retrieval(monkeypatch)
     seen: list = []
     monkeypatch.setattr(llm, "call", scripted(list(replies), seen))
-    events = run_driver(agent(), user_message=user, project_id=project_id, history=history)
+    probe = agent()
+    run_tool = probe._run_tool_call
+    _TOOL_RESULTS.clear()
+
+    async def recorded(*args, **kwargs):
+        out = await run_tool(*args, **kwargs)
+        _TOOL_RESULTS.append(out)
+        return out
+
+    monkeypatch.setattr(probe, "_run_tool_call", recorded)
+    events = run_driver(probe, user_message=user, project_id=project_id, history=history)
     return events, seen
 
 
