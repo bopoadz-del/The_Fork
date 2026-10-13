@@ -1243,7 +1243,8 @@ def gate(
                     "citation_provenance: removed %d unbacked attribution(s): %s",
                     len(removed), removed[:5],
                 )
-                _REMOVED_IN_PIECE.set(True)
+                if any(names_a_reference(r) for r in removed):
+                    _REMOVED_IN_PIECE.set(True)
             return text if out == text else out
         credit = _missing_calculator_credit(out, credits, text)
         defaults = _missing_default_lines(out, credits, text)
@@ -1257,7 +1258,7 @@ def gate(
             )
         if extra:
             out = out.rstrip() + "\n\n" + extra
-        if removed:
+        if any(names_a_reference(r) for r in removed):
             out += UNVERIFIED_NOTE
         return out
     except Exception:  # noqa: BLE001 -- a gate must never break an answer
@@ -1266,6 +1267,27 @@ def gate(
 
 
 import contextvars as _contextvars
+
+# A reference a reader could go and check: a stored file name, or a code,
+# volume, table, clause or similar designation carrying its number ("ACI
+# 318", "Vol 6", "Table 7.3.1.1", "BS8110").
+_FILE_REFERENCE_RE = re.compile(r"\b[\w-]+\.(?:pdf|docx?|xlsx?|md|txt|csv|dwg|xer)\b", re.IGNORECASE)
+_DESIGNATION_RE = re.compile(r"\b[A-Z][A-Za-z]{0,11}[ .-]?\d[\d.\-]*")
+# The platform's own passage keys (a chunk number, a document id) point at a
+# passage too.
+_PASSAGE_KEY_RE = re.compile(r"\b(?:chunk|doc[_ ]?id|src)\s*[:#=]?\s*\w*\d", re.IGNORECASE)
+
+
+def names_a_reference(attribution: str) -> bool:
+    """Does a removed attribution name a source a reader could look up? The
+    note "named a source that nothing read" is true only for those. A line
+    naming no source -- a bare "Sources:" heading, "Source: the platform's
+    calculator, on your inputs", "this is general knowledge" -- is removed
+    without the note."""
+    text = str(attribution or "")
+    return bool(_FILE_REFERENCE_RE.search(text) or _DESIGNATION_RE.search(text)
+                or _PASSAGE_KEY_RE.search(text))
+
 
 #: Set when a piece checked with annotate=False had an attribution removed.
 _REMOVED_IN_PIECE: "_contextvars.ContextVar[bool]" = _contextvars.ContextVar(

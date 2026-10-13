@@ -224,8 +224,8 @@ def modulus_of_elasticity_concrete(
     Two forms, because they are different numbers and a reader cannot tell
     them apart from a bare float:
 
-    * ``metric_technical`` (default, unchanged): Ec = 15000 sqrt(f'c) with
-      f'c in kg/cm2 -- for C35 that is 280,624 kg/cm2.
+    * ``metric_technical`` (default): Ec = 15000 sqrt(f'c) with f'c in
+      kg/cm2. 1 N/mm² = 10.197 kg/cm². For C35 that is 283,375 kg/cm2.
     * ``aci``: ACI 318-19 Eq. 19.2.2.1b SI form, Ec = 4700 sqrt(f'c) in MPa
       -- for C35, 27,806 MPa.
 
@@ -245,7 +245,7 @@ def modulus_of_elasticity_concrete(
             "unit": "MPa",
             "standard": "ACI 318-19 Eq. 19.2.2.1b (SI): 4700*sqrt(f'c)",
         }
-    ec_kg_cm2 = round(15000 * math.sqrt(fck * 10), 0)
+    ec_kg_cm2 = round(15000 * math.sqrt(fck * 10.197), 0)
     return {
         "value": ec_kg_cm2,
         "unit": "kg/cm2",
@@ -467,6 +467,10 @@ def post_tensioning_force(
         'concrete_grade_n_mm2': Param('N/mm2', 5, 150, label='concrete strength', grade='concrete'),
         'use_i_beam': Param('-'),
         'i_beam_weight_t': Param('t', 0, 1000, label='steel section weight'),
+        'steel_area_mm2': Param('mm2', 0, 1e8, label='structural steel area'),
+        'steel_fy_mpa': Param('MPa', 100, 2000, label='structural steel yield strength', grade='steel'),
+        'rebar_area_mm2': Param('mm2', 0, 1e8, label='reinforcement area'),
+        'rebar_fy_mpa': Param('MPa', 100, 2000, label='reinforcement yield strength', grade='rebar'),
     },
     outputs={'option_a': '-', 'option_b': '-', 'recommended': '-'},
 )
@@ -474,23 +478,58 @@ def composite_column_design(
     axial_load_kn: float, column_diameter_mm: float,
     concrete_grade_n_mm2: float = 60.0,
     use_i_beam: bool = True, i_beam_weight_t: float = 0.0,
+    steel_area_mm2: float = 0.0, steel_fy_mpa: float = 355.0,
+    rebar_area_mm2: float = 0.0, rebar_fy_mpa: float = 500.0,
 ) -> Dict[str, Any]:
-    """Compare C60+I-Beam vs C80+rebar for composite columns."""
+    """Squash resistance of a concrete-encased column, EN 1994-1-1 §6.7.3.2.
+
+    Npl,Rd = Aa*fyd + 0.85*Ac*fcd + As*fsd, fcd = fck/γc (γc = 1.5),
+    fyd = fy/γM0 (γM0 = 1.0), fsd = fsk/γs (γs = 1.15). Ac is the concrete
+    area inside the gross section. A section mass is not an area, so
+    ``i_beam_weight_t`` does not change the resistance.
+    """
     if column_diameter_mm <= 0:
         raise ValueError("column_diameter_mm must be > 0")
     if axial_load_kn < 0 or concrete_grade_n_mm2 <= 0:
         raise ValueError("axial_load_kn must be >= 0 and concrete_grade_n_mm2 must be > 0")
-    col_area = math.pi * (column_diameter_mm / 2)**2
-    cap_a = col_area * concrete_grade_n_mm2 / 1000 * (1.10 if use_i_beam and i_beam_weight_t > 0 else 1.0)
-    upgraded = min(concrete_grade_n_mm2 * 1.33, 80.0)
-    cap_b = col_area * upgraded / 1000 * 0.95
+    if steel_area_mm2 < 0 or rebar_area_mm2 < 0 or steel_fy_mpa <= 0 or rebar_fy_mpa <= 0:
+        raise ValueError("steel and reinforcement areas must be >= 0 and yields must be > 0")
+    gross = math.pi * (column_diameter_mm / 2) ** 2
+    steel = float(steel_area_mm2) if use_i_beam else 0.0
+    rebar = float(rebar_area_mm2)
+    if steel + rebar > gross:
+        raise ValueError("steel plus reinforcement area exceeds the gross section")
+    concrete = gross - steel - rebar
+    fcd = float(concrete_grade_n_mm2) / 1.5
+
+    def resistance(steel_area: float) -> float:
+        ac = gross - steel_area - rebar
+        return (
+            steel_area * float(steel_fy_mpa)
+            + 0.85 * ac * fcd
+            + rebar * (float(rebar_fy_mpa) / 1.15)
+        ) / 1000.0
+
+    cap_a = resistance(steel)
+    cap_b = resistance(0.0)
     return {
-        "option_a": {"type": f"C{concrete_grade_n_mm2:.0f}+I-Beam", "capacity_kn": round(cap_a, 0),
-                     "is_safe": cap_a >= axial_load_kn},
-        "option_b": {"type": f"C{upgraded:.0f}+rebar", "capacity_kn": round(cap_b, 0),
-                     "is_safe": cap_b >= axial_load_kn},
+        "option_a": {
+            "type": f"C{concrete_grade_n_mm2:.0f}+encased steel",
+            "capacity_kn": round(cap_a, 0),
+            "is_safe": cap_a >= axial_load_kn,
+        },
+        "option_b": {
+            "type": f"C{concrete_grade_n_mm2:.0f}+rebar",
+            "capacity_kn": round(cap_b, 0),
+            "is_safe": cap_b >= axial_load_kn,
+        },
         "recommended": "B" if cap_b >= axial_load_kn and not (cap_a >= axial_load_kn) else (
             "A or B" if cap_a >= axial_load_kn and cap_b >= axial_load_kn else "A" if cap_a >= axial_load_kn else "NEITHER"),
+        "note": (
+            "EN 1994-1-1 §6.7.3.2. A section mass of "
+            f"{i_beam_weight_t:g} t is not an area; pass steel_area_mm2."
+        ),
+        "concrete_area_mm2": round(concrete if use_i_beam else gross - rebar, 1),
     }
 
 @formula(
@@ -511,7 +550,10 @@ def foundation_bearing_pressure(
     column_load_kn: float, soil_bearing_capacity_kn_m2: float,
     foundation_depth_m: float = 0.0,
 ) -> Dict[str, float]:
-    """q = P/A, FOS vs soil capacity."""
+    """q = P/A. The soil value is an allowable pressure, so it already
+    includes the factor of safety. The foundation is adequate when the net
+    pressure does not exceed that allowable (FOS >= 1). Requiring FOS >= 2
+    applies a second factor."""
     if foundation_width_m <= 0 or foundation_length_m <= 0:
         return {"error": "foundation_width_m and foundation_length_m must be > 0"}
     area = foundation_width_m * foundation_length_m
@@ -522,20 +564,24 @@ def foundation_bearing_pressure(
         "bearing_pressure_kn_m2": round(q, 2),
         "net_pressure_kn_m2": round(net_q, 2),
         "fos_against_bearing": round(fos, 2),
-        "bearing_ok": fos >= 2.0,
+        "bearing_ok": fos >= 1.0,
     }
 
 @formula(
     owner='design',
-    display_name='Precast beam lifting check',
-    description='Crane load for lifting a precast beam: beam plus rigging with a dynamic factor, against crane capacity.',
+    display_name='Precast member erection demand',
+    description=(
+        'Erection demand of a precast member: member weight plus rigging, '
+        'times the dynamic allowance, as a share of the allowable pick weight '
+        'at the stated radius.'
+    ),
     inputs={
-        'beam_weight_t': Param('t', 0, 1000),
-        'beam_length_m': Param('m', 0, 200),
-        'crane_capacity_t': Param('t', 0, 10000),
-        'lift_radius_m': Param('m', 0, 200),
-        'rigging_weight_t': Param('t', 0, 500),
-        'dynamic_factor': Param('-', 1, 3),
+        'beam_weight_t': Param('t', 0, 1000, label='member weight'),
+        'beam_length_m': Param('m', 0, 200, label='member length'),
+        'crane_capacity_t': Param('t', 0, 10000, label='allowable pick weight'),
+        'lift_radius_m': Param('m', 0, 200, label='pick radius'),
+        'rigging_weight_t': Param('t', 0, 500, label='rigging weight'),
+        'dynamic_factor': Param('-', 1, 3, label='dynamic allowance'),
     },
     outputs={'effective_lift_weight_t': 't', 'utilization_pct': '%', 'is_safe': '-'},
 )
@@ -544,7 +590,7 @@ def precast_beam_erection_check(
     crane_capacity_t: float, lift_radius_m: float,
     rigging_weight_t: float = 0.5, dynamic_factor: float = 1.25,
 ) -> Dict[str, Any]:
-    """Crane lift check: effective = (beam + rigging) x 1.25 dynamic."""
+    """Member weight plus rigging, times the dynamic allowance."""
     effective = (beam_weight_t + rigging_weight_t) * dynamic_factor
     util = effective / crane_capacity_t * 100
     return {
