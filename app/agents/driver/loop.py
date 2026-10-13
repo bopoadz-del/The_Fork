@@ -82,6 +82,15 @@ def _tidy(text: str) -> str:
     return _EMPTY_BRACKETS.sub("", text)
 
 
+def _offered_workflows(offered: List[Dict[str, Any]]) -> int:
+    """How many workflows the run_workflow tool offered this step (0: none)."""
+    for t in offered:
+        fn = t.get("function") or {}
+        if fn.get("name") == routes.RUN_WORKFLOW:
+            return len(((fn.get("parameters") or {}).get("properties") or {}).get("workflow", {}).get("enum") or [])
+    return 0
+
+
 def _args(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     raw = (tool_call.get("function") or {}).get("arguments") or "{}"
     try:
@@ -149,9 +158,14 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         check["passages_read"] = report["passages_read"]
         return {"type": "token", "content": checked} if checked.strip() else None
 
+    # One trace line per turn: what the model was offered and chose, and how
+    # each step ended. Tool and workflow names only -- never the user's words.
+    trace: List[Dict[str, Any]] = []
     step = 0
     for step in range(driver.max_steps()):
         offered = tools.offered(agent, project_id, hat, disciplines)
+        trace.append({"step": step + 1, "hat": hat, "offered": len(offered),
+                      "workflows": _offered_workflows(offered), "calls": []})
         # Streamed: each finished sentence is checked and sent while the model
         # is still writing. One sentence is held back, so a short preamble
         # ("Let me look that up.") is dropped when the reply turns out to be
@@ -211,6 +225,11 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 if result_of_call.get("ok", True):
                     ran.append((name, args))  # a failed run is credited with nothing
             ok = bool(result_of_call.get("ok", True))
+            trace[-1]["calls"].append({
+                "tool": name, "workflow": args.get("workflow") if name == routes.RUN_WORKFLOW else None,
+                "calculation": args.get("calculation") if name == "construction_calc" else None,
+                "ok": ok, "missing": bool(result_of_call.get("missing") or result_of_call.get("needs_input")),
+            })
             if name != tools.SELECT_HAT:
                 if ok:
                     succeeded = True
@@ -298,6 +317,9 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         notes = "\n\n" + credit + notes
     if notes.strip():
         yield {"type": "token", "content": notes}
+    _LOG.info("DRIVER_TURN %s", json.dumps({
+        "steps": trace, "ended": ("answer" if model_answered else "question" if answer_done else "step_limit"),
+        "elapsed_s": round(time.monotonic() - t0, 2)}, default=str))
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "provenance": provenance, "exit_check": check,
            "sources": sources.panel(_trail(), provenance, "".join(sent),
