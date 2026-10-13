@@ -279,10 +279,10 @@ def interior_finishes_takeoff(
     display_name='Estimate line cost split',
     description='Material, labour and plant split of one estimate line.',
     inputs={
-        'quantity': Param('count', 0, 1e12, label='quantity'),
-        'daily_output': Param('count/d', 0, 1e9, label='daily output'),
+        'quantity': Param('-', 0, 1e12, label='quantity'),
+        'daily_output': Param('-', 0, 1e9, label='daily output'),
         'day_rate': Param('currency/d', 0, 1e9, label='day rate'),
-        'material_rate_per_unit': Param('currency/count', 0, 1e9, label='material rate per unit'),
+        'material_rate_per_unit': Param('-', 0, 1e9, label='material rate per unit'),
         'plant_fraction_of_labour': Param('ratio', 0, 10, label='plant cost as a fraction of labour'),
     },
     outputs={'quantity': '-', 'crew_days': 'days', 'labour_cost': 'currency', 'plant_cost': 'currency', 'material_cost': 'currency', 'total_cost': 'currency', 'total_is_partial': '-'},

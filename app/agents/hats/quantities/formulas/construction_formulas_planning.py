@@ -12,9 +12,9 @@ from typing import Optional
     display_name='Material consumption',
     description='Material required for a quantity of work from the output per unit and an optional waste factor.',
     inputs={
-        'quantity_of_work': Param('count', 0, 1e12, label='quantity of work'),
-        'output_per_unit': Param('count', 0, 1e12, label='output per unit'),
-        'waste_factor': Param('ratio', 0, 1, label='waste allowance'),
+        'quantity_of_work': Param('-', 0, 1e12, label='quantity of work'),
+        'output_per_unit': Param('-', 0, 1e12, label='output per unit'),
+        'waste_factor': Param('ratio', 0, 2, label='waste allowance'),
         'waste_percent': Param('%', 0, 100, label='waste allowance'),
     },
     outputs={'material_required': '-', 'base_without_waste': '-', 'waste_factor': '-'},
