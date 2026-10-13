@@ -13,11 +13,11 @@ from typing import Any, Dict
     display_name='Supervision manpower',
     description='Supervision manpower for given quantities, from supervision ratios flagged as indicative defaults.',
     inputs={
-        'concrete_m3': Param('m3', 0, 1e8),
-        'structural_steel_t': Param('t', 0, 1e6),
-        'piping_dia_inch': Param('-', 0, 1e9, label='piping (inch-diameter)'),
+        'concrete_m3': Param('m3', 0, 1e8, label='concrete volume'),
+        'structural_steel_t': Param('t', 0, 1e6, label='structural steel'),
+        'piping_dia_inch': Param('dia-inch', 0, 1e9, label='piping'),
         'electrical_cable_km': Param('km', 0, 100000, label='electrical cable'),
-        'area_m2': Param('m2', 0, 1e8),
+        'area_m2': Param('m2', 0, 1e8, label='gross area'),
     },
     outputs={'civil_supervisors': '-', 'structural_supervisors': '-', 'piping_supervisors': '-', 'electrical_supervisors': '-', 'general_supervisors': '-', 'total_supervisors': '-', 'hse_officers': '-', 'document_controllers': '-', 'total_supervision_staff': '-'},
 )
@@ -70,8 +70,8 @@ def supervision_ratio(
     display_name='Electrical installation programme',
     description='Electrical installation programme: stage durations from first fix to handover.',
     inputs={
-        'floor_area_m2': Param('m2', 0, 1e8),
-        'num_floors': Param('-', 1, 300, label='number of floors'),
+        'floor_area_m2': Param('m2', 0, 1e8, label='floor area'),
+        'num_floors': Param('count', 1, 300, label='number of floors'),
     },
     outputs={'total_area_m2': 'm2', 'stages': '-', 'total_days': 'days'},
 )
@@ -94,8 +94,8 @@ def electrical_installation_sequence(
     display_name='Plumbing installation programme',
     description='Plumbing installation programme: stage durations from submittal to handover.',
     inputs={
-        'floor_area_m2': Param('m2', 0, 1e8),
-        'num_floors': Param('-', 1, 300, label='number of floors'),
+        'floor_area_m2': Param('m2', 0, 1e8, label='floor area'),
+        'num_floors': Param('count', 1, 300, label='number of floors'),
     },
     outputs={'stages': '-', 'cumulative_days': 'days', 'total_days': 'days'},
 )
