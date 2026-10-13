@@ -1636,6 +1636,20 @@ def _norm_unit_token(raw: Any) -> str:
 _BARE_KINDS = frozenset({"", "-", "currency", "ratio", "count", "no", "nr"})
 
 
+def _same_kind(written: str, declared: str) -> bool:
+    """A written unit measures what the declared unit measures (kg and t
+    are both a mass)."""
+    try:
+        from app.agents.base.formulas.construction_formulas_planning import parse_unit
+
+        a, b = parse_unit(written), parse_unit(declared)
+        if a is not None and b is not None:
+            return a.dimension == b.dimension
+    except Exception:  # noqa: BLE001 -- fall back to the token rule
+        logger.debug("unit dimension lookup failed", exc_info=True)
+    return binding_kind(written) == binding_kind(declared)
+
+
 def binding_kind(unit: str) -> str:
     """How a figure has to be written to identify this declared unit.
 
@@ -1907,6 +1921,41 @@ def extract_calculation_params_from_text(
         noun = _DIMENSION_ADJECTIVES[match.group(3).lower()]
         dest = labels.get(_norm_label(noun))
         if not dest or dest in found:
+            continue
+        num = _parse_text_number(match.group(1))
+        if num is None:
+            continue
+        found[dest] = _to_param_unit(num, match.group(2), dest, declared_units.get(dest, ""))
+        consumed.append(match.span())
+
+    # Figure first, label after: "120,000 m3 of concrete", "6,000 t steel".
+    # The label may be written by its last word when no other label ends
+    # with that word ("steel" for structural steel), and the figure's unit
+    # must be the kind of unit that input declares, so a figure never binds
+    # to an input of another kind on a word alone.
+    label_after = re.compile(
+        rf"{number}\s*({_TEXT_UNIT_RE})\s+(?:of\s+)?([A-Za-z][A-Za-z ]{{0,48}})",
+        re.IGNORECASE,
+    )
+
+    def _named(words: List[str]) -> Optional[str]:
+        for n in range(min(3, len(words)), 0, -1):
+            key = _norm_label(" ".join(words[:n]))
+            if key in labels:
+                return labels[key]
+            tails = {dest for lab, dest in labels.items() if lab.endswith("_" + key)}
+            if len(tails) == 1:
+                return tails.pop()
+        return None
+
+    for match in label_after.finditer(raw):
+        if _overlaps(match.span()):
+            continue
+        dest = _named(match.group(3).lower().split())
+        if not dest or dest in found:
+            continue
+        declared = str(declared_units.get(dest) or _unit_from_name(dest) or "")
+        if not declared or not _same_kind(match.group(2), declared):
             continue
         num = _parse_text_number(match.group(1))
         if num is None:
