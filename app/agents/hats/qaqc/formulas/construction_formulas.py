@@ -3,7 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
-from app.lib.formula_registry import Param, formula
+from app.lib.formula_registry import Param, formula, grade_label
 import json
 import math
 import re
@@ -146,7 +146,7 @@ def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     if outside is not None:
         return {
             "error": (
-                "Each cumulative percentage retained must be between 0 and 100, "
+                "Each cumulative percentage retained must be between 0 and 100 %, "
                 f"not {outside}."
             ),
         }
@@ -239,7 +239,7 @@ def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -
     display_name='Post-tensioning grout checks',
     description='Grouting pressure and strength checks for post-tensioning ducts.',
     inputs={
-        'tendon_duct_diameter_mm': Param('mm', 10, 300, label='duct diameter'),
+        'tendon_duct_diameter_mm': Param('mm', 20, 150, label='duct diameter'),
         'required_pressure_n_mm2': Param('N/mm2', 0, 10, label='grout pressure'),
         'strength_28d_n_mm2': Param('N/mm2', 1, 150, label='28-day strength'),
         'strength_7d_n_mm2': Param('N/mm2', 1, 150, label='7-day strength'),
@@ -299,17 +299,24 @@ def concrete_maturity_strength(
     Equivalent age te (hours) = MI / (Tref - T0); te_days = te / 24.
     f(t)/f28 = te_days / (a + b*te_days)  with a=4, b=0.85 (ACI 209R).
     """
-    if not temperature_history_c or not time_intervals_hours:
+    temps = _series_figures(temperature_history_c)
+    hours = _series_figures(time_intervals_hours)
+    if len(hours) == 1 and not isinstance(time_intervals_hours, (list, tuple)):
+        hours = hours * len(temps) if temps else hours
+    if not temps or not hours:
         return {
-            "error": "temperature_history_c and time_intervals_hours are required and must be non-empty.",
+            "error": "The recorded temperatures and the time intervals are required and must not be empty.",
         }
-    if len(temperature_history_c) != len(time_intervals_hours):
+    if len(temps) != len(hours):
         return {
-            "error": "temperature_history_c and time_intervals_hours must have the same length.",
+            "error": "The recorded temperatures and the time intervals must have the same number of values.",
         }
-    if any(float(dt) <= 0 for dt in time_intervals_hours):
-        return {"error": "time_intervals_hours must all be > 0."}
-    if strength_28d_n_mm2 <= 0:
+    if any(float(dt) <= 0 for dt in hours):
+        return {"error": "Each time interval must be greater than zero."}
+    grade = grade_label(strength_28d_n_mm2)
+    if grade is not None:
+        strength_28d_n_mm2 = grade[1]
+    if float(strength_28d_n_mm2) <= 0:
         return {"error": "strength_28d_n_mm2 must be > 0."}
     te_denom = float(reference_temperature_c) - float(datum_temperature)
     if te_denom <= 0:
@@ -317,7 +324,7 @@ def concrete_maturity_strength(
 
     mi = sum(
         max(0.0, float(t) - float(datum_temperature)) * float(dt)
-        for t, dt in zip(temperature_history_c, time_intervals_hours)
+        for t, dt in zip(temps, hours)
     )
     te_days = (mi / te_denom) / 24.0
     denom = gain_a + gain_b * te_days
