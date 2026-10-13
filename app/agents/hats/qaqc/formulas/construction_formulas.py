@@ -8,7 +8,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from app.agents.base.formulas.construction_formulas_shared import (  # noqa: F401
     _is_aci_code,
 )
@@ -43,11 +43,21 @@ def _series_figures(value: Any) -> List[float]:
     return [float(match.group(0)) for match in re.finditer(_SERIES_FIGURE, text)]
 
 
-def _rupture_form(code: Any) -> str:
-    """The ACI form when the code names it; otherwise the default form."""
-    if _is_aci_code(code):
-        return "aci"
-    return "metric_technical"
+def _code_token(code: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(code or "").lower())
+
+
+def _is_ec2_code(code: Any) -> bool:
+    """Eurocode 2 / EN 1992, however the caller writes the name."""
+    token = _code_token(code)
+    if not token:
+        return False
+    return (
+        "en1992" in token
+        or token.startswith("ec2")
+        or token.startswith("eurocode2")
+        or token in {"eurocode", "ec"}
+    )
 
 
 @dataclass
@@ -155,52 +165,110 @@ def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
 @formula(
     owner='qaqc',
     display_name='Concrete modulus of rupture',
-    description='Flexural tensile strength (modulus of rupture) of concrete, to the selected code.',
+    description='Flexural tensile strength of concrete from the named design code.',
     inputs={
         'fck_n_mm2': Param('N/mm2', 5, 150, label='characteristic concrete strength', grade='concrete'),
         'code': Param('-', label='design code'),
+        'lambda_factor': Param('ratio', 0.5, 1.0, label='lightweight concrete factor'),
+        'h_mm': Param('mm', 1, 5000, label='section depth'),
     },
-    outputs={'fck_n_mm2': 'N/mm2', 'value': 'currency', 'unit': '-', 'modulus_of_rupture_n_mm2': 'N/mm2', 'split_cylinder_aci_n_mm2': 'N/mm2', 'tensile_pct_of_compressive': '-'},
+    outputs={
+        'fck_n_mm2': 'N/mm2',
+        'value': 'N/mm2',
+        'unit': '-',
+        'modulus_of_rupture_n_mm2': 'N/mm2',
+    },
 )
-def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict[str, float]:
-    """Tensile strength. Two forms, and the caller's code decides which.
+def modulus_of_rupture(
+    fck_n_mm2: float,
+    code: str,
+    lambda_factor: float = 1.0,
+    h_mm: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Flexural tensile strength. The named code picks the clause.
 
-    * ``metric_technical`` (default, unchanged): fr = 2.4 sqrt(f'c) with f'c
-      in kg/cm2, plus the split-cylinder figure -- for C30 that is 4.157 MPa.
-    * ``aci``: ACI 318-19 Eq. 19.2.3.1, fr = 0.62 sqrt(f'c) in MPa (normal
-      weight, lambda = 1.0) -- for C30, 3.40 MPa.
+    * ACI 318-19 Eq. 19.2.3.1: fr = 0.62 λ √f'c (MPa). λ defaults to 1.0.
+    * EN 1992-1-1 Table 3.1: fctm = 0.30 fck^(2/3) for fck ≤ 50 MPa,
+      else 2.12 ln(1 + (fck + 8)/10). When a depth h is given,
+      §3.1.8: fctm,fl = max((1.6 − h/1000) fctm, fctm).
 
-    Live, asked as a follow-up naming ACI 318-19 for f'c = 30: this
-    returned 4.157 and the operator was shown 4.16 MPa. The sibling
-    ``modulus_of_elasticity_concrete`` had already been given this parameter;
-    this one was left behind, so an ACI question got the metric-technical
-    answer with no sign that the code had been ignored.
+    No code is not a default. An unknown code is refused.
     """
-    # Not _norm_code: it defaults every unknown string to ACI, which would
-    # silently change this function's default form. An unknown code keeps
-    # the metric-technical form (the signature default).
-    form = _rupture_form(code)
-    fck = float(fck_n_mm2)
-    if form == "aci":
-        fr_mpa = round(0.62 * math.sqrt(fck), 3)
+    if not str(code or "").strip():
         return {
-            "fck_n_mm2": fck_n_mm2,
+            "error": "The design code is required.",
+            "needs_input": ["code"],
+        }
+    fck = float(fck_n_mm2)
+    if fck <= 0:
+        return {
+            "error": "The characteristic concrete strength must be greater than zero.",
+        }
+
+    if _is_aci_code(code):
+        lam = float(lambda_factor)
+        fr = 0.62 * lam * math.sqrt(fck)
+        fr_mpa = round(fr, 3)
+        return {
+            "fck_n_mm2": fck,
             "value": fr_mpa,
             "unit": "MPa",
             "modulus_of_rupture_n_mm2": fr_mpa,
-            "standard": "ACI 318-19 Eq. 19.2.3.1: 0.62*sqrt(f'c) MPa, normal weight",
+            "lambda_factor": lam,
+            "standard": (
+                "ACI 318-19 Eq. 19.2.3.1: fr = 0.62*λ*√f'c MPa "
+                f"(λ = {lam})"
+            ),
         }
-    fck_kg = fck * 10
-    fr = 2.4 * math.sqrt(fck_kg) / 10
-    ft_aci = 1.78 * math.sqrt(fck_kg) / 10
+
+    if _is_ec2_code(code):
+        if fck <= 50.0:
+            fctm = 0.30 * (fck ** (2.0 / 3.0))
+            fctm_clause = (
+                "EN 1992-1-1 Table 3.1: fctm = 0.30*fck^(2/3) "
+                "for fck ≤ 50 MPa"
+            )
+        else:
+            fctm = 2.12 * math.log(1.0 + (fck + 8.0) / 10.0)
+            fctm_clause = (
+                "EN 1992-1-1 Table 3.1: fctm = 2.12*ln(1+(fck+8)/10) "
+                "for fck > 50 MPa"
+            )
+        depth = None
+        if h_mm not in (None, ""):
+            depth = float(h_mm)
+        if depth is not None and depth > 0:
+            fctm_fl = max((1.6 - depth / 1000.0) * fctm, fctm)
+            value = round(fctm_fl, 3)
+            return {
+                "fck_n_mm2": fck,
+                "value": value,
+                "unit": "MPa",
+                "modulus_of_rupture_n_mm2": value,
+                "fctm_n_mm2": round(fctm, 3),
+                "fctm_fl_n_mm2": value,
+                "h_mm": depth,
+                "standard": (
+                    f"{fctm_clause}; EN 1992-1-1 §3.1.8: "
+                    "fctm,fl = max((1.6-h/1000)*fctm, fctm)"
+                ),
+            }
+        value = round(fctm, 3)
+        return {
+            "fck_n_mm2": fck,
+            "value": value,
+            "unit": "MPa",
+            "modulus_of_rupture_n_mm2": value,
+            "fctm_n_mm2": value,
+            "standard": fctm_clause,
+        }
+
+    shown = str(code).strip()
     return {
-        "fck_n_mm2": fck_n_mm2,
-        "value": round(fr, 3),
-        "unit": "MPa",
-        "modulus_of_rupture_n_mm2": round(fr, 3),
-        "split_cylinder_aci_n_mm2": round(ft_aci, 3),
-        "tensile_pct_of_compressive": round(ft_aci / fck_n_mm2 * 100, 1),
-        "standard": "2.4*sqrt(f'c) with f'c in kg/cm2 (metric-technical form)",
+        "error": (
+            f"The design code {shown} is not one of the codes this calculator "
+            "supports. It supports ACI 318 and Eurocode 2."
+        ),
     }
 
 @formula(
