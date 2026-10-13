@@ -160,3 +160,21 @@ def test_count_and_ratio_units_are_dimensionless_for_the_converter():
     assert fr.convert_figure(count, 5, "pieces") == {"value": 5}
     assert fr.convert_figure(ratio, 0.4, "ratio") == {"value": 0.4}
     assert fr.convert_figure(ratio, 40, "%")["value"] == pytest.approx(0.4)
+
+
+def test_a_declared_unit_written_as_words_is_not_printed_as_a_unit():
+    """An output declared with a note in place of a unit ("same unit as
+    specified") shows its figure, not the note."""
+    from app.agents.driver import render
+
+    from tests.lane5_core_support import Param, registered
+
+    def fn(span_m: float) -> dict:
+        return {"margin": span_m / 2}
+
+    with registered("lane5_unit_words", fn, "Qx margin check", {"span_m": Param("m", lo=0, hi=1e6, label="span")},
+                    {"margin": "same unit as specified"}):
+        text = render.render_calculation({"status": "success", "calculation": "lane5_unit_words",
+                                          "result": {"margin": 2.0}}, {"span_m": 4})
+    assert "same unit as specified" not in text
+    assert "2" in text

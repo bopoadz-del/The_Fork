@@ -52,6 +52,12 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False) ->
     _, every = cp.figure_provenance(checked, None, msgs, enforce=False, tool_passages=True)
     out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
     out = _tidy(out)
+    if shared:
+        # A library file the turn read is named by its title, never by its
+        # stored file name -- after the gate, which matches citations
+        # against the stored names the evidence carries.
+        for stored, title in sorted(sources.library_names(msgs).items(), key=lambda kv: -len(kv[0])):
+            out = out.replace(stored, title)
     report = {
         "identifiers_replaced": identifiers,
         "figures_removed": [e["figure"] for e in every if not e.get("source")],
@@ -82,6 +88,38 @@ def _tidy(text: str) -> str:
     return _EMPTY_BRACKETS.sub("", text)
 
 
+def _offered_workflows(offered: List[Dict[str, Any]]) -> int:
+    """How many workflows the run_workflow tool offered this step (0: none)."""
+    for t in offered:
+        fn = t.get("function") or {}
+        if fn.get("name") == routes.RUN_WORKFLOW:
+            return len(((fn.get("parameters") or {}).get("properties") or {}).get("workflow", {}).get("enum") or [])
+    return 0
+
+
+def _named_calculator_note(user_message: str) -> str:
+    """When the ask names one platform calculator by its declared name, say
+    so before the model chooses: a figure that calculator computes comes
+    from running it, never from the model's own knowledge. The model still
+    chooses; this only tells it what the ask named."""
+    try:
+        from app.lib import formula_registry
+        from app.lib.construction_formulas import calculator_name_from_text
+
+        name = calculator_name_from_text(user_message or "")
+        spec = formula_registry.get(name) if name else None
+    except Exception:  # noqa: BLE001 -- a note is help, never a failure
+        _LOG.debug("named-calculator lookup failed", exc_info=True)
+        return ""
+    if spec is None:
+        return ""
+    where = "" if spec.owner == "base" else f" It is in the {spec.owner} hat."
+    return (f"This ask names the platform calculator {spec.display_name} (construction_calc, "
+            f"calculation \"{spec.name}\").{where} A figure, level or result it computes comes from "
+            "running it with the user's inputs, not from your own knowledge; if it cannot run, "
+            "say what it needs.")
+
+
 def _args(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     raw = (tool_call.get("function") or {}).get("arguments") or "{}"
     try:
@@ -104,6 +142,9 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     # loop (live: 0.4-1.1 s stalls at 5 driver users).
     msgs: List[Dict[str, Any]] = await off_loop(context.messages, user_message, history,
                                                  project_id, user_id, hat)
+    note = await off_loop(_named_calculator_note, user_message)
+    if note:
+        msgs.insert(len(msgs) - 1, {"role": "system", "content": note})
     used: List[str] = []
     ran: List[tuple] = []  # (tool, arguments) of every tool run, for the credit lines
     computed: List[tuple] = []  # (envelope, inputs) of every calculation that succeeded
@@ -149,9 +190,14 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         check["passages_read"] = report["passages_read"]
         return {"type": "token", "content": checked} if checked.strip() else None
 
+    # One trace line per turn: what the model was offered and chose, and how
+    # each step ended. Tool and workflow names only -- never the user's words.
+    trace: List[Dict[str, Any]] = []
     step = 0
     for step in range(driver.max_steps()):
         offered = tools.offered(agent, project_id, hat, disciplines)
+        trace.append({"step": step + 1, "hat": hat, "offered": len(offered),
+                      "workflows": _offered_workflows(offered), "calls": []})
         # Streamed: each finished sentence is checked and sent while the model
         # is still writing. One sentence is held back, so a short preamble
         # ("Let me look that up.") is dropped when the reply turns out to be
@@ -211,6 +257,11 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 if result_of_call.get("ok", True):
                     ran.append((name, args))  # a failed run is credited with nothing
             ok = bool(result_of_call.get("ok", True))
+            trace[-1]["calls"].append({
+                "tool": name, "workflow": args.get("workflow") if name == routes.RUN_WORKFLOW else None,
+                "calculation": args.get("calculation") if name == "construction_calc" else None,
+                "ok": ok, "missing": bool(result_of_call.get("missing") or result_of_call.get("needs_input")),
+            })
             if name != tools.SELECT_HAT:
                 if ok:
                     succeeded = True
@@ -298,6 +349,10 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         notes = "\n\n" + credit + notes
     if notes.strip():
         yield {"type": "token", "content": notes}
+    _LOG.info("DRIVER_TURN %s", json.dumps({
+        "steps": trace, "ended": ("answer" if model_answered else "question" if answer_done else "step_limit"),
+        "figures_removed": check["figures_removed"], "identifiers_replaced": check.get("identifiers_replaced", 0),
+        "elapsed_s": round(time.monotonic() - t0, 2)}, default=str))
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "provenance": provenance, "exit_check": check,
            "sources": sources.panel(_trail(), provenance, "".join(sent),

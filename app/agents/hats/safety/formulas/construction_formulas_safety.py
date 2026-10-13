@@ -183,3 +183,7 @@ ADDITIONAL_CALCULATORS = {
     "fall_arrest_force": fall_arrest_force,
     "crane_lift_capacity": crane_lift_capacity,
 }
+
+from app.agents.hats.safety.defaults import install_default_disclosure
+
+install_default_disclosure()

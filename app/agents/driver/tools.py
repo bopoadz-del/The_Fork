@@ -62,8 +62,9 @@ def offered(agent: Any, project_id: Optional[str], hat: Optional[str], disciplin
     return [select_hat_schema(disciplines)] + tools + ([workflow] if workflow else [])
 
 
-#: Calculations listed in one schema at most: base plus one hat stays well
-#: under it; a larger offer is cut by registry order, never silently.
+#: Calculations listed in full (inputs with units and ranges) at most: base
+#: plus one hat stays well under it; a larger offer is cut by registry order,
+#: never silently. Every other registered calculator is still listed, briefly.
 _MAX_CALCULATIONS = 80
 
 
@@ -90,6 +91,18 @@ def calculator_schema(hat: Optional[str]) -> Dict[str, Any]:
     for spec in specs:
         inputs = "; ".join(_input_line(k, p) for k, p in formula_registry.parameters(spec).items())
         lines.append(f"- {spec.name}: {spec.display_name}. {spec.description} Inputs: {inputs or 'none'}.")
+    # Every other registered calculator stays callable before its hat is
+    # chosen: a calculator the turn needs is never out of reach, so the model
+    # never works its figure by hand or reaches for a different tool.
+    listed = {s.name for s in specs}
+    others = [s for s in formula_registry.all_specs() if s.name not in listed]
+    if others:
+        lines.append("Other calculators (in another hat; call them the same way):")
+        for spec in others:
+            inputs = "; ".join(f"{k} = {p.label or k.replace('_', ' ')}"
+                               for k, p in formula_registry.parameters(spec).items())
+            lines.append(f"- {spec.name}: {spec.display_name} ({spec.owner}). Inputs: {inputs or 'none'}.")
+    specs = specs + others
     return {
         "type": "function",
         "function": {
