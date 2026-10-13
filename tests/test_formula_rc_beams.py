@@ -86,10 +86,10 @@ def test_slab_thickness_min_aci_simply_supported():
 
 
 def test_slab_thickness_min_eurocode_cantilever():
-    # EC2 cantilever ratio 8: 6000/8 = 750 mm.
+    # EC2 cantilever l/d = 8: d = 750 mm; h = d + 25 mm nominal cover.
     r = CALCULATORS["slab_thickness_min"](span_mm=6000, support_condition="cantilever",
                                           code="eurocode")
-    assert r["min_thickness_mm"] == pytest.approx(750.0, abs=0.5)
+    assert r["min_thickness_mm"] == pytest.approx(775.0, abs=0.5)
 
 
 def test_rebar_lap_length_aci():

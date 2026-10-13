@@ -794,7 +794,7 @@ class TestSlabThicknessMin:
 
     def test_eurocode_cantilever(self):
         r = _ok("slab_thickness_min", span_mm=6000, support_condition="cantilever", code="eurocode")
-        assert r["min_thickness_mm"] == pytest.approx(750.0, abs=0.1)
+        assert r["min_thickness_mm"] == pytest.approx(775.0, abs=0.1)
 
 
 class TestGuardrailTopRailHeight:

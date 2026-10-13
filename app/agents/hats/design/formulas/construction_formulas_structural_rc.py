@@ -146,6 +146,8 @@ _EC_RATIOS = {"simply_supported": 20.0, "one_end_continuous": 26.0,
         'support_condition': Param('-'),
         'code': Param('-'),
         'fy_mpa': Param('MPa', 100, 1500, label='reinforcement yield strength', grade='rebar'),
+        'cover_mm': Param('mm', 0, 200, label='nominal cover'),
+        'bar_diameter_mm': Param('mm', 0, 60, label='bar diameter'),
     },
     outputs={'min_thickness_mm': 'mm', 'support_condition': '-'},
 )
@@ -154,21 +156,30 @@ def slab_thickness_min(
     support_condition: str = "simply_supported",
     code: str = _ACI,
     fy_mpa: float = 420.0,
+    cover_mm: float = 25.0,
+    bar_diameter_mm: float = 0.0,
 ) -> dict:
     """Minimum one-way slab thickness for deflection control (span/ratio).
 
     ACI 318-19 Table 7.3.1.1 (fy=420): SS L/20, one-end L/24, both-ends L/28,
-    cantilever L/10; x(0.4 + fy/700) for other fy.
-    EN 1992-1-1 §7.4.2 basic span/depth: SS 20, end 26, interior 30, cantilever 8.
+    cantilever L/10; x(0.4 + fy/700) for other fy. Those ratios are overall
+    thickness.
+    EN 1992-1-1 §7.4.2 basic span/depth (effective depth): SS 20, end 26,
+    interior 30, cantilever 8. Thickness is that depth plus nominal cover
+    plus half the bar diameter. Cover defaults to §4.4.1 XC1 class S4:
+    cmin,dur 15 mm + Δcdev 10 mm.
     """
     cc = _norm_code(code)
     L = float(span_mm)
     sc = (support_condition or "simply_supported").strip().lower()
     if cc == _EC:
         ratio = _EC_RATIOS.get(sc, 20.0)
-        t = L / ratio
-        std = "EN 1992-1-1 §7.4.2 (basic span/depth)"
-        note = f"L/{ratio:.0f} = {L}/{ratio:.0f} = {t:.1f} mm"
+        depth = L / ratio
+        t = depth + float(cover_mm) + float(bar_diameter_mm) / 2.0
+        std = "EN 1992-1-1 §7.4.2 (basic span/depth) + §4.4.1 cover"
+        note = (f"d=L/{ratio:.0f}={depth:.1f} mm; h=d+cover+φ/2 "
+                f"= {depth:.1f}+{float(cover_mm):.1f}+{float(bar_diameter_mm)/2:.1f} "
+                f"= {t:.1f} mm")
     else:
         ratio = _ACI_RATIOS.get(sc, 20.0)
         fy_mod = 0.4 + fy_mpa / 700.0
