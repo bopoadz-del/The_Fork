@@ -980,13 +980,13 @@ class TestProductivityManpowerDuration:
 
 
 class TestProductivityRate:
-    """rate = output / labour_hours; per-worker = rate / crew_size."""
+    """rate = output / man-hours. The crew does not divide that rate again."""
 
     def test_500_in_40_hours_crew_4(self):
-        # 500/40=12.5 /h; /4=3.125 /worker-h.
+        # 500/40 = 12.5 per man-hour. A crew of 4 does not make it 3.125.
         r = _ok("productivity_rate", output_quantity=500, labor_hours=40, crew_size=4)
         assert r["rate_per_hour"] == pytest.approx(12.5, abs=0.001)
-        assert r["rate_per_worker_hour"] == pytest.approx(3.125, abs=0.001)
+        assert r["rate_per_worker_hour"] == pytest.approx(12.5, abs=0.001)
 
     def test_zero_hours_is_error(self):
         _err("productivity_rate", output_quantity=500, labor_hours=0, crew_size=4)
