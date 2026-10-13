@@ -11,6 +11,7 @@ few by score.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List
 
 #: Retrieval and navigation tools: their results are passages, not figures.
@@ -111,7 +112,7 @@ def panel(
         score = float(h.get("score") or 0.0)
         out.append({
             "doc_id": doc_id,
-            "doc_name": name,
+            "doc_name": library_title(name) if layer in LIBRARY_LAYERS else name,
             "page_or_section": _page(h),
             "score": round(score, 3),
             "confidence": _confidence(score),
@@ -129,6 +130,34 @@ def panel(
             and str(row.get("doc_name") or "") not in seen_names
         ]
         out = [*extra, *out][:_MAX_SOURCES]
+    return out
+
+
+# Layers whose files the platform curates, not a user: their stored file
+# names are storage keys ("design_values_metric.md") and read as their words.
+# A user's own document keeps the name its owner gave it.
+LIBRARY_LAYERS = frozenset({"general_knowledge"})
+_STORED_NAME_RE = re.compile(r"^(?:.*[\\/])?([^\\/]+?)(?:\.[A-Za-z0-9]{1,5})?$")
+
+
+def library_title(name: str) -> str:
+    """A library file's stored name as words: no folder, no extension, no
+    underscores."""
+    m = _STORED_NAME_RE.match((name or "").strip())
+    base = m.group(1) if m else (name or "")
+    if " " in base or "_" not in base:
+        return name  # already written as words ("Formwork notes.md")
+    return re.sub(r"_+", " ", base).strip() or name
+
+
+def library_names(trail: List[Dict[str, Any]]) -> Dict[str, str]:
+    """{stored file name: title} for every library passage this turn read."""
+    out: Dict[str, str] = {}
+    for hit in _hits(trail):
+        layer = str(hit.get("origin") or hit.get("layer") or "")
+        stored = str(hit.get("filename") or hit.get("doc_name") or "").strip()
+        if layer in LIBRARY_LAYERS and stored:
+            out[stored] = str(hit.get("title") or "").strip() or library_title(stored)
     return out
 
 
