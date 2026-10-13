@@ -16,15 +16,19 @@ from app.lib.formula_registry import Param
 _PLAIN_NUMBER = re.compile(
     r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$"
 )
-
-# One alias table for every BOQ row the generator reads. Canonical names win;
-# an alias only fills a missing canonical field (setdefault).
-_BOQ_FIELD_ALIASES = (
-    ("quantity", ("qty",)),
-    ("unit_price", ("rate", "unit_rate")),
-    ("total", ("amount",)),
+# A leading number and whatever unit words follow it ("40 m", "1,500 per m").
+_LEADING_MEASURE = re.compile(
+    r"^(?P<num>[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(?P<rest>.*)$"
 )
+
+# Row lists the generator reads. Field names come from the BOQ column map
+# (the same headers a sheet and an ingested row use). A qualified header
+# such as "total quantity" or "total price" resolves by that same map:
+# total + a quantity word is the quantity, total + a money word is the
+# line total, unit + a money word is the rate. Canonical names win.
 _BOQ_ROW_LISTS = ("boq", "line_items")
+_QUALIFIED_RATE_WORDS = ("per", "/")
+_ALIAS_TABLE: tuple | None = None
 
 
 def _coerce_boq_number(value: Any) -> Any:
@@ -44,23 +48,158 @@ def _coerce_boq_number(value: Any) -> Any:
     return None
 
 
+def _coerce_measure(value: Any) -> tuple[Any, str | None]:
+    """A cell as ``(number, unit)``. The unit is set only when the cell is a
+    number followed by a unit token (``40 m``, ``1,500 per m``)."""
+    number = _coerce_boq_number(value)
+    if number is not None or not isinstance(value, str):
+        return number, None
+    text = value.strip().replace(",", "")
+    match = _LEADING_MEASURE.match(text)
+    if not match:
+        return None, None
+    number = _coerce_boq_number(match.group("num"))
+    if number is None:
+        return None, None
+    rest = (match.group("rest") or "").strip()
+    if not rest:
+        return number, None
+    tokens = rest.split()
+    if len(tokens) == 1 and tokens[0][:1].isalpha():
+        return number, tokens[0]
+    if (
+        len(tokens) == 2
+        and tokens[0].lower() in _QUALIFIED_RATE_WORDS
+        and tokens[1][:1].isalpha()
+    ):
+        return number, tokens[1]
+    return None, None
+
+
+def _alias_table() -> tuple:
+    """Quantity, rate and total aliases, in the BOQ processor's own vocabulary."""
+    global _ALIAS_TABLE
+    if _ALIAS_TABLE is not None:
+        return _ALIAS_TABLE
+    from app.blocks.boq_processor import BOQProcessorBlock
+
+    columns = BOQProcessorBlock._COL_MAP
+
+    def tokens(field: str, dest: str) -> tuple:
+        seen = []
+        for alias in columns[field]:
+            token = BOQProcessorBlock._normalize_col(alias)
+            if token and token != dest and token not in seen:
+                seen.append(token)
+        return tuple(seen)
+
+    _ALIAS_TABLE = (
+        ("unit", tokens("unit", "unit")),
+        ("quantity", tokens("quantity", "quantity")),
+        ("unit_price", tokens("rate", "unit_price")),
+        ("total", tokens("total", "total")),
+    )
+    return _ALIAS_TABLE
+
+
+def _header_cells(row: dict) -> dict:
+    """Row keys reduced the same way a BOQ column header is reduced."""
+    from app.blocks.boq_processor import BOQProcessorBlock
+
+    cells: dict = {}
+    for key, value in row.items():
+        if not isinstance(key, str):
+            continue
+        token = BOQProcessorBlock._normalize_col(key)
+        if token and token not in cells:
+            cells[token] = value
+    return cells
+
+
+def _qualified_dest(token: str, table: tuple) -> str | None:
+    """``total quantity`` is a quantity; ``total price`` is a line total;
+    ``unit price`` is a rate. Exact aliases are handled before this."""
+    by_dest = {dest: set(aliases) for dest, aliases in table}
+    quantity = by_dest.get("quantity", set()) | {"quantity"}
+    rate = by_dest.get("unit_price", set()) | {"unit_price"}
+    total = by_dest.get("total", set()) | {"total"}
+    money = rate | total
+    if token.startswith("total_"):
+        rest = token[len("total_"):]
+        if rest in quantity:
+            return "quantity"
+        if rest in money:
+            return "total"
+    if token.startswith("unit_") and token[len("unit_"):] in money:
+        return "unit_price"
+    return None
+
+
 def _normalise_boq_row(row: dict) -> dict:
-    """Map qty/rate/amount onto quantity/unit_price/total. setdefault only."""
+    """Map a BOQ row onto quantity, unit, unit_price and total.
+
+    The canonical key wins. An alias, or a qualified header, fills only a
+    missing canonical field. A non-numeric canonical value is left as it is.
+    """
+    cells = _header_cells(row)
+    table = _alias_table()
     out = dict(row)
-    for dest, aliases in _BOQ_FIELD_ALIASES:
-        if dest in out:
-            number = _coerce_boq_number(out[dest])
+    filled: set[str] = set()
+    quantity_unit: str | None = None
+    rate_unit: str | None = None
+
+    def note_unit(dest: str, unit: str | None) -> None:
+        nonlocal quantity_unit, rate_unit
+        if not unit:
+            return
+        if dest == "quantity" and quantity_unit is None:
+            quantity_unit = unit
+        elif dest == "unit_price" and rate_unit is None:
+            rate_unit = unit
+
+    for dest, aliases in table:
+        if dest == "unit":
+            if str(out.get("unit") or "").strip():
+                filled.add(dest)
+                continue
+            for alias in aliases:
+                text = cells.get(alias)
+                if text is None or not str(text).strip():
+                    continue
+                out["unit"] = str(text).strip()
+                filled.add(dest)
+                break
+            continue
+        if dest in cells:
+            number, unit = _coerce_measure(cells[dest])
             if number is not None:
                 out[dest] = number
+                note_unit(dest, unit)
+            filled.add(dest)
             continue
         for alias in aliases:
-            if alias not in row:
+            if alias not in cells:
                 continue
-            number = _coerce_boq_number(row[alias])
+            number, unit = _coerce_measure(cells[alias])
             if number is None:
                 continue
-            out.setdefault(dest, number)
+            out[dest] = number
+            note_unit(dest, unit)
+            filled.add(dest)
             break
+    for token, value in cells.items():
+        dest = _qualified_dest(token, table)
+        if dest is None or dest in filled:
+            continue
+        number, unit = _coerce_measure(value)
+        if number is None:
+            continue
+        out[dest] = number
+        note_unit(dest, unit)
+        filled.add(dest)
+    chosen_unit = quantity_unit or rate_unit
+    if chosen_unit and not str(out.get("unit") or "").strip():
+        out["unit"] = chosen_unit
     return out
 
 
