@@ -138,16 +138,28 @@ def _crew_cost_from_aliases(
             return value
     return None
 
+# A rate quoted against one of these is output per day, not per man-hour.
+_PER_DAY_RATE = ("gang-day", "gang day", "crew-day", "crew day", "per day", "/day")
+
+
+def _unit_is_per_day(rate_unit: Optional[str]) -> bool:
+    """True when the quoted unit is a day rate, not an hour rate."""
+    unit = str(rate_unit or "").lower()
+    if not unit or "hour" in unit or "/h" in unit:
+        return False
+    return any(token in unit for token in _PER_DAY_RATE)
+
+
 def _daily_production_from_rate_alias(
     *,
     productivity_rate: Optional[float],
     rate_unit: Optional[str],
     crew_cost: Optional[float],
 ) -> Optional[float]:
-    """Live A2-1: ``productivity_rate`` + gang-day unit (or a crew day-rate).
+    """``productivity_rate`` plus a day unit (or a crew day-rate).
 
     ``productivity`` on this calculator is qty / man-hour. A rate quoted
-    per gang-day / crew-day is ``daily_production``, not that field.
+    per day is ``daily_production``, not that field.
     """
     if productivity_rate is None or productivity_rate == "":
         return None
@@ -159,14 +171,9 @@ def _daily_production_from_rate_alias(
     if rate <= 0:
         return None
     unit = str(rate_unit or "").lower()
-    per_day = any(
-        token in unit
-        for token in ("gang-day", "gang day", "crew-day", "crew day", "per day", "/day")
-    )
-    if per_day or crew_cost is not None or not unit:
-        # No unit + crew cost (or a bare rate next to a day-cost) is the
-        # live plastering pairing. A unit that names hours stays on the
-        # man-hour path via ``productivity``.
+    if _unit_is_per_day(unit) or crew_cost is not None or not unit:
+        # No unit + crew cost (or a bare rate next to a day-cost) is a
+        # day rate. A unit that names hours stays on the man-hour path.
         if "hour" in unit or "/h" in unit:
             return None
         return rate
@@ -194,7 +201,14 @@ def _daily_production_from_rate_alias(
         'day_rate': Param('currency/day', 0, 1e9, label='day rate'),
         'gang_cost_per_day': Param('currency/day', 0, 1e9, label='gang cost per day'),
     },
-    outputs={'productivity': 'per productivity_units', 'required_manpower': '-', 'manhours_required': 'h', 'daily_required_production': '-', 'duration': 'duration_units', 'total_cost': 'currency'},
+    outputs={
+        'productivity': '1/man-hour',
+        'required_manpower': '-',
+        'manhours_required': 'h',
+        'daily_required_production': '-',
+        'duration': 'days',
+        'total_cost': 'currency',
+    },
 )
 def productivity_manpower_duration(
     *,
@@ -244,6 +258,18 @@ def productivity_manpower_duration(
             prod_alias = None
         if prod_alias is not None and prod_alias > 0:
             productivity = prod_alias
+    # A per-day unit describes the rate next to it. That figure is duration
+    # in days, including when the same number was also passed as productivity.
+    if productivity is not None and _unit_is_per_day(rate_unit):
+        quoted = productivity_rate if productivity_rate not in (None, "") else productivity
+        try:
+            same_rate = float(productivity) == float(quoted)
+        except (TypeError, ValueError):
+            same_rate = False
+        if same_rate:
+            if daily_production is None:
+                daily_production = float(productivity)
+            productivity = None
 
     results: Dict[str, Any] = {
         "formulas_used": [],
@@ -261,7 +287,6 @@ def productivity_manpower_duration(
             }
         prod = float(quantity_executed) / mh
         results["productivity"] = round(prod, 6)
-        results["productivity_units"] = "qty / man-hour"
         results["formulas_used"].append(
             "Productivity = Quantity Executed / Man-hours"
         )
@@ -320,7 +345,6 @@ def productivity_manpower_duration(
             }
         dur = float(quantity) / daily
         results["duration"] = round(dur, 4)
-        results["duration_units"] = "days (same period as daily_production)"
         results["formulas_used"].append(
             "Duration = Quantity / Daily Production"
         )
