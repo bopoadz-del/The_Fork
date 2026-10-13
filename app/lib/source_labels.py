@@ -159,8 +159,16 @@ def _shown_quantity(value: Any, row: Dict[str, Any]) -> str:
     return f"{shown} {unit_words(unit)}"
 
 
+# Unitless kinds of input a range still names, so "0 to 1" reads as a ratio.
+_NAMED_KINDS = frozenset({"ratio", "count", "fraction"})
+
+
 def _accepted_range(row: Dict[str, Any]) -> str:
-    return f"{_shown_quantity(row['lo'], row)} to {_shown_quantity(row['hi'], row)}"
+    shown = f"{_shown_quantity(row['lo'], row)} to {_shown_quantity(row['hi'], row)}"
+    kind = _norm(row.get("unit") or "")
+    if kind in _NAMED_KINDS and not _is_fraction_percent(row):
+        shown += f", as a {kind}"
+    return shown
 
 
 def input_question(calculation: str, rejected: List[Dict[str, Any]],
@@ -247,9 +255,17 @@ def calculator_label(calculation: str, inputs: Optional[Dict[str, Any]] = None) 
     spec = formula_registry.get(calculation or "")
     name = spec.display_name if spec and spec.display_name else "Calculation"
     units = spec.inputs if spec else {}
-    shown = ", ".join(input_phrase(k, v, units.get(k, "")) for k, v in (inputs or {}).items()
+    shown = ", ".join(_credit_phrase(calculation, k, v, units.get(k, "")) for k, v in (inputs or {}).items()
                       if v not in (None, ""))
     return f"{name} — {CALCULATOR_SUFFIX}" + (f" ({shown})" if shown else "")
+
+
+def _credit_phrase(calculation: str, key: str, value: Any, unit: str) -> str:
+    """One input in a credit line: its declared label (else its name as
+    words) and its value in its unit -- "core temperature 68 °C", never the
+    key's own words when a label is declared."""
+    value_part = input_phrase("", value, unit).strip()
+    return f"{parameter_label(calculation, key)} {value_part}".strip()
 
 
 def _same_value(left: Any, right: Any) -> bool:

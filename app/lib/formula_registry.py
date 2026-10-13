@@ -471,6 +471,10 @@ def _unit_rejection(spec: ParamSpec, value: Any, reason: str, **extra: Any) -> D
     return row
 
 
+# Declared units that carry no dimension: a figure in them is a plain number.
+_DIMENSIONLESS = frozenset({"count", "ratio"})
+
+
 def convert_figure(spec: ParamSpec, number: float, unit: str,
                    context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """One figure written in ``unit``, put into the unit ``spec`` declares by
@@ -480,10 +484,15 @@ def convert_figure(spec: ParamSpec, number: float, unit: str,
 
     shown = f"{written_number(number)} {unit}"
     declared, written = parse_unit(spec.unit), parse_unit(unit)
-    if declared is None:
-        # No unit of its own: a count, a factor, or a figure in whatever unit
-        # its companions use. The written number stands; a percentage only
-        # becomes a fraction for an input whose range is a fraction.
+    dimensionless = declared is not None and declared.dimension in _DIMENSIONLESS
+    if declared is None or (dimensionless and (written is None or written.dimension
+                                                in (declared.dimension, "fraction"))):
+        # No unit of its own: a count, a ratio, a factor, or a figure in
+        # whatever unit its companions use. The written number stands (an
+        # unrecognised word after a count names what is counted; a known
+        # unit of another kind, "5 m" for a count, is refused below); a
+        # percentage only becomes a fraction for an input whose range is a
+        # fraction.
         if (written is not None and written.dimension == "fraction"
                 and spec.hi is not None and spec.hi <= 1):
             value = number * written.scale
@@ -655,3 +664,76 @@ def schema_gaps() -> List[str]:
             kind = p.kind if p.kind in TOOL_KINDS else ""
             gaps += _param_gaps(f"tool:{name}.{key}", kind, p, p.required)
     return sorted(gaps)
+
+
+def _key_form(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(text or "").lower())
+
+
+#: Magnitude words a figure may carry. The bare letter "m" is not one: it is
+#: a metre.
+_MAGNITUDE = {"thousand": 1e3, "k": 1e3, "million": 1e6, "mn": 1e6, "mio": 1e6,
+              "billion": 1e9, "bn": 1e9}
+_MAGNITUDE_RE = re.compile(
+    r"^(?P<pre>\s*(?:[A-Za-z]{3}|[$€£¥])?\s*)(?P<num>[+-]?\d[\d,]*(?:\.\d+)?)\s*"
+    r"(?P<mag>" + "|".join(sorted(_MAGNITUDE, key=len, reverse=True)) + r")\b(?P<post>.*)$",
+    re.IGNORECASE)
+
+
+def _with_magnitude(value: Any) -> Any:
+    """"2 million" -> 2000000; "SAR 1.5 bn" -> "SAR 1500000000". Anything else unchanged."""
+    if not isinstance(value, str):
+        return value
+    m = _MAGNITUDE_RE.match(value)
+    if not m:
+        return value
+    number = float(m.group("num").replace(",", "")) * _MAGNITUDE[m.group("mag").lower()]
+    shown = int(number) if number.is_integer() else number
+    pre, post = m.group("pre").strip(), m.group("post").strip()
+    return shown if not pre and not post else " ".join(x for x in (pre, str(shown), post) if x)
+
+
+def bind_declared(name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Arguments bound by the formula's own declarations, the same way for
+    every formula: a key that names one input by its name, its declared label,
+    the label's initials ("PV" for "planned value") or its name in words
+    (case, spaces and separators ignored) is moved onto
+    that input, and a figure written with a magnitude word is expanded. An
+    input already given, or a key that could name two inputs, is left alone."""
+    spec = get(name or "")
+    if spec is None or not isinstance(params, dict):
+        return params
+    from app.lib.source_labels import parameter_words
+
+    forms: Dict[str, List[str]] = {}
+    for key, p in spec.params.items():
+        words = re.findall(r"[A-Za-z]+", p.label or "")
+        initials = "".join(w[0] for w in words) if len(words) >= 2 else ""
+        for form in {_key_form(key), _key_form(p.label), _key_form(parameter_words(key, p.unit)),
+                     _key_form(initials)}:
+            if form:
+                forms.setdefault(form, []).append(key)
+    out = dict(params)
+    for given in list(params):
+        if given in spec.params:
+            continue
+        # A one-character key is a symbol (E, I, w): the symbol binder owns
+        # it, unit conversion included.
+        if len(_key_form(given)) < 2:
+            continue
+        targets = sorted(set(forms.get(_key_form(given), [])))
+        if len(targets) == 1 and targets[0] not in out:
+            out[targets[0]] = out.pop(given)
+    # A magnitude word scales an amount with no physical unit (money, a
+    # count, a ratio); after an engineering figure "MN" is a meganewton.
+    for key, p in spec.params.items():
+        if key in out and _norm_unit(p.unit) in _AMOUNT_UNITS:
+            out[key] = _with_magnitude(out[key])
+    return out
+
+
+_AMOUNT_UNITS = frozenset({"", "-", "currency", "count", "ratio", "no", "nr"})
+
+
+def _norm_unit(unit: str) -> str:
+    return (unit or "").strip().lower()

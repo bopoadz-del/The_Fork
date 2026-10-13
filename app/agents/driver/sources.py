@@ -45,10 +45,21 @@ def _confidence(score: float) -> str:
     return "High" if score >= 0.75 else "Medium" if score >= 0.5 else "Low"
 
 
+def _page(hit: Dict[str, Any]) -> str:
+    """A page or section a user can open: a positive page number or a named
+    section. -1 / 0 / empty mean "no page" and are never shown."""
+    page = hit.get("page")
+    if isinstance(page, (int, float)) and not isinstance(page, bool):
+        return str(int(page)) if page > 0 else ""
+    text = str(page or hit.get("page_or_section") or "").strip()
+    return "" if text.lstrip("-").isdigit() and int(text) <= 0 else text
+
+
 def panel(
     trail: List[Dict[str, Any]],
     provenance: List[Dict[str, Any]],
     answer: str = "",
+    calculated: bool = False,
 ) -> List[Dict[str, Any]]:
     """Sources for the Sources panel, one per document.
 
@@ -68,20 +79,31 @@ def panel(
         if used_rows:
             def _hit_used(hit: Dict[str, Any]) -> bool:
                 doc_id = str(hit.get("document_id") or hit.get("doc_id") or "")
-                name = str(hit.get("filename") or hit.get("doc_name") or "")
-                if doc_id in backing or name in backing:
+                name = _hit_name(hit)
+                if doc_id in backing or name in backing or str(hit.get("filename") or "") in backing:
                     return True
                 snippet = str(hit.get("snippet") or hit.get("text") or "")
                 return bool(snippet) and _answer_quotes_passage(answer, snippet)
 
             hits = [hit for hit in hits if _hit_used(hit)]
+    if calculated and (answer or "").strip():
+        # A calculator answered: only passages the answer actually used are
+        # its sources, never the best of whatever the searches returned.
+        from app.agents.runtime import _answer_quotes_passage
+
+        def _backs(hit: Dict[str, Any]) -> bool:
+            doc_id = str(hit.get("document_id") or hit.get("doc_id") or "")
+            name = _hit_name(hit)
+            snippet = str(hit.get("snippet") or hit.get("text") or "")
+            return bool({doc_id, name, str(hit.get("filename") or "")} & backing) or (bool(snippet) and _answer_quotes_passage(answer, snippet))
+        hits = [hit for hit in hits if _backs(hit)]
     hits.sort(key=lambda h: (
         not ({str(h.get("document_id") or h.get("doc_id") or ""), str(h.get("filename") or "")} & backing),
         -float(h.get("score") or 0.0)))
     seen, out = set(), []
     for h in hits:
         doc_id = str(h.get("document_id") or h.get("doc_id") or "")
-        name = str(h.get("filename") or h.get("doc_name") or doc_id)
+        name = _hit_name(h) or doc_id
         if not name or (doc_id or name) in seen:
             continue
         seen.add(doc_id or name)
@@ -90,7 +112,7 @@ def panel(
         out.append({
             "doc_id": doc_id,
             "doc_name": name,
-            "page_or_section": str(h.get("page") or h.get("page_or_section") or ""),
+            "page_or_section": _page(h),
             "score": round(score, 3),
             "confidence": _confidence(score),
             "layer": layer,
@@ -98,7 +120,7 @@ def panel(
         })
         if len(out) >= _MAX_SOURCES:
             break
-    if used_rows:
+    if used_rows and not calculated:
         seen_ids = {str(row.get("doc_id") or "") for row in out}
         seen_names = {str(row.get("doc_name") or "") for row in out}
         extra = [
@@ -108,6 +130,16 @@ def panel(
         ]
         out = [*extra, *out][:_MAX_SOURCES]
     return out
+
+
+def _hit_name(hit: Dict[str, Any]) -> str:
+    """What a reader calls a passage's document: its title when the hit
+    carries one, then its source label, then the stored file name."""
+    for key in ("title", "source_label", "original_name", "filename", "doc_name"):
+        value = str(hit.get(key) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def tool_credit_lines(calls: List[Dict[str, Any]]) -> str:
