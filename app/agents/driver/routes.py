@@ -93,6 +93,19 @@ def card_overlaps(declared: Dict[str, Dict[str, Any]], limit: float = OVERLAP_LI
     return out
 
 
+def input_request(workflow: str, refusal: Dict[str, Any]) -> str:
+    """What the user is asked when a workflow cannot run for a missing input:
+    what it produces and what it needs, in its card's words."""
+    card = cards().get(workflow) or {}
+    produces = card.get("produces")
+    needs = card.get("needs")
+    if produces and needs:
+        return (f"To produce {_lower_first(produces)}, I need {_lower_first(needs)}. "
+                "Please provide them, or tell me which project document holds them.")
+    return (f"The {workflow.replace('_', ' ')} workflow could not run: "
+            f"{str(refusal.get('missing') or 'an input it needs is missing').strip()}")
+
+
 def _lower_first(text: str) -> str:
     return text[:1].lower() + text[1:]
 

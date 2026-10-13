@@ -193,6 +193,11 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     # One trace line per turn: what the model was offered and chose, and how
     # each step ended. Tool and workflow names only -- never the user's words.
     trace: List[Dict[str, Any]] = []
+    # Workflows that refused for a missing input and have not run since. While
+    # one is open, the model's next reply is held until it is complete: a
+    # reply that only answers would be the workflow's deliverable written by
+    # hand, so the workflow's own request for its inputs is given instead.
+    refused: Dict[str, Dict[str, Any]] = {}
     step = 0
     for step in range(driver.max_steps()):
         offered = tools.offered(agent, project_id, hat, disciplines)
@@ -203,12 +208,13 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         # ("Let me look that up.") is dropped when the reply turns out to be
         # tool calls.
         buffer, held, result = "", None, None
+        hold_reply = bool(refused)
         async for kind, value in llm.stream(agent, msgs, offered, model=driver.model()):
             if kind == "done":
                 result = value
                 break
             buffer += value
-            while True:
+            while not hold_reply:
                 cut = _SENTENCE_END.search(buffer)
                 if cut is None:
                     break
@@ -223,6 +229,16 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             return
         message = result["message"]
         calls = message.get("tool_calls") or []
+        if not calls and refused:
+            # The model answered while a refused workflow is still open: its
+            # deliverable comes from the workflow, so the turn asks for what
+            # the workflow needs instead of showing a hand-written one.
+            for request in dict.fromkeys(routes.input_request(w, r) for w, r in refused.items()):
+                event = _release(request + "\n", model_text=False)
+                if event:
+                    yield event
+            answer_done = True
+            break
         if not calls:
             for piece in (held, buffer):
                 if piece:
@@ -250,6 +266,11 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 used.append(f"{name}:{args.get('workflow')}")
                 result_of_call = await routes.run(args, user_message, project_id, user_id, conversation_id)
                 exports.extend(result_of_call.get("exports") or [])
+                workflow = str(args.get("workflow") or "")
+                if result_of_call.get("ok"):
+                    refused.pop(workflow, None)
+                elif result_of_call.get("missing"):
+                    refused[workflow] = result_of_call
             else:
                 used.append(name)
                 result_of_call = await agent._run_tool_call(call, api_key, project_id, conversation_id,
