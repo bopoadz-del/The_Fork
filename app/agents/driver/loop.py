@@ -198,6 +198,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     # reply that only answers would be the workflow's deliverable written by
     # hand, so the workflow's own request for its inputs is given instead.
     refused: Dict[str, Dict[str, Any]] = {}
+    reminded = False  # the model was told once to call a refused workflow again
     step = 0
     for step in range(driver.max_steps()):
         offered = tools.offered(agent, project_id, hat, disciplines)
@@ -229,10 +230,17 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             return
         message = result["message"]
         calls = message.get("tool_calls") or []
+        if not calls and refused and not reminded:
+            # The model answered while a refused workflow is still open. Its
+            # reply is not shown; it is told once to call the workflow again
+            # with the inputs the user's words and the documents give.
+            reminded = True
+            msgs.append({"role": "system", "content": routes.call_again_note(refused)})
+            continue
         if not calls and refused:
-            # The model answered while a refused workflow is still open: its
-            # deliverable comes from the workflow, so the turn asks for what
-            # the workflow needs instead of showing a hand-written one.
+            # Reminded once and still answering: the deliverable comes from
+            # the workflow, so the turn asks for what the workflow needs
+            # instead of showing a hand-written one.
             for request in dict.fromkeys(routes.input_request(w, r) for w, r in refused.items()):
                 event = _release(request + "\n", model_text=False)
                 if event:

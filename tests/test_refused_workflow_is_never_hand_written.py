@@ -39,6 +39,7 @@ def test_an_answer_after_a_refusal_becomes_the_workflows_request(monkeypatch, wo
         {"content": "", "tool_calls": [call("run_workflow", {"workflow": "widget_register"}, "w1")]},
         {"content": "", "tool_calls": [call("search_project_documents", {"query": "widgets"}, "s1")]},
         {"content": "Widget register\n| widget | location |\n| A | level 1 |"},
+        {"content": "Widget register\n| widget | location |\n| A | level 1 |"},  # after the reminder
     ])
     text = answer_text(events)
     assert "| A | level 1 |" not in text
@@ -53,3 +54,19 @@ def test_a_successful_re_call_answers_as_usual(monkeypatch, workflow):
         {"content": "Widget register: 3 widgets."},
     ])
     assert "Widget register: 3 widgets." in answer_text(events)
+
+
+def test_a_model_reminded_once_can_still_re_call(monkeypatch, workflow):
+    """The first plain answer after a refusal is not shown; the model is
+    reminded once, and a re-call then answers as usual."""
+    events, seen = drive(monkeypatch, "Make the widget register for widgets A, B and C", [
+        {"content": "", "tool_calls": [call("run_workflow", {"workflow": "widget_register"}, "w1")]},
+        {"content": "Here is a register I wrote: A, B, C."},
+        {"content": "", "tool_calls": [call("run_workflow", {"workflow": "widget_register",
+                                                              "params": {"widgets": ["A", "B", "C"]}}, "w2")]},
+        {"content": "Widget register: 3 widgets."},
+    ])
+    text = answer_text(events)
+    assert "Here is a register I wrote" not in text
+    assert "Widget register: 3 widgets." in text
+    assert any("has not run yet" in m.get("content", "") for m in seen[2]["messages"] if m.get("role") == "system")

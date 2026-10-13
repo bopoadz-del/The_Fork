@@ -93,6 +93,18 @@ def card_overlaps(declared: Dict[str, Dict[str, Any]], limit: float = OVERLAP_LI
     return out
 
 
+def call_again_note(refused: Dict[str, Dict[str, Any]]) -> str:
+    """The one reminder a model gets when it answers while a workflow it
+    called is still refusing for a missing input."""
+    parts = []
+    for workflow, refusal in refused.items():
+        inputs = ", ".join(f"{key} ({label})" for key, label in (refusal.get("inputs") or {}).items())
+        parts.append(f"{workflow}: {str(refusal.get('missing') or '').strip()} Inputs: {inputs or 'see its entry'}.")
+    return ("A workflow you called has not run yet, so its deliverable does not exist. Call run_workflow "
+            "for it again now, with params filled from the user's own words and the documents you read, "
+            "keyed as listed. Do not write the deliverable yourself. " + " ".join(parts))
+
+
 def input_request(workflow: str, refusal: Dict[str, Any]) -> str:
     """What the user is asked when a workflow cannot run for a missing input:
     what it produces and what it needs, in its card's words."""
