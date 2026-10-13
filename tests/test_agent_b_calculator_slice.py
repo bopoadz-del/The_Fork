@@ -90,10 +90,10 @@ def test_well_point_spacing_drawdown_is_not_a_cash_flow_lock():
 
 
 def test_productivity_rate_result_carries_per_hour_unit():
-    """500 / 40 h with a crew of 4 is 12.5 per hour, and the unit is on the result."""
+    """500 units in 40 man-hours is 12.5 per man-hour. The crew is not a second divisor."""
     direct = productivity_rate(output_quantity=500, labor_hours=40, crew_size=4)
     assert direct["rate_per_hour"] == pytest.approx(12.5, abs=0.001)
-    assert direct["rate_per_worker_hour"] == pytest.approx(3.125, abs=0.001)
+    assert direct["rate_per_worker_hour"] == pytest.approx(12.5, abs=0.001)
     assert direct["unit"] == "/hr"
     assert direct["value"] == pytest.approx(12.5, abs=0.001)
     assert direct["rate_per_worker_hour_unit"] == "/worker-hr"
