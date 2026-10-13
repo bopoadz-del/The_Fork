@@ -286,6 +286,10 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 if result_of_call.get("ok", True):
                     ran.append((name, args))  # a failed run is credited with nothing
             ok = bool(result_of_call.get("ok", True))
+            # The platform's shared exit check replaces a tool's internal error
+            # text copied into the answer, for the errors this turn recorded.
+            from app.agents import answer_exit
+            answer_exit.note_tool_result(name, result_of_call)
             trace[-1]["calls"].append({
                 "tool": name, "workflow": args.get("workflow") if name == routes.RUN_WORKFLOW else None,
                 "calculation": args.get("calculation") if name == "construction_calc" else None,
@@ -343,7 +347,13 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         for shown_name, error in dict.fromkeys(failed):
             if error.lower() in written.lower():
                 continue
-            line = f"{shown_name} could not complete: {error}"
+            from app.agents import answer_exit
+
+            # The tool's own words, unless they carry internal tokens: the
+            # shared exit check gives those as one plain sentence.
+            line = answer_exit.check_text(f"{shown_name} could not complete: {error}")
+            if not line.strip() or line.strip().lower() in written.lower():
+                continue
             sent.append(("\n\n" if written.strip() else "") + line + "\n")
             yield {"type": "token", "content": sent[-1]}
             written = "".join(sent)
