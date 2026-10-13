@@ -47,6 +47,7 @@ def test_a_driver_turn_leaves_a_trace_without_the_users_words(monkeypatch):
     assert "qxsecret" not in lines[0]
     trace = json.loads(lines[0][len("DRIVER_TURN "):])
     assert trace["ended"] == "answer"
+    assert trace["figures_removed"] == []
     first = trace["steps"][0]
     assert first["workflows"] == 1
     assert first["calls"] == [{"tool": "run_workflow", "workflow": "widget_register", "calculation": None,
