@@ -11,8 +11,8 @@ from app.lib.formula_registry import Param, formula
     display_name='Field compaction check',
     description='Field compaction as a percentage of the laboratory maximum dry density, against the specified minimum.',
     inputs={
-        'field_dry_density': Param('-', 0.5, 3, label='field dry density'),
-        'max_dry_density': Param('-', 0.5, 3, label='maximum dry density'),
+        'field_dry_density': Param('t/m3', 0.5, 3, label='field dry density'),
+        'max_dry_density': Param('t/m3', 0.5, 3, label='maximum dry density'),
         'required_compaction_percent': Param('%', 0, 110, label='required compaction'),
     },
     outputs={'compaction_percent': '%', 'required_percent': '%', 'passed': '-'},
@@ -35,6 +35,10 @@ def compaction_control(
         "required_percent": required_compaction_percent,
         "passed": passed,
         "standard": "ASTM D698/D1557 (Proctor)",
-        "note": (f"{field_dry_density}/{max_dry_density}*100 = {pct:.2f}% "
-                 f"({'PASS' if passed else 'FAIL'} vs {required_compaction_percent}%)."),
+        "note": (
+            f"{field_dry_density}/{max_dry_density} × 100 = {pct:.2f}%, "
+            f"{'PASS' if passed else 'FAIL'} — "
+            f"which {'meets' if passed else 'does not meet'} the specified "
+            f"{required_compaction_percent}%."
+        ),
     }
