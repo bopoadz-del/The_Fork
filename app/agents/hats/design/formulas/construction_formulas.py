@@ -467,6 +467,10 @@ def post_tensioning_force(
         'concrete_grade_n_mm2': Param('N/mm2', 5, 150, label='concrete strength', grade='concrete'),
         'use_i_beam': Param('-'),
         'i_beam_weight_t': Param('t', 0, 1000, label='steel section weight'),
+        'steel_area_mm2': Param('mm2', 0, 1e8, label='structural steel area'),
+        'steel_fy_mpa': Param('MPa', 100, 2000, label='structural steel yield strength', grade='steel'),
+        'rebar_area_mm2': Param('mm2', 0, 1e8, label='reinforcement area'),
+        'rebar_fy_mpa': Param('MPa', 100, 2000, label='reinforcement yield strength', grade='rebar'),
     },
     outputs={'option_a': '-', 'option_b': '-', 'recommended': '-'},
 )
@@ -474,23 +478,58 @@ def composite_column_design(
     axial_load_kn: float, column_diameter_mm: float,
     concrete_grade_n_mm2: float = 60.0,
     use_i_beam: bool = True, i_beam_weight_t: float = 0.0,
+    steel_area_mm2: float = 0.0, steel_fy_mpa: float = 355.0,
+    rebar_area_mm2: float = 0.0, rebar_fy_mpa: float = 500.0,
 ) -> Dict[str, Any]:
-    """Compare C60+I-Beam vs C80+rebar for composite columns."""
+    """Squash resistance of a concrete-encased column, EN 1994-1-1 §6.7.3.2.
+
+    Npl,Rd = Aa*fyd + 0.85*Ac*fcd + As*fsd, fcd = fck/γc (γc = 1.5),
+    fyd = fy/γM0 (γM0 = 1.0), fsd = fsk/γs (γs = 1.15). Ac is the concrete
+    area inside the gross section. A section mass is not an area, so
+    ``i_beam_weight_t`` does not change the resistance.
+    """
     if column_diameter_mm <= 0:
         raise ValueError("column_diameter_mm must be > 0")
     if axial_load_kn < 0 or concrete_grade_n_mm2 <= 0:
         raise ValueError("axial_load_kn must be >= 0 and concrete_grade_n_mm2 must be > 0")
-    col_area = math.pi * (column_diameter_mm / 2)**2
-    cap_a = col_area * concrete_grade_n_mm2 / 1000 * (1.10 if use_i_beam and i_beam_weight_t > 0 else 1.0)
-    upgraded = min(concrete_grade_n_mm2 * 1.33, 80.0)
-    cap_b = col_area * upgraded / 1000 * 0.95
+    if steel_area_mm2 < 0 or rebar_area_mm2 < 0 or steel_fy_mpa <= 0 or rebar_fy_mpa <= 0:
+        raise ValueError("steel and reinforcement areas must be >= 0 and yields must be > 0")
+    gross = math.pi * (column_diameter_mm / 2) ** 2
+    steel = float(steel_area_mm2) if use_i_beam else 0.0
+    rebar = float(rebar_area_mm2)
+    if steel + rebar > gross:
+        raise ValueError("steel plus reinforcement area exceeds the gross section")
+    concrete = gross - steel - rebar
+    fcd = float(concrete_grade_n_mm2) / 1.5
+
+    def resistance(steel_area: float) -> float:
+        ac = gross - steel_area - rebar
+        return (
+            steel_area * float(steel_fy_mpa)
+            + 0.85 * ac * fcd
+            + rebar * (float(rebar_fy_mpa) / 1.15)
+        ) / 1000.0
+
+    cap_a = resistance(steel)
+    cap_b = resistance(0.0)
     return {
-        "option_a": {"type": f"C{concrete_grade_n_mm2:.0f}+I-Beam", "capacity_kn": round(cap_a, 0),
-                     "is_safe": cap_a >= axial_load_kn},
-        "option_b": {"type": f"C{upgraded:.0f}+rebar", "capacity_kn": round(cap_b, 0),
-                     "is_safe": cap_b >= axial_load_kn},
+        "option_a": {
+            "type": f"C{concrete_grade_n_mm2:.0f}+encased steel",
+            "capacity_kn": round(cap_a, 0),
+            "is_safe": cap_a >= axial_load_kn,
+        },
+        "option_b": {
+            "type": f"C{concrete_grade_n_mm2:.0f}+rebar",
+            "capacity_kn": round(cap_b, 0),
+            "is_safe": cap_b >= axial_load_kn,
+        },
         "recommended": "B" if cap_b >= axial_load_kn and not (cap_a >= axial_load_kn) else (
             "A or B" if cap_a >= axial_load_kn and cap_b >= axial_load_kn else "A" if cap_a >= axial_load_kn else "NEITHER"),
+        "note": (
+            "EN 1994-1-1 §6.7.3.2. A section mass of "
+            f"{i_beam_weight_t:g} t is not an area; pass steel_area_mm2."
+        ),
+        "concrete_area_mm2": round(concrete if use_i_beam else gross - rebar, 1),
     }
 
 @formula(
