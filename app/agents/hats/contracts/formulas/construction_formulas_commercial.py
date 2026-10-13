@@ -13,7 +13,7 @@ from app.lib.formula_registry import Param, formula
     inputs={
         'rate_percent': Param('%', 0, 100, label='delay damages rate'),
         'contract_amount': Param('currency', 0, 1e13, label='contract amount'),
-        'currency': Param('-', label='currency code'),
+        'currency': Param('-', label='currency'),
     },
     outputs={'daily_amount': 'currency', 'rate_percent': '%', 'contract_amount': 'currency', 'currency': '-', 'per': '-'},
 )
