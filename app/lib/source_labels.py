@@ -247,9 +247,17 @@ def calculator_label(calculation: str, inputs: Optional[Dict[str, Any]] = None) 
     spec = formula_registry.get(calculation or "")
     name = spec.display_name if spec and spec.display_name else "Calculation"
     units = spec.inputs if spec else {}
-    shown = ", ".join(input_phrase(k, v, units.get(k, "")) for k, v in (inputs or {}).items()
+    shown = ", ".join(_credit_phrase(calculation, k, v, units.get(k, "")) for k, v in (inputs or {}).items()
                       if v not in (None, ""))
     return f"{name} — {CALCULATOR_SUFFIX}" + (f" ({shown})" if shown else "")
+
+
+def _credit_phrase(calculation: str, key: str, value: Any, unit: str) -> str:
+    """One input in a credit line: its declared label (else its name as
+    words) and its value in its unit -- "core temperature 68 °C", never the
+    key's own words when a label is declared."""
+    value_part = input_phrase("", value, unit).strip()
+    return f"{parameter_label(calculation, key)} {value_part}".strip()
 
 
 def _same_value(left: Any, right: Any) -> bool:
