@@ -1583,7 +1583,12 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
         # (waste_pct, markup_pct) reads a bare 10 as 10% the same way.
         if key in {"bulking_factor", "swell_factor"} or _percent_named_fraction(key, declared.get(key)):
             number = out[key]
-            if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0:
+            # A figure already inside the input's declared range is taken as
+            # given (150% bound as 1.5 on a 0..2 fraction is not divided again).
+            declared_param = spec.params.get(key) if spec else None
+            hi = getattr(declared_param, "hi", None)
+            in_range = hi is not None and isinstance(number, (int, float)) and float(number) <= float(hi)
+            if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0 and not in_range:
                 out[key] = float(number) / 100.0
     return out
 
@@ -1706,6 +1711,14 @@ def _text_label_map(fn: Any) -> Dict[str, str]:
         dest = _unique_semantic_dest(_snake_key(incoming), accepted_norm)
         if dest:
             add(incoming, dest)
+    # The registry's declared labels are the words a user reads: each names
+    # its own input, over any word built from a signature name.
+    spec = _formula_spec(fn)
+    for dest, param in (spec.params.items() if spec else ()):
+        key = _norm_label(param.label or "")
+        if key and dest in accepted_list:
+            out[key] = dest
+            ambiguous.discard(key)
     return out
 
 # English dimension adjectives written after the figure ("12 m long",
@@ -1768,6 +1781,39 @@ def _bind_grade_labels(fn: Any, grades: List[Tuple[Tuple[int, int], str, float, 
             found[owners[0]] = formula_registry.grade_value(params[owners[0]], strength, label)
 
 
+#: Currency codes and symbols written in front of a figure ("USD 150000",
+#: "$5,000"). Only these are dropped: three capitals before a number are
+#: otherwise a standard ("ACI 318") or a code and stay as written.
+_CURRENCY_CODES = ("USD", "EUR", "GBP", "SAR", "AED", "QAR", "KWD", "OMR", "BHD", "EGP", "JOD", "INR",
+                   "PKR", "CNY", "JPY", "KRW", "AUD", "NZD", "CAD", "CHF", "SGD", "HKD", "ZAR", "TRY",
+                   "MYR", "IDR", "THB", "PHP", "BRL", "MXN", "SEK", "NOK", "DKK", "PLN", "RUB", "NGN", "KES")
+_CURRENCY_BEFORE_RE = re.compile(r"(?<![A-Za-z])(?:(?:" + "|".join(_CURRENCY_CODES) + r")\s*|[$€£¥]\s*)(?=[+-]?\d)")
+_SPELLED_MAGNITUDE_RE = re.compile(r"(?<![\d.])([+-]?\d[\d,]*(?:\.\d+)?)\s*(thousand|million|billion)\b", re.IGNORECASE)
+_SPELLED_MAGNITUDE = {"thousand": 1e3, "million": 1e6, "billion": 1e9}
+_AREA_WORD_RE = (
+    (re.compile(r"\b(?:sq\.?|square)\s*(?:ft|feet|foot)\b", re.IGNORECASE), "ft2"),
+    (re.compile(r"\b(?:sq\.?|square)\s*(?:m|metres?|meters?)\b", re.IGNORECASE), "m2"),
+)
+
+
+def _normalize_ask(raw: str) -> str:
+    """The ask as the binder reads it: a written minus is a sign, an area
+    written in words is a unit, a spelled-out magnitude is part of its figure
+    (it scales any figure: "1.5 million m"), and a currency code or symbol in
+    front of a figure is dropped. Abbreviated magnitudes (k, mn, bn) are left
+    as written: after an engineering figure "MN" is a meganewton."""
+    text = raw.replace("−", "-")
+    text = re.sub(r"(?i)\bminus\s+(?=\d)", "-", text)
+    for rx, unit in _AREA_WORD_RE:
+        text = rx.sub(unit, text)
+
+    def _scale(m: "re.Match[str]") -> str:
+        value = float(m.group(1).replace(",", "")) * _SPELLED_MAGNITUDE[m.group(2).lower()]
+        return f"{int(value) if value.is_integer() else value}"
+    text = _SPELLED_MAGNITUDE_RE.sub(_scale, text)
+    return _CURRENCY_BEFORE_RE.sub("", text)
+
+
 def extract_calculation_params_from_text(
     fn: Any,
     text: str,
@@ -1779,7 +1825,7 @@ def extract_calculation_params_from_text(
     A bare number binds when exactly one still-missing required input
     declares no unit of its own. Two figures of one kind bind to neither.
     """
-    raw = str(text or "").strip()
+    raw = _normalize_ask(str(text or "").strip())
     if not raw or fn is None:
         return {}
     labels = _text_label_map(fn)
@@ -1821,7 +1867,7 @@ def extract_calculation_params_from_text(
             match = _first_open(rx, raw, _overlaps) or _first_open(glued, raw, _overlaps)
         else:
             rx = re.compile(
-                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+(?:is|of|equals)\s+|\s+)({_TEXT_NUM_RE})"
+                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+(?:is|of|equals|at)\s+|\s+)({_TEXT_NUM_RE})"
                 rf"(?:\s*({_TEXT_UNIT_RE}))?",
                 re.IGNORECASE,
             )
