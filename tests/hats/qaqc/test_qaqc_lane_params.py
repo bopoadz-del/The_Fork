@@ -74,24 +74,26 @@ def test_every_lane_param_has_a_unit_or_choice_and_a_range(spec, name, p):
         assert p.unit not in ("", "-"), f"{spec.name}.{name} is a measured input with no unit"
 
 
-def test_rupture_code_selects_one_of_the_two_declared_forms():
-    """The design code is a declared choice: ACI or the default form.
-
-    An unknown string keeps the default form — that fallback is pinned
-    outside this lane and is not a silent table lookup.
-    """
+def test_rupture_code_selects_a_published_clause():
+    """The design code is required. ACI and Eurocode 2 are the published forms."""
     aci = run_calculation("modulus_of_rupture", {
         "fck_n_mm2": 30, "code": "ACI 318-19",
     })
-    default = run_calculation("modulus_of_rupture", {"fck_n_mm2": 30})
-    unknown = run_calculation("modulus_of_rupture", {
-        "fck_n_mm2": 30, "code": "something else",
+    ec2 = run_calculation("modulus_of_rupture", {
+        "fck_n_mm2": 30, "code": "Eurocode 2",
     })
-    assert aci["status"] == default["status"] == unknown["status"] == "success"
-    assert aci["result"]["modulus_of_rupture_n_mm2"] == pytest.approx(3.396, abs=0.005)
-    assert default["result"]["modulus_of_rupture_n_mm2"] == pytest.approx(4.157, abs=0.005)
-    assert unknown["result"]["modulus_of_rupture_n_mm2"] == pytest.approx(4.157, abs=0.005)
-    assert aci["result"]["modulus_of_rupture_n_mm2"] != default["result"]["modulus_of_rupture_n_mm2"]
+    missing = run_calculation("modulus_of_rupture", {"fck_n_mm2": 30})
+    unknown = run_calculation("modulus_of_rupture", {
+        "fck_n_mm2": 30, "code": "not-a-published-code",
+    })
+    assert aci["status"] == "success"
+    assert ec2["status"] == "success"
+    assert aci["result"]["modulus_of_rupture_n_mm2"] == pytest.approx(3.40, abs=0.01)
+    assert ec2["result"]["modulus_of_rupture_n_mm2"] == pytest.approx(2.90, abs=0.01)
+    assert missing["status"] == "error"
+    assert "code" in (missing.get("missing") or [])
+    assert unknown["status"] == "error"
+    assert "[" not in str(unknown.get("error") or unknown.get("question") or "")
 
 
 def test_every_lane_formula_recomputes_a_hand_checked_figure():
@@ -115,8 +117,11 @@ def test_every_lane_formula_recomputes_a_hand_checked_figure():
     assert r.get("verdict")
     assert "NG" not in r["verdict"]
 
-    r = run_calculation("modulus_of_rupture", {"fck_n_mm2": 40})["result"]
-    assert r["modulus_of_rupture_n_mm2"] == pytest.approx(4.8, abs=0.005)
+    r = run_calculation("modulus_of_rupture", {
+        "fck_n_mm2": 40, "code": "ACI 318",
+    })["result"]
+    assert r["modulus_of_rupture_n_mm2"] == pytest.approx(3.92, abs=0.01)
+    assert "19.2.3.1" in str(r.get("standard") or "")
 
     r = run_calculation("concrete_curing_time", {"target_strength_fraction": 0.70})["result"]
     assert r["days_to_target"] == pytest.approx(6.91, abs=0.05)
