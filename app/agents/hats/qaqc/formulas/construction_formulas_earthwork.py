@@ -37,6 +37,7 @@ def compaction_control(
         "standard": "ASTM D698/D1557 (Proctor)",
         "note": (
             f"{field_dry_density}/{max_dry_density} × 100 = {pct:.2f}%, "
+            f"{'PASS' if passed else 'FAIL'} — "
             f"which {'meets' if passed else 'does not meet'} the specified "
             f"{required_compaction_percent}%."
         ),
