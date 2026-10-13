@@ -12,6 +12,34 @@ _ACI = "aci"
 
 _EC = "eurocode"
 
+# EN 1993-1-1 Table 3.1 fu for t ≤ 40 mm, and EN 1993-1-8 Table 4.1 βw.
+# Keyed by the yield number in the grade label (S275 → 275).
+_FILLET_PARENT_METAL = {
+    235: (360.0, 0.80),
+    275: (430.0, 0.85),
+    355: (510.0, 0.90),
+    420: (520.0, 1.00),
+    460: (540.0, 1.00),
+}
+
+
+def _fillet_parent_metal(value):
+    """(fu MPa, βw) for a structural-steel grade label, or None if it is not tabulated."""
+    if value is None:
+        return None
+    text = str(value).strip().upper()
+    if text.startswith("S"):
+        text = text[1:]
+    digits = []
+    for ch in text:
+        if ch.isdigit():
+            digits.append(ch)
+        else:
+            break
+    if not digits:
+        return None
+    return _FILLET_PARENT_METAL.get(int("".join(digits)))
+
 def _norm_code(code: str) -> str:
     c = (code or "").strip().lower()
     if c in ("ec", "eurocode", "en", "en1993"):
@@ -142,15 +170,17 @@ def bolt_shear_capacity(
         'electrode_strength_mpa': Param('MPa', 200, 1500, label='electrode strength'),
         'code': Param('-'),
         'beta_w': Param('-', 0.5, 1.5, label='weld correlation factor'),
+        'steel_grade': Param('-', label='steel grade', grade='steel'),
     },
     outputs={'capacity_kn': 'kN', 'capacity_per_mm_kn': 'kN', 'effective_throat_mm': 'mm'},
 )
 def weld_capacity(
     leg_size_mm: float,
     length_mm: float,
-    electrode_strength_mpa: float = 490.0,
+    electrode_strength_mpa: float = None,
     code: str = _ACI,
-    beta_w: float = 0.9,
+    beta_w: float = None,
+    steel_grade: str = None,
 ) -> dict:
     """Design strength of a fillet weld over ``length_mm``.
 
@@ -163,16 +193,34 @@ def weld_capacity(
     cc = _norm_code(code)
     throat = 0.707 * float(leg_size_mm)
     L = float(length_mm)
+    fu = electrode_strength_mpa
+    beta = beta_w
+    if cc == _EC and steel_grade not in (None, ""):
+        parent = _fillet_parent_metal(steel_grade)
+        if parent is None and (fu is None or beta is None):
+            return {"error": (
+                f"Steel grade {steel_grade} has no tabulated fillet-weld fu and "
+                "beta_w. Pass electrode strength and the correlation factor."
+            )}
+        if parent is not None:
+            if fu is None:
+                fu = parent[0]
+            if beta is None:
+                beta = parent[1]
+    if fu is None:
+        fu = 490.0
+    if beta is None:
+        beta = 0.9
     if cc == _EC:
-        fvw_d = electrode_strength_mpa / (math.sqrt(3.0) * beta_w * 1.25)
+        fvw_d = fu / (math.sqrt(3.0) * beta * 1.25)
         per_mm = fvw_d * throat
         std = "EN 1993-1-8 §4.5.3.3 (gM2=1.25)"
-        expr = (f"fvw,d = fu/(sqrt3*beta_w*gM2) = {electrode_strength_mpa}/"
-                f"(1.732*{beta_w}*1.25) = {fvw_d:.1f} MPa; x throat {throat:.3f}")
+        expr = (f"fvw,d = fu/(sqrt3*beta_w*gM2) = {fu}/"
+                f"(1.732*{beta}*1.25) = {fvw_d:.1f} MPa; x throat {throat:.3f}")
     else:
-        per_mm = 0.75 * 0.60 * electrode_strength_mpa * throat
+        per_mm = 0.75 * 0.60 * fu * throat
         std = "AISC 360-16 §J2.4 (LRFD, phi=0.75)"
-        expr = (f"0.75*0.60*FEXX*throat = 0.75*0.60*{electrode_strength_mpa}*"
+        expr = (f"0.75*0.60*FEXX*throat = 0.75*0.60*{fu}*"
                 f"{throat:.3f}")
     total_n = per_mm * L
     return {
