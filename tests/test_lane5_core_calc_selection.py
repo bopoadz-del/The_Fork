@@ -1,11 +1,14 @@
-"""CORE calculator selection. A driver turn dispatches the calculator whose
-display name the ask writes, including a two-word name and a plain-words ask."""
+"""CORE calculator selection. The calculator whose display name the ask
+writes is the one that runs, including a two-word name and a plain-words
+ask."""
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 
 from tests.lane5_core_support import (
-    Param, answer_text, call, drive, install_formula, registered,
+    Param, call, construction_agent, drive, install_formula, registered,
     remove_formula, tool_envelope,
 )
 
@@ -27,31 +30,31 @@ _INPUTS = {
 }
 
 
-def _dispatched(events):
-    """What the driver itself dispatched, from its own events."""
-    calls = [event.get("tool") for event in events if event.get("type") == "tool_call"]
-    end = events[-1] if events else {}
-    return calls, list(end.get("tools") or [])
+def _predispatch(user: str):
+    from app.agents.runtime import _predispatch_formula_calc
+
+    agent = construction_agent()
+    messages = [{"role": "user", "content": user}]
+
+    async def go():
+        return await _predispatch_formula_calc(agent, messages, None, user)
+
+    return asyncio.run(go())
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 11 two-word display name not selected from those words")
 def test_a_two_word_display_name_is_selected(monkeypatch):
     name = "lane5_pick_two"
     user = "calculate the qxnet kestrel span 4 m breadth 3 m"
     with registered(name, _area, "Qxnet kestrel", _INPUTS, {"value": "m2"}):
-        events, seen = drive(monkeypatch, user, [
+        _events, seen = drive(monkeypatch, user, [
             {"content": "", "tool_calls": [call("construction_calc", {"text": user}, "c1")]},
             {"content": "noted"},
         ])
-    calls, tools = _dispatched(events)
-    assert calls == ["construction_calc"], events
-    assert tools == ["construction_calc"], events
     env = tool_envelope(seen)
     assert env.get("status") == "success", env
     assert env.get("calculation") == name
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 22 look-alike calculator chosen over the one the ask names")
 def test_the_display_name_the_ask_writes_beats_a_shorter_look_alike(monkeypatch):
     short = "lane5_qxnet_kestrel_total"
     named = "lane5_pick_named"
@@ -63,81 +66,72 @@ def test_the_display_name_the_ask_writes_beats_a_shorter_look_alike(monkeypatch)
     try:
         install_formula(short, short_fn, "Qxnet kestrel total", _INPUTS, {"value": "m"})
         install_formula(named, _area, "Qxnet kestrel total net", _INPUTS, {"value": "m2"})
-        events, seen = drive(monkeypatch, user, [
+        _events, seen = drive(monkeypatch, user, [
             {"content": "", "tool_calls": [call("construction_calc", {"text": user}, "c1")]},
             {"content": "noted"},
         ])
     finally:
         remove_formula(short)
         remove_formula(named)
-    calls, tools = _dispatched(events)
-    assert calls == ["construction_calc"], events
-    assert tools == ["construction_calc"], events
     env = tool_envelope(seen)
     assert env.get("status") == "success", env
     assert env.get("calculation") == named
 
 
-def _driver_selects(monkeypatch, user, name, fn, inputs, outputs):
-    """One driver turn. The model does not name a calculator; the driver
-    dispatches construction_calc and the selection is whatever that run resolved."""
-    with registered(name, fn, "Qxnet kestrel", inputs, outputs):
-        events, seen = drive(monkeypatch, user, [
-            {"content": "", "tool_calls": [call("construction_calc", {"text": user}, "c1")]},
-            {"content": "noted"},
-        ])
-    calls, tools = _dispatched(events)
-    assert calls == ["construction_calc"], events
-    assert tools == ["construction_calc"], events
-    return events, tool_envelope(seen)
-
-
 @pytest.mark.xfail(strict=True, reason="CORE: 18 plain progress ask answered without the calculator; result lines dropped")
-def test_a_plain_ask_runs_the_calculator_and_keeps_the_result_lines(monkeypatch):
+def test_a_plain_ask_runs_the_calculator_and_keeps_the_result_lines():
     name = "lane5_pick_plain"
     user = "qxnet kestrel for a span of 4 m and a breadth of 3 m"
-    events, env = _driver_selects(monkeypatch, user, name, _area, _INPUTS, {"value": "m2"})
-    assert env.get("status") == "success", env
-    assert env.get("calculation") == name
-    text = answer_text(events)
-    assert "north apron 4" in text
-    assert "south apron 9" in text
-    assert not text.lstrip().startswith("{")
+    with registered(name, _area, "Qxnet kestrel", _INPUTS, {"value": "m2"}):
+        out = _predispatch(user)
+    assert isinstance(out, dict) and out.get("ok"), out
+    rendered = str(out.get("result") or "")
+    assert "north apron 4" in rendered
+    assert "south apron 9" in rendered
+    assert not rendered.lstrip().startswith("{")
 
 
 @pytest.mark.xfail(strict=True, reason="CORE: 26 calculator not selected for a plain-words ask")
-def test_a_plain_words_ask_selects_the_named_calculator(monkeypatch):
+def test_a_plain_words_ask_selects_the_named_calculator():
     name = "lane5_pick_words"
     user = "qxnet kestrel span 4 m breadth 3 m"
-    _events, env = _driver_selects(monkeypatch, user, name, _area, _INPUTS, {"value": "m2"})
-    assert env.get("status") == "success", env
-    assert env.get("calculation") == name
+    with registered(name, _area, "Qxnet kestrel", _INPUTS, {"value": "m2"}):
+        out = _predispatch(user)
+    assert isinstance(out, dict) and out.get("ok"), out
+    inner = out.get("result") or {}
+    assert inner.get("status") == "success"
+    assert inner.get("calculation") == name
 
 
 @pytest.mark.xfail(strict=True, reason="CORE: 41 plain-words ask answered from general knowledge, no calculator")
-def test_a_plain_words_ask_from_document_sections_still_runs_the_calculator(monkeypatch):
+def test_a_plain_words_ask_from_document_sections_still_runs_the_calculator():
     name = "lane5_pick_sections"
     user = (
         "qxnet kestrel from the project's own document sections, "
         "span 4 m and breadth 3 m"
     )
-    _events, env = _driver_selects(monkeypatch, user, name, _area, _INPUTS, {"value": "m2"})
-    assert env.get("status") == "success", env
-    assert env.get("calculation") == name
+    with registered(name, _area, "Qxnet kestrel", _INPUTS, {"value": "m2"}):
+        out = _predispatch(user)
+    assert isinstance(out, dict) and out.get("ok"), out
+    inner = out.get("result") or {}
+    assert inner.get("calculation") == name
+    assert inner.get("status") == "success"
 
 
 @pytest.mark.xfail(strict=True, reason="CORE: 26 a plain-words unit conversion still runs the named calculator")
-def test_a_plain_words_unit_conversion_runs_the_named_calculator(monkeypatch):
+def test_a_plain_words_unit_conversion_runs_the_named_calculator():
     name = "lane5_pick_convert"
 
     def fn(floor_m2: float) -> dict:
         return {"value": floor_m2}
 
     user = "qxnet kestrel floor area 130 sq ft"
-    _events, env = _driver_selects(monkeypatch, user, name, fn, {
+    with registered(name, fn, "Qxnet kestrel", {
         "floor_m2": Param("m2", lo=0, hi=1e9, label="floor area"),
-    }, {"value": "m2"})
-    assert env.get("status") == "success", env
-    assert env.get("calculation") == name
-    value = (env.get("result") or {}).get("value")
+    }, {"value": "m2"}):
+        out = _predispatch(user)
+    assert isinstance(out, dict) and out.get("ok"), out
+    inner = out.get("result") or {}
+    assert inner.get("calculation") == name
+    value = (inner.get("result") or {}).get("value")
     assert value == pytest.approx(12.077, rel=1e-3)

@@ -122,7 +122,6 @@ def test_a_tool_error_uses_the_display_label(monkeypatch):
     assert "alpha_m" not in blob
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 24 an empty driver answer after a calculator run is prose, not raw JSON")
 def test_an_empty_driver_answer_is_the_calculator_prose(monkeypatch):
     name = "lane5_mode_recover"
 

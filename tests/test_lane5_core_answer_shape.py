@@ -20,7 +20,6 @@ def _rows(span_m: float) -> dict:
     }
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 14 driver drops lines and table rows")
 def test_every_tool_row_reaches_the_answer(monkeypatch):
     name = "lane5_rows_kept"
     user = "calculate the qxnet apron table span 4 m"
@@ -38,7 +37,6 @@ def test_every_tool_row_reaches_the_answer(monkeypatch):
     assert "south apron 9" in text
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 35 driver answers cut off mid-section (empty headings, missing result)")
 def test_a_section_is_not_left_empty(monkeypatch):
     name = "lane5_section_kept"
 
