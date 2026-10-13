@@ -1420,6 +1420,22 @@ def figure_provenance(
             nums = set(credit.result_numbers) | set(_nums(json.dumps(credit.inputs, default=str)))
             calc_entries.append((nums, {"source": pt.SOURCE_CALCULATOR,
                                         "formula": credit.calculation, "inputs": credit.inputs}))
+        # A platform workflow's own result is a source too: the figures its
+        # answer carries (an EVM's CV and EAC, a cash flow's month rows) were
+        # produced by the run, not by the model.
+        for rec in ev.records:
+            if rec.kind != "tool_run":
+                continue
+            try:
+                payload = json.loads(rec.text or "")
+            except (TypeError, ValueError):
+                continue
+            if (isinstance(payload, dict) and payload.get("ok") and payload.get("workflow")
+                    and isinstance(payload.get("answer"), str)):
+                nums = set(_nums(payload["answer"]))
+                if nums:
+                    calc_entries.append((nums, {"source": pt.SOURCE_CALCULATOR,
+                                                "formula": str(payload["workflow"]), "inputs": {}}))
         calc_pool: set[float] = set()
         for nums, _meta in calc_entries:
             calc_pool |= nums
