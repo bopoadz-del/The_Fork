@@ -238,7 +238,15 @@ async def _stream_from_heavy_reasoning(
 # behind ORCHESTRATOR_PREDEFINED (default off) so the live path is unchanged
 # until the pilot proves out; scoped to the schedule workflow only.
 def _predefined_enabled() -> bool:
+    """The predefined shortcut runs only for a turn that is NOT in driver mode.
+    In driver mode the model has every workflow as ``run_workflow`` and
+    chooses; a shortcut ahead of it took cash-flow and look-ahead asks before
+    the driver ever saw them (lanes 1 and 3)."""
     import os
+
+    from app.agents import driver
+    if driver.enabled():
+        return False
     return (os.getenv("ORCHESTRATOR_PREDEFINED") or "").lower() in ("1", "true", "yes", "on")
 
 
