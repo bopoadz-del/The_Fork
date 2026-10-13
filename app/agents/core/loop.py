@@ -16,8 +16,13 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 async def chat(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
     """One turn. Identical retrievals within it are answered once
     (vector_store turn memo); see ``_chat_impl``."""
-    from app.agents import answer_exit
+    import importlib
+
     from app.core.offload import off_loop
+
+    # A large module: its first import (once per process) froze the loop for
+    # 125-188 ms at 15 users. Already-imported modules return at once.
+    answer_exit = await off_loop(importlib.import_module, "app.agents.answer_exit")
     from app.core.rag.vector_store import end_turn_memo, start_turn_memo
 
     token = start_turn_memo()
@@ -927,8 +932,13 @@ async def chat_stream(
                 producer_task, heartbeat_task, return_exceptions=True,
             )
 
-    from app.agents import answer_exit
+    import importlib
+
     from app.core.offload import off_loop
+
+    # A large module: its first import (once per process) froze the loop for
+    # 125-188 ms at 15 users. Already-imported modules return at once.
+    answer_exit = await off_loop(importlib.import_module, "app.agents.answer_exit")
 
     # Opened before the producer task exists, so the task (and the threads it
     # offloads to) record this turn's evidence into the same record.

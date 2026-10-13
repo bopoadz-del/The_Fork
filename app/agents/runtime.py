@@ -3041,10 +3041,18 @@ class _EmitLeakGuard:
     revisiting once the actual path is known.
     """
 
-    __slots__ = ("_acc", "tripped")
+    __slots__ = ("_acc", "_tail", "tripped")
+
+    #: How much already-checked text is re-read with each new token. Every
+    #: marker is short and the retrieval-marker pattern is anchored on a short
+    #: prefix, so a match that ends in the new token starts within this tail.
+    #: Re-reading the whole answer on every token made the guard quadratic in
+    #: the answer length -- on the event loop (CI: 266 ms stall at 15 users).
+    TAIL_CHARS = 4096
 
     def __init__(self) -> None:
         self._acc: list[str] = []
+        self._tail = ""
         self.tripped = False
 
     def check(self, event: dict[str, Any]) -> dict[str, Any] | None:
@@ -3061,7 +3069,8 @@ class _EmitLeakGuard:
         if not self.tripped:
             if kind == "token":
                 self._acc.append(content)
-                probe = "".join(self._acc)
+                probe = self._tail + content
+                self._tail = probe[-self.TAIL_CHARS:]
             else:
                 probe = content
             # Nuclear first: a full inject dump still falls back. Routing

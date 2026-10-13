@@ -139,16 +139,32 @@ def calculators_named_by_display(text: str) -> List[str]:
     if not words:
         return []
     padded = f" {' '.join(words)} "
+    return [name for name, phrase in _display_phrases() if phrase in padded]
+
+
+_DISPLAY_PHRASES: Dict[int, List[Tuple[str, str]]] = {}
+
+
+def _display_phrases() -> List[Tuple[str, str]]:
+    """(registry name, padded display-name phrase) for every calculator whose
+    display name has three or more words. Built once per registry state:
+    rebuilding it for every message ran on the event loop each turn."""
     from app.lib.formula_registry import all_specs
 
-    named: List[str] = []
-    for spec in all_specs():
-        if spec.name not in CALCULATORS:
-            continue
-        phrase = _phrase_words(spec.display_name)
-        if len(phrase) >= 3 and f" {' '.join(phrase)} " in padded:
-            named.append(spec.name)
-    return named
+    specs = all_specs()
+    key = len(specs)
+    cached = _DISPLAY_PHRASES.get(key)
+    if cached is None:
+        cached = []
+        for spec in specs:
+            if spec.name not in CALCULATORS:
+                continue
+            phrase = _phrase_words(spec.display_name)
+            if len(phrase) >= 3:
+                cached.append((spec.name, f" {' '.join(phrase)} "))
+        _DISPLAY_PHRASES.clear()
+        _DISPLAY_PHRASES[key] = cached
+    return cached
 
 
 def calculator_name_from_text(text: str) -> Optional[str]:
