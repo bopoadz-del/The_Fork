@@ -169,7 +169,7 @@ def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     inputs={
         'fck_n_mm2': Param('N/mm2', 5, 150, label='characteristic concrete strength', grade='concrete'),
         'code': Param('-', label='design code'),
-        'lambda_factor': Param('-', 0.5, 1.0, label='lightweight concrete factor'),
+        'lambda_factor': Param('ratio', 0.5, 1.0, label='lightweight concrete factor'),
         'h_mm': Param('mm', 1, 5000, label='section depth'),
     },
     outputs={
