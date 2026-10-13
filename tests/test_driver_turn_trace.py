@@ -38,6 +38,7 @@ def test_a_driver_turn_leaves_a_trace_without_the_users_words(monkeypatch):
     try:
         drive(monkeypatch, "Register the qxsecret widgets please", [
             {"content": "", "tool_calls": [call("run_workflow", {"workflow": "widget_register"}, "w1")]},
+            {"content": "{}"},  # reading the ask for the refused inputs: nothing stated
             {"content": "Which widgets?"},
             {"content": "Which widgets?"},  # after the one reminder to call the workflow again
         ])
