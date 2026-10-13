@@ -11,7 +11,7 @@ from app.lib.formula_registry import Param, formula
     display_name='Return on investment',
     description='Return on investment as a percentage of cost.',
     inputs={
-        'gain': Param('-', -1e13, 1e13, label='gain'),
+        'gain': Param('currency', -1e13, 1e13, label='amount gained'),
         'cost': Param('currency', 0, 1e13, label='investment cost'),
     },
     outputs={'net_profit': '-', 'roi_percent': '%'},
