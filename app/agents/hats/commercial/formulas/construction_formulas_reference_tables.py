@@ -14,7 +14,7 @@ _LEED_LEVELS = [(80, "Platinum"), (60, "Gold"), (50, "Silver"), (40, "Certified"
     display_name='LEED certification level',
     description='Maps a LEED point total to its certification level.',
     inputs={
-        'points': Param('-', 0, 110, label='LEED points'),
+        'points': Param('count', 0, 110, label='LEED points'),
     },
     outputs={'points': '-', 'certification_level': '-'},
 )
