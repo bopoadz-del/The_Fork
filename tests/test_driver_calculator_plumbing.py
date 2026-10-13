@@ -178,3 +178,15 @@ def test_a_declared_unit_written_as_words_is_not_printed_as_a_unit():
                                           "result": {"margin": 2.0}}, {"span_m": 4})
     assert "same unit as specified" not in text
     assert "2" in text
+
+
+def test_a_calculator_that_ran_on_its_defaults_has_answered():
+    """Lane 4 on 17874d1: striking time and guardrail height both ran (live
+    trace: ok, nothing missing) and the answers still opened by saying the
+    calculator needed an input. An input a calculator filled with its own
+    default is not a missing one: the standing rules say so."""
+    from pathlib import Path
+
+    rules = (Path(__file__).resolve().parents[1] / "config" / "driver_standing_rules.md").read_text(encoding="utf-8")
+    assert "A calculator that ran has answered" in rules
+    assert "Ask for an input only when the calculator itself asks for it" in rules

@@ -110,8 +110,11 @@ def calculator_schema(hat: Optional[str]) -> Dict[str, Any]:
             "description": (
                 "Run one of the platform's deterministic calculators. Choose the calculation "
                 "that does what the user asks, then fill params from the user's own words: "
-                "match each figure to an input by its label and unit. Give every figure in the "
-                "unit the user stated; the calculator converts units it can. Leave out an input "
+                "match each figure to an input by its label and unit. Give every figure with the "
+                "unit the user stated, written with it (\"21,528 sq ft\", \"12 ft\"), whatever unit "
+                "the input's own name ends in; the calculator converts it. A figure you derive "
+                "(a total from per-floor figures, a sum) carries the unit of the figures it came "
+                "from. A bare number is read in the input's own unit. Leave out an input "
                 "the user did not give: the calculator asks for it. Never invent a value. "
                 "In the answer, name inputs and the calculator by their labels and display "
                 "name, never by the identifiers below.\n" + "\n".join(lines)
