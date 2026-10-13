@@ -556,7 +556,8 @@ def test_a_streamed_answer_carries_the_calculator_credit_once(monkeypatch):
     monkeypatch.setattr(agent, "_run_tool_call", fake_tool)
     events = _run(agent, user_message="slab 12 m long, 8 m wide, 200 mm thick", project_id="p")
     text = "".join(e["content"] for e in events if e["type"] == "token")
-    assert "19.2 m3" in text and "20.16 m3" in text
+    assert "19.2 m3" in text
+    assert "20.16" not in text  # a waste figure the calculator did not return
     assert text.count("construction_calc") <= 1  # the credit, at most once, never per sentence
     assert "m3.With" not in text and "m3.Check" not in text
 

@@ -76,6 +76,10 @@ class Turn:
     questions: list[str] = field(default_factory=list)
     #: The question asked in place of the error text that came with it.
     error_questions: dict[str, str] = field(default_factory=dict)
+    #: The retrieval message and conversation this turn checked, so figures
+    #: can be judged against the same evidence objects as citations.
+    rag_sys_msg: dict[str, Any] | None = None
+    messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 _TURN: contextvars.ContextVar[Turn | None] = contextvars.ContextVar("answer_exit_turn", default=None)
@@ -229,6 +233,8 @@ def note_evidence(
         from app.agents import citation_provenance as cp
 
         msgs = list(messages or [])
+        turn.rag_sys_msg = rag_sys_msg
+        turn.messages = msgs
         evidence = cp.build_evidence(rag_sys_msg, msgs, tool_passages=True)
         for rec in evidence.records:
             if rec.kind != "retrieval" or not (rec.source_name or rec.doc_id):
@@ -1414,6 +1420,48 @@ def _tidy(text: str) -> str:
     return tidy(text.replace(_MARK, SENTINEL))
 
 
+def _turn_has_figure_evidence(turn: Turn) -> bool:
+    """True when the turn has something a figure can be judged against:
+    a tool result, a retrieved passage, or a number the user stated."""
+    from app.agents import citation_provenance as cp
+
+    ev = cp.build_evidence(turn.rag_sys_msg, turn.messages, tool_passages=True)
+    if any(r.kind == "tool_run" for r in ev.records):
+        return True
+    if any(r.kind == "retrieval" and (r.text or "").strip() for r in ev.records):
+        return True
+    return any(cp._nums(r.text) for r in ev.records if r.kind == "user")
+
+
+def _check_figures(text: str, turn: Turn | None) -> str:
+    """Figures the turn cannot back are removed or labelled improvised.
+
+    The turn's messages are the same evidence ``citation_provenance`` uses:
+    user operands, tool results (a calculator or the formula executor) and
+    retrieved passages. A figure none of those hold is not stated, unless
+    it is the value of arithmetic on the user's own operands and the
+    executor's sandbox produced it. A turn with none of those is not
+    judged: there is nothing to back a figure with.
+    """
+    if not turn or not (turn.messages or turn.rag_sys_msg):
+        return text
+    try:
+        if not _turn_has_figure_evidence(turn):
+            return text
+        from app.agents.citation_provenance import closing_notes, figure_provenance
+
+        out, _entries = figure_provenance(
+            text, turn.rag_sys_msg, turn.messages, enforce=True, tool_passages=True,
+        )
+        extra = closing_notes(out, turn.messages, tool_passages=True)
+        if extra:
+            out = out.rstrip() + extra
+        return out
+    except Exception:  # noqa: BLE001 -- the exit must never break an answer
+        _LOG.exception("answer_exit: figure check failed; text passed through")
+        return text
+
+
 def build_index(
     turn: Turn | None = None,
     sources: Iterable[dict[str, Any]] | None = None,
@@ -1433,7 +1481,8 @@ def check_text(
     index: CitationIndex | None = None,
 ) -> str:
     """The answer as it may leave: citations resolved to name and page or
-    removed, no chunk numbers, ids, dumps, raw tool errors or machinery words."""
+    removed, no chunk numbers, ids, dumps, raw tool errors or machinery
+    words, and no figure the turn's tools or the user did not produce."""
     if not isinstance(text, str) or not text.strip():
         return text
     try:
@@ -1453,6 +1502,7 @@ def check_text(
         out = _machine_wording(out)
         out = _restore(out, held)
         out = _tidy(out)
+        out = _check_figures(out, turn)
         out = _dedupe_source_lines(out)
         if out == text:
             return text
