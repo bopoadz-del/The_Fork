@@ -1389,10 +1389,13 @@ def figure_provenance(
         if not text or not text.strip():
             return text, []
         ev = build_evidence(rag_sys_msg, messages, tool_passages=tool_passages)
+        # Every figure the user typed in this conversation is the user's own,
+        # whichever turn it was typed in. Taking only the latest turn credited
+        # a figure typed earlier to whatever document also held it.
         user_vals: set[float] = set()
         for rec in ev.records:
             if rec.kind == "user":
-                user_vals = set(_nums(rec.text))  # the latest operator turn wins
+                user_vals |= set(_nums(rec.text))
         calc_entries: list[tuple[set[float], dict[str, Any]]] = []
         for credit in _calculator_credits(ev):
             nums = set(credit.result_numbers) | set(_nums(json.dumps(credit.inputs, default=str)))
