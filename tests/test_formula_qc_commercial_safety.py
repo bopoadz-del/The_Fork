@@ -48,10 +48,10 @@ def test_cost_per_area():
 
 
 def test_productivity_rate():
-    # 500/40 = 12.5/hr; /4 crew = 3.125/worker-hr.
+    # 500/40 = 12.5 per man-hour. The crew of 4 is not a second divisor.
     r = CALCULATORS["productivity_rate"](output_quantity=500, labor_hours=40, crew_size=4)
     assert r["rate_per_hour"] == pytest.approx(12.5, abs=0.001)
-    assert r["rate_per_worker_hour"] == pytest.approx(3.125, abs=0.001)
+    assert r["rate_per_worker_hour"] == pytest.approx(12.5, abs=0.001)
 
 
 def test_delay_damages_daily_is_rate_times_aca():

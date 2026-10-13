@@ -53,22 +53,23 @@ def cost_per_area(total_cost: float, area: float, area_unit: str = "m2") -> dict
 @formula(
     owner='base',
     display_name='Productivity rate',
-    description='Output per labour-hour and per worker from an output, the hours worked and the crew size.',
+    description='Output per man-hour. The hours are already man-hours, so the crew size is not applied again.',
     inputs={
         'output_quantity': Param('-', 0, 1e12),
-        'labor_hours': Param('h', 0, 1e8, label='labour hours'),
+        'labor_hours': Param('man-hour', 0, 1e8, label='man-hours'),
         'crew_size': Param('-', 1, 10000),
     },
     outputs={'rate_per_hour': '-', 'rate_per_worker_hour': '-', 'crew_size': '-', 'unit': '-', 'value': 'currency', 'rate_per_worker_hour_unit': '-'},
 )
 def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int = 1) -> dict:
-    """Output per labour-hour and per worker-hour. rate = output/hours;
-    per-worker = rate/crew_size."""
+    """Output per man-hour. ``labor_hours`` is already man-hours (one
+    person's hours), so the per-worker rate is output/man-hours. Dividing
+    by the crew again would count the same people twice."""
     o, h = float(output_quantity), float(labor_hours)
     if h == 0:
         return {"error": "labor_hours must be > 0"}
     rate = o / h
-    per_worker = (rate / crew_size) if crew_size else rate
+    per_worker = rate
     rate_r = round(rate, 3)
     per_r = round(per_worker, 4)
     return {
@@ -79,6 +80,7 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
         "value": rate_r,
         "rate_per_worker_hour_unit": "/worker-hr",
         "standard": "arithmetic (productivity)",
-        "note": (f"Rate = output/hours = {o}/{h} = {rate:.3f}/hr; "
-                 f"per worker = /{crew_size} = {per_worker:.4f}/worker-hr."),
+        "note": (f"Rate = output/man-hours = {o}/{h} = {rate:.4f}/hr; "
+                 f"per worker-hour = {per_worker:.4f}/worker-hr "
+                 f"(man-hours are not divided by the crew of {crew_size} again)."),
     }
