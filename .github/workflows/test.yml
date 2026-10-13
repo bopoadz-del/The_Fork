@@ -16,7 +16,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Docs-only changes (Markdown, docs/, FLEET_OPS-style report files) do not
+  # run the suites. The suite jobs are skipped by condition, which a required
+  # check counts as passed, so a docs-only PR still merges.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          files=$(git diff --name-only "$BASE" "$HEAD" 2>/dev/null || true)
+          if [ -n "$files" ] && ! echo "$files" | grep -qvE '(^docs/|^FLEET_OPS/|\.md$)'; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"; echo "docs-only change: suites skipped"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # Hard cap: a healthy run finishes far sooner; anything longer is a hang,
     # and GitHub's default cap is 6 HOURS of billed minutes per hung job.
@@ -218,6 +244,8 @@ jobs:
     # because the suite TRUNCATEs between tests. Same tests as the single job
     # this replaces -- none skipped, none optional.
     name: test-postgres (shard ${{ matrix.shard }}/4)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # Same hard cap as the matrix job. This job was the 6h0m zombie in every
     # stuck run on 2026-07-05 (hung inside "Run tests (PostgreSQL)").
@@ -327,8 +355,8 @@ jobs:
     # enforced (--cov-fail-under=25).
     name: test-postgres
     runs-on: ubuntu-latest
-    needs: test-postgres-shard
-    if: always()
+    needs: [changes, test-postgres-shard]
+    if: always() && needs.changes.outputs.docs_only != 'true'
     timeout-minutes: 10
     steps:
       - name: Every shard passed
