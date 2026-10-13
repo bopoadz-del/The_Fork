@@ -3,12 +3,19 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
+import re
 from app.lib.formula_registry import Param, formula
 from typing import Dict, List, Optional
 
 
 _NO_CRITERION_SCORES = (
     "Which scores does each tenderer have (technical, commercial, HSE out of 100)?"
+)
+
+# A plain number, after thousands separators are removed. Rejects anything
+# float() would also reject, without catching the exception.
+_PLAIN_NUMBER = re.compile(
+    r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$"
 )
 
 
@@ -20,12 +27,9 @@ def _score_number(value: object) -> Optional[float]:
         return float(value)
     if isinstance(value, str):
         text = value.strip().replace(",", "")
-        if not text:
+        if not _PLAIN_NUMBER.match(text):
             return None
-        try:
-            return float(text)
-        except ValueError:
-            return None
+        return float(text)
     return None
 
 
