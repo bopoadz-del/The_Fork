@@ -144,6 +144,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             answer_done = True
             break
         msgs.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
+        questions: List[str] = []  # calculators that need an input this round
         for call in calls:
             name = (call.get("function") or {}).get("name") or ""
             args = _args(call)
@@ -178,10 +179,22 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             envelope = result_of_call.get("result") if isinstance(result_of_call, dict) else None
             if isinstance(envelope, dict) and envelope.get("calculation"):
                 shown = render.render_calculation(envelope, args.get("params") if isinstance(args.get("params"), dict) else args)
+                if envelope.get("status") != "success" and str(envelope.get("question") or "").strip():
+                    questions.append(str(envelope["question"]).strip())
             else:
                 shown = full[:_TOOL_RESULT_CHARS]
             msgs.append({**tool_msg, "content": shown})
             evidence.append({**tool_msg, "content": full})
+        # A calculator that rejected or lacks an input ends the turn with its
+        # own question: the model is never given the chance to compute a
+        # figure the calculator refused (lane 2: it did).
+        if questions:
+            for question in dict.fromkeys(questions):
+                event = _release(question + "\n")
+                if event:
+                    yield event
+            answer_done = True
+            break
     if not answer_done:
         event = _release(_STOP)
         if event:

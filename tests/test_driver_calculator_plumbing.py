@@ -102,3 +102,36 @@ def test_a_driver_turn_never_shows_a_registry_identifier(monkeypatch):
     assert "widget_width_m" not in tool_msg["content"] and "{" not in tool_msg["content"]
     end = events[-1]
     assert end["exit_check"]["identifiers_replaced"] >= 3
+
+
+def test_a_rejected_input_ends_the_turn_with_the_calculators_question(monkeypatch):
+    """Lane 2 CORE: after a calculator rejected an out-of-range input, the
+    driver computed its own figure. The calculator's question is the answer."""
+    from tests.test_driver_mode import _agent, _no_retrieval
+
+    _no_retrieval(monkeypatch)
+    calls = []
+    replies = [
+        {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+            "name": "construction_calc",
+            "arguments": json.dumps({"calculation": NAME, "params": {"widget_width_m": 500, "widget_depth_m": 3}})}}]},
+        {"content": "Working it out myself: the widget area is 1500 m2."},
+    ]
+
+    async def fake_stream(agent, messages, offered, model=""):
+        calls.append(1)
+        reply = replies.pop(0)
+        if reply.get("content"):
+            yield "content", reply["content"]
+        yield "done", {"status": "success", "message": reply}
+
+    monkeypatch.setattr(llm, "stream", fake_stream)
+
+    async def go():
+        return [e async for e in loop.stream(_agent(), user_message="widget 500 m by 3 m, what area?", project_id="p")]
+    events = asyncio.run(go())
+    text = "".join(e["content"] for e in events if e["type"] == "token")
+    assert len(calls) == 1, "the model must not get a turn after the calculator asked"
+    assert "1500" not in text
+    assert "widget width" in text and "?" in text
+    assert "widget_width_m" not in text
