@@ -14,7 +14,7 @@ from app.lib.formula_registry import Param, formula
         'length_m': Param('m', 0, 10000, label='length'),
         'width_m': Param('m', 0, 10000, label='width'),
         'depth_m': Param('m', 0, 500, label='depth'),
-        'bulking_factor': Param('fraction', 0, 1, label='bulking'),
+        'bulking_factor': Param('fraction', 0, 2.0, label='bulking'),
     },
     outputs={'bank_volume_m3': 'm3', 'loose_volume_m3': 'm3', 'bulked_volume_m3': 'm3', 'bulking_factor': '-'},
 )

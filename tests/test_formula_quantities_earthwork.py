@@ -4,7 +4,8 @@ Geometry/arithmetic — values hand-derived and shown in comments.
 """
 import pytest
 
-from app.lib.construction_formulas import CALCULATORS
+from app.lib import formula_registry
+from app.lib.construction_formulas import CALCULATORS, run_calculation
 
 
 # ── concrete_volume ────────────────────────────────────────────────────────
@@ -65,6 +66,32 @@ def test_excavation_volume():
     r = CALCULATORS["excavation_volume"](length_m=20, width_m=10, depth_m=3)
     assert r["bank_volume_m3"] == pytest.approx(600.0, abs=0.01)
     assert r["loose_volume_m3"] == pytest.approx(750.0, abs=0.01)
+
+
+def test_excavation_volume_bulking_factor_1_5_is_600_loose():
+    # 10*8*3 = 240 bank; loose = bank*(1+1.5) = 600. Rock bulking can exceed 1.
+    declared = formula_registry.parameters(
+        formula_registry.get("excavation_volume")
+    )["bulking_factor"]
+    assert declared.lo == 0
+    assert declared.hi == 2.0
+    env = run_calculation(
+        "excavation_volume",
+        {"length_m": 10, "width_m": 8, "depth_m": 3, "bulking_factor": 1.5},
+    )
+    assert env["status"] == "success", env
+    assert env["result"]["bank_volume_m3"] == pytest.approx(240.0, abs=0.01)
+    assert env["result"]["loose_volume_m3"] == pytest.approx(600.0, abs=0.01)
+    assert env["result"]["bulked_volume_m3"] == pytest.approx(600.0, abs=0.01)
+
+
+def test_excavation_volume_negative_bulking_factor_is_rejected():
+    env = run_calculation(
+        "excavation_volume",
+        {"length_m": 10, "width_m": 8, "depth_m": 3, "bulking_factor": -0.2},
+    )
+    assert env["status"] == "error", env
+    assert "loose_volume_m3" not in env
 
 
 def test_backfill_volume():
