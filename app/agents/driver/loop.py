@@ -20,6 +20,7 @@ _LOG = logging.getLogger(__name__)
 #: sentence's closing mark, or at a line break (list items, table rows).
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n")
 _HEADING = re.compile(r"^\s*#{1,6}\s+\S")
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
 #: How much of one tool result the model is given.
 _TOOL_RESULT_CHARS = 20000
@@ -100,6 +101,9 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     ran: List[tuple] = []  # (tool, arguments) of every tool run, for the credit lines
     computed: List[tuple] = []  # (envelope, inputs) of every calculation that succeeded
     model_answered = False
+    failed: List[tuple] = []  # (tool, its own error) of every run that failed
+    succeeded = False  # any tool run this turn came back ok
+    user_numbers = set(_NUMBER.findall(user_message or ""))
     evidence: List[Dict[str, Any]] = []  # tool results, whole, for the exit check
     exports: List[Dict[str, Any]] = []
     yield {"type": "start", "mode": "driver", "agent": agent.name}
@@ -114,11 +118,17 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
 
     sent: List[str] = []
 
-    def _release(piece: str) -> Optional[Dict[str, Any]]:
-        """Exit-check one finished piece of the answer and hand it out."""
+    def _release(piece: str, model_text: bool = True) -> Optional[Dict[str, Any]]:
+        """Exit-check one finished piece of the answer and hand it out.
+        ``model_text`` False: the platform's own words (a calculator's
+        question, a computed result), which no failed run makes unbacked."""
         if not piece.strip():  # layout only (a blank line): nothing to check
             sent.append(piece)
             return {"type": "token", "content": piece}
+        if model_text and failed and not succeeded and set(_NUMBER.findall(piece)) - user_numbers:
+            # Every tool this turn failed: nothing backs a number the user
+            # did not write, bare counts included ("0 items were found").
+            return None
         checked, trail, report = exit_check(piece, _trail())
         # The checks tidy whitespace; the piece's own ending (a line break
         # between list items or paragraphs) belongs to the answer's layout.
@@ -189,10 +199,22 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 exports.extend(result_of_call.get("exports") or [])
             else:
                 used.append(name)
-                ran.append((name, args))
                 result_of_call = await agent._run_tool_call(call, api_key, project_id, conversation_id,
                                                             user_message=user_message, history=history)
-            yield {"type": "tool_result", "tool": name, "name": name, "ok": bool(result_of_call.get("ok", True))}
+                if result_of_call.get("ok", True):
+                    ran.append((name, args))  # a failed run is credited with nothing
+            ok = bool(result_of_call.get("ok", True))
+            if name != tools.SELECT_HAT:
+                if ok:
+                    succeeded = True
+                else:
+                    from app.lib.source_labels import tool_label
+
+                    shown_name = (str(args.get("workflow") or "").replace("_", " ").capitalize()
+                                  if name == routes.RUN_WORKFLOW else tool_label(name))
+                    error = str(result_of_call.get("error") or result_of_call.get("missing") or "").strip()
+                    failed.append((shown_name, error or "it returned no result"))
+            yield {"type": "tool_result", "tool": name, "name": name, "ok": ok}
             full = json.dumps(result_of_call, default=str)
             tool_msg = {"role": "tool", "name": name, "tool_call_id": call.get("id") or name}
             # The model gets at most _TOOL_RESULT_CHARS of a result; the exit
@@ -218,7 +240,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         # figure the calculator refused (lane 2: it did).
         if questions:
             for question in dict.fromkeys(questions):
-                event = _release(question + "\n")
+                event = _release(question + "\n", model_text=False)
                 if event:
                     yield event
             answer_done = True
@@ -227,6 +249,17 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         event = _release(_STOP)
         if event:
             yield event
+    if model_answered and failed and not succeeded:
+        # The failure itself, in the tool's own words, when the answer does
+        # not already say it: the user learns what could not be done and why.
+        written = "".join(sent)
+        for shown_name, error in dict.fromkeys(failed):
+            if error.lower() in written.lower():
+                continue
+            line = f"{shown_name} could not complete: {error}"
+            sent.append(("\n\n" if written.strip() else "") + line + "\n")
+            yield {"type": "token", "content": sent[-1]}
+            written = "".join(sent)
     if model_answered:
         # A result the platform computed reaches the user even when the
         # model's words stop short of it (a table header with no rows, a
@@ -244,7 +277,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 piece = ("" if written.endswith("\n") else "\n") + block + "\n"
             else:
                 piece = "\n\n" + block + "\n"
-            event = _release(piece)
+            event = _release(piece, model_text=False)
             if event:
                 yield event
     from app.agents import citation_provenance as cp
