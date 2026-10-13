@@ -28,6 +28,12 @@ _TOOL_RESULT_CHARS = 20000
 _STOP = ("I could not finish this answer within the steps a turn may take. "
          "Please narrow the question or split it into parts.")
 
+#: When the steps run out: one last reply, with no tools, from what the tools
+#: already returned -- instead of discarding the work and showing _STOP.
+_FINISH = ("No more tool calls are available for this question. Answer the user now from the results "
+           "above. Where something could not be worked out, say plainly what is missing and what the "
+           "user would need to provide.")
+
 
 def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False) -> tuple:
     """The one check before a driver answer leaves: an attribution no
@@ -336,10 +342,43 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                     yield event
             answer_done = True
             break
+    if not answer_done and refused:
+        # Out of steps with a workflow still refusing: its deliverable comes
+        # from the workflow, so the turn asks for what it needs.
+        for request in dict.fromkeys(routes.input_request(w, r) for w, r in refused.items()):
+            event = _release(request + "\n", model_text=False)
+            if event:
+                yield event
+        answer_done = True
     if not answer_done:
-        event = _release(_STOP)
-        if event:
-            yield event
+        # Out of steps: answer from the evidence already gathered, no tools.
+        msgs.append({"role": "system", "content": _FINISH})
+        finished = False
+        buffer = ""
+        async for kind, value in llm.stream(agent, msgs, [], model=driver.model()):
+            if kind == "done":
+                finished = bool(value and value.get("status") == "success")
+                break
+            buffer += value
+            while True:
+                cut = _SENTENCE_END.search(buffer)
+                if cut is None:
+                    break
+                sentence, buffer = buffer[:cut.end()], buffer[cut.end():]
+                event = _release(sentence)
+                if event:
+                    finished = True
+                    yield event
+        if buffer:
+            event = _release(buffer)
+            if event:
+                finished = True
+                yield event
+        model_answered = finished
+        if not finished or not "".join(sent).strip():
+            event = _release(_STOP)
+            if event:
+                yield event
     if model_answered and failed and not succeeded:
         # The failure itself, in the tool's own words, when the answer does
         # not already say it: the user learns what could not be done and why.

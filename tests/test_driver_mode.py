@@ -135,9 +135,29 @@ def test_the_step_limit_holds(monkeypatch):
                for i in range(5)]
     monkeypatch.setattr(llm, "call", _scripted(replies, seen))
     events = _run(_agent(), user_message="keep going")
-    assert len(seen) == 2
+    # Two tool steps, then one closing call that is offered no tools.
+    assert len(seen) == 3 and seen[2]["tools"] == []
     assert events[-1]["steps"] == 2
+    # The closing reply asked for another tool: nothing to show, so the stop line.
     assert "within the steps" in "".join(e["content"] for e in events if e["type"] == "token")
+
+
+def test_out_of_steps_the_driver_answers_from_what_it_found(monkeypatch):
+    """CORE: a turn that used its steps ended on "could not finish", throwing
+    away what its tools returned. Now one tool-free reply answers from it."""
+    _no_retrieval(monkeypatch)
+    monkeypatch.setenv("DRIVER_MAX_STEPS", "2")
+    seen = []
+    replies = [{"content": "", "tool_calls": [_call("select_hat", {"hat": "planning"}, f"c{i}")]}
+               for i in range(2)] + [{"content": "From what I found: the planning hat applies. "
+                                                 "The duration is missing; please give it."}]
+    monkeypatch.setattr(llm, "call", _scripted(replies, seen))
+    events = _run(_agent(), user_message="keep going")
+    text = "".join(e["content"] for e in events if e["type"] == "token")
+    assert "From what I found" in text and "duration is missing" in text
+    assert "within the steps" not in text
+    assert seen[-1]["tools"] == []
+    assert any("No more tool calls" in str(m.get("content")) for m in seen[-1]["messages"])
 
 
 def test_the_system_message_carries_rules_hats_and_profile():
