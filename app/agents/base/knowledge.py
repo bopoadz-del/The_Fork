@@ -4,6 +4,7 @@ library being injected into every turn. Base package: every hat has it."""
 from __future__ import annotations
 
 from app.agents.core.tool_registry import ToolCall, tool
+from app.lib.formula_registry import Param
 
 SCHEMA = {
     "type": "function",
@@ -24,7 +25,10 @@ SCHEMA = {
 }
 
 
-@tool("search_general_knowledge", owner="base", display_name='Knowledge base search', schema=SCHEMA)
+@tool("search_general_knowledge", owner="base", display_name='Knowledge base search', schema=SCHEMA, params={
+    "query": Param(label="what to look for", kind="text", required=True),
+    "top_k": Param("nr", 1, 20, label="number of passages", kind="integer", required=False),
+})
 async def handle_search_general_knowledge(call: ToolCall) -> dict:
     """Search every configured general-knowledge project; best passages first."""
     from app.core.doc_index import search_project_documents

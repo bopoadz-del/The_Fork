@@ -13,10 +13,10 @@ from app.lib.formula_registry import Param, formula
                  "within tolerance, its deviation, and the margin left. The specified value and "
                  "the tolerance come from the user or the project documents."),
     inputs={
-        'measured': Param('-', -1e9, 1e9, label='measured value'),
-        'specified': Param('-', -1e9, 1e9, label='specified value'),
-        'tolerance_plus': Param('-', 0, 1e9, label='plus tolerance'),
-        'tolerance_minus': Param('-', 0, 1e9, label='minus tolerance'),
+        'measured': Param('ratio', -1e9, 1e9, label='measured value'),
+        'specified': Param('ratio', -1e9, 1e9, label='specified value'),
+        'tolerance_plus': Param('ratio', 0, 1e9, label='plus tolerance'),
+        'tolerance_minus': Param('ratio', 0, 1e9, label='minus tolerance'),
     },
     outputs={"within_tolerance": "-", "deviation": "same unit as specified",
              "lower_limit": "same unit as specified", "upper_limit": "same unit as specified",
