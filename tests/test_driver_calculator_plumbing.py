@@ -1,0 +1,104 @@
+"""Driver-mode calculator plumbing (F-CORE-ROUND-2 steps 3-5), against a
+synthetic formula only: the model is offered the registry's labels and units,
+reads results as prose, and no registry identifier reaches the user."""
+from __future__ import annotations
+
+import asyncio
+import json
+
+import pytest
+
+from app.agents.driver import llm, loop, render, tools
+from app.lib import construction_formulas as cf
+from app.lib import formula_registry as fr
+
+NAME = "syn_widget_area"
+
+
+@pytest.fixture(autouse=True)
+def synthetic_formula():
+    def syn_widget_area(widget_width_m: float, widget_depth_m: float, finish_layers: int = 1):
+        return {"widget_area_m2": widget_width_m * widget_depth_m * finish_layers,
+                "note": "Synthetic widget area."}
+    fr._REGISTRY.pop(NAME, None)
+    fr.formula(owner="base", description="Area of a synthetic widget.",
+               display_name="Synthetic widget area",
+               inputs={"widget_width_m": fr.Param(unit="m", lo=0.01, hi=50, label="widget width"),
+                       "widget_depth_m": fr.Param(unit="m", lo=0.01, hi=50, label="widget depth"),
+                       "finish_layers": fr.Param(unit="count", lo=1, hi=10, label="finish layers")},
+               outputs={"widget_area_m2": "m2"})(syn_widget_area)
+    cf.CALCULATORS[NAME] = syn_widget_area
+    render._MAP.clear()
+    yield
+    fr._REGISTRY.pop(NAME, None)
+    cf.CALCULATORS.pop(NAME, None)
+    render._MAP.clear()
+
+
+def test_the_schema_offers_every_input_by_label_unit_range_and_required():
+    schema = tools.calculator_schema(None)
+    assert NAME in schema["function"]["parameters"]["properties"]["calculation"]["enum"]
+    d = schema["function"]["description"]
+    line = next(x for x in d.splitlines() if x.startswith(f"- {NAME}:"))
+    assert "Synthetic widget area" in line
+    assert "widget_width_m = widget width (m, 0.01 to 50)" in line
+    assert "finish_layers = finish layers (count, 1 to 10, optional)" in line
+
+
+def test_a_result_reaches_the_model_as_prose_without_identifiers():
+    env = cf.run_calculation(NAME, {"widget_width_m": 2, "widget_depth_m": 3})
+    text = render.render_calculation(env, {"widget_width_m": 2, "widget_depth_m": 3})
+    assert text.startswith("Synthetic widget area — platform calculator.")
+    assert "widget width 2 m" in text and "widget depth 3 m" in text
+    assert "widget area 6 m" in text
+    for key in (NAME, "widget_width_m", "widget_area_m2", "{", "}"):
+        assert key not in text
+
+
+def test_an_out_of_range_input_is_asked_for_by_its_label():
+    env = cf.run_calculation(NAME, {"widget_width_m": 500, "widget_depth_m": 3})
+    text = render.render_calculation(env, {"widget_width_m": 500})
+    assert "needs input" in text and "widget width" in text
+    assert "widget_width_m" not in text
+
+
+def test_identifiers_in_an_answer_become_the_names_a_user_reads():
+    out, n = render.readable(f"I ran {NAME} with widget_width_m = 2 and `widget_depth_m` = 3.")
+    assert out == "I ran Synthetic widget area with widget width = 2 and widget depth = 3."
+    assert n == 3
+    plain, m = render.readable("The span and the load are within limits.")
+    assert m == 0 and plain == "The span and the load are within limits."
+
+
+def test_a_driver_turn_never_shows_a_registry_identifier(monkeypatch):
+    from tests.test_driver_mode import _agent, _no_retrieval
+
+    _no_retrieval(monkeypatch)
+    seen = []
+    replies = [
+        {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+            "name": "construction_calc",
+            "arguments": json.dumps({"calculation": NAME, "params": {"widget_width_m": 2, "widget_depth_m": 3}})}}]},
+        {"content": f"Using {NAME}, with widget_width_m 2 m and widget_depth_m 3 m, the widget area is 6 m2."},
+    ]
+
+    async def fake_stream(agent, messages, offered, model=""):
+        seen.append([dict(m) for m in messages])
+        reply = replies.pop(0)
+        if reply.get("content"):
+            yield "content", reply["content"]
+        yield "done", {"status": "success", "message": reply}
+
+    monkeypatch.setattr(llm, "stream", fake_stream)
+
+    async def go():
+        return [e async for e in loop.stream(_agent(), user_message="widget 2 m by 3 m, what area?", project_id="p")]
+    events = asyncio.run(go())
+    text = "".join(e["content"] for e in events if e["type"] == "token")
+    for key in (NAME, "widget_width_m", "widget_depth_m", "construction_calc"):
+        assert key not in text, text
+    assert "6 m2" in text
+    tool_msg = next(m for m in seen[1] if m.get("role") == "tool")
+    assert "widget_width_m" not in tool_msg["content"] and "{" not in tool_msg["content"]
+    end = events[-1]
+    assert end["exit_check"]["identifiers_replaced"] >= 3

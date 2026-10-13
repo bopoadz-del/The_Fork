@@ -10,7 +10,7 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.agents import driver
-from app.agents.driver import context, llm, routes, sources, tools
+from app.agents.driver import context, llm, render, routes, sources, tools
 from app.core import turn_progress
 from app.core.offload import off_loop
 
@@ -37,10 +37,13 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]]) -> tuple:
     figures removed and counts the passages read, for the end event."""
     from app.agents import citation_provenance as cp
 
+    # No registry identifier leaves: each becomes the name a user reads.
+    answer, identifiers = render.readable(answer)
     checked = cp.gate(answer, None, msgs, tool_passages=True, annotate=False)
     _, every = cp.figure_provenance(checked, None, msgs, enforce=False, tool_passages=True)
     out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
     report = {
+        "identifiers_replaced": identifiers,
         "figures_removed": [e["figure"] for e in every if not e.get("source")],
         "passages_read": sum(1 for r in cp.build_evidence(None, msgs, tool_passages=True).records
                              if r.kind == "retrieval"),
@@ -100,6 +103,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         sent.append(checked)
         provenance.extend(trail)
         check["figures_removed"].extend(report["figures_removed"])
+        check["identifiers_replaced"] = check.get("identifiers_replaced", 0) + report["identifiers_replaced"]
         check["passages_read"] = report["passages_read"]
         return {"type": "token", "content": checked} if checked.strip() else None
 
@@ -168,7 +172,15 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             # The model gets at most _TOOL_RESULT_CHARS of a result; the exit
             # check reads it whole -- cut, the JSON no longer parses and every
             # figure it backs looks unsourced (live: 23 figures removed).
-            msgs.append({**tool_msg, "content": full[:_TOOL_RESULT_CHARS]})
+            # A calculation reaches the model as prose in the registry's own
+            # words (render.render_calculation), never as raw keys it could
+            # copy into the answer; the exit check still reads the full result.
+            envelope = result_of_call.get("result") if isinstance(result_of_call, dict) else None
+            if isinstance(envelope, dict) and envelope.get("calculation"):
+                shown = render.render_calculation(envelope, args.get("params") if isinstance(args.get("params"), dict) else args)
+            else:
+                shown = full[:_TOOL_RESULT_CHARS]
+            msgs.append({**tool_msg, "content": shown})
             evidence.append({**tool_msg, "content": full})
     if not answer_done:
         event = _release(_STOP)
