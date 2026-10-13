@@ -145,3 +145,18 @@ def test_the_standing_rules_send_computed_figures_to_the_calculator():
     rules = (Path(__file__).resolve().parents[1] / "config" / "driver_standing_rules.md").read_text(encoding="utf-8")
     assert "A figure a platform calculator computes comes from that calculator" in rules
     assert "then general knowledge, then a calculation" not in rules
+
+
+def test_count_and_ratio_units_are_dimensionless_for_the_converter():
+    """Lane 1 asked: schema_gaps tells a dimensionless input to declare 'count'
+    or 'ratio' -- does the converter know them? It treats them as having no
+    unit of its own: a figure stands as written, a percentage becomes a
+    fraction for a 0..1 input, and nothing is rejected as an unknown unit."""
+    count = fr.ParamSpec(name="n", kind="integer", unit="count", lo=1, hi=100,
+                         label="number of items", grade="", required=True)
+    ratio = fr.ParamSpec(name="r", kind="number", unit="ratio", lo=0, hi=1,
+                         label="share", grade="", required=True)
+    assert fr.convert_figure(count, 5, "count") == {"value": 5}
+    assert fr.convert_figure(count, 5, "pieces") == {"value": 5}
+    assert fr.convert_figure(ratio, 0.4, "ratio") == {"value": 0.4}
+    assert fr.convert_figure(ratio, 40, "%")["value"] == pytest.approx(0.4)
