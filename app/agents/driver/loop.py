@@ -94,6 +94,18 @@ def _tidy(text: str) -> str:
     return _EMPTY_BRACKETS.sub("", text)
 
 
+def _calc_verdict(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """A calculator run as the trace records it: its status, whether it asked,
+    and which inputs it was missing or used a default for (names only)."""
+    env = result.get("result") if isinstance(result, dict) else None
+    if not isinstance(env, dict):
+        return None
+    inner = env.get("result") if isinstance(env.get("result"), dict) else {}
+    return {"status": env.get("status"), "asked": bool(env.get("needs_input") or env.get("question")),
+            "missing": list(env.get("missing") or [])[:8],
+            "defaults": sorted(str(k) for k in (inner.get("defaults_used") or env.get("defaults_used") or {}))[:8]}
+
+
 def _offered_workflows(offered: List[Dict[str, Any]]) -> int:
     """How many workflows the run_workflow tool offered this step (0: none)."""
     for t in offered:
@@ -101,6 +113,44 @@ def _offered_workflows(offered: List[Dict[str, Any]]) -> int:
         if fn.get("name") == routes.RUN_WORKFLOW:
             return len(((fn.get("parameters") or {}).get("properties") or {}).get("workflow", {}).get("enum") or [])
     return 0
+
+
+async def _inputs_stated_in_ask(agent: Any, user_message: str, history: Any,
+                                refusal: Dict[str, Any]) -> Dict[str, Any]:
+    """The refused workflow's inputs that the user's own words state, as
+    params -- read by one tool-free model call, never invented: a key the
+    words do not give is left out. Empty when nothing is stated."""
+    inputs = refusal.get("inputs") or {}
+    if not inputs:
+        return {}
+    said = [str(user_message or "")]
+    for turn in history or []:
+        if isinstance(turn, dict) and turn.get("role") == "user" and turn.get("content"):
+            said.append(str(turn["content"]))
+    listing = "\n".join(f"- {key}: {label}" for key, label in inputs.items())
+    prompt = ("A platform workflow could not run: " + str(refusal.get("missing") or "").strip()
+              + "\nIts inputs (key: what it is):\n" + listing
+              + "\nFrom the user's own words below, give the inputs they state, as one JSON "
+              "object keyed exactly as listed. A list input is a JSON list of the items the user "
+              "names. Leave out every input the words do not state; never guess, never use outside "
+              "knowledge. Reply with the JSON object only ({} when nothing is stated).")
+    messages = [{"role": "system", "content": prompt},
+                {"role": "user", "content": "\n\n".join(reversed(said))}]
+    try:
+        import copy
+
+        reader = copy.copy(agent)
+        reader.temperature = llm.DECISION_TEMPERATURE  # reading, not writing: unsampled
+        reply = await llm.call(reader, messages, [], model=driver.model())
+        text = str(((reply or {}).get("message") or {}).get("content") or "").strip()
+        start, end = text.find("{"), text.rfind("}")
+        found = json.loads(text[start:end + 1]) if start != -1 and end > start else {}
+    except Exception:  # noqa: BLE001 -- reading the ask is help; the turn asks instead
+        _LOG.warning("driver: inputs from the ask could not be read", exc_info=True)
+        return {}
+    if not isinstance(found, dict):
+        return {}
+    return {k: v for k, v in found.items() if k in inputs and v not in (None, "", [], {})}
 
 
 def _named_calculator_note(user_message: str) -> str:
@@ -204,6 +254,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     # reply that only answers would be the workflow's deliverable written by
     # hand, so the workflow's own request for its inputs is given instead.
     refused: Dict[str, Dict[str, Any]] = {}
+    filled_from_ask: set = set()  # workflows whose inputs were read from the ask once
     reminded = False  # the model was told once to call a refused workflow again
     step = 0
     for step in range(driver.max_steps()):
@@ -279,8 +330,18 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             elif name == routes.RUN_WORKFLOW:
                 used.append(f"{name}:{args.get('workflow')}")
                 result_of_call = await routes.run(args, user_message, project_id, user_id, conversation_id)
-                exports.extend(result_of_call.get("exports") or [])
                 workflow = str(args.get("workflow") or "")
+                if result_of_call.get("missing") and workflow not in filled_from_ask:
+                    # The workflow refused for a missing input. Before any
+                    # question, its inputs that the user's own words already
+                    # state are read out and it runs once more with them.
+                    filled_from_ask.add(workflow)
+                    stated = await _inputs_stated_in_ask(agent, user_message, history, result_of_call)
+                    if stated:
+                        args = {**args, "params": {**(args.get("params") or {}), **stated}}
+                        result_of_call = await routes.run(args, user_message, project_id, user_id,
+                                                          conversation_id)
+                exports.extend(result_of_call.get("exports") or [])
                 if result_of_call.get("ok"):
                     refused.pop(workflow, None)
                 elif result_of_call.get("missing"):
@@ -300,6 +361,8 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 "tool": name, "workflow": args.get("workflow") if name == routes.RUN_WORKFLOW else None,
                 "calculation": args.get("calculation") if name == "construction_calc" else None,
                 "ok": ok, "missing": bool(result_of_call.get("missing") or result_of_call.get("needs_input")),
+                # A calculator's own verdict: success, or needs_input and which inputs.
+                "result": _calc_verdict(result_of_call) if name == "construction_calc" else None,
             })
             if name != tools.SELECT_HAT:
                 if ok:
@@ -428,6 +491,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     if notes.strip():
         yield {"type": "token", "content": notes}
     _LOG.info("DRIVER_TURN %s", json.dumps({
+        "conversation": str(conversation_id or ""),  # an id, never the user's words
         "steps": trace, "ended": ("answer" if model_answered else "question" if answer_done else "step_limit"),
         "figures_removed": check["figures_removed"], "identifiers_replaced": check.get("identifiers_replaced", 0),
         "elapsed_s": round(time.monotonic() - t0, 2)}, default=str))
