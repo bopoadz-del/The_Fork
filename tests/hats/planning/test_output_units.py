@@ -55,3 +55,61 @@ def test_manhour_productivity_keeps_the_declared_hour_unit():
     env = run_calculation("productivity_manpower_duration", params)
     text = render.render_calculation(env, params)
     assert "manhours required 40 h" in text
+
+
+def _assert_days(env, inputs):
+    assert env.get("status") == "success", env
+    text = render.render_calculation(env, inputs)
+    assert "Result: duration 40 days." in text
+    assert "manhours required" not in text.lower()
+    assert "40 h" not in text
+
+
+@pytest.mark.parametrize("written", ["2 m2 per gang-day", "2 m2/gang-day"])
+def test_construction_calc_keeps_a_gang_day_rate_out_of_manhours(written):
+    """The live tool passes the rate with its unit on the value."""
+    import asyncio
+
+    from app.agents.base.tools import handle_construction_calc
+    from app.agents.core.tool_registry import ToolCall
+
+    args = {
+        "calculation": "productivity_manpower_duration",
+        "params": {"quantity": 80, "productivity": written},
+    }
+    call = ToolCall(
+        agent=None, name="construction_calc", args=args,
+        user_message="How long does 80 m2 take at a gang-day rate?",
+    )
+    out = asyncio.run(handle_construction_calc(call))
+    inputs = args["params"]
+    _assert_days(out["result"], inputs)
+
+
+@pytest.mark.parametrize("written", ["2 m2 per gang-day", "2 m2/gang-day"])
+def test_workflow_envelope_keeps_a_gang_day_rate_out_of_manhours(written):
+    """A workflow envelope reaches the same calculator through the container."""
+    import asyncio
+
+    from app.containers.construction import ConstructionContainer
+
+    envelope = {
+        "action": "construction_calc",
+        "message": "How long does 80 m2 take at a gang-day rate?",
+        "calculation": "productivity_manpower_duration",
+        "quantity": 80,
+        "productivity": written,
+    }
+    out = asyncio.run(ConstructionContainer().construction_calc(envelope, {}))
+    _assert_days(out, {"quantity": 80, "productivity": written})
+
+
+def test_an_hour_unit_on_the_rate_stays_manhours():
+    env = run_calculation("productivity_manpower_duration", {
+        "quantity": 80,
+        "productivity_rate": "2 per hour",
+    })
+    text = render.render_calculation(env, {"quantity": 80, "productivity_rate": "2 per hour"})
+    assert env["status"] == "success", env
+    assert "Result: manhours required 40 h." in text
+    assert "40 days" not in text

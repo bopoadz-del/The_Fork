@@ -15,8 +15,6 @@
  "formula:plumbing_flow_programme.num_floors:unit",
  "formula:productivity_manpower_duration.daily_production:unit",
  "formula:productivity_manpower_duration.manpower:unit",
- "formula:productivity_manpower_duration.productivity:unit",
- "formula:productivity_manpower_duration.productivity_rate:unit",
  "formula:productivity_manpower_duration.quantity:unit",
  "formula:productivity_manpower_duration.quantity_executed:unit",
  "formula:productivity_manpower_duration.remaining_qty:unit",
