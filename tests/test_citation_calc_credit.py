@@ -19,6 +19,7 @@ import re
 
 from app.agents.citation_provenance import UNVERIFIED_NOTE, gate
 from app.lib.construction_formulas import run_calculation
+from app.lib.source_labels import calculator_label
 
 _PROPOSAL = "FIXTURE-d-20260928-proposal.pdf"
 _BOREHOLE = "FIXTURE-d-20260928-borehole.pdf"
@@ -249,21 +250,22 @@ def test_malformed_calculator_payload_is_not_a_credit():
     assert gate(answer, None, messages) is answer
 
 
+# The credit line as the platform writes it: inputs by their declared labels.
+_DEWATER_CREDIT = "Source: " + calculator_label(
+    "dewatering_uplift_check", {"water_depth": 23, "raft_thickness": 2, "floor_count": 5})
+
+
 def test_answer_that_already_credits_the_calculation_is_unchanged():
     answer = (
         "Dewatering cannot stop. The factor of safety is 0.380.\n"
-        "Source: Uplift check for stopping dewatering — platform calculator "
-        "(water depth 23 m, raft thickness 2 m, floor count 5)\n"
+        f"{_DEWATER_CREDIT}\n"
     )
     assert gate(answer, _dewater_rag(), _dewater_messages()) is answer
 
 
 def test_credit_line_carrying_result_notes_is_reduced_to_the_label():
     notes = "; ".join(_DEWATER_ENV["result"]["notes"])
-    label = (
-        "Source: Uplift check for stopping dewatering — platform calculator "
-        "(water depth 23 m, raft thickness 2 m, floor count 5)"
-    )
+    label = _DEWATER_CREDIT
     answer = (
         "Dewatering cannot stop. The factor of safety is 0.380.\n"
         f"{label} — {notes}\n"
