@@ -94,6 +94,16 @@ def _tidy(text: str) -> str:
     return _EMPTY_BRACKETS.sub("", text)
 
 
+def _asks_for_input(result: Dict[str, Any]) -> bool:
+    """True when a tool's result is a request for an input (a calculator's
+    question, a workflow naming what it needs), not a failure."""
+    if not isinstance(result, dict):
+        return False
+    env = result.get("result") if isinstance(result.get("result"), dict) else {}
+    return bool(result.get("needs_input") or result.get("missing") or env.get("needs_input")
+                or str(env.get("question") or "").strip())
+
+
 def _offered_workflows(offered: List[Dict[str, Any]]) -> int:
     """How many workflows the run_workflow tool offered this step (0: none)."""
     for t in offered:
@@ -304,13 +314,17 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             if name != tools.SELECT_HAT:
                 if ok:
                     succeeded = True
-                else:
+                elif not _asks_for_input(result_of_call):
+                    # A tool asking for an input has not failed: its question is
+                    # the answer. A real failure is told in its own words; one
+                    # with no words of its own adds no line.
                     from app.lib.source_labels import tool_label
 
                     shown_name = (str(args.get("workflow") or "").replace("_", " ").capitalize()
                                   if name == routes.RUN_WORKFLOW else tool_label(name))
                     error = str(result_of_call.get("error") or result_of_call.get("missing") or "").strip()
-                    failed.append((shown_name, error or "it returned no result"))
+                    if error:
+                        failed.append((shown_name, error))
             yield {"type": "tool_result", "tool": name, "name": name, "ok": ok}
             full = json.dumps(result_of_call, default=str)
             tool_msg = {"role": "tool", "name": name, "tool_call_id": call.get("id") or name}
