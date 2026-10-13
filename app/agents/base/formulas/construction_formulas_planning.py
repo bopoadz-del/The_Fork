@@ -95,6 +95,11 @@ _FAMILIES: Dict[str, Dict[str, Any]] = {
     "fraction": {
         "fraction": 1.0, "%": 0.01, "percent": 0.01, "pct": 0.01, "‰": 0.001,
     },
+    # A count is a number of things. "nr" is the mark used on a quantity
+    # that is not a length, an area or a mass.
+    "count": {
+        "nr": 1.0,
+    },
     "labour effort": {
         "man-hour": 1.0, "man-hours": 1.0, "manhour": 1.0, "manhours": 1.0,
         "mh": 1.0, "mhr": 1.0, "mhrs": 1.0, "man-hr": 1.0, "man-hrs": 1.0,
