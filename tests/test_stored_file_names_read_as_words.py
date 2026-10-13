@@ -48,3 +48,13 @@ def test_a_users_document_keeps_its_name():
         {"ok": True, "result": {"results": [_hit("own")]}})}]
     rows = sources.panel(trail, [], "")
     assert rows[0]["doc_name"] == "qx_alpha_design_values.md"
+
+
+def test_citing_a_library_file_by_its_stored_name_is_not_an_unbacked_attribution(monkeypatch):
+    """The gate matches the stored name the evidence carries; the rename to
+    words comes after, so a true citation never draws the removal note."""
+    from tests.lane5_core_support import install_driver_stream
+
+    install_driver_stream(monkeypatch)
+    events = _drive(monkeypatch, "general_knowledge")
+    assert "Unverified attribution removed" not in answer_text(events)

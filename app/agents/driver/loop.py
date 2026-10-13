@@ -48,14 +48,16 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False) ->
         from app.agents import answer_exit
 
         answer = answer_exit.check_text(answer)
-        # A library file the turn read is named by its title, never by its
-        # stored file name.
-        for stored, title in sorted(sources.library_names(msgs).items(), key=lambda kv: -len(kv[0])):
-            answer = answer.replace(stored, title)
     checked = cp.gate(answer, None, msgs, tool_passages=True, annotate=False)
     _, every = cp.figure_provenance(checked, None, msgs, enforce=False, tool_passages=True)
     out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
     out = _tidy(out)
+    if shared:
+        # A library file the turn read is named by its title, never by its
+        # stored file name -- after the gate, which matches citations
+        # against the stored names the evidence carries.
+        for stored, title in sorted(sources.library_names(msgs).items(), key=lambda kv: -len(kv[0])):
+            out = out.replace(stored, title)
     report = {
         "identifiers_replaced": identifiers,
         "figures_removed": [e["figure"] for e in every if not e.get("source")],
