@@ -687,8 +687,15 @@ class ConstructionBoqMixin:
                               or fig.get("work_done_percent", 0)) / 100.0
         previous_certified = float(p.get("previous_certified") or data.get("previous_certified", 0)
                                    or fig.get("previous_certified", 0))
-        retention_pct = float(p.get("retention_percent",
-                                    p.get("retention_rate", fig.get("retention_percent", 10)))) / 100.0
+        # The stated retention wins wherever it was given (params or the
+        # envelope); 0 is a stated value, not a missing one.
+        stated_retention = next(
+            (src[key] for src in (p, data) for key in ("retention_percent", "retention_rate")
+             if isinstance(src, dict) and src.get(key) is not None and src.get(key) != ""),
+            None,
+        )
+        retention_pct = float(stated_retention if stated_retention is not None
+                              else fig.get("retention_percent", 10)) / 100.0
         advance_payment = float(p.get("advance_payment") or data.get("advance_paid", 0)
                                 or data.get("advance_payment", 0) or fig.get("advance_payment", 0))
         advance_pct = float(
