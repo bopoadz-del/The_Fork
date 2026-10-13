@@ -40,12 +40,34 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]]) -> tuple:
     checked = cp.gate(answer, None, msgs, tool_passages=True, annotate=False)
     _, every = cp.figure_provenance(checked, None, msgs, enforce=False, tool_passages=True)
     out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
+    out = _tidy(out)
     report = {
         "figures_removed": [e["figure"] for e in every if not e.get("source")],
         "passages_read": sum(1 for r in cp.build_evidence(None, msgs, tool_passages=True).records
                              if r.kind == "retrieval"),
     }
     return out, trail, report
+
+
+def _without_missing_pages(value: Any) -> Any:
+    """A tool result as the model reads it, minus pages that are not pages
+    (-1 / 0 / None mean "no page"): left in, they came back as "(source: -1)"."""
+    if isinstance(value, dict):
+        return {k: _without_missing_pages(v) for k, v in value.items()
+                if not (k in ("page", "page_number") and (v is None or (isinstance(v, (int, float))
+                                                                      and not isinstance(v, bool) and v <= 0)))}
+    if isinstance(value, list):
+        return [_without_missing_pages(v) for v in value]
+    return value
+
+
+#: Brackets left empty, or holding only separators, once the exit check has
+#: removed an unbacked figure or attribution from them.
+_EMPTY_BRACKETS = re.compile(r"\s*[(\[]\s*[,;:\-–—]*\s*[)\]]")
+
+
+def _tidy(text: str) -> str:
+    return _EMPTY_BRACKETS.sub("", text)
 
 
 def _args(tool_call: Dict[str, Any]) -> Dict[str, Any]:
@@ -168,7 +190,8 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             # The model gets at most _TOOL_RESULT_CHARS of a result; the exit
             # check reads it whole -- cut, the JSON no longer parses and every
             # figure it backs looks unsourced (live: 23 figures removed).
-            msgs.append({**tool_msg, "content": full[:_TOOL_RESULT_CHARS]})
+            msgs.append({**tool_msg, "content": json.dumps(_without_missing_pages(result_of_call),
+                                                           default=str)[:_TOOL_RESULT_CHARS]})
             evidence.append({**tool_msg, "content": full})
     if not answer_done:
         event = _release(_STOP)
@@ -187,5 +210,6 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         yield {"type": "token", "content": notes}
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "provenance": provenance, "exit_check": check,
-           "sources": sources.panel(_trail(), provenance, "".join(sent)),
+           "sources": sources.panel(_trail(), provenance, "".join(sent),
+                                    calculated=any(n == "construction_calc" for n, _ in ran)),
            "steps": step + 1, "elapsed_s": round(time.monotonic() - t0, 2)}
