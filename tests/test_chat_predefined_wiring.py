@@ -91,3 +91,29 @@ def test_endpoint_routes_to_predefined_via_dynamic_understand(client, monkeypatc
     end = next(e for e in evs if e["type"] == "end")
     assert end["workflow"] == "generate_wbs"
     assert end["exports"], "produce mode should carry a download offer"
+
+
+def test_a_driver_mode_turn_is_never_taken_by_the_predefined_shortcut(client, monkeypatch):
+    """Lanes 1 and 3 CORE: a cash-flow / look-ahead ask with driver mode on was
+    answered in 'predefined' mode. In driver mode the model picks workflows."""
+    monkeypatch.setenv("ORCHESTRATOR_PREDEFINED", "1")
+    monkeypatch.setenv("DRIVER_MODE", "request")
+
+    async def fake_understand(prompt, has_documents=False):
+        return {"workflow": "schedule", "action": "generate_wbs", "mode": "produce",
+                "deliverable": True, "params": {}}
+    monkeypatch.setattr(chat_mod, "understand_intent", fake_understand)
+
+    async def fake_classify(prompt):
+        return (None, 0.0)
+    monkeypatch.setattr(chat_mod, "_classify_intent", fake_classify)
+
+    from app.agents import driver
+    assert not chat_mod._predefined_enabled() or not driver.enabled()
+    token = driver._REQUESTED.set(True)
+    try:
+        assert driver.enabled()
+        assert chat_mod._predefined_enabled() is False
+    finally:
+        driver._REQUESTED.reset(token)
+    assert chat_mod._predefined_enabled() is True
