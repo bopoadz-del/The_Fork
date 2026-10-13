@@ -351,6 +351,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         yield {"type": "token", "content": notes}
     _LOG.info("DRIVER_TURN %s", json.dumps({
         "steps": trace, "ended": ("answer" if model_answered else "question" if answer_done else "step_limit"),
+        "figures_removed": check["figures_removed"], "identifiers_replaced": check.get("identifiers_replaced", 0),
         "elapsed_s": round(time.monotonic() - t0, 2)}, default=str))
     yield {"type": "end", "complete": True, "mode": "driver", "hat": hat, "tools": used, "exports": exports,
            "provenance": provenance, "exit_check": check,

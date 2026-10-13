@@ -2458,73 +2458,6 @@ def _with_input_question(env: Dict[str, Any], name: str, missing: List[str]) -> 
     return env
 
 
-_WRITTEN_FIGURE_RE = re.compile(
-    r"(?<![\w.,])(-?\d[\d,]*(?:\.\d+)?)\s*([A-Za-z%/][A-Za-z0-9/%.]*)")
-
-
-def _place_written_figures(name: str, fn: Any, text: str,
-                           params: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
-    """Every figure the user wrote with a unit goes to an input, or is asked.
-
-    A figure whose unit measures what exactly one still-open input measures
-    is that input's, required or not. A figure that fits several open
-    inputs, and none of the inputs it fits already holds it, is asked: the
-    calculator never quietly runs on a default the user's figure may have
-    been meant to replace. Returns (params, question or "")."""
-    from app.lib import formula_registry
-    from app.agents.base.formulas.construction_formulas_planning import parse_unit
-
-    spec = formula_registry.get(name)
-    if spec is None or not text:
-        return params, ""
-    inputs = formula_registry.parameters(spec)
-    out = dict(params)
-    unclear: List[Tuple[str, List[str]]] = []
-    for m in _WRITTEN_FIGURE_RE.finditer(_normalize_ask(text)):
-        written = parse_unit(m.group(2))
-        number = _parse_text_number(m.group(1))
-        if written is None or number is None:
-            continue
-        fits = [k for k, p in inputs.items()
-                if (parse_unit(p.unit) is not None and parse_unit(p.unit).dimension == written.dimension)]
-        if not fits:
-            continue  # a figure for something this calculator does not take
-        held = False
-        for key in fits:
-            if out.get(key) in (None, ""):
-                continue
-            conv = formula_registry.convert_figure(inputs[key], number, m.group(2))
-            value = conv.get("value") if isinstance(conv, dict) else None
-            current = out[key] if isinstance(out[key], (list, tuple)) else [out[key]]
-            try:  # held as the input's value, or as one of a series' values
-                if value is not None and any(
-                        abs(float(v) - float(value)) <= 1e-9 * max(1.0, abs(float(value)))
-                        or abs(float(v) - number) <= 1e-9 * max(1.0, abs(number)) for v in current):
-                    held = True
-                    break
-            except (TypeError, ValueError):
-                continue
-        if held:
-            continue
-        open_fits = [k for k in fits if out.get(k) in (None, "")]
-        if len(open_fits) == 1:
-            conv = formula_registry.convert_figure(inputs[open_fits[0]], number, m.group(2))
-            if isinstance(conv, dict) and "value" in conv:
-                out[open_fits[0]] = conv["value"]
-                continue
-        if len(open_fits) > 1:
-            labels = [inputs[k].display_label for k in open_fits]
-            unclear.append((m.group(0).strip(), labels))
-    if not unclear:
-        return out, ""
-    from app.lib.source_labels import _joined
-
-    parts = [f"which input {fig} is: the {_joined(labels).replace(' and ', ' or ')}" for fig, labels in unclear]
-    display = spec.display_name or name
-    return out, (f"The {display} calculator could not tell " + "; and ".join(parts)
-                 + ". Which is it?")
-
-
 def _input_rejection_envelope(
     name: str, rejected: List[Dict[str, Any]], missing: List[str],
 ) -> Dict[str, Any]:
@@ -2738,10 +2671,6 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         for key, val in extract_calculation_params_from_text(fn, text_blob).items():
             if params.get(key) in (None, ""):
                 params[key] = val
-        params, unclear = _place_written_figures(str(name), fn, text_blob, params)
-        if unclear:
-            return {"status": "error", "needs_input": True, "calculation": str(name),
-                    "error": unclear, "question": unclear, "rejected": [], "missing": []}
     # Re-run the symbol alias AFTER both text extractors. The ask sentence rides
     # along in ``text`` / ``query`` and both extractors above pull "E = 200",
     # "I = 2.0e-4" (and a shortened ``c``) back out of it as bare keys — after
