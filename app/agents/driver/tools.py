@@ -52,7 +52,13 @@ def offered(agent: Any, project_id: Optional[str], hat: Optional[str], disciplin
             tools.append(spec.schema)
     from app.agents.driver import routes
 
-    workflow = routes.schema(routes.catalogue())
+    workflows = routes.catalogue()
+    workflow = routes.schema(workflows)
+    if workflow:
+        # A package tool named like a catalogue workflow runs that workflow
+        # by a second door; with two doors the model's choice between them
+        # varies. The workflow is offered once, through run_workflow.
+        tools = [t for t in tools if (t.get("function") or {}).get("name") not in set(workflows)]
     return [select_hat_schema(disciplines)] + tools + ([workflow] if workflow else [])
 
 

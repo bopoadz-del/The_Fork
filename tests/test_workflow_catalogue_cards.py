@@ -97,3 +97,21 @@ def test_an_action_name_bound_to_another_workflows_method_is_not_a_second_entry(
     impl = get_block_instance("construction").get_actions()
     methods = [getattr(impl[w], "__func__", impl[w]) for w in routes.catalogue() if w in impl]
     assert len(methods) == len(set(methods))
+
+
+def test_a_workflow_has_one_door(monkeypatch):
+    """A package tool named like a catalogue workflow is the same workflow by a
+    second door: the model is offered run_workflow for it, never both."""
+    from app.agents.core import tool_registry
+    from app.agents.driver import tools
+
+    shared = sorted(set(tool_registry._TOOLS))[:1]
+    assert shared, "no package tools registered"
+    monkeypatch.setattr(routes, "catalogue", lambda: shared + ["widget_register"])
+    monkeypatch.setattr(routes, "cards", lambda: {})
+    from tests.test_driver_mode import _agent
+
+    hat = tool_registry._TOOLS[shared[0]].owner
+    offered = [t["function"]["name"] for t in tools.offered(_agent(), None, hat, [hat])]
+    assert routes.RUN_WORKFLOW in offered
+    assert shared[0] not in offered
