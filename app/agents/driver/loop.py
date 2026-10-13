@@ -86,6 +86,29 @@ def _tidy(text: str) -> str:
     return _EMPTY_BRACKETS.sub("", text)
 
 
+def _named_calculator_note(user_message: str) -> str:
+    """When the ask names one platform calculator by its declared name, say
+    so before the model chooses: a figure that calculator computes comes
+    from running it, never from the model's own knowledge. The model still
+    chooses; this only tells it what the ask named."""
+    try:
+        from app.lib import formula_registry
+        from app.lib.construction_formulas import calculator_name_from_text
+
+        name = calculator_name_from_text(user_message or "")
+        spec = formula_registry.get(name) if name else None
+    except Exception:  # noqa: BLE001 -- a note is help, never a failure
+        _LOG.debug("named-calculator lookup failed", exc_info=True)
+        return ""
+    if spec is None:
+        return ""
+    where = "" if spec.owner == "base" else f" It is in the {spec.owner} hat."
+    return (f"This ask names the platform calculator {spec.display_name} (construction_calc, "
+            f"calculation \"{spec.name}\").{where} A figure, level or result it computes comes from "
+            "running it with the user's inputs, not from your own knowledge; if it cannot run, "
+            "say what it needs.")
+
+
 def _args(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     raw = (tool_call.get("function") or {}).get("arguments") or "{}"
     try:
@@ -108,6 +131,9 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     # loop (live: 0.4-1.1 s stalls at 5 driver users).
     msgs: List[Dict[str, Any]] = await off_loop(context.messages, user_message, history,
                                                  project_id, user_id, hat)
+    note = await off_loop(_named_calculator_note, user_message)
+    if note:
+        msgs.insert(len(msgs) - 1, {"role": "system", "content": note})
     used: List[str] = []
     ran: List[tuple] = []  # (tool, arguments) of every tool run, for the credit lines
     computed: List[tuple] = []  # (envelope, inputs) of every calculation that succeeded
