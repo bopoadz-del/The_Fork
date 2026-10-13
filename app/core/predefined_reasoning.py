@@ -78,8 +78,18 @@ def container_action_names() -> set:
         con = get_block_instance("construction")
         impl = set(con.get_actions().keys()) if hasattr(con, "get_actions") else set()
         return impl & SCOPED_DISPATCH_ALLOWLIST
-    except Exception:
+    except Exception:  # noqa: BLE001 -- reported loudly below, never silently
+        # A container that does not load takes every one of its workflows
+        # out of reach. That must be visible: logged as an error here and
+        # counted by /health (workflows_reachable), never an empty set quietly.
+        logging.getLogger(__name__).exception(
+            "construction container did not load: its workflows are unreachable")
         return set()
+
+
+def workflows_reachable() -> int:
+    """How many predefined workflows the model can reach right now."""
+    return len(set(WORKFLOW_REGISTRY) | container_action_names())
 
 # Verbs that mean "I want the artifact", not "answer my question".
 _DELIVERABLE_RE = re.compile(
