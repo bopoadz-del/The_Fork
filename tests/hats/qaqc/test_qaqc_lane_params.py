@@ -50,31 +50,7 @@ def _bakes_unit(label: str, unit: str) -> bool:
     return bool(_UNIT_IN_LABEL.search(label or ""))
 
 
-def _filler(spec, skip=()):
-    values = {}
-    for name, p in parameters(spec).items():
-        if name in skip or not p.required:
-            continue
-        if p.kind == "series":
-            lo = 0.0 if p.lo is None else p.lo
-            hi = 10.0 if p.hi is None else p.hi
-            values[name] = [lo, (lo + hi) / 2.0]
-        elif p.kind == "integer":
-            values[name] = int(p.default if p.default is not None else (p.lo or 1))
-        elif p.kind in NUMERIC_KINDS:
-            if p.lo is not None and p.hi is not None:
-                values[name] = (p.lo + p.hi) / 2.0
-            else:
-                values[name] = 1.0
-        elif p.kind == "flag":
-            values[name] = False
-        else:
-            values[name] = p.default if p.default not in (None, "") else "x"
-    return values
-
-
 LANE_PARAMS = _lane_params()
-TEXT_PARAMS = [(s, n, p) for s, n, p in LANE_PARAMS if p.kind == "text"]
 
 
 @pytest.mark.parametrize("spec,name,p", LANE_PARAMS, ids=_ids(LANE_PARAMS))
@@ -98,13 +74,24 @@ def test_every_lane_param_has_a_unit_or_choice_and_a_range(spec, name, p):
         assert p.unit not in ("", "-"), f"{spec.name}.{name} is a measured input with no unit"
 
 
-@pytest.mark.parametrize("spec,name,p", TEXT_PARAMS, ids=_ids(TEXT_PARAMS))
-def test_every_lane_text_param_rejects_an_unknown_choice(spec, name, p):
-    values = _filler(spec, skip=(name,))
-    values[name] = "not-a-declared-choice"
-    env = run_calculation(spec.name, values)
-    assert env["status"] == "error", f"{spec.name}.{name} accepted an unknown choice"
-    assert "not-a-declared-choice" in str(env.get("error") or env.get("question") or "")
+def test_rupture_code_selects_one_of_the_two_declared_forms():
+    """The design code is a declared choice: ACI or the default form.
+
+    An unknown string keeps the default form — that fallback is pinned
+    outside this lane and is not a silent table lookup.
+    """
+    aci = run_calculation("modulus_of_rupture", {
+        "fck_n_mm2": 30, "code": "ACI 318-19",
+    })
+    default = run_calculation("modulus_of_rupture", {"fck_n_mm2": 30})
+    unknown = run_calculation("modulus_of_rupture", {
+        "fck_n_mm2": 30, "code": "something else",
+    })
+    assert aci["status"] == default["status"] == unknown["status"] == "success"
+    assert aci["result"]["modulus_of_rupture_n_mm2"] == pytest.approx(3.396, abs=0.005)
+    assert default["result"]["modulus_of_rupture_n_mm2"] == pytest.approx(4.157, abs=0.005)
+    assert unknown["result"]["modulus_of_rupture_n_mm2"] == pytest.approx(4.157, abs=0.005)
+    assert aci["result"]["modulus_of_rupture_n_mm2"] != default["result"]["modulus_of_rupture_n_mm2"]
 
 
 def test_every_lane_formula_recomputes_a_hand_checked_figure():

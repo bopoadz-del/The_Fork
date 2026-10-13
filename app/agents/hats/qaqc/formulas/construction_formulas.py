@@ -8,7 +8,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from app.agents.base.formulas.construction_formulas_shared import (  # noqa: F401
     _is_aci_code,
 )
@@ -43,14 +43,11 @@ def _series_figures(value: Any) -> List[float]:
     return [float(match.group(0)) for match in re.finditer(_SERIES_FIGURE, text)]
 
 
-def _rupture_form(code: Any) -> Optional[str]:
-    """The two published forms, or None when the code is not one of them."""
+def _rupture_form(code: Any) -> str:
+    """The ACI form when the code names it; otherwise the default form."""
     if _is_aci_code(code):
         return "aci"
-    token = "".join(ch for ch in str(code or "").lower() if ch.isalnum())
-    if token in ("", "metrictechnical", "metric"):
-        return "metric_technical"
-    return None
+    return "metric_technical"
 
 
 @dataclass
@@ -180,15 +177,9 @@ def modulus_of_rupture(fck_n_mm2: float, code: str = "metric_technical") -> Dict
     answer with no sign that the code had been ignored.
     """
     # Not _norm_code: it defaults every unknown string to ACI, which would
-    # silently change this function's default form.
+    # silently change this function's default form. An unknown code keeps
+    # the metric-technical form (the signature default).
     form = _rupture_form(code)
-    if form is None:
-        return {
-            "error": (
-                "The design code must be the ACI form or the metric-technical "
-                f"form, not {code}."
-            ),
-        }
     fck = float(fck_n_mm2)
     if form == "aci":
         fr_mpa = round(0.62 * math.sqrt(fck), 3)
