@@ -135,11 +135,24 @@ def calculators_named_by_display(text: str) -> List[str]:
     registry id written out. A two-word one ("Concrete volume") is also a
     bill and take-off phrase, so it is left to the id rules.
     """
+    hits, subsumed = _display_hits(text)
+    return [name for name, phrase in hits.items()
+            if len(phrase.split()) >= 3 and name not in subsumed]
+
+
+def _display_hits(text: str) -> Tuple[Dict[str, str], set]:
+    """({registry name: display phrase} for every calculator whose display
+    name, two words or more, the ask writes out in full; the names among them
+    written only as part of a longer display name the ask also writes --
+    "Kestrel total" inside "Kestrel total net" names the longer one)."""
     words = _phrase_words(text)
     if not words:
-        return []
+        return {}, set()
     padded = f" {' '.join(words)} "
-    return [name for name, phrase in _display_phrases() if phrase in padded]
+    hits = {name: phrase for name, phrase in _display_phrases() if phrase in padded}
+    subsumed = {name for name, phrase in hits.items()
+                if any(other != phrase and phrase in other for other in hits.values())}
+    return {name: phrase.strip() for name, phrase in hits.items()}, subsumed
 
 
 _DISPLAY_PHRASES: Dict[int, List[Tuple[str, str]]] = {}
@@ -160,7 +173,7 @@ def _display_phrases() -> List[Tuple[str, str]]:
             if spec.name not in CALCULATORS:
                 continue
             phrase = _phrase_words(spec.display_name)
-            if len(phrase) >= 3:
+            if len(phrase) >= 2:
                 cached.append((spec.name, f" {' '.join(phrase)} "))
         _DISPLAY_PHRASES.clear()
         _DISPLAY_PHRASES[key] = cached
@@ -221,9 +234,15 @@ def calculator_name_from_text(text: str) -> Optional[str]:
                 and stem not in _FORMULA_NAME_STEM_COLLISIONS
             ):
                 stems.append(name)
-    display = calculators_named_by_display(raw)
-    for group in (full, display, triples, pairs, stems):
-        uniq = list(dict.fromkeys(group))
+    hits, subsumed = _display_hits(raw)
+    display = [name for name, phrase in hits.items() if len(phrase.split()) >= 3]
+    # A two-word display name is also a take-off or lookup phrase ("Concrete
+    # volume"): it names the calculator only when no id rule does and the ask
+    # gives a figure to compute with.
+    two_word = ([name for name, phrase in hits.items() if len(phrase.split()) == 2]
+                if re.search(r"\d", raw) else [])
+    for group in (full, display, triples, pairs, stems, two_word):
+        uniq = [name for name in dict.fromkeys(group) if name not in subsumed]
         if len(uniq) == 1:
             return uniq[0]
         if len(uniq) > 1:
