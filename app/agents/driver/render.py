@@ -12,11 +12,13 @@ user reads (``readable``) before it leaves.
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Dict, List, Optional
 
 from app.lib.source_labels import CALCULATOR_SUFFIX, input_phrase
 
+_LOG = logging.getLogger(__name__)
 _MAX_LIST = 8
 _NOT_OUTPUTS = frozenset({"note", "notes", "standard"})
 
@@ -34,15 +36,32 @@ def _value(value: Any) -> Optional[str]:
     return input_phrase("", value).strip()
 
 
+def _shown_unit(unit: str) -> str:
+    """A declared unit as it is printed beside a figure. A unit written as
+    words that is not a unit ("same unit as specified") is a note about the
+    figure, not its unit, and is not printed."""
+    unit = str(unit or "").strip()
+    if not unit or " " not in unit:
+        return unit
+    try:
+        from app.agents.base.formulas.construction_formulas_planning import parse_unit
+
+        return unit if parse_unit(unit) is not None else ""
+    except Exception:  # noqa: BLE001 -- rendering never fails on a unit
+        _LOG.warning("unit parser failed on declared unit %r; not printed", unit, exc_info=True)
+        return ""
+
+
 def _phrases(values: Dict[str, Any], labels: Dict[str, str], units: Dict[str, str]) -> List[str]:
     out = []
     for key, value in values.items():
         if _value(value) is None:
             continue
-        phrase = input_phrase(key, value, units.get(key, ""))
+        unit = _shown_unit(units.get(key, ""))
+        phrase = input_phrase(key, value, unit)
         label = labels.get(key)
         if label:  # the declared label replaces the words built from the key
-            head = input_phrase(key, "", units.get(key, "")).strip()
+            head = input_phrase(key, "", unit).strip()
             phrase = label + phrase[len(head):] if phrase.startswith(head) else f"{label} {phrase}"
         out.append(phrase)
     return out
