@@ -224,8 +224,8 @@ def modulus_of_elasticity_concrete(
     Two forms, because they are different numbers and a reader cannot tell
     them apart from a bare float:
 
-    * ``metric_technical`` (default, unchanged): Ec = 15000 sqrt(f'c) with
-      f'c in kg/cm2 -- for C35 that is 280,624 kg/cm2.
+    * ``metric_technical`` (default): Ec = 15000 sqrt(f'c) with f'c in
+      kg/cm2. 1 N/mm² = 10.197 kg/cm². For C35 that is 283,375 kg/cm2.
     * ``aci``: ACI 318-19 Eq. 19.2.2.1b SI form, Ec = 4700 sqrt(f'c) in MPa
       -- for C35, 27,806 MPa.
 
@@ -245,7 +245,7 @@ def modulus_of_elasticity_concrete(
             "unit": "MPa",
             "standard": "ACI 318-19 Eq. 19.2.2.1b (SI): 4700*sqrt(f'c)",
         }
-    ec_kg_cm2 = round(15000 * math.sqrt(fck * 10), 0)
+    ec_kg_cm2 = round(15000 * math.sqrt(fck * 10.197), 0)
     return {
         "value": ec_kg_cm2,
         "unit": "kg/cm2",
