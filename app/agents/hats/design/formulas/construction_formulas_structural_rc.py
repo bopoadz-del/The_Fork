@@ -18,6 +18,18 @@ def _norm_code(code: str) -> str:
         return _EC
     return _ACI
 
+
+# ACI 318-19 Table 25.4.2.5. ψg holds for fy up to the stated limit.
+_GRADE_FACTOR = ((420.0, 1.0), (550.0, 1.15), (float("inf"), 1.3))
+
+
+def _grade_factor(fy_mpa: float) -> float:
+    fy = float(fy_mpa)
+    for limit, factor in _GRADE_FACTOR:
+        if fy <= limit:
+            return factor
+    return _GRADE_FACTOR[-1][1]
+
 @formula(
     owner='design',
     display_name='Concrete beam bending capacity',
@@ -397,9 +409,11 @@ def rebar_lap_length(
 ) -> dict:
     """Tension lap-splice length for a deformed bar.
 
-    ACI 318-19 §25.4.2: ld = (fy*ψs/(1.1*sqrt(fc)*((cb+Ktr)/db)))*db;
-    ψs = 0.8 for No. 19 and smaller, else 1.0. Other ψ and λ stay 1 when
-    the ask does not state top-bar, coating, or lightweight concrete.
+    ACI 318-19 §25.4.2: ld = (fy*ψt*ψe*ψs*ψg/(1.1*λ*sqrt(fc)*((cb+Ktr)/db)))*db;
+    ψs = 0.8 for No. 19 and smaller, else 1.0. Table 25.4.2.5: ψg = 1.0 for
+    fy ≤ 420 MPa, 1.15 above that up to 550 MPa, and 1.3 above 550 MPa.
+    Other ψ and λ stay 1 when the ask does not state top-bar, coating, or
+    lightweight concrete.
     Class B lap = 1.3*ld. ``confinement_ratio`` = (cb+Ktr)/db, capped 2.5.
     EN 1992-1-1 §8.4/8.7: lb,rqd = (db/4)*(fyd/fbd), fbd=2.25*η1*η2*fctd,
     η1 = 1 (good bond unless stated otherwise), η2 = 1 for db ≤ 32 mm and
@@ -422,11 +436,12 @@ def rebar_lap_length(
     else:
         conf = min(confinement_ratio, 2.5)
         psi_s = 0.8 if db <= 19.0 else 1.0
-        ld = (fy_mpa * psi_s / (1.1 * math.sqrt(fc_mpa) * conf)) * db
+        psi_g = _grade_factor(fy_mpa)
+        ld = (fy_mpa * psi_s * psi_g / (1.1 * math.sqrt(fc_mpa) * conf)) * db
         lap = 1.3 * ld
         std = "ACI 318-19 §25.4.2 (Class B lap)"
-        note = (f"ld=(fy*psi_s/(1.1*sqrt(fc)*{conf}))*db={ld:.1f} mm "
-                f"(psi_s={psi_s}); lap=1.3*ld={lap:.1f} mm")
+        note = (f"ld=(fy*ψs*ψg/(1.1*sqrt(fc)*{conf}))*db={ld:.1f} mm "
+                f"(ψs={psi_s}, ψg={psi_g}); lap=1.3*ld={lap:.1f} mm")
     return {
         "code": cc,
         "lap_length_mm": round(lap, 1),
