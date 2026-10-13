@@ -33,7 +33,6 @@ def _run(monkeypatch, value, closing):
     return events, tool_envelope(seen)
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 16 after out-of-range rejection the driver computes its own figure instead of asking")
 def test_an_out_of_range_input_is_asked_not_replaced(monkeypatch):
     events, env = _run(monkeypatch, 4, "I multiplied the figures and the stored total is 16.")
     text = answer_text(events)
@@ -43,7 +42,6 @@ def test_an_out_of_range_input_is_asked_not_replaced(monkeypatch):
     assert question and question in text
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 39 after out-of-range rejection the driver does arithmetic by hand")
 def test_an_out_of_range_input_is_not_worked_by_hand(monkeypatch):
     events, env = _run(monkeypatch, 4, "4 times 4 is 16, so the stored total is 16.")
     text = answer_text(events)
@@ -52,7 +50,6 @@ def test_an_out_of_range_input_is_not_worked_by_hand(monkeypatch):
     assert env.get("needs_input") is True
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 40 range-rejection message omits the valid range and the unit")
 def test_the_rejection_names_the_range_and_the_unit(monkeypatch):
     _events, env = _run(monkeypatch, 4, "noted")
     question = str(env.get("question") or env.get("error") or "")
