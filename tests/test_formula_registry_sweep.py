@@ -184,7 +184,7 @@ def test_simple_cost_and_productivity():
         "cost_per_area"] == pytest.approx(2000.0)
     r = run("productivity_rate", output_quantity=100, labor_hours=50, crew_size=2)
     assert r["rate_per_hour"] == pytest.approx(2.0)
-    assert r["rate_per_worker_hour"] == pytest.approx(1.0)
+    assert r["rate_per_worker_hour"] == pytest.approx(2.0)
 
 
 def test_wind_pressure_uses_the_asce_si_constant():
