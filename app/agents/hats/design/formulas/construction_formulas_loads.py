@@ -82,7 +82,7 @@ def wind_pressure(
         'soil_factor_s': Param('-', 1, 2, label='soil factor'),
         'behaviour_factor_q': Param('-', 1, 8, label='behaviour factor'),
         'lambda_factor': Param('-', 0.5, 1, label='correction factor'),
-        'seismic_coefficient': Param('ratio', 0, 5, label='seismic coefficient'),
+        'seismic_coefficient': Param('fraction', 0, 5, label='seismic coefficient'),
     },
     outputs={'base_shear_kn': 'kN', 'seismic_response_coefficient_cs': '-'},
 )
