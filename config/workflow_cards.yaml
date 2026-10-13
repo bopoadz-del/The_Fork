@@ -14,8 +14,8 @@ as_built_deviation_report:
   inputs:
     as_built_file: As-built drawing file
     design_file: Design drawing file
-    measurements: As-built measurements
-    design_measurements: Design measurements
+    measurements: As-built measurements (one figure, a list of figures, or each as type, value and unit)
+    design_measurements: Design measurements (matching the as-built ones by type or by order)
     tolerance_mm: Tolerance (mm)
 
 carbon_footprint_calculator:
