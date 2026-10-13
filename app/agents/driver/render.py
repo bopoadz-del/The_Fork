@@ -12,11 +12,13 @@ user reads (``readable``) before it leaves.
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Dict, List, Optional
 
 from app.lib.source_labels import CALCULATOR_SUFFIX, input_phrase
 
+_LOG = logging.getLogger(__name__)
 _MAX_LIST = 8
 _NOT_OUTPUTS = frozenset({"note", "notes", "standard"})
 
@@ -46,6 +48,7 @@ def _shown_unit(unit: str) -> str:
 
         return unit if parse_unit(unit) is not None else ""
     except Exception:  # noqa: BLE001 -- rendering never fails on a unit
+        _LOG.warning("unit parser failed on declared unit %r; not printed", unit, exc_info=True)
         return ""
 
 
