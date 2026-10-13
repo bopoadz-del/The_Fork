@@ -534,18 +534,18 @@ class TestRcBeamMomentCapacity:
 
 
 class TestRcBeamShearCapacity:
-    """ACI 318-19 §22.5 (SI): φVc=0.75×0.17√fc bw d.
+    """ACI 318-19 Table 22.5.5.1, Av < Av,min: φ×0.66×λs×(ρ)^(1/3)×√fc×bw×d.
     EN 1992-1-1 §6.2.2: VRd,c = max( Eq.6.2a, vmin bw d ) with
     CRd,c=0.12, k=1+√(200/d)≤2, vmin=0.035 k^{3/2} √fck.
     """
 
     def test_aci_300x550_c30(self):
-        # 0.75×0.17×√30×300×550 / 1000 = 115.23 kN.
+        # λs=√(2/(1+0.004×550)); ρ=0.01; φVc ≈ 76.19 kN.
         r = _ok(
             "rc_beam_shear_capacity",
             width_mm=300, eff_depth_mm=550, fc_mpa=30, code="aci",
         )
-        assert r["shear_capacity_kn"] == pytest.approx(115.23, abs=0.05)
+        assert r["shear_capacity_kn"] == pytest.approx(76.19, abs=0.05)
 
     def test_eurocode_rho_0_01_6_2a_governs(self):
         # k=1.603; (100×0.01×30)^{1/3}=3.107; V=0.12×1.603×3.107×165=98.62 kN.

@@ -93,7 +93,10 @@ def rc_beam_shear_capacity(
 ) -> dict:
     """Concrete shear capacity (no shear reinforcement).
 
-    ACI 318-19 §22.5: phi.Vc = 0.75 * 0.17 * sqrt(fc) * bw * d (SI, N).
+    ACI 318-19 Table 22.5.5.1, Av < Av,min: Vc = 0.66*λs*(ρw)^(1/3)*√fc'*bw*d,
+    λs = √(2/(1+0.004*d)) ≤ 1 (d in mm), √fc' ≤ 8.3 MPa, and Vc not above
+    0.42*√fc'*bw*d. φ = 0.75. The 0.17√fc' equation is the row for members
+    that already have Av ≥ Av,min, which this calculator does not.
     EN 1992-1-1 §6.2.2: VRd,c = CRd,c*k*(100*rho_l*fck)^(1/3)*bw*d,
     CRd,c=0.12, k=1+sqrt(200/d)<=2.0, rho_l<=0.02.
     """
@@ -110,10 +113,15 @@ def rc_beam_shear_capacity(
                 f"= {vrd_n/1000.0:.2f} kN")
         cap = vrd_n / 1000.0
     else:
-        vc_n = 0.75 * 0.17 * math.sqrt(fc_mpa) * bw * d
-        std = "ACI 318-19 §22.5 (phi=0.75)"
-        note = (f"phi.Vc=0.75*0.17*sqrt(fc)*bw*d=0.75*0.17*{math.sqrt(fc_mpa):.3f}"
-                f"*{bw}*{d} = {vc_n/1000.0:.2f} kN")
+        sqrt_fc = min(math.sqrt(fc_mpa), 8.3)
+        lam_s = min(1.0, math.sqrt(2.0 / (1.0 + 0.004 * d)))
+        rho = max(float(rho_l), 0.0)
+        vc = 0.66 * lam_s * (rho ** (1.0 / 3.0)) * sqrt_fc
+        vc = min(vc, 0.42 * sqrt_fc)
+        vc_n = 0.75 * vc * bw * d
+        std = "ACI 318-19 Table 22.5.5.1 (Av < Av,min, phi=0.75)"
+        note = (f"phi.Vc=0.75*0.66*lambda_s*(rho)^(1/3)*sqrt(fc)*bw*d "
+                f"(lambda_s={lam_s:.3f}) = {vc_n/1000.0:.2f} kN")
         cap = vc_n / 1000.0
     return {
         "code": cc,
