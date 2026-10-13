@@ -149,7 +149,7 @@ def fineness_modulus(sieve_retained_percentages: List[float]) -> float:
     if outside is not None:
         return {
             "error": (
-                "Each cumulative percentage retained must be between 0 and 100, "
+                "Each cumulative percentage retained must be between 0 and 100 %, "
                 f"not {outside}."
             ),
         }
