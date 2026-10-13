@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from app.lib.source_labels import CALCULATOR_SUFFIX, input_phrase
 
 _MAX_LIST = 8
+_NOT_OUTPUTS = frozenset({"note", "notes", "standard"})
 
 
 def _spec(calculation: str):
@@ -65,14 +66,10 @@ def render_calculation(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]
     in_units = {k: p.unit for k, p in params.items()}
     result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
     used = {k: v for k, v in (inputs or {}).items() if k in params}
-    outputs = {k: v for k, v in result.items() if k not in used and k not in ("note", "notes", "standard")}
-    out_units = dict(spec.outputs) if spec else {}
     lines = [head + "."]
     if used:
         lines.append("Inputs: " + "; ".join(_phrases(used, labels, in_units)) + ".")
-    shown = _phrases(outputs, labels, out_units)
-    if shown:
-        lines.append("Result: " + "; ".join(shown) + ".")
+    lines += result_lines(envelope, inputs)
     for key in ("standard", "note"):
         if isinstance(result.get(key), str) and result[key].strip():
             lines.append(result[key].strip())
@@ -80,6 +77,72 @@ def render_calculation(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]
     if isinstance(notes, list):
         lines += [str(n) for n in notes[:_MAX_LIST] if str(n).strip()]
     return "\n".join(lines)
+
+
+def _outputs(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]]):
+    from app.lib import formula_registry
+
+    spec = _spec(str(envelope.get("calculation") or ""))
+    params = formula_registry.parameters(spec) if spec else {}
+    result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
+    used = {k for k in (inputs or {}) if k in params}
+    outputs = {k: v for k, v in result.items() if k not in used and k not in _NOT_OUTPUTS}
+    labels = {k: p.label for k, p in params.items() if p.label}
+    return outputs, labels, (dict(spec.outputs) if spec else {})
+
+
+def _items(value: Any) -> List[str]:
+    """A list output's rows, each as written (rows of plain values only)."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(v).strip() for v in value[:_MAX_LIST]
+            if not isinstance(v, (dict, list, tuple, set)) and str(v).strip()]
+
+
+def result_lines(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> List[str]:
+    """A successful calculation's result: its figures, then each list output's
+    rows, one per line."""
+    outputs, labels, units = _outputs(envelope, inputs)
+    lines = []
+    shown = _phrases(outputs, labels, units)
+    if shown:
+        lines.append("Result: " + "; ".join(shown) + ".")
+    for key, value in outputs.items():
+        rows = _items(value)
+        if rows:
+            lines.append(f"{labels.get(key) or input_phrase(key, '').strip().capitalize()}:")
+            lines += [f"- {row}" for row in rows]
+    return lines
+
+
+_NUMBER = re.compile(r"-?\d+(?:[.,]\d+)*")
+
+
+def _numbers(text: str) -> List[float]:
+    out = []
+    for raw in _NUMBER.findall(text or ""):
+        try:
+            out.append(float(raw.replace(",", "")))
+        except ValueError:
+            continue
+    return out
+
+
+def carried(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]], answer: str) -> bool:
+    """Does the answer carry this calculation's result: every figure it
+    produced (to the rounding a writer would use) and every row it listed?"""
+    outputs, _labels, _units = _outputs(envelope, inputs)
+    written = _numbers(answer)
+    text = (answer or "").lower()
+    for value in outputs.values():
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            if not any(abs(w - value) <= max(abs(value) * 0.005, 0.005) for w in written):
+                return False
+        elif any(row.lower() not in text for row in _items(value)):
+            return False
+    return True
 
 
 def _identifier_map() -> Dict[str, str]:

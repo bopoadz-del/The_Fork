@@ -19,6 +19,7 @@ _LOG = logging.getLogger(__name__)
 #: Where a streamed answer may be cut into checkable pieces: after a
 #: sentence's closing mark, or at a line break (list items, table rows).
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n")
+_HEADING = re.compile(r"^\s*#{1,6}\s+\S")
 
 #: How much of one tool result the model is given.
 _TOOL_RESULT_CHARS = 20000
@@ -97,6 +98,8 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                                                  project_id, user_id, hat)
     used: List[str] = []
     ran: List[tuple] = []  # (tool, arguments) of every tool run, for the credit lines
+    computed: List[tuple] = []  # (envelope, inputs) of every calculation that succeeded
+    model_answered = False
     evidence: List[Dict[str, Any]] = []  # tool results, whole, for the exit check
     exports: List[Dict[str, Any]] = []
     yield {"type": "start", "mode": "driver", "agent": agent.name}
@@ -163,7 +166,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                     event = _release(piece)
                     if event:
                         yield event
-            answer_done = True
+            answer_done = model_answered = True
             break
         msgs.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
         questions: List[str] = []  # calculators that need an input this round
@@ -200,7 +203,10 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             # copy into the answer; the exit check still reads the full result.
             envelope = result_of_call.get("result") if isinstance(result_of_call, dict) else None
             if isinstance(envelope, dict) and envelope.get("calculation"):
-                shown = render.render_calculation(envelope, args.get("params") if isinstance(args.get("params"), dict) else args)
+                inputs = args.get("params") if isinstance(args.get("params"), dict) else args
+                shown = render.render_calculation(envelope, inputs)
+                if envelope.get("status") == "success":
+                    computed.append((envelope, inputs))
                 if envelope.get("status") != "success" and str(envelope.get("question") or "").strip():
                     questions.append(str(envelope["question"]).strip())
             else:
@@ -221,6 +227,26 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         event = _release(_STOP)
         if event:
             yield event
+    if model_answered:
+        # A result the platform computed reaches the user even when the
+        # model's words stop short of it (a table header with no rows, a
+        # heading with nothing under it): what the answer does not carry is
+        # added in the renderer's words, under a heading left empty.
+        for envelope, inputs in computed:
+            written = "".join(sent)
+            if render.carried(envelope, inputs, written):
+                continue
+            block = "\n".join(render.result_lines(envelope, inputs))
+            if not block:
+                continue
+            last = written.rstrip("\n").rsplit("\n", 1)[-1]
+            if _HEADING.match(last):
+                piece = ("" if written.endswith("\n") else "\n") + block + "\n"
+            else:
+                piece = "\n\n" + block + "\n"
+            event = _release(piece)
+            if event:
+                yield event
     from app.agents import citation_provenance as cp
 
     # Once, at the end: the calculator credit the answer does not carry, and
