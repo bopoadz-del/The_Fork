@@ -16,9 +16,9 @@ _OSHA_MAF_KN = 8.0  # OSHA 1926.502 maximum arresting force (body harness)
     display_name='Scaffold load capacity',
     description='Intended scaffold load and the capacity it must be built to support.',
     inputs={
-        'platform_area_m2': Param('m2', 0, 10000),
-        'duty': Param('-'),
-        'safety_factor': Param('-', 1, 10),
+        'platform_area_m2': Param('m2', 0, 10000, label='platform area'),
+        'duty': Param('-', label='scaffold duty'),
+        'safety_factor': Param('-', 1, 10, label='safety factor'),
     },
     outputs={'duty': '-', 'duty_load_kpa': 'kPa', 'intended_load_kn': 'kN', 'required_capacity_kn': 'kN', 'safety_factor': '-'},
 )
@@ -29,8 +29,15 @@ def scaffold_load_capacity(
 ) -> dict:
     """Scaffold intended load and the capacity it must be built to support.
     OSHA 1926.451: scaffolds support their own weight + 4x the intended load."""
-    d = (duty or "medium").strip().lower()
-    duty_kpa = _SCAFFOLD_DUTY_KPA.get(d, 2.4)
+    d = str(duty or "").strip().lower()
+    if d not in _SCAFFOLD_DUTY_KPA:
+        return {
+            "error": (
+                "The scaffold duty must be light, medium or heavy, "
+                f"not {duty}. What duty should I use?"
+            ),
+        }
+    duty_kpa = _SCAFFOLD_DUTY_KPA[d]
     area = float(platform_area_m2)
     intended_kn = duty_kpa * area
     required_kn = intended_kn * safety_factor
@@ -50,10 +57,10 @@ def scaffold_load_capacity(
     display_name='Fall arrest force',
     description='Peak arrest force on a falling worker from mass, free-fall distance and deceleration distance.',
     inputs={
-        'worker_mass_kg': Param('kg', 20, 300),
+        'worker_mass_kg': Param('kg', 20, 300, label='worker mass'),
         'free_fall_m': Param('m', 0, 10, label='free-fall distance'),
-        'deceleration_distance_m': Param('m', 0, 10),
-        'g': Param('-', 9.7, 9.9, label='gravitational acceleration'),
+        'deceleration_distance_m': Param('m', 0, 10, label='deceleration distance'),
+        'g': Param('m/s2', 9.7, 9.9, label='gravitational acceleration'),
     },
     outputs={'max_arrest_force_kn': 'kN', 'within_osha_limit': '-', 'osha_limit_kn': 'kN'},
 )
@@ -83,8 +90,11 @@ def fall_arrest_force(
         "within_osha_limit": within,
         "osha_limit_kn": _OSHA_MAF_KN,
         "standard": "OSHA 1926.502 (MAF <= 8 kN)",
-        "note": (f"F = W*(1 + H/d) = {w_n:.0f}*(1 + {H}/{d}) = {f_n:.0f} N = "
-                 f"{f_kn:.2f} kN ({'OK' if within else 'EXCEEDS'} 8 kN limit)."),
+        "note": (
+            f"F = W×(1 + H/d) = {w_n:.0f}×(1 + {H}/{d}) = {f_n:.0f} N = "
+            f"{f_kn:.2f} kN, "
+            f"{'within' if within else 'above'} the 8 kN limit."
+        ),
     }
 
 @formula(
@@ -93,9 +103,9 @@ def fall_arrest_force(
     description="Net crane capacity after rigging deductions, and the lift's utilisation.",
     inputs={
         'chart_capacity_t': Param('t', 0, 10000, label='chart capacity'),
-        'deductions_t': Param('t', 0, 10000),
+        'deductions_t': Param('t', 0, 10000, label='deductions'),
         'load_t': Param('t', 0, 10000, label='load'),
-        'max_utilization': Param('-', 0, 1, label='maximum utilisation'),
+        'max_utilization': Param('fraction', 0, 1, label='maximum utilisation'),
     },
     outputs={'net_capacity_t': 't', 'utilization_percent': '%', 'passed': '-', 'max_utilization_percent': '%'},
 )
@@ -123,9 +133,12 @@ def crane_lift_capacity(
         "passed": passed,
         "max_utilization_percent": round(max_utilization * 100.0, 1),
         "standard": "crane lift plan (de-rated chart)",
-        "note": (f"Net = {chart_capacity_t} - {deductions_t} = {net:.1f} t; "
-                 f"util = {load_t}/{net:.1f} = {util*100:.1f}% "
-                 f"({'PASS' if passed else 'FAIL'} vs {max_utilization*100:.0f}%)."),
+        "note": (
+            f"Net = {chart_capacity_t} − {deductions_t} = {net:.1f} t; "
+            f"utilisation = {load_t}/{net:.1f} = {util*100:.1f}%, "
+            f"which {'is within' if passed else 'exceeds'} "
+            f"the {max_utilization*100:.0f}% limit."
+        ),
     }
 
 ADDITIONAL_CALCULATORS = {

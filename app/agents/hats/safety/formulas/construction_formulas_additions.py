@@ -36,7 +36,6 @@ def guardrail_top_rail_height() -> dict:
         "scope": "construction",
         "note": (
             "Top rail 42 in +/- 3 in above walking/working level. "
-            "General industry (1910.29) same requirement. "
-            "Saudi Arabia: SABIC/Aramco typically adopt OSHA standards."
+            "General industry (1910.29) same requirement."
         ),
     }
