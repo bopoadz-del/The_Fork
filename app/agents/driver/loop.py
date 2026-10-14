@@ -116,6 +116,22 @@ def _calc_verdict(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "defaults": sorted(str(k) for k in (inner.get("defaults_used") or env.get("defaults_used") or {}))[:8]}
 
 
+def _given_inputs(args: Dict[str, Any]) -> Dict[str, Any]:
+    """The inputs the model passed a calculator, as the trace records them:
+    numbers as passed; a text value only as "text" (the trace carries no user
+    words); never the ask itself; at most ten."""
+    params = args.get("params") if isinstance(args.get("params"), dict) else {}
+    out: Dict[str, Any] = {}
+    for key, value in params.items():
+        if key in ("text", "message", "user_message") or len(out) >= 10:
+            continue
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[str(key)] = value
+        elif isinstance(value, str):
+            out[str(key)] = "text"
+    return out
+
+
 def _offered_workflows(offered: List[Dict[str, Any]]) -> int:
     """How many workflows the run_workflow tool offered this step (0: none)."""
     for t in offered:
@@ -373,6 +389,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 "ok": ok, "missing": bool(result_of_call.get("missing") or result_of_call.get("needs_input")),
                 # A calculator's own verdict: success, or needs_input and which inputs.
                 "result": _calc_verdict(result_of_call) if name == "construction_calc" else None,
+                "given": _given_inputs(args) if name == "construction_calc" else None,
             })
             if name != tools.SELECT_HAT:
                 if ok:
