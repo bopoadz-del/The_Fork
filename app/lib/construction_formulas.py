@@ -2562,6 +2562,31 @@ def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dic
     return out
 
 
+_ZERO_WORDS = re.compile(r"(?<![\w.,])0(?:\.0+)?(?![\w.,]*\d)|\b(?:zero|nil|none|nothing)\b|\bno\s+[a-z]", re.I)
+
+
+def _drop_unstated_zeros(name: str, params: Dict[str, Any], text: str) -> Dict[str, Any]:
+    """A zero the user's words never state, sent to an input that cannot be
+    zero, is an invented figure: it is dropped, so the calculator asks for the
+    input instead of refusing a "given" 0 the user never gave. A stated zero
+    ("0%", "zero", "no cranes", "nil") stays and meets the range check."""
+    from app.lib import formula_registry
+
+    spec = formula_registry.get(name)
+    words = str(text or "").strip()
+    # With no words to read (a direct call), a zero cannot be told unstated.
+    if spec is None or not words or _ZERO_WORDS.search(words):
+        return params
+    declared = formula_registry.parameters(spec)
+    out = dict(params)
+    for key, value in params.items():
+        p = declared.get(key)
+        if (p is not None and p.lo is not None and float(p.lo) > 0
+                and isinstance(value, (int, float)) and not isinstance(value, bool) and float(value) == 0.0):
+            del out[key]
+    return out
+
+
 def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run one whitelisted deterministic calculator by name with keyword params.
 
@@ -2706,6 +2731,7 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     params, conversions, unit_rejected = formula_registry.convert_written_units(
         str(name), params, context)
     params = _coerce_bound_values(fn, params, frozenset(c.get("parameter") for c in conversions))
+    params = _drop_unstated_zeros(str(name), params, ask_text)
     params, rejected = formula_registry.check_inputs(str(name), params)
     refused = {row["parameter"] for row in unit_rejected}
     rejected = unit_rejected + [row for row in rejected if row["parameter"] not in refused]
