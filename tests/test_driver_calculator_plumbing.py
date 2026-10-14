@@ -190,3 +190,14 @@ def test_a_calculator_that_ran_on_its_defaults_has_answered():
     rules = (Path(__file__).resolve().parents[1] / "config" / "driver_standing_rules.md").read_text(encoding="utf-8")
     assert "A calculator that ran has answered" in rules
     assert "Ask for an input only when the calculator itself asks for it" in rules
+
+
+def test_a_stated_zero_is_passed_not_left_to_the_default():
+    """Lane 1 on f7d3b94: a payment certificate at 0% retention with 100,000
+    previously certified netted 125,000 (verified 150,000): the 0% was left
+    out, so the tool's 10% default stood in for it. A stated zero is a
+    figure, and the standing rules say to pass it."""
+    from pathlib import Path
+
+    rules = (Path(__file__).resolve().parents[1] / "config" / "driver_standing_rules.md").read_text(encoding="utf-8")
+    assert "A figure the user states is passed to the tool even when it is zero" in rules
