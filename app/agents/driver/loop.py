@@ -35,7 +35,8 @@ _FINISH = ("No more tool calls are available for this question. Answer the user 
            "user would need to provide.")
 
 
-def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False) -> tuple:
+def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False,
+               platform: bool = False) -> tuple:
     """The one check before a driver answer leaves: an attribution no
     evidence record backs is removed (citation_provenance.gate), and every
     figure is credited to the user's words, a tool run or a retrieved
@@ -56,7 +57,16 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False) ->
         answer = answer_exit.check_text(answer)
     checked = cp.gate(answer, None, msgs, tool_passages=True, annotate=False)
     _, every = cp.figure_provenance(checked, None, msgs, enforce=False, tool_passages=True)
-    out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
+    if not platform:
+        out, trail = cp.figure_provenance(checked, None, msgs, enforce=True, tool_passages=True)
+    else:
+        # The platform's own words (a calculator's question, a workflow's
+        # request, a rendered result) come from the tool's own result: their
+        # figures are the tool's, so none is removed. Lane 5: the range in
+        # "accepts (0% to 100%). What bulking should I use?" was cut, and the
+        # question with it.
+        out, trail = checked, []
+        every = []
     out = _tidy(out)
     if shared:
         # A library file the turn read is named by its title, never by its
@@ -259,7 +269,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             # Every tool this turn failed: nothing backs a number the user
             # did not write, bare counts included ("0 items were found").
             return None
-        checked, trail, report = exit_check(piece, _trail(), shared=model_text)
+        checked, trail, report = exit_check(piece, _trail(), shared=model_text, platform=not model_text)
         # The checks tidy whitespace; the piece's own ending (a line break
         # between list items or paragraphs) belongs to the answer's layout.
         ending = piece[len(piece.rstrip()):]
