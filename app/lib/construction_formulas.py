@@ -2534,6 +2534,23 @@ def _units_written_for(figure: float, text: str) -> List[str]:
     return found
 
 
+def _words_written_after(figure: float, text: str) -> str:
+    """The unit words the ask writes right after this figure, up to the end
+    of the clause (at most six words); empty when the figure is not written
+    or is written twice with different words."""
+    found = set()
+    num = re.compile(r"(?<![\w.,])(" + _TEXT_NUM_RE + r")(?![\d,.]*\d)")
+    for match in num.finditer(text or ""):
+        value = _parse_text_number(match.group(1))
+        if value is None or not _numbers_agree(value, figure):
+            continue
+        rest = re.split(r"[.;:?!,()]|\s(?:and|for|with|to|over|in|on)\s", text[match.end():], maxsplit=1)[0]
+        words = " ".join(rest.split()[:6]).strip()
+        if words and re.match(r"[A-Za-z%/]", words):
+            found.add(words)
+    return next(iter(found)) if len(found) == 1 else ""
+
+
 def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dict[str, float],
                           text: str, call_unit: Optional[str]) -> Dict[str, Any]:
     """A bare figure the caller passed is in the unit the ask wrote for that
@@ -2550,6 +2567,14 @@ def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dic
     for key, figure in caller.items():
         dests = list(_partition_bound_params(fn, {key: figure})[0])
         p = declared.get(dests[0]) if len(dests) == 1 else None
+        if p is not None and p.kind == "text" and isinstance(out.get(p.name), (int, float))                 and not isinstance(out.get(p.name), bool) and _numbers_agree(out.get(p.name), figure):
+            # A text input reads the unit words written on its value ("1,500
+            # m2 per gang-day"); a bare figure gets the words the ask wrote
+            # after that figure, so the formula reads the user's unit.
+            words = _words_written_after(figure, text)
+            if words:
+                out[p.name] = f"{figure:g} {words}"
+            continue
         if (p is None or p.kind not in formula_registry.NUMERIC_KINDS or not p.unit
                 or not _numbers_agree(out.get(p.name), figure)):
             continue
