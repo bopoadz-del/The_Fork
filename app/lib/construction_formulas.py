@@ -2551,6 +2551,9 @@ def _words_written_after(figure: float, text: str) -> str:
     return next(iter(found)) if len(found) == 1 else ""
 
 
+_RATE_WORDS = re.compile(r"[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?\s*(?:/\s*|\s+per\s+)[A-Za-z]+(?:-[A-Za-z]+)?")
+
+
 def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dict[str, float],
                           text: str, call_unit: Optional[str]) -> Dict[str, Any]:
     """A bare figure the caller passed is in the unit the ask wrote for that
@@ -2600,6 +2603,14 @@ def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dic
             unit = call_unit
         if unit and factor(unit) != 1.0:
             out[p.name] = f"{figure!r} {unit}"
+        elif not unit and not by_factor and "/" not in str(p.unit):
+            # Written as a rate ("10 lifts/h", "12 m2 per day") for an input
+            # that is not one: the rate goes with the figure, so the unit
+            # check asks instead of reading the rate as the input's unit
+            # (lane 3: "10 lifts/h" ran as a 10 t crane).
+            rate = _RATE_WORDS.match(_words_written_after(figure, text))
+            if rate:
+                out[p.name] = f"{figure!r} {rate.group(0).strip()}"
     return out
 
 
