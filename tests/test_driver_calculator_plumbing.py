@@ -201,3 +201,13 @@ def test_a_stated_zero_is_passed_not_left_to_the_default():
 
     rules = (Path(__file__).resolve().parents[1] / "config" / "driver_standing_rules.md").read_text(encoding="utf-8")
     assert "A figure the user states is passed to the tool even when it is zero" in rules
+
+
+def test_a_one_row_result_is_still_a_table():
+    """Lane 1 on 9c1d155: a 12-month cash flow came out as a 12-row table,
+    the 1-month one as bullets with no table row (0/3). The standing rules
+    say per-period or per-item rows are a table with every row, also one."""
+    from pathlib import Path
+
+    rules = (Path(__file__).resolve().parents[1] / "config" / "driver_standing_rules.md").read_text(encoding="utf-8")
+    assert "shown as a table with every row, also when there is only one row" in rules
