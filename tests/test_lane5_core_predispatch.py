@@ -29,7 +29,7 @@ def _plan(_context):
     return ExecutionPlan(steps=[])
 
 
-@pytest.mark.xfail(strict=True, reason="CORE: 10 a percent outside 0-100 is rejected and not computed")
+# CORE 10, fixed by "a stated percent is not divided by 100 twice".
 def test_a_percent_outside_0_to_100_is_rejected(monkeypatch):
     name = "lane5_hold_gate"
 
