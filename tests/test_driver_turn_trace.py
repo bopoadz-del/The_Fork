@@ -53,4 +53,4 @@ def test_a_driver_turn_leaves_a_trace_without_the_users_words(monkeypatch):
     first = trace["steps"][0]
     assert first["workflows"] == 1
     assert first["calls"] == [{"tool": "run_workflow", "workflow": "widget_register", "calculation": None,
-                               "ok": False, "missing": True, "result": None}]
+                               "ok": False, "missing": True, "result": None, "given": None}]
