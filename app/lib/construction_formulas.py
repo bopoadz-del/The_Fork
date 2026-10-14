@@ -1571,10 +1571,25 @@ def _coerce_list(val: Any) -> Any:
         return [coerced]
     return val
 
-def _coerce_bound_values(fn: Any, bound: Dict[str, Any], converted: frozenset = frozenset()) -> Dict[str, Any]:
+def _stated_percents(text: Any) -> frozenset:
+    """Every figure the user's words write as a percentage ("150%",
+    "12.5 %"), as numbers."""
+    found = set()
+    for match in re.finditer(r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)\s*(?:%|per\s*cent\b|percent\b)", str(text or ""), re.I):
+        try:
+            found.add(round(float(match.group(1).replace(",", "")), 9))
+        except ValueError:
+            continue
+    return frozenset(found)
+
+def _coerce_bound_values(fn: Any, bound: Dict[str, Any], converted: frozenset = frozenset(),
+                         stated_percents: frozenset = frozenset()) -> Dict[str, Any]:
     """Strip unit suffixes from numeric strings; wrap list-typed scalars.
     ``converted``: inputs the unit converter already put in their declared
-    unit (150% already became 1.5); they are not re-read as percentages."""
+    unit (150% already became 1.5); they are not re-read as percentages.
+    ``stated_percents``: the figures the user wrote as percentages; a value
+    that is one of them divided by 100 is already a fraction, whatever its
+    declared range, and is not divided again."""
     try:
         sig = _inspect.signature(fn)
     except (TypeError, ValueError):
@@ -1611,7 +1626,8 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any], converted: frozenset = 
             declared_param = spec.params.get(key) if spec else None
             hi = getattr(declared_param, "hi", None)
             in_range = hi is not None and isinstance(number, (int, float)) and float(number) <= float(hi)
-            if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0 and not in_range:
+            already_fraction = isinstance(number, (int, float)) and round(float(number) * 100.0, 9) in stated_percents
+            if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0 and not in_range                     and not already_fraction:
                 out[key] = float(number) / 100.0
     return out
 
@@ -2705,7 +2721,8 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         params = _attach_written_units(str(name), fn, params, caller_figures, ask_text, call_unit)
     params, conversions, unit_rejected = formula_registry.convert_written_units(
         str(name), params, context)
-    params = _coerce_bound_values(fn, params, frozenset(c.get("parameter") for c in conversions))
+    params = _coerce_bound_values(fn, params, frozenset(c.get("parameter") for c in conversions),
+                                  _stated_percents(ask_text))
     params, rejected = formula_registry.check_inputs(str(name), params)
     refused = {row["parameter"] for row in unit_rejected}
     rejected = unit_rejected + [row for row in rejected if row["parameter"] not in refused]
