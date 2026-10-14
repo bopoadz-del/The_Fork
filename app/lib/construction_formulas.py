@@ -2634,6 +2634,9 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         params.pop(_POSITIONAL_KEY, None)
     caller_figures = {key: figure for key, val in params.items()
                       if not _is_junk_key(key) and (figure := _bare_figure(val)) is not None}
+    # The keys the caller sent, before the ask's words are read for more: an
+    # argument only the ask extractors produced is the server's own guess.
+    caller_keys = frozenset(str(k) for k in params)
     ask_text = _ask_blob(params)
     # Live UI pack E4: a concrete/raft ask (or leftover-L6 excavation name
     # plus "documented waste factor" in ``text``) must apply the project's
@@ -2742,6 +2745,11 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     from app.lib import formula_registry
     context = _pop_conversion_context(fn, params)
     params, unknown = _partition_bound_params(fn, params)
+    # An argument read out of the ask's words that this calculator does not
+    # take is dropped, not an error: only an argument the caller sent can be
+    # "unknown" (lane 5: "10 panels of 6 x 0.8 x 25 m" gave width_m and wall,
+    # and a complete diaphragm-wall call failed 3/3).
+    unknown = [key for key in unknown if key in caller_keys]
     if not _accepts_param(fn, "unit"):
         params = _attach_written_units(str(name), fn, params, caller_figures, ask_text, call_unit)
     params, conversions, unit_rejected = formula_registry.convert_written_units(
