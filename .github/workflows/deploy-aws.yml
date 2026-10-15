@@ -13,26 +13,46 @@
 #
 # This does NOT touch DNS. theshovel.ai moves only when a human moves it.
 #
-# Started by hand only (workflow_dispatch), never by a merge: several lanes
-# merge to main while others are testing on live, and a deploy on every merge
-# restarted live under their tests. Merged changes are deployed in batches,
-# by one owner, when no test run is in flight; each run deploys main as it
-# stands, so one run carries every merge since the last.
+# A push to main deploys only after the tests workflow on that same commit
+# finishes green. The run checks out and ships workflow_run.head_sha, so a
+# later merge cannot change which commit this deploy builds. Manual
+# workflow_dispatch is unchanged and deploys the ref the owner selected.
+# Overlapping deploys queue; a later run does not cancel one already rolling.
 name: deploy-aws
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["tests"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
 
 env:
   AWS_REGION: us-west-2
   ECR_REPOSITORY: the-fork
   ECS_CLUSTER: cerebrum
 
+# Queue, do not cancel. A second green main must not abort an image push
+# or an ECS roll that is already in progress.
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false
+
 jobs:
   deploy:
+    # Dispatch stays unconditional. A completed tests run deploys only
+    # when that run itself succeeded.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # The image carries Torch, transformers and OCR wheels; the hosted
       # runner's 14 GB disk fills during the build without this.
@@ -61,16 +81,17 @@ jobs:
       - name: Build and push
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           IMAGE="$REGISTRY/$ECR_REPOSITORY"
           # ECS sets none of the env vars the liveness route reads for build_sha
           # (RENDER_GIT_COMMIT, GIT_SHA, SOURCE_VERSION). Bake the commit.
           docker build \
-            --build-arg GIT_SHA=${{ github.sha }} \
-            -t "$IMAGE:${{ github.sha }}" \
+            --build-arg GIT_SHA="$DEPLOY_SHA" \
+            -t "$IMAGE:$DEPLOY_SHA" \
             -t "$IMAGE:latest" \
             .
-          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:$DEPLOY_SHA"
           docker push "$IMAGE:latest"
 
       - name: Roll the web service
