@@ -159,9 +159,13 @@ jobs:
           DEPLOY_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
         run: |
           set -euo pipefail
-          base="${DEPLOY_BASE_URL%/}"
+          # ${var:-} is safe under set -u, so an unset variable and an empty
+          # one take the same path. Parsing this file does not read the
+          # variable; a missing value fails here and does not skip the step.
+          base="${DEPLOY_BASE_URL:-}"
+          base="${base%/}"
           if [ -z "$base" ]; then
-            echo "::error::repository variable PUBLIC_BASE_URL is empty"
+            echo "::error::repository variable PUBLIC_BASE_URL is unset or empty"
             exit 1
           fi
           case "$base" in
@@ -176,14 +180,7 @@ jobs:
           echo "polling $url for build_sha=$DEPLOY_SHA ($attempts attempts)"
           for attempt in $(seq 1 "$attempts"); do
             code=$(curl --proto '=https' --max-time 15 -sS -o /tmp/livez.json -w '%{http_code}' "$url" || echo "000")
-            sha=$(python3 -c 'import json, pathlib
-path = pathlib.Path("/tmp/livez.json")
-raw = path.read_text(encoding="utf-8") if path.exists() else ""
-try:
-    value = json.loads(raw or "{}").get("build_sha") or ""
-except json.JSONDecodeError:
-    value = ""
-print(str(value).strip())')
+            sha=$(python3 scripts/read_livez_build_sha.py /tmp/livez.json)
             echo "attempt $attempt/$attempts: HTTP $code build_sha=${sha:-<empty>}"
             if [ "$code" = "200" ] && [ "$sha" = "$DEPLOY_SHA" ]; then
               echo "live build_sha matches $DEPLOY_SHA"
