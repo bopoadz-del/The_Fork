@@ -2834,6 +2834,17 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # status:"success" -- an error envelope inside a green one, which the agent
     # tool loop reads as a working answer and narrates as a result.
     #
+    if not _result_is_failure(result) and isinstance(result.get("needs_input"), list) and result["needs_input"]:
+        # A partial result: what the calculator could compute, and the inputs
+        # it needed for the rest. Said in the input's own words; no value is
+        # ever assumed for an input the caller did not give.
+        result = dict(result)
+        spec = formula_registry.get(str(name))
+        params_spec = formula_registry.parameters(spec) if spec is not None else {}
+        named = [(params_spec[p].label if p in params_spec and params_spec[p].label else str(p).replace("_", " "))
+                 for p in result["needs_input"]]
+        result["not_computed"] = (f"Not computed without the {', '.join(named)}: it was not given, "
+                                  "and no value is assumed.")
     if _result_is_failure(result):
         if isinstance(result.get("needs_input"), list) and result["needs_input"]:
             return _input_rejection_envelope(str(name), [], list(result["needs_input"]))
