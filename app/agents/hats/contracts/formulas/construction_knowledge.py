@@ -12,8 +12,8 @@ from typing import Dict
     display_name='Risk score',
     description='Risk score and band from probability and impact ratings.',
     inputs={
-        'probability': Param('-', 1, 5),
-        'impact': Param('-', 1, 5),
+        'probability': Param('count', 1, 5, label='probability'),
+        'impact': Param('count', 1, 5, label='impact rating'),
     },
     outputs={'probability': '-', 'impact': '-', 'score': '-', 'band': '-', 'requires_action': '-', 'description': '-'},
 )

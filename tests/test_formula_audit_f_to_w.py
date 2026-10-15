@@ -136,12 +136,12 @@ class TestFormworkStrikingTime:
 
 class TestFoundationBearingPressure:
     """q = P/A (kN/m²). Net = q − γD with γ = 18 kN/m³ (unsourced default).
-    FOS = q_allow / q_net; bearing_ok iff FOS ≥ 2.
+    The soil value is allowable, so bearing_ok iff FOS ≥ 1.
     """
 
     def test_3m_square_2000kn(self):
         # A = 3×3 = 9 m²; q = 2000/9 = 222.222… kN/m²; D=0 → net=q;
-        # FOS = 300/222.222 = 1.35; 1.35 < 2 → not OK.
+        # FOS = 300/222.222 = 1.35 ≥ 1 → within the allowable.
         r = _ok(
             "foundation_bearing_pressure",
             foundation_width_m=3, foundation_length_m=3,
@@ -150,11 +150,11 @@ class TestFoundationBearingPressure:
         assert r["bearing_pressure_kn_m2"] == pytest.approx(222.22, abs=0.01)
         assert r["net_pressure_kn_m2"] == pytest.approx(222.22, abs=0.01)
         assert r["fos_against_bearing"] == pytest.approx(1.35, abs=0.01)
-        assert r["bearing_ok"] is False
+        assert r["bearing_ok"] is True
 
     def test_overburden_reduces_net_pressure(self):
         # D=2 m → surcharge = 2×18 = 36; net = 222.22−36 = 186.22;
-        # FOS = 300/186.22 = 1.611.
+        # FOS = 300/186.22 = 1.611 ≥ 1.
         r = _ok(
             "foundation_bearing_pressure",
             foundation_width_m=3, foundation_length_m=3,
@@ -163,7 +163,7 @@ class TestFoundationBearingPressure:
         )
         assert r["net_pressure_kn_m2"] == pytest.approx(186.22, abs=0.01)
         assert r["fos_against_bearing"] == pytest.approx(1.61, abs=0.01)
-        assert r["bearing_ok"] is False
+        assert r["bearing_ok"] is True
 
     def test_zero_width_is_error(self):
         _err(
@@ -281,19 +281,17 @@ class TestMobilizationCostEstimate:
 
 
 class TestModulusOfElasticityConcrete:
-    """Older kg/cm² form Ec = 15_000 √(f'c) with f'c = 10×fck (N/mm²→kg/cm²).
-    ≈ ACI 318 Ec = 4700 √f'c MPa (40 MPa → 29.7 GPa vs 30.0×10⁴ kg/cm²).
+    """kg/cm² form Ec = 15_000 √(f'c) with f'c = 10.197×fck (N/mm²→kg/cm²).
     """
 
     def test_c40(self):
-        # f'c = 400 kg/cm²; √400 = 20; Ec = 15_000×20 = 300_000 kg/cm².
+        # f'c = 40×10.197 kg/cm²; Ec = 15_000×√(that) = 302_941 kg/cm².
         r = _ok("modulus_of_elasticity_concrete", fck_n_mm2=40)
-        assert r["value"] == pytest.approx(300_000.0, abs=0.5)
+        assert r["value"] == pytest.approx(round(15_000 * math.sqrt(40 * 10.197)), abs=0.5)
 
     def test_c25_and_zero(self):
-        # f'c=250; √250=15.8114; Ec=237_171 → rounds to 237171.
         r = _ok("modulus_of_elasticity_concrete", fck_n_mm2=25)
-        assert r["value"] == pytest.approx(round(15_000 * math.sqrt(250)), abs=0.5)
+        assert r["value"] == pytest.approx(round(15_000 * math.sqrt(25 * 10.197)), abs=0.5)
         z = _err("modulus_of_elasticity_concrete", fck_n_mm2=0)
         assert z["needs_input"] is True
         assert "characteristic concrete strength" in z["question"]
@@ -534,18 +532,18 @@ class TestRcBeamMomentCapacity:
 
 
 class TestRcBeamShearCapacity:
-    """ACI 318-19 §22.5 (SI): φVc=0.75×0.17√fc bw d.
+    """ACI 318-19 Table 22.5.5.1, Av < Av,min: φ×0.66×λs×(ρ)^(1/3)×√fc×bw×d.
     EN 1992-1-1 §6.2.2: VRd,c = max( Eq.6.2a, vmin bw d ) with
     CRd,c=0.12, k=1+√(200/d)≤2, vmin=0.035 k^{3/2} √fck.
     """
 
     def test_aci_300x550_c30(self):
-        # 0.75×0.17×√30×300×550 / 1000 = 115.23 kN.
+        # λs=√(2/(1+0.004×550)); ρ=0.01; φVc ≈ 76.19 kN.
         r = _ok(
             "rc_beam_shear_capacity",
             width_mm=300, eff_depth_mm=550, fc_mpa=30, code="aci",
         )
-        assert r["shear_capacity_kn"] == pytest.approx(115.23, abs=0.05)
+        assert r["shear_capacity_kn"] == pytest.approx(76.19, abs=0.05)
 
     def test_eurocode_rho_0_01_6_2a_governs(self):
         # k=1.603; (100×0.01×30)^{1/3}=3.107; V=0.12×1.603×3.107×165=98.62 kN.
@@ -794,7 +792,7 @@ class TestSlabThicknessMin:
 
     def test_eurocode_cantilever(self):
         r = _ok("slab_thickness_min", span_mm=6000, support_condition="cantilever", code="eurocode")
-        assert r["min_thickness_mm"] == pytest.approx(750.0, abs=0.1)
+        assert r["min_thickness_mm"] == pytest.approx(775.0, abs=0.1)
 
 
 class TestGuardrailTopRailHeight:

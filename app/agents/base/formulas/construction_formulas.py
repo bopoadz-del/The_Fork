@@ -25,9 +25,9 @@ def diaphragm_wall_panel_volume(
 ) -> Dict[str, float]:
     """Concrete volume for diaphragm wall panels with 10% tremie waste."""
     if panel_length <= 0 or wall_thickness <= 0 or excavation_depth <= 0:
-        raise ValueError("panel_length, wall_thickness and excavation_depth must be > 0")
+        return {"error": "panel length, wall thickness and excavation depth must be > 0."}
     if panel_count <= 0:
-        raise ValueError("panel_count must be > 0")
+        return {"error": "number of panels must be > 0."}
     vol = panel_length * wall_thickness * excavation_depth
     total = vol * panel_count
     return {

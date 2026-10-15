@@ -687,8 +687,15 @@ class ConstructionBoqMixin:
                               or fig.get("work_done_percent", 0)) / 100.0
         previous_certified = float(p.get("previous_certified") or data.get("previous_certified", 0)
                                    or fig.get("previous_certified", 0))
-        retention_pct = float(p.get("retention_percent",
-                                    p.get("retention_rate", fig.get("retention_percent", 10)))) / 100.0
+        # The stated retention wins wherever it was given (params or the
+        # envelope); 0 is a stated value, not a missing one.
+        stated_retention = next(
+            (src[key] for src in (p, data) for key in ("retention_percent", "retention_rate")
+             if isinstance(src, dict) and src.get(key) is not None and src.get(key) != ""),
+            None,
+        )
+        retention_pct = float(stated_retention if stated_retention is not None
+                              else fig.get("retention_percent", 10)) / 100.0
         advance_payment = float(p.get("advance_payment") or data.get("advance_paid", 0)
                                 or data.get("advance_payment", 0) or fig.get("advance_payment", 0))
         advance_pct = float(
@@ -816,22 +823,33 @@ class ConstructionBoqMixin:
                     name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
                 ))
 
-        # From BOQ list without rates
+        # From BOQ list. Rows arrive under the names the sheet, the ingest
+        # and the indexed line use; read them through one alias table.
         elif isinstance(boq, list) and boq:
+            from app.agents.hats.procurement.tools import _normalise_boq_row
+
             for item in boq:
+                if isinstance(item, dict):
+                    item = _normalise_boq_row(item)
                 name = item.get("description", item.get("item", "Unknown"))
                 qty = item.get("quantity", 0)
-                unit = item.get("unit", "ea")
+                if isinstance(qty, bool) or not isinstance(qty, (int, float)):
+                    qty = 0
+                unit = item.get("unit") or "ea"
                 unit_cost = item.get("unit_price")
-                if unit_cost is not None:
-                    unit_cost = (
-                        _parse_money_str(unit_cost)
-                        if isinstance(unit_cost, str)
-                        else _safe_float(unit_cost)
-                    )
+                if isinstance(unit_cost, bool) or not isinstance(unit_cost, (int, float)):
+                    unit_cost = None
+                stated_total = item.get("total")
+                if isinstance(stated_total, bool) or not isinstance(stated_total, (int, float)):
+                    stated_total = None
+                if unit_cost is None and stated_total is not None and qty:
+                    unit_cost = stated_total / qty
                 if unit_cost is None:
                     unit_cost = await self._lookup_unit_cost(name, unit, location, project_type)
-                total = qty * (unit_cost or 0)
+                if unit_cost is None and stated_total is not None:
+                    total = stated_total
+                else:
+                    total = qty * (unit_cost or 0)
                 cat, lead, supplier = self._classify_procurement_item(name)
                 procurement_items.append(self._build_procurement_item(
                     name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start

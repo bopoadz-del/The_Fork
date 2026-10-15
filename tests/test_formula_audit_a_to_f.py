@@ -425,28 +425,22 @@ def test_audit_compaction_control():
 # ── 16 composite_column_design ─────────────────────────────────────────────
 
 def test_audit_composite_column_design():
-    """Documented heuristic (SPEC-C900), NOT EC4/AISC composite design:
-    Ag = π(D/2)²; cap_A = Ag × fck / 1000  (×1.10 only if I-beam mass > 0);
-    cap_B = Ag × min(fck×1.33, 80) / 1000 × 0.95.
-    Hand: D=800 mm, fck=60, no I-beam mass
-          Ag = π×400² = 502,654.82 mm²
-          cap_A = 502654.82×60/1000 = 30,159 kN
-          upgraded = min(79.8, 80) = 79.8
-          cap_B = 502654.82×79.8/1000×0.95 = 38,106 kN.
-    With I-beam mass 2 t: cap_A × 1.10 = 33,175 kN.
-    Factors 1.10 / 0.95 / 1.33 are unsourced — this locks the documented
-    arithmetic only (Phase 1 verdict UNVERIFIABLE vs a code).
+    """EN 1994-1-1 §6.7.3.2: Npl,Rd = 0.85*Ag*fck/1.5 when no steel is given.
+    Hand: D=800 mm, fck=60, Ag=π×400²
+          N = 0.85×Ag×60/1.5/1000 = 17,090 kN.
+    A section mass is not an area, so 2 t does not raise it by 10 percent.
     """
     r = _ok("composite_column_design",
             {"axial_load_kn": 5000, "column_diameter_mm": 800})
-    assert r["option_a"]["capacity_kn"] == pytest.approx(30159, abs=1)
-    assert r["option_b"]["capacity_kn"] == pytest.approx(38106, abs=1)
+    expect = 0.85 * math.pi * 400.0 ** 2 * 60 / 1.5 / 1000
+    assert r["option_a"]["capacity_kn"] == pytest.approx(expect, abs=1)
+    assert r["option_b"]["capacity_kn"] == pytest.approx(expect, abs=1)
     assert r["recommended"] == "A or B"
 
     ib = _ok("composite_column_design",
              {"axial_load_kn": 5000, "column_diameter_mm": 800,
               "use_i_beam": True, "i_beam_weight_t": 2.0})
-    assert ib["option_a"]["capacity_kn"] == pytest.approx(33175, abs=1)
+    assert ib["option_a"]["capacity_kn"] == pytest.approx(expect, abs=1)
 
     _err("composite_column_design",
          {"axial_load_kn": 5000, "column_diameter_mm": 0})

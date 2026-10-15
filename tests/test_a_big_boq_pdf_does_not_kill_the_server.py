@@ -150,6 +150,10 @@ def test_every_page_is_closed_before_the_next_page_is_read(blank_pdf, monkeypatc
 
 # ── the event loop: other users are served while a bill is parsed ──────────
 
+# Measures the event loop's own latency: CI runs it alone, not beside xdist
+# workers competing for the runner's cores (pytest.ini: serial, timing).
+@pytest.mark.serial
+@pytest.mark.timing
 def test_the_event_loop_keeps_running_while_a_pdf_is_parsed(blank_pdf, monkeypatch):
     def slow(self, *a, **k):
         time.sleep(0.25)
