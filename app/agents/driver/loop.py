@@ -36,7 +36,7 @@ _FINISH = ("No more tool calls are available for this question. Answer the user 
 
 
 def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False,
-               platform: bool = False) -> tuple:
+               platform: bool = False, project_id: Optional[str] = None) -> tuple:
     """The one check before a driver answer leaves: an attribution no
     evidence record backs is removed (citation_provenance.gate), and every
     figure is credited to the user's words, a tool run or a retrieved
@@ -78,6 +78,10 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False,
     # stored file name, in the model's words and the platform's own alike.
     for stored, label in sorted(sources.project_labels(msgs).items(), key=lambda kv: -len(kv[0])):
         out = out.replace(stored, label)
+    if project_id:
+        from app.core import document_labels
+
+        out = document_labels.for_project(project_id).text(out)
     report = {
         "identifiers_replaced": identifiers,
         "figures_removed": [e["figure"] for e in every if not e.get("source")],
@@ -273,7 +277,8 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             # Every tool this turn failed: nothing backs a number the user
             # did not write, bare counts included ("0 items were found").
             return None
-        checked, trail, report = exit_check(piece, _trail(), shared=model_text, platform=not model_text)
+        checked, trail, report = exit_check(piece, _trail(), shared=model_text, platform=not model_text,
+                                                project_id=project_id)
         # The checks tidy whitespace; the piece's own ending (a line break
         # between list items or paragraphs) belongs to the answer's layout.
         ending = piece[len(piece.rstrip()):]

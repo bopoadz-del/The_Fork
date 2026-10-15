@@ -45,8 +45,10 @@ async def test_register_returned_deterministically(runtime, tmp_path, monkeypatc
     assert out["ok"] is True
     res = out["result"]
     assert res["total_documents"] == 2
+    # Order 2130Z: listed by type and short id with the document id, never the stored file name.
     names = {d["filename"] for d in res["documents"]}
-    assert names == {"spec_vol2.pdf", "boq_final.xlsx"}
+    assert not names & {"spec_vol2.pdf", "boq_final.xlsx"} and len(names) == 2
+    assert all(d["document_id"] and d["document_id"][:6] in d["filename"] for d in res["documents"])
     # every row carries the fields the answer needs
     for d in res["documents"]:
         assert "doc_type" in d and "size_bytes" in d
@@ -66,7 +68,9 @@ async def test_master_corpus_alias_lists_backing_corpus(runtime, tmp_path, monke
                                        project_id="master_alias")
     assert out["ok"] is True
     assert out["result"]["total_documents"] == 1
-    assert out["result"]["documents"][0]["filename"] == "drawing_a101.pdf"
+    # Order 2130Z: the backing corpus's document is listed by its label, never its file name.
+    listed = out["result"]["documents"][0]
+    assert listed["filename"] != "drawing_a101.pdf" and listed["document_id"][:6] in listed["filename"]
 
 
 @pytest.mark.asyncio

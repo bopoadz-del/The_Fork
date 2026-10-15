@@ -153,9 +153,9 @@ def neutral_label(hit: Dict[str, Any]) -> str:
             kind = str((projects.get_document(doc_id) or {}).get("doc_type") or "").strip()
         except Exception:  # noqa: BLE001 -- the type is a label, never a gate
             kind = ""
-    kind = re.sub(r"[_\-]+", " ", kind).strip().capitalize() or "Document"
-    short = re.sub(r"[^0-9A-Za-z]", "", doc_id)[:6]
-    return f"{kind} {short}".strip() if short else kind
+    from app.core.document_labels import label
+
+    return label(doc_id, kind)
 
 
 def project_labels(trail: List[Dict[str, Any]]) -> Dict[str, str]:
