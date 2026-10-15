@@ -169,7 +169,9 @@ def project_labels(trail: List[Dict[str, Any]]) -> Dict[str, str]:
         label = neutral_label(hit)
         for key in _NAME_KEYS:
             name = str(hit.get(key) or "").strip()
-            if len(name) >= 4:
+            # Only what reads as a document's name -- a file name or several
+            # words -- never one plain word a sentence could hold ("Notes").
+            if len(name) >= 4 and (re.search(r"[._/-]", name) or len(name.split()) >= 2):
                 out[name] = label
                 base = re.split(r"[\\/]", name)[-1]
                 if len(base) >= 4:

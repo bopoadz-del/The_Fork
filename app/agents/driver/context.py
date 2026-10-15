@@ -53,6 +53,13 @@ def project_profile(project_id: Optional[str], user_id: Optional[str]) -> str:
     profile = project.get("profile")
     if isinstance(profile, dict):
         lines += [f"{k}: {v}" for k, v in profile.items() if v not in (None, "")]
+    # The model knows the project by its neutral id, never its real name,
+    # client, site or codes (app.core.project_identity).
+    from app.core import project_identity
+
+    red = project_identity.redactor_for(project_id)
+    if red is not None:
+        lines = [red.text(line) for line in lines]
     return "Project profile\n" + "\n".join(lines) if lines else f"Project {project_id}: no profile on record."
 
 

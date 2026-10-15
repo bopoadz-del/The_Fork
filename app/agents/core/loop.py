@@ -25,14 +25,33 @@ async def chat(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
     answer_exit = await off_loop(importlib.import_module, "app.agents.answer_exit")
     from app.core.rag.vector_store import end_turn_memo, start_turn_memo
 
+    from app.core import project_identity
+
     token = start_turn_memo()
     turn, turn_token = answer_exit.begin_turn()
+    # This turn's project identity set: every exit check in this context
+    # replaces its members (app.core.project_identity).
+    identity_token = project_identity.set_current(
+        await off_loop(project_identity.redactor_for, _project_id_of(self, args, kwargs)))
     try:
         result = await self._chat_impl(*args, **kwargs)
         return await off_loop(answer_exit.check_result, result, turn)
     finally:
+        project_identity.reset(identity_token)
         answer_exit.reset_turn(turn_token)
         end_turn_memo(token)
+
+
+def _project_id_of(agent: Any, args: tuple, kwargs: dict) -> str | None:
+    """The ``project_id`` a ``chat`` call carries, by name or by position."""
+    import inspect
+
+    try:
+        bound = inspect.signature(agent._chat_impl).bind_partial(*args, **kwargs)
+    except (TypeError, ValueError):
+        return kwargs.get("project_id")
+    value = bound.arguments.get("project_id")
+    return value if isinstance(value, str) else None
 
 
 async def _chat_impl(
@@ -943,6 +962,11 @@ async def chat_stream(
     # Opened before the producer task exists, so the task (and the threads it
     # offloads to) record this turn's evidence into the same record.
     _exit_turn = answer_exit.open_turn()
+    # This turn's project identity set: every exit check in this context
+    # (tokens, end, persistence) replaces its members (app.core.project_identity).
+    from app.core import project_identity
+
+    project_identity.set_current(await off_loop(project_identity.redactor_for, project_id))
     _streamed: list[str] = []
     _leak_guard = _EmitLeakGuard()
     try:

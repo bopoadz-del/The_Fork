@@ -41,13 +41,14 @@ def test_a_library_file_is_named_by_its_words(monkeypatch):
     assert names == ["qx alpha design values"]
 
 
-def test_a_users_document_keeps_its_name():
+def test_a_users_document_is_shown_by_its_label():
     from app.agents.driver import sources
 
     trail = [{"role": "tool", "name": "search_project_documents", "content": json.dumps(
         {"ok": True, "result": {"results": [_hit("own")]}})}]
     rows = sources.panel(trail, [], "")
-    assert rows[0]["doc_name"] == "qx_alpha_design_values.md"
+    # Order 2130Z/2210Z: a user's project document is shown by type and short id, never its stored name.
+    assert rows[0]["doc_name"] == "Document d1"
 
 
 def test_citing_a_library_file_by_its_stored_name_is_not_an_unbacked_attribution(monkeypatch):

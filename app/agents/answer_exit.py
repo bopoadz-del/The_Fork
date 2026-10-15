@@ -1442,7 +1442,20 @@ def check_text(
     index: CitationIndex | None = None,
 ) -> str:
     """The answer as it may leave: citations resolved to name and page or
-    removed, no chunk numbers, ids, dumps, raw tool errors or machinery words."""
+    removed, no chunk numbers, ids, dumps, raw tool errors or machinery words,
+    and no member of the project's identity set (app.core.project_identity)."""
+    from app.core import project_identity
+
+    return project_identity.redact(_check_text(text, turn=turn, sources=sources, index=index))
+
+
+def _check_text(
+    text: str,
+    *,
+    turn: Turn | None = None,
+    sources: Iterable[dict[str, Any]] | None = None,
+    index: CitationIndex | None = None,
+) -> str:
     if not isinstance(text, str) or not text.strip():
         return text
     try:
@@ -1546,7 +1559,19 @@ def check_sources(
     turn: Turn | None = None,
     index: CitationIndex | None = None,
 ) -> list[dict[str, Any]] | None:
-    """Sources rows as they may leave: a document name, and the page or nothing."""
+    """Sources rows as they may leave: a document name, and the page or
+    nothing; no member of the project's identity set in any field."""
+    from app.core import project_identity
+
+    return project_identity.redact(_check_sources(rows, turn=turn, index=index))
+
+
+def _check_sources(
+    rows: list[dict[str, Any]] | None,
+    *,
+    turn: Turn | None = None,
+    index: CitationIndex | None = None,
+) -> list[dict[str, Any]] | None:
     if not isinstance(rows, list):
         return rows
     try:

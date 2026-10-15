@@ -37,7 +37,8 @@ def test_an_admin_sets_the_profile_and_the_driver_sees_it(client):
     assert r.json()["profile"] == {k: v for k, v in profile.items() if v}
     assert projects.get_project(pid)["profile"]["contract_form"] == "design and build"
     text = context.project_profile(pid, owner)  # read as the project's owner
-    assert "Profile Probe" in text and "contract_form: design and build" in text
+    # Order 2210Z: the model knows the project by its neutral id, never its real name.
+    assert "Profile Probe" not in text and "name: PRJ-" in text and "contract_form: design and build" in text
 
 
 def test_only_an_admin_sets_a_profile(client):

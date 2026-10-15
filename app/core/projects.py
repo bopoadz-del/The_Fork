@@ -442,6 +442,9 @@ def _patch_legacy_columns() -> None:
             if "profile" not in cols:  # 0028 (driver mode: the project profile)
                 conn.execute(sqla_text("ALTER TABLE projects ADD COLUMN profile TEXT"))
                 conn.commit()
+            if "identity" not in cols:  # 0031 (the project's identity set)
+                conn.execute(sqla_text("ALTER TABLE projects ADD COLUMN identity TEXT"))
+                conn.commit()
 
             doc_cols = {row[1] for row in conn.execute(
                 sqla_text("PRAGMA table_info(documents)")
@@ -1210,6 +1213,13 @@ def add_document(
     with SessionLocal() as session:
         document = session.get(Document, did)
     assert document is not None
+    # At ingest: the new file name can carry the project's code.
+    try:
+        from app.core import project_identity
+
+        project_identity.refresh(project_id)
+    except Exception:  # noqa: BLE001 -- the identity set is refreshed again on use
+        logger.warning("add_document: identity refresh failed for %s", project_id, exc_info=True)
     return _document_as_dict(document)
 
 

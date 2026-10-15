@@ -3065,6 +3065,11 @@ class _EmitLeakGuard:
         content = event.get("content")
         if not isinstance(content, str) or not content:
             return event
+        from app.core import project_identity
+
+        redacted = project_identity.redact(content)
+        if redacted != content:
+            content, event = redacted, {**event, "content": redacted}
 
         if not self.tripped:
             if kind == "token":
