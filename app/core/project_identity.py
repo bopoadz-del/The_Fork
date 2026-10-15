@@ -61,8 +61,9 @@ def _initials(value: str) -> str:
     return letters.upper() if len(letters) >= _MIN_LEN else ""
 
 
-def derive(project: dict[str, Any], document_names: Iterable[str] = ()) -> list[str]:
-    """The identity members the project's record and documents give."""
+def derive(project: dict[str, Any], document_names: Iterable[str] = (), *, general: Any = None) -> list[str]:
+    """The identity members the project's record and documents give.
+    ``general`` overrides the platform vocabulary (document_labels)."""
     from app.core.document_labels import NameGuard
 
     fields = [str(project.get(k) or "").strip() for k in ("name", "client", "location")]
@@ -82,7 +83,7 @@ def derive(project: dict[str, Any], document_names: Iterable[str] = ()) -> list[
             if initials := _initials(form):
                 members.add(initials)
         members.update(m.group(0) for m in _CODE.finditer(value))
-    guard = NameGuard({"id": str(i), "original_name": n} for i, n in enumerate(document_names))
+    guard = NameGuard(({"id": str(i), "original_name": n} for i, n in enumerate(document_names)), general=general)
     members.update(guard.codes)
     return sorted(m for m in members if len(m) >= 2)
 

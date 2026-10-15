@@ -613,7 +613,7 @@ def test_the_end_event_lists_sources_and_the_calculation_credit(monkeypatch):
     end = events[-1]
     # Order 2130Z: a project document is named by its type and a short id, never its file name.
     first = [s["doc_name"] for s in end["sources"]][0]
-    assert first.startswith("Document") and "Conditions of Contract" not in first
+    assert first == "Document d9"
     assert end["sources"][0]["confidence"] == "High" and end["sources"][1]["confidence"] == "Low"
     text = "".join(e["content"] for e in events if e["type"] == "token")
     assert "Calculated with: Payment certificate (gross valuation 2,400,000, retention percent 10)" in text
