@@ -32,6 +32,12 @@ def _label_without_unit(key: str, unit: str) -> str:
     flat = re.sub(r"[^a-z0-9]", "", str(unit or "").lower())
     while len(words) > 1 and flat and flat.endswith(words[-1].lower()):
         words.pop()
+    # A currency amount's key ends in its currency code ("price_sar"): that
+    # word repeats the unit, whatever the code.
+    if len(words) > 1 and flat.startswith("currency") and re.fullmatch(r"[a-z]{3}", words[-1].lower()):
+        words.pop()
+        while len(words) > 1 and flat.endswith(words[-1].lower()):
+            words.pop()
     return " ".join(words)
 
 
@@ -39,7 +45,13 @@ def headline(envelope: Dict[str, Any]) -> str:
     """The one sentence a calculation's answer leads with: its primary figure,
     labelled, with its unit. Empty when the result names no primary figure."""
     result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
+    spec0 = _spec(str(envelope.get("calculation") or ""))
+    main = getattr(spec0, "main_output", "") if spec0 else ""
     primary = result.get("primary_result")
+    if main and isinstance(result.get(main), (int, float)) and not isinstance(result.get(main), bool):
+        # The formula declares the output its answer leads with.
+        primary = {"value": result[main], "unit": dict(spec0.outputs).get(main, ""),
+                   "label": _label_without_unit(main, dict(spec0.outputs).get(main, ""))}
     if not isinstance(primary, dict) or primary.get("value") in (None, ""):
         # No primary figure named: the formula's first declared output the
         # result carries as a number.
@@ -62,7 +74,10 @@ def headline(envelope: Dict[str, Any]) -> str:
     # description ("same unit as specified") is not printed.
     unit = "" if unit in ("-", "") or re.search(r"\s", unit) else " " + unit
     value = primary["value"]
-    shown = f"{value:g}" if isinstance(value, float) else str(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        shown = f"{value:,.2f}".rstrip("0").rstrip(".") if abs(value) >= 1000 else f"{value:g}"
+    else:
+        shown = str(value)
     return f"Headline: {label[:1].upper() + label[1:]} is {shown}{unit}."
 
 

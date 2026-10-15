@@ -30,3 +30,25 @@ def test_without_a_primary_figure_the_first_real_output_is_the_headline():
 def test_the_headline_label_does_not_repeat_its_unit():
     assert render.headline(cf.run_calculation("excavation_volume", {"length_m": 10, "width_m": 8, "depth_m": 3})) \
         == "Headline: Bank volume is 240 m3."
+
+
+def test_a_declared_main_output_is_the_headline():
+    """LANE3 on #973: the fallback took the first numeric output -- a cost
+    rate with a volume / mass / area unit -- on concrete, rebar, formwork and
+    mobilisation. A formula now declares the output its answer leads with,
+    and its rate outputs carry their real units."""
+    cases = {
+        "cost_buildup_concrete": ({"quantity_m3": 100}, "Headline: Selling price is 308.83 currency/m3."),
+        "cost_buildup_rebar": ({"quantity_t": 20}, "Headline: Selling price is 4,856 currency/t."),
+        "mobilization_cost_estimate": ({"num_personnel": 50, "duration_months": 6}, "Headline: Grand total is 2,627,775 currency."),
+    }
+    for name, (params, expected) in cases.items():
+        assert render.headline(cf.run_calculation(name, params)) == expected, name
+
+
+def test_a_main_output_must_be_a_declared_output():
+    import pytest
+    from app.lib.formula_registry import formula
+
+    with pytest.raises(ValueError):
+        formula(owner="base", description="d", display_name="Qx", inputs={}, outputs={"a": "m"}, main_output="b")
