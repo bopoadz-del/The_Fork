@@ -17,10 +17,6 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# How long a corpus count may be served without another read. This is the
-# config default: probes must not COUNT the chunk table on every /health hit.
-CORPUS_CHUNK_CACHE_TTL_S = 300
-
 _corpus_cache_lock = threading.Lock()
 _corpus_cache_value: Optional[Dict[str, Any]] = None
 _corpus_cache_at: Optional[float] = None
@@ -72,8 +68,22 @@ def reset_corpus_chunk_cache() -> None:
         _corpus_refresh_error = None
 
 
+def _corpus_cache_config() -> Dict[str, float]:
+    """Tunables for the corpus-count probe.
+
+    ``ttl_s`` is how long a successful count is served with no database work.
+    ``negative_ttl_s`` is how long a failed refresh is remembered so a down
+    database is not queried again on every /health hit.
+    """
+    return {"ttl_s": 300, "negative_ttl_s": 30}
+
+
 def _corpus_ttl_s() -> float:
-    return float(CORPUS_CHUNK_CACHE_TTL_S)
+    return float(_corpus_cache_config()["ttl_s"])
+
+
+def _corpus_negative_ttl_s() -> float:
+    return float(_corpus_cache_config()["negative_ttl_s"])
 
 
 def _reltuples(session: Any, table: str) -> Optional[float]:
@@ -186,14 +196,10 @@ def _store_corpus_count(result: Dict[str, Any]) -> None:
 
 def _background_refresh(timeout_s: float) -> None:
     """One refresh off the request path. Failures stay recorded, never raised."""
-    global _corpus_refreshing, _corpus_refresh_error
+    global _corpus_refreshing
     result = _invoke_refresh(timeout_s)
     with _corpus_cache_lock:
-        if result.get("error") is None and result.get("chunks") is not None:
-            _store_corpus_count(result)
-        else:
-            _corpus_refresh_error = str(result.get("error") or "corpus refresh failed")[:200]
-            logger.warning("corpus chunk count refresh failed: %s", _corpus_refresh_error)
+        _remember_corpus_result(result)
         _corpus_refreshing = False
 
 
@@ -225,42 +231,87 @@ def _from_cache(payload: Dict[str, Any], age_s: float, *, stale: bool, latency_m
     return out
 
 
+def _warming_payload(latency_ms: int) -> Dict[str, Any]:
+    """A concurrent cold caller arrived while the one refresh is in flight."""
+    return {
+        "chunks": None,
+        "source": "warming",
+        "table": None,
+        "latency_ms": latency_ms,
+        "error": None,
+        "warming": True,
+    }
+
+
+def _remember_corpus_result(result: Dict[str, Any]) -> None:
+    """Store a success for the long TTL, or a failure for the negative TTL.
+
+    Caller holds ``_corpus_cache_lock``. A failure does not replace a good count.
+    """
+    global _corpus_cache_value, _corpus_cache_at, _corpus_refresh_error
+    ok = result.get("error") is None and result.get("chunks") is not None
+    if ok:
+        _store_corpus_count(result)
+        return
+    if _corpus_cache_value is not None and _corpus_cache_value.get("error") is None:
+        _corpus_refresh_error = str(result.get("error") or "corpus refresh failed")[:200]
+        logger.warning("corpus chunk count refresh failed: %s", _corpus_refresh_error)
+        return
+    _corpus_cache_value = dict(result)
+    _corpus_cache_at = time.monotonic()
+    _corpus_refresh_error = str(result.get("error") or "corpus refresh failed")[:200]
+    logger.warning("corpus chunk count refresh failed: %s", _corpus_refresh_error)
+
+
 def probe_corpus_chunks(timeout_s: float = 1.5) -> Dict[str, Any]:
     """Chunk-table size for /health — never documents.chunk_count.
 
     The first call reads Postgres ``pg_class.reltuples`` and falls back to
     ``COUNT(*)`` only when that estimate is missing or -1, under the same
-    statement timeout as before. Later calls inside the TTL return the
-    cached figure (``source="cached"``, ``age_s``) and do no database work.
-    After the TTL the last figure is returned at once with ``stale: true``
-    while a single background thread refreshes it. A probe error is a field
-    on the payload. This function does not raise.
+    statement timeout as before. Later calls inside the TTL from config
+    return the cached figure (``source="cached"``, ``age_s``) and do no
+    database work. After that TTL the last figure is returned at once with
+    ``stale: true`` while a single background thread refreshes it. Concurrent
+    cold callers get one refresh; the rest receive a warming payload. A
+    failed refresh is remembered for the negative TTL from config so a down
+    database is not queried on every probe. A probe error is a field on the
+    payload. This function does not raise.
     """
+    global _corpus_refreshing
     started = time.monotonic()
+    leader = False
     try:
         now = time.monotonic()
-        ttl = _corpus_ttl_s()
         with _corpus_cache_lock:
             cached = _corpus_cache_value
             cached_at = _corpus_cache_at
+            latency_ms = int((time.monotonic() - started) * 1000)
             if cached is not None and cached_at is not None:
                 age = now - cached_at
-                if age < ttl:
-                    return _from_cache(
-                        cached, age, stale=False,
-                        latency_ms=int((time.monotonic() - started) * 1000),
-                    )
-                _schedule_background_refresh(timeout_s)
-                return _from_cache(
-                    cached, age, stale=True,
-                    latency_ms=int((time.monotonic() - started) * 1000),
-                )
-        result = _invoke_refresh(timeout_s)
-        if result.get("error") is None and result.get("chunks") is not None:
+                failed = cached.get("error") is not None or cached.get("chunks") is None
+                if failed and age < _corpus_negative_ttl_s():
+                    return _from_cache(cached, age, stale=False, latency_ms=latency_ms)
+                if not failed and age < _corpus_ttl_s():
+                    return _from_cache(cached, age, stale=False, latency_ms=latency_ms)
+                if not failed:
+                    _schedule_background_refresh(timeout_s)
+                    return _from_cache(cached, age, stale=True, latency_ms=latency_ms)
+            if _corpus_refreshing:
+                return _warming_payload(latency_ms)
+            _corpus_refreshing = True
+            leader = True
+        try:
+            result = _invoke_refresh(timeout_s)
             with _corpus_cache_lock:
-                _store_corpus_count(result)
-        return result
+                _remember_corpus_result(result)
+            return result
+        finally:
+            with _corpus_cache_lock:
+                _corpus_refreshing = False
     except Exception as exc:  # noqa: BLE001 — /health must never fail closed on this probe
+        if leader:
+            with _corpus_cache_lock:
+                _corpus_refreshing = False
         return {
             "chunks": None,
             "source": "exact",

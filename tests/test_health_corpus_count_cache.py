@@ -87,6 +87,73 @@ def test_stale_call_returns_immediately_and_refreshes_once(monkeypatch):
     assert calls == [1.5, 1.5]
 
 
+def test_failed_refresh_is_not_requeried_inside_negative_ttl(monkeypatch):
+    calls = []
+
+    def refresher(timeout_s: float = 1.5):
+        calls.append(timeout_s)
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(health_probes, "_refresh_corpus_count", refresher)
+    first = probe_corpus_chunks()
+    second = probe_corpus_chunks()
+    assert calls == [1.5]
+    assert first["error"] and "db down" in first["error"]
+    assert second["error"] and "db down" in second["error"]
+    assert second["source"] == "cached"
+    assert second["age_s"] < health_probes._corpus_negative_ttl_s()
+
+    with health_probes._corpus_cache_lock:
+        health_probes._corpus_cache_at = time.monotonic() - (
+            health_probes._corpus_negative_ttl_s() + 1
+        )
+    third = probe_corpus_chunks()
+    assert calls == [1.5, 1.5]
+    assert third["error"] and "db down" in third["error"]
+
+
+def test_parallel_cold_calls_refresh_once(monkeypatch):
+    calls = []
+    call_lock = threading.Lock()
+    gate = threading.Event()
+
+    def refresher(timeout_s: float = 1.5):
+        with call_lock:
+            calls.append(timeout_s)
+        gate.wait(2)
+        return _ok(5)
+
+    monkeypatch.setattr(health_probes, "_refresh_corpus_count", refresher)
+    workers = 6
+    barrier = threading.Barrier(workers)
+    results = []
+    result_lock = threading.Lock()
+
+    def worker():
+        barrier.wait()
+        payload = probe_corpus_chunks()
+        with result_lock:
+            results.append(payload)
+
+    threads = [threading.Thread(target=worker) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    deadline = time.time() + 2
+    while time.time() < deadline and len(results) < workers - 1:
+        time.sleep(0.01)
+    try:
+        assert calls == [1.5]
+        assert len(results) == workers - 1
+        assert all(row.get("source") == "warming" and row.get("warming") is True for row in results)
+    finally:
+        gate.set()
+        for thread in threads:
+            thread.join(2)
+    assert calls == [1.5]
+    assert sum(1 for row in results if row.get("chunks") == 5) == 1
+    assert sum(1 for row in results if row.get("source") == "warming") == workers - 1
+
+
 def test_refresher_error_is_payload_and_does_not_raise(monkeypatch):
     def refresher(timeout_s: float = 1.5):
         raise RuntimeError("db down")
