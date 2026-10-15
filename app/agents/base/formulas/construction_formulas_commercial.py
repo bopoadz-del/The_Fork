@@ -59,7 +59,7 @@ def cost_per_area(total_cost: float, area: float, area_unit: str = "m2") -> dict
         'labor_hours': Param('man-hour', 0, 1e8, label='man-hours'),
         'crew_size': Param('nr', 1, 10000, label='crew size'),
     },
-    outputs={'rate_per_hour': '-', 'rate_per_worker_hour': '-', 'crew_size': '-', 'unit': '-', 'value': 'currency', 'rate_per_worker_hour_unit': '-'},
+    outputs={'rate_per_hour': '-', 'rate_per_worker_hour': '-', 'rate_per_crew_hour': '-', 'crew_hours': 'h', 'crew_size': '-', 'unit': '-', 'value': 'currency', 'rate_per_worker_hour_unit': '-'},
 )
 def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int = 1) -> dict:
     """Output per man-hour. ``labor_hours`` is already man-hours (one
@@ -72,9 +72,16 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
     per_worker = rate
     rate_r = round(rate, 3)
     per_r = round(per_worker, 4)
+    # The crew works together: its hours are the man-hours shared across the
+    # crew, and its output per crew-hour is the rate per worker-hour times
+    # the crew (lane 5: 120 m2 in 40 man-hours by 4 = 12 m2 per crew-hour).
+    crew = max(int(crew_size or 1), 1)
+    crew_hours = h / crew
     return {
         "rate_per_hour": rate_r,
         "rate_per_worker_hour": per_r,
+        "rate_per_crew_hour": round(o / crew_hours, 4),
+        "crew_hours": round(crew_hours, 4),
         "crew_size": crew_size,
         "unit": "/hr",
         "value": rate_r,
@@ -82,5 +89,6 @@ def productivity_rate(output_quantity: float, labor_hours: float, crew_size: int
         "standard": "arithmetic (productivity)",
         "note": (f"Rate = output/man-hours = {o}/{h} = {rate:.4f}/hr; "
                  f"per worker-hour = {per_worker:.4f}/worker-hr "
-                 f"(man-hours are not divided by the crew of {crew_size} again)."),
+                 f"(man-hours are not divided by the crew of {crew_size} again); "
+                 f"per crew-hour = output/(man-hours/crew) = {o}/{crew_hours:.4f} = {o / crew_hours:.4f}."),
     }
