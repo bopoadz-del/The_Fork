@@ -100,8 +100,14 @@ def test_the_model_picks_the_hat_and_gets_that_hats_tools(monkeypatch):
     text = "".join(e["content"] for e in events if e["type"] == "token")
     assert "75 mm" in text
     # Before the hat: base tools only. After: the qaqc package's tools too, no other hat's.
-    assert "commissioning_checklist" not in seen[0]["tools"]
-    assert "commissioning_checklist" in seen[1]["tools"]
+    from app.agents.core import tool_registry
+    from app.agents.driver import routes
+
+    # The hat's own tools, less any that is a catalogue workflow (offered
+    # through run_workflow instead).
+    own = sorted(set(tool_registry.tools_of("qaqc")) - set(routes.catalogue()))
+    assert not set(own) & set(seen[0]["tools"])
+    assert set(own) <= set(seen[1]["tools"])
     assert "cash_flow_forecast" not in seen[1]["tools"]
     assert "select_hat" in seen[0]["tools"] and "search_project_documents" in seen[0]["tools"]
     assert "qaqc hat" in seen[1]["messages"][0]["content"]
@@ -129,9 +135,29 @@ def test_the_step_limit_holds(monkeypatch):
                for i in range(5)]
     monkeypatch.setattr(llm, "call", _scripted(replies, seen))
     events = _run(_agent(), user_message="keep going")
-    assert len(seen) == 2
+    # Two tool steps, then one closing call that is offered no tools.
+    assert len(seen) == 3 and seen[2]["tools"] == []
     assert events[-1]["steps"] == 2
+    # The closing reply asked for another tool: nothing to show, so the stop line.
     assert "within the steps" in "".join(e["content"] for e in events if e["type"] == "token")
+
+
+def test_out_of_steps_the_driver_answers_from_what_it_found(monkeypatch):
+    """CORE: a turn that used its steps ended on "could not finish", throwing
+    away what its tools returned. Now one tool-free reply answers from it."""
+    _no_retrieval(monkeypatch)
+    monkeypatch.setenv("DRIVER_MAX_STEPS", "2")
+    seen = []
+    replies = [{"content": "", "tool_calls": [_call("select_hat", {"hat": "planning"}, f"c{i}")]}
+               for i in range(2)] + [{"content": "From what I found: the planning hat applies. "
+                                                 "The duration is missing; please give it."}]
+    monkeypatch.setattr(llm, "call", _scripted(replies, seen))
+    events = _run(_agent(), user_message="keep going")
+    text = "".join(e["content"] for e in events if e["type"] == "token")
+    assert "From what I found" in text and "duration is missing" in text
+    assert "within the steps" not in text
+    assert seen[-1]["tools"] == []
+    assert any("No more tool calls" in str(m.get("content")) for m in seen[-1]["messages"])
 
 
 def test_the_system_message_carries_rules_hats_and_profile():
@@ -306,9 +332,9 @@ def test_a_driver_answer_passes_the_exit_check_before_it_streams(monkeypatch):
     calls = []
     real = loop.exit_check
 
-    def spy(answer, msgs):
+    def spy(answer, msgs, **kw):
         calls.append(answer)
-        return real(answer, msgs)
+        return real(answer, msgs, **kw)
 
     monkeypatch.setattr(loop, "exit_check", spy)
     events = _run(_agent(), user_message="How many bags of cement?")

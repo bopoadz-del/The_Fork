@@ -30,23 +30,23 @@ def _result(params):
 # ── the default form is unchanged, but now says what it is ─────────────────
 
 def test_the_default_value_is_unchanged():
-    # Existing callers and the audit suite depend on this number.
-    assert _result({"fck_n_mm2": 40})["value"] == pytest.approx(300_000.0, abs=0.5)
+    # 1 N/mm² = 10.197 kg/cm², then Ec = 15000 √(f'c).
+    assert _result({"fck_n_mm2": 40})["value"] == pytest.approx(
+        round(15_000 * math.sqrt(40 * 10.197)), abs=0.5)
     assert _result({"fck_n_mm2": 25})["value"] == pytest.approx(
-        round(15_000 * math.sqrt(250)), abs=0.5)
+        round(15_000 * math.sqrt(25 * 10.197)), abs=0.5)
 
 
 def test_the_default_value_names_its_unit():
     r = _result({"fck_n_mm2": 35})
     assert r["unit"] == "kg/cm2"
-    assert r["value"] == pytest.approx(280_624.0, abs=0.5)
+    assert r["value"] == pytest.approx(round(15_000 * math.sqrt(35 * 10.197)), abs=0.5)
 
 
 def test_the_mpa_conversion_is_done_here_not_guessed():
     r = _result({"fck_n_mm2": 35})
-    # 280,624 kg/cm2 x 0.0980665 = 27,520 MPa. Dividing by 10 gives 28,062,
-    # which is the number that reached the operator.
-    assert r["value_mpa"] == pytest.approx(27_520.0, abs=1.0)
+    kg = round(15_000 * math.sqrt(35 * 10.197))
+    assert r["value_mpa"] == pytest.approx(round(kg * 0.0980665), abs=1.0)
     assert r["value_mpa"] != pytest.approx(28_062.0, abs=1.0)
 
 
@@ -69,7 +69,7 @@ def test_an_unknown_code_keeps_the_default_form():
     # would silently change this function's default.
     r = _result({"fck_n_mm2": 35, "code": "something else"})
     assert r["unit"] == "kg/cm2"
-    assert r["value"] == pytest.approx(280_624.0, abs=0.5)
+    assert r["value"] == pytest.approx(round(15_000 * math.sqrt(35 * 10.197)), abs=0.5)
 
 
 def test_the_two_forms_are_different_numbers():

@@ -55,8 +55,8 @@ def _criterion_score(tenderer: Dict, criterion: str) -> Optional[float]:
     display_name='Tender evaluation',
     description='Scores and ranks tender submissions on weighted technical and commercial criteria.',
     inputs={
-        'tenderers': Param('-'),
-        'weights': Param('-'),
+        'tenderers': Param(label='tender submissions'),
+        'weights': Param(label='criterion weights'),
     },
     outputs={'ranked_tenderers': '-', 'recommended': '-', 'weights_applied': '-', 'procedure': '-'},
 )

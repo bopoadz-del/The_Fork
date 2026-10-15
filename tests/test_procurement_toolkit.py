@@ -176,6 +176,119 @@ def test_synthetic_tool_hits_the_container(monkeypatch):
     assert float(calls["params"]["budget"]) == 200000
 
 
+def test_procurement_list_maps_boq_qty_rate_onto_quantity_unit_price(monkeypatch):
+    captured = {}
+
+    class Stub:
+        async def procurement_list_generator(self, input_data, params):
+            captured["input"] = input_data
+            captured["params"] = params
+            return {"status": "success", "action": "procurement_list", "procurement_list": []}
+
+    import app.dependencies as deps
+    monkeypatch.setattr(deps, "get_block_instance", lambda name: Stub())
+
+    from app.agents.core.tool_registry import ToolCall
+    from app.agents.hats.procurement.tools import handle_procurement_list_generator
+
+    call = ToolCall(
+        agent=_agent(["construction"]),
+        name="procurement_list_generator",
+        args={"boq": [{
+            "description": "High-yield reinforcement",
+            "unit": "t",
+            "qty": 520,
+            "rate": 3150,
+            "amount": 1638000,
+        }]},
+    )
+    result = _run(handle_procurement_list_generator(call))
+    assert result["ok"] is True, result
+    row = captured["params"]["boq"][0]
+    assert row["quantity"] == 520
+    assert row["unit_price"] == 3150
+
+
+def test_procurement_list_boq_field_table_does_not_clobber(monkeypatch):
+    """One alias table for every BOQ row: canonical wins, strings coerce.
+
+    ``unit_rate`` and ``amount`` are the same table as ``rate`` and ``qty``.
+    Rows that arrive on ``input`` or nested ``params`` are mapped too.
+    """
+    captured = {}
+
+    class Stub:
+        async def procurement_list_generator(self, input_data, params):
+            captured["input"] = input_data
+            captured["params"] = params
+            return {"status": "success", "action": "procurement_list", "procurement_list": []}
+
+    import app.dependencies as deps
+    monkeypatch.setattr(deps, "get_block_instance", lambda name: Stub())
+
+    from app.agents.core.tool_registry import ToolCall
+    from app.agents.hats.procurement.tools import handle_procurement_list_generator
+
+    call = ToolCall(
+        agent=_agent(["construction"]),
+        name="procurement_list_generator",
+        args={
+            "params": {"boq": [{
+                "description": "Kept",
+                "qty": 1,
+                "quantity": 9,
+                "rate": 2,
+                "unit_price": "8",
+                "amount": 3,
+                "total": 7,
+            }]},
+            "input": {"boq": [{
+                "description": "Alias",
+                "unit": "m",
+                "unit_rate": "12.5",
+                "amount": "1,000",
+            }], "line_items": [{
+                "description": "Lines",
+                "qty": "4",
+                "rate": 6,
+            }]},
+        },
+    )
+    result = _run(handle_procurement_list_generator(call))
+    assert result["ok"] is True, result
+    kept = captured["params"]["boq"][0]
+    assert kept["quantity"] == 9
+    assert kept["unit_price"] == 8
+    assert kept["total"] == 7
+    alias = captured["input"]["boq"][0]
+    assert alias["unit_price"] == 12.5
+    assert alias["total"] == 1000
+    assert "quantity" not in alias
+    lines = captured["input"]["line_items"][0]
+    assert lines["quantity"] == 4
+    assert lines["unit_price"] == 6
+
+
+def test_procurement_list_parameters_are_fully_declared():
+    from app.agents.core.tool_registry import get
+    from app.lib.formula_registry import TOOL_KINDS, schema_gaps
+
+    spec = get("procurement_list_generator")
+    assert spec is not None and spec.params
+    for name, param in spec.params.items():
+        assert (param.label or "").strip(), name
+        assert param.kind in TOOL_KINDS, name
+        assert param.required is not None, name
+        if param.kind in ("number", "integer"):
+            assert param.unit and param.unit != "-", name
+            assert param.lo is not None and param.hi is not None, name
+            assert param.lo < param.hi, name
+    assert not [
+        gap for gap in schema_gaps()
+        if gap.startswith("tool:procurement_list_generator")
+    ]
+
+
 def test_synthetic_tool_refuses_without_construction_block():
     r = _call(_agent([]), "procurement_list_generator", {})
     assert r["ok"] is False

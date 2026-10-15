@@ -11,9 +11,9 @@ from app.lib.formula_registry import Param, formula
     display_name='Cut and fill balance',
     description='Site earthwork balance: surplus to export or deficit to import, from cut and fill volumes.',
     inputs={
-        'cut_volume_m3': Param('m3', 0, 1e8),
-        'fill_volume_m3': Param('m3', 0, 1e8),
-        'bulking_factor': Param('-', 0, 1, label='bulking'),
+        'cut_volume_m3': Param('m3', 0, 1e8, label='cut volume'),
+        'fill_volume_m3': Param('m3', 0, 1e8, label='fill volume'),
+        'bulking_factor': Param('fraction', 0, 1, label='bulking'),
     },
     outputs={'balance_bank_m3': 'm3', 'haul_loose_m3': 'm3'},
 )

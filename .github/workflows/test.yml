@@ -167,15 +167,25 @@ jobs:
         # alone, not beside xdist workers competing for the runner's cores.
         # Coverage appends to the parallel run's and every report is written
         # here, from the whole suite.
-        run: >
-          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120
-          -m serial
-          --cov=app --cov-append --cov-report=term-missing --cov-report=xml
-          --cov-report=json:coverage.json
-          --cov-fail-under=25
+        # Exit 5 is "nothing selected": in a profile where every serial test
+        # is a timing test, they all run in the timing step instead.
+        run: |
+          rc=0
+          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120             -m "serial and not timing"             --cov=app --cov-append --cov-report=term-missing --cov-report=xml             --cov-report=json:coverage.json             --cov-fail-under=25 || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data-serial
+          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
+          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
+
+      - name: Run the timing tests (no coverage instrumentation)
+        # Same assertions, same limits; only the coverage tracer is off, so
+        # the measurement is the event loop's, not the tracer's lock.
+        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data-timing
           CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
           CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
 
@@ -347,10 +357,24 @@ jobs:
 
       - name: Run the serial tests (shard 1, alone)
         if: matrix.shard == 1
-        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m serial --cov=app --cov-append --cov-report=
+        run: |
+          rc=0
+          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m "serial and not timing" --cov=app --cov-append --cov-report= || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data-serial
+          CEREBRUM_VIRGIN: "true"
+          CEREBRUM_DOMAIN_KITS: ""
+          RAG_EMBEDDING_MODEL: fake
+          COVERAGE_FILE: .coverage.shard${{ matrix.shard }}
+
+      - name: Run the timing tests (shard 1, no coverage instrumentation)
+        if: matrix.shard == 1
+        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data-timing
           CEREBRUM_VIRGIN: "true"
           CEREBRUM_DOMAIN_KITS: ""
           RAG_EMBEDDING_MODEL: fake

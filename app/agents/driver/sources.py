@@ -11,6 +11,7 @@ few by score.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List
 
 #: Retrieval and navigation tools: their results are passages, not figures.
@@ -79,8 +80,8 @@ def panel(
         if used_rows:
             def _hit_used(hit: Dict[str, Any]) -> bool:
                 doc_id = str(hit.get("document_id") or hit.get("doc_id") or "")
-                name = str(hit.get("filename") or hit.get("doc_name") or "")
-                if doc_id in backing or name in backing:
+                name = _hit_name(hit)
+                if doc_id in backing or name in backing or str(hit.get("filename") or "") in backing:
                     return True
                 snippet = str(hit.get("snippet") or hit.get("text") or "")
                 return bool(snippet) and _answer_quotes_passage(answer, snippet)
@@ -93,9 +94,9 @@ def panel(
 
         def _backs(hit: Dict[str, Any]) -> bool:
             doc_id = str(hit.get("document_id") or hit.get("doc_id") or "")
-            name = str(hit.get("filename") or hit.get("doc_name") or "")
+            name = _hit_name(hit)
             snippet = str(hit.get("snippet") or hit.get("text") or "")
-            return bool({doc_id, name} & backing) or (bool(snippet) and _answer_quotes_passage(answer, snippet))
+            return bool({doc_id, name, str(hit.get("filename") or "")} & backing) or (bool(snippet) and _answer_quotes_passage(answer, snippet))
         hits = [hit for hit in hits if _backs(hit)]
     hits.sort(key=lambda h: (
         not ({str(h.get("document_id") or h.get("doc_id") or ""), str(h.get("filename") or "")} & backing),
@@ -103,7 +104,7 @@ def panel(
     seen, out = set(), []
     for h in hits:
         doc_id = str(h.get("document_id") or h.get("doc_id") or "")
-        name = str(h.get("source_label") or h.get("filename") or h.get("doc_name") or doc_id)
+        name = _hit_name(h) or doc_id
         if not name or (doc_id or name) in seen:
             continue
         seen.add(doc_id or name)
@@ -111,7 +112,7 @@ def panel(
         score = float(h.get("score") or 0.0)
         out.append({
             "doc_id": doc_id,
-            "doc_name": name,
+            "doc_name": library_title(name) if layer in LIBRARY_LAYERS else name,
             "page_or_section": _page(h),
             "score": round(score, 3),
             "confidence": _confidence(score),
@@ -130,6 +131,44 @@ def panel(
         ]
         out = [*extra, *out][:_MAX_SOURCES]
     return out
+
+
+# Layers whose files the platform curates, not a user: their stored file
+# names are storage keys ("design_values_metric.md") and read as their words.
+# A user's own document keeps the name its owner gave it.
+LIBRARY_LAYERS = frozenset({"general_knowledge"})
+_STORED_NAME_RE = re.compile(r"^(?:.*[\\/])?([^\\/]+?)(?:\.[A-Za-z0-9]{1,5})?$")
+
+
+def library_title(name: str) -> str:
+    """A library file's stored name as words: no folder, no extension, no
+    underscores."""
+    m = _STORED_NAME_RE.match((name or "").strip())
+    base = m.group(1) if m else (name or "")
+    if " " in base or "_" not in base:
+        return name  # already written as words ("Formwork notes.md")
+    return re.sub(r"_+", " ", base).strip() or name
+
+
+def library_names(trail: List[Dict[str, Any]]) -> Dict[str, str]:
+    """{stored file name: title} for every library passage this turn read."""
+    out: Dict[str, str] = {}
+    for hit in _hits(trail):
+        layer = str(hit.get("origin") or hit.get("layer") or "")
+        stored = str(hit.get("filename") or hit.get("doc_name") or "").strip()
+        if layer in LIBRARY_LAYERS and stored:
+            out[stored] = str(hit.get("title") or "").strip() or library_title(stored)
+    return out
+
+
+def _hit_name(hit: Dict[str, Any]) -> str:
+    """What a reader calls a passage's document: its title when the hit
+    carries one, then its source label, then the stored file name."""
+    for key in ("title", "source_label", "original_name", "filename", "doc_name"):
+        value = str(hit.get(key) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def tool_credit_lines(calls: List[Dict[str, Any]]) -> str:
