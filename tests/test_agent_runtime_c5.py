@@ -263,7 +263,9 @@ async def test_search_tool_calls_doc_index(monkeypatch):
         tool_call, project_id="proj-x", user_message=operator,
     )
     assert result["ok"] is True
-    assert result["result"]["results"] == sentinel
+    # Order 2130Z/2210Z: the model reads a project hit by its label, never its file name.
+    assert result["result"]["results"] == [{"document_id": "d1", "filename": "Document d1",
+                                            "snippet": "found it", "score": 0.9}]
     # One search: the model's query. The operator's message is not a second query.
     assert captured["project_id"] == "proj-x"
     assert captured["query"] == "anything"

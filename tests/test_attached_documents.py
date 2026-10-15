@@ -193,8 +193,9 @@ def test_fetch_document_tool_call_roundtrip(fetch_env):
     out = asyncio.run(agent._run_tool_call(call, project_id="p1"))
     assert out["ok"] is True
     assert out["result"]["document_id"] == "d2"
-    assert out["result"]["filename"] == "schedule.xer"
-    assert out["result"]["content"] == "TEXT OF schedule.xer"
+    # Order 2130Z/2210Z: the document is named by its label, in the result and in its text.
+    assert out["result"]["filename"] == "Document d2"
+    assert out["result"]["content"] == "TEXT OF Document d2"
 
 
 def test_fetch_document_tool_requires_project():

@@ -142,11 +142,19 @@ def _labelled_hits(results: Any, project_id: str) -> Any:
     from app.agents.driver.sources import LIBRARY_LAYERS
     from app.core import document_labels
 
+    from app.core import project_identity
+
     guard = document_labels.for_project(project_id)
+    identity = project_identity.redactor_for(project_id)
     out = []
     for hit in results:
-        if not isinstance(hit, dict) or str(hit.get("origin") or hit.get("layer") or "own") in LIBRARY_LAYERS:
+        if not isinstance(hit, dict):
             out.append(hit)
+            continue
+        if str(hit.get("origin") or hit.get("layer") or "own") in LIBRARY_LAYERS:
+            # A library passage keeps its title; the project's identity still
+            # never reaches the model through it.
+            out.append(identity.deep(hit) if identity is not None else hit)
             continue
         hit = dict(hit)
         doc_id = str(hit.get("document_id") or hit.get("doc_id") or "")
@@ -156,6 +164,8 @@ def _labelled_hits(results: Any, project_id: str) -> Any:
         for key in ("snippet", "text", "content"):
             if isinstance(hit.get(key), str):
                 hit[key] = guard.text(hit[key])
+                if identity is not None:
+                    hit[key] = identity.text(hit[key])
         out.append(hit)
     return out
 
@@ -251,8 +261,13 @@ async def handle_fetch_document(call: ToolCall) -> dict:
                 "hint": "Pass the id from the attachment note or a search result, or the file's name.",
             },
         }
-    from app.core import document_labels
+    from app.core import document_labels, project_identity
     guard = await _off_loop(document_labels.for_project, project_id)
+    identity = await _off_loop(project_identity.redactor_for, project_id)
+
+    def _clean(value: str) -> str:
+        value = guard.text(value)
+        return identity.text(value) if identity is not None else value
     if filename and not doc_id:
         # The model knows a document by its label ("Specification abc123").
         doc_id = guard.resolve(filename) or ""
@@ -260,7 +275,7 @@ async def handle_fetch_document(call: ToolCall) -> dict:
             filename = ""
     content, doc, err = (await _off_loop(_fetch_document_content, project_id, doc_id, filename))
     if err:
-        return {"name": name, "ok": False, "result": {"status": "error", "error": guard.text(err)}}
+        return {"name": name, "ok": False, "result": {"status": "error", "error": _clean(err)}}
     return {
         "name": "fetch_document",
         "ok": True,
@@ -268,7 +283,9 @@ async def handle_fetch_document(call: ToolCall) -> dict:
             "document_id": doc.get("id"),
             "filename": document_labels.label(str(doc.get("id") or ""), str(doc.get("doc_type") or "")),
             "doc_type": doc.get("doc_type"),
-            "content": guard.text(content["text"]),
+            # The fetched document's own name is replaced in its own text even
+            # when the project listing does not carry it.
+            "content": document_labels.NameGuard([doc], general=set()).text(_clean(content["text"])),
             "truncated": content["truncated"],
             "source": content["source"],
         },

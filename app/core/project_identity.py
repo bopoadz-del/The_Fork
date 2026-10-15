@@ -164,7 +164,15 @@ def redactor_for(project_id: str | None) -> Redactor | None:
     try:
         return Redactor(project_id, refresh(project_id))
     except Exception:  # noqa: BLE001
-        _LOG.warning("project_identity: identity set unavailable for %s", project_id, exc_info=True)
+        _LOG.warning("project_identity: identity set could not be refreshed for %s", project_id, exc_info=True)
+    # Not fail-open: the set stored at the last ingest still applies.
+    try:
+        stored = _stored(project_id)
+        members = [str(m) for m in (stored.get("derived") or []) + (stored.get("added") or [])]
+        return Redactor(project_id, members) if members else None
+    except Exception:  # noqa: BLE001
+        _LOG.error("project_identity: no identity set readable for %s; answers leave unredacted", project_id,
+                   exc_info=True)
         return None
 
 

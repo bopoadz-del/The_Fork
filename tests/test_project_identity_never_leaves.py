@@ -85,3 +85,49 @@ def test_a_code_the_platform_uses_is_never_identity(monkeypatch):
     assert "QYD" in members and "AED" not in members and "HVAC" not in members
     red = project_identity.Redactor("zz9", members)
     assert red.text("Rate 308.83 AED/m3 per QYD-ST-0001; HVAC riser.") == "Rate 308.83 AED/m3 per PRJ-zz9-ST-0001; HVAC riser."
+
+
+def test_search_passages_reach_the_model_without_the_projects_identity(monkeypatch):
+    """LANE4 #977: chunk text is run through the identity set too, not only
+    the file-name labels -- here a set from the project record alone."""
+    from app.agents.base import tools
+    from app.core import document_labels
+
+    red = project_identity.Redactor(RECORD["id"], project_identity.derive(RECORD, [], general=set()))
+    monkeypatch.setattr(project_identity, "redactor_for", lambda pid: red)
+    monkeypatch.setattr(document_labels, "for_project", lambda pid: document_labels.NameGuard([], general=set()))
+    hits = [{"document_id": "abc123def", "filename": "notes.pdf", "score": 0.8, "origin": "own",
+             "snippet": "Morrowind Estates Holding requires the slab at Port Avela by May."},
+            {"filename": "design_values_metric.md", "origin": "general_knowledge",
+             "snippet": "As on the Qelvar Harbour Tower job, use C40."}]
+    out = tools._labelled_hits(hits, RECORD["id"])
+    text = str(out)
+    assert "Morrowind" not in text and "Port Avela" not in text and "Qelvar" not in text
+    assert out[0]["snippet"] == "PRJ-a1b2c3 requires the slab at PRJ-a1b2c3 by May."
+    assert out[1]["filename"] == "design_values_metric.md"
+
+
+def test_the_driver_exit_neutralises_a_real_drawing_reference():
+    """Order 2210Z's test, through the driver's own exit (loop.exit_check)."""
+    from app.agents.driver import loop
+
+    token = project_identity.set_current(_red())
+    try:
+        out, _trail, _report = loop.exit_check(
+            "Drawing QHT-ST-0043 shows the Qelvar Harbour Tower core wall reinforcement.",
+            [{"role": "user", "content": "What does drawing QHT-ST-0043 show for the core wall?"}], shared=True)
+    finally:
+        project_identity.reset(token)
+    assert "QHT" not in out and "Qelvar" not in out
+    assert "PRJ-a1b2c3-ST-0043" in out
+
+
+def test_a_failed_refresh_still_applies_the_stored_set(monkeypatch):
+    """Not fail-open: when the set cannot be re-derived, the stored one applies."""
+    def boom(pid):
+        raise RuntimeError("database away")
+
+    monkeypatch.setattr(project_identity, "refresh", boom)
+    monkeypatch.setattr(project_identity, "_stored", lambda pid: {"derived": ["Qelvar Harbour Tower"], "added": []})
+    red = project_identity.redactor_for("a1b2c3d4e5")
+    assert red is not None and red.text("Qelvar Harbour Tower") == "PRJ-a1b2c3"
