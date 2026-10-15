@@ -112,7 +112,7 @@ def panel(
         score = float(h.get("score") or 0.0)
         out.append({
             "doc_id": doc_id,
-            "doc_name": library_title(name) if layer in LIBRARY_LAYERS else name,
+            "doc_name": library_title(name) if layer in LIBRARY_LAYERS else neutral_label(h),
             "page_or_section": _page(h),
             "score": round(score, 3),
             "confidence": _confidence(score),
@@ -129,7 +129,51 @@ def panel(
             if str(row.get("doc_id") or "") not in seen_ids
             and str(row.get("doc_name") or "") not in seen_names
         ]
+        labels = project_labels(trail)
+        for row in extra:
+            row["doc_name"] = labels.get(str(row.get("doc_name") or ""), neutral_label(row))
         out = [*extra, *out][:_MAX_SOURCES]
+    return out
+
+
+#: Every key a hit or source row can carry a document's own name under.
+_NAME_KEYS = ("title", "source_label", "original_name", "filename", "doc_name")
+
+
+def neutral_label(hit: Dict[str, Any]) -> str:
+    """How an answer and its Sources name a project document: its type and a
+    short id, never its file name or path (order 2130Z: a stored file name
+    can carry a client's or a project's real name)."""
+    doc_id = str(hit.get("document_id") or hit.get("doc_id") or "").strip()
+    kind = str(hit.get("doc_type") or "").strip()
+    if not kind and doc_id:
+        try:
+            from app.core import projects
+
+            kind = str((projects.get_document(doc_id) or {}).get("doc_type") or "").strip()
+        except Exception:  # noqa: BLE001 -- the type is a label, never a gate
+            kind = ""
+    kind = re.sub(r"[_\-]+", " ", kind).strip().capitalize() or "Document"
+    short = re.sub(r"[^0-9A-Za-z]", "", doc_id)[:6]
+    return f"{kind} {short}".strip() if short else kind
+
+
+def project_labels(trail: List[Dict[str, Any]]) -> Dict[str, str]:
+    """{every name a project document's hit carries: its neutral label} for
+    the passages this turn read -- library files keep their titles."""
+    out: Dict[str, str] = {}
+    for hit in _hits(trail):
+        layer = str(hit.get("origin") or hit.get("layer") or "own")
+        if layer in LIBRARY_LAYERS:
+            continue
+        label = neutral_label(hit)
+        for key in _NAME_KEYS:
+            name = str(hit.get(key) or "").strip()
+            if len(name) >= 4:
+                out[name] = label
+                base = re.split(r"[\\/]", name)[-1]
+                if len(base) >= 4:
+                    out[base] = label
     return out
 
 

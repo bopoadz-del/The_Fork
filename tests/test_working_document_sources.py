@@ -127,7 +127,8 @@ def test_driver_panel_lists_the_quoted_file_not_unused_hits():
     ]
     out = sources.panel(trail, [], _ANSWER)
     shown = [s.get("doc_name") for s in out]
-    assert "pour-note.txt" in shown
+    # Order 2130Z: the quoted file is listed, by its neutral label, never its file name.
+    assert shown and all("pour-note" not in name for name in shown)
     assert "guide-a.pdf" not in shown
     assert "guide-b.pdf" not in shown
     assert "guide-c.pdf" not in shown

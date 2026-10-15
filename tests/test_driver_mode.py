@@ -611,7 +611,9 @@ def test_the_end_event_lists_sources_and_the_calculation_credit(monkeypatch):
     monkeypatch.setattr(agent, "_run_tool_call", fake_tool)
     events = _run(agent, user_message="gross 2,400,000, retention 10%, net payment?", project_id="p")
     end = events[-1]
-    assert [s["doc_name"] for s in end["sources"]][0] == "Conditions of Contract.pdf"
+    # Order 2130Z: a project document is named by its type and a short id, never its file name.
+    first = [s["doc_name"] for s in end["sources"]][0]
+    assert first.startswith("Document") and "Conditions of Contract" not in first
     assert end["sources"][0]["confidence"] == "High" and end["sources"][1]["confidence"] == "Low"
     text = "".join(e["content"] for e in events if e["type"] == "token")
     assert "Calculated with: Payment certificate (gross valuation 2,400,000, retention percent 10)" in text
@@ -628,7 +630,9 @@ def test_a_shared_documents_name_is_shown_as_stored(monkeypatch):
         {"ok": True, "result": {"results": [{"document_id": "g1", "filename": "General Spec.pdf",
                                               "score": 0.9, "origin": "master_corpus", "snippet": "x"}]}})}]
     out = sources.panel(trail, [])
-    assert out and out[0]["doc_name"] == "General Spec.pdf" and out[0]["layer"] == "master_corpus"
+    # Order 2130Z: shown by its type and a short id, never its stored file name.
+    assert out and out[0]["doc_name"] == "Document g1" and out[0]["layer"] == "master_corpus"
+    assert "General Spec" not in out[0]["doc_name"]
 
 
 def test_streamed_pieces_keep_their_line_breaks(monkeypatch):

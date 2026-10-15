@@ -74,6 +74,10 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False,
         # against the stored names the evidence carries.
         for stored, title in sorted(sources.library_names(msgs).items(), key=lambda kv: -len(kv[0])):
             out = out.replace(stored, title)
+    # A project document is named by its type and a short id, never by its
+    # stored file name, in the model's words and the platform's own alike.
+    for stored, label in sorted(sources.project_labels(msgs).items(), key=lambda kv: -len(kv[0])):
+        out = out.replace(stored, label)
     report = {
         "identifiers_replaced": identifiers,
         "figures_removed": [e["figure"] for e in every if not e.get("source")],

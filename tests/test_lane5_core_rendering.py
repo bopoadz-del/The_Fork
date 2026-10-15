@@ -149,7 +149,8 @@ def test_a_source_is_shown_by_its_title(monkeypatch):
     }, "The stored total is 42 m.")
     names = [str(row.get("doc_name") or "") for row in (events[-1].get("sources") or [])]
     assert names
-    assert all(name == "Alpha memo" for name in names)
+    # Order 2130Z: a project source is shown by its type and a short id, never its title or file name.
+    assert names and all("Alpha memo" not in name and name.startswith("Document") for name in names)
     assert all("alpha_store_9f3a" not in name for name in names)
 
 
