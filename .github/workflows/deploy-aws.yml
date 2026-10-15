@@ -176,14 +176,7 @@ jobs:
           echo "polling $url for build_sha=$DEPLOY_SHA ($attempts attempts)"
           for attempt in $(seq 1 "$attempts"); do
             code=$(curl --proto '=https' --max-time 15 -sS -o /tmp/livez.json -w '%{http_code}' "$url" || echo "000")
-            sha=$(python3 -c 'import json, pathlib
-path = pathlib.Path("/tmp/livez.json")
-raw = path.read_text(encoding="utf-8") if path.exists() else ""
-try:
-    value = json.loads(raw or "{}").get("build_sha") or ""
-except json.JSONDecodeError:
-    value = ""
-print(str(value).strip())')
+            sha=$(python3 scripts/read_livez_build_sha.py /tmp/livez.json)
             echo "attempt $attempt/$attempts: HTTP $code build_sha=${sha:-<empty>}"
             if [ "$code" = "200" ] && [ "$sha" = "$DEPLOY_SHA" ]; then
               echo "live build_sha matches $DEPLOY_SHA"
