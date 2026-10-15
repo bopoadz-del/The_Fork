@@ -11,6 +11,7 @@ can hang or crash the health endpoint is worse than the lie it replaces.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 import time
@@ -71,20 +72,32 @@ def reset_corpus_chunk_cache() -> None:
 
 _DEFAULT_CORPUS_TTL_S = 300.0
 _DEFAULT_CORPUS_NEGATIVE_TTL_S = 30.0
+# Longer than a day is not used. A non-finite value, or one that is not
+# above zero, also falls back to the default so the age comparison can expire.
+_MAX_CORPUS_CACHE_TTL_S = 86400.0
 
 
 def _env_float(name: str, default: float) -> float:
-    """Same numeric-env reader as the other core watchdogs.
+    """Read one cache TTL from the environment.
 
-    Missing, blank, or non-numeric values keep ``default``.
+    Missing, blank, non-numeric, non-finite, non-positive, or above the cap
+    keep ``default``. Zero, negative, nan, and inf must not reach the age
+    checks: those either refresh on every probe or never expire a failure.
     """
     raw = (os.getenv(name) or "").strip()
     if not raw:
         return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         return default
+    if (
+        not math.isfinite(value)
+        or value <= 0
+        or value > _MAX_CORPUS_CACHE_TTL_S
+    ):
+        return default
+    return value
 
 
 def _corpus_cache_config() -> Dict[str, float]:
@@ -93,8 +106,10 @@ def _corpus_cache_config() -> Dict[str, float]:
     ``ttl_s`` is how long a successful count is served with no database work.
     ``negative_ttl_s`` is how long a failed refresh is remembered so a down
     database is not queried again on every /health hit.
-    Both are read from the environment on each call. Unset values stay at
-    ``CORPUS_CHUNK_CACHE_TTL_S`` 300 and ``CORPUS_CHUNK_CACHE_NEGATIVE_TTL_S`` 30.
+    Both are read from the environment on each call. Unset, blank, or
+    unusable values stay at ``CORPUS_CHUNK_CACHE_TTL_S`` 300 and
+    ``CORPUS_CHUNK_CACHE_NEGATIVE_TTL_S`` 30. A usable value is finite and
+    greater than zero, and not above one day.
     """
     return {
         "ttl_s": _env_float("CORPUS_CHUNK_CACHE_TTL_S", _DEFAULT_CORPUS_TTL_S),

@@ -4,6 +4,8 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 import app.core.health_probes as health_probes
 from app.core.health_probes import probe_corpus_chunks, reset_corpus_chunk_cache
 
@@ -152,6 +154,15 @@ def test_parallel_cold_calls_refresh_once(monkeypatch):
     assert calls == [1.5]
     assert sum(1 for row in results if row.get("chunks") == 5) == 1
     assert sum(1 for row in results if row.get("source") == "warming") == workers - 1
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "nan", "inf", "abc"])
+def test_unusable_ttl_env_uses_default(monkeypatch, raw):
+    """0, negative, nan, inf, and non-numeric values do not change the TTLs."""
+    monkeypatch.setenv("CORPUS_CHUNK_CACHE_TTL_S", raw)
+    monkeypatch.setenv("CORPUS_CHUNK_CACHE_NEGATIVE_TTL_S", raw)
+    assert health_probes._corpus_ttl_s() == 300
+    assert health_probes._corpus_negative_ttl_s() == 30
 
 
 def test_env_ttl_overrides_take_effect(monkeypatch):
