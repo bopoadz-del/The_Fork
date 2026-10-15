@@ -64,10 +64,10 @@ def test_rc_moment_capacity_eurocode():
 
 
 def test_rc_shear_capacity_aci():
-    # 0.75*0.17*sqrt(30)*300*550 = 0.75*0.17*5.477*165000 = 115.2 kN.
+    # Table 22.5.5.1, no stirrups, ρ=0.01, d=550: φVc ≈ 76.2 kN.
     r = CALCULATORS["rc_beam_shear_capacity"](
         width_mm=300, eff_depth_mm=550, fc_mpa=30, code="aci")
-    assert r["shear_capacity_kn"] == pytest.approx(115.2, abs=0.3)
+    assert r["shear_capacity_kn"] == pytest.approx(76.2, abs=0.1)
 
 
 def test_rc_shear_capacity_eurocode():
@@ -86,10 +86,10 @@ def test_slab_thickness_min_aci_simply_supported():
 
 
 def test_slab_thickness_min_eurocode_cantilever():
-    # EC2 cantilever ratio 8: 6000/8 = 750 mm.
+    # EC2 cantilever l/d = 8: d = 750 mm; h = d + 25 mm nominal cover.
     r = CALCULATORS["slab_thickness_min"](span_mm=6000, support_condition="cantilever",
                                           code="eurocode")
-    assert r["min_thickness_mm"] == pytest.approx(750.0, abs=0.5)
+    assert r["min_thickness_mm"] == pytest.approx(775.0, abs=0.5)
 
 
 def test_rebar_lap_length_aci():

@@ -12,8 +12,8 @@ from app.lib.formula_registry import Param, formula
     description="Daily delay damages from the contract's daily rate and the contract amount it applies to.",
     inputs={
         'rate_percent': Param('%', 0, 100, label='delay damages rate'),
-        'contract_amount': Param('currency', 0, 1e13),
-        'currency': Param('-'),
+        'contract_amount': Param('currency', 0, 1e13, label='contract amount'),
+        'currency': Param('-', label='currency'),
     },
     outputs={'daily_amount': 'currency', 'rate_percent': '%', 'contract_amount': 'currency', 'currency': '-', 'per': '-'},
 )

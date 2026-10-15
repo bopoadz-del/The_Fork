@@ -135,11 +135,24 @@ def calculators_named_by_display(text: str) -> List[str]:
     registry id written out. A two-word one ("Concrete volume") is also a
     bill and take-off phrase, so it is left to the id rules.
     """
+    hits, subsumed = _display_hits(text)
+    return [name for name, phrase in hits.items()
+            if len(phrase.split()) >= 3 and name not in subsumed]
+
+
+def _display_hits(text: str) -> Tuple[Dict[str, str], set]:
+    """({registry name: display phrase} for every calculator whose display
+    name, two words or more, the ask writes out in full; the names among them
+    written only as part of a longer display name the ask also writes --
+    "Kestrel total" inside "Kestrel total net" names the longer one)."""
     words = _phrase_words(text)
     if not words:
-        return []
+        return {}, set()
     padded = f" {' '.join(words)} "
-    return [name for name, phrase in _display_phrases() if phrase in padded]
+    hits = {name: phrase for name, phrase in _display_phrases() if phrase in padded}
+    subsumed = {name for name, phrase in hits.items()
+                if any(other != phrase and phrase in other for other in hits.values())}
+    return {name: phrase.strip() for name, phrase in hits.items()}, subsumed
 
 
 _DISPLAY_PHRASES: Dict[int, List[Tuple[str, str]]] = {}
@@ -160,7 +173,7 @@ def _display_phrases() -> List[Tuple[str, str]]:
             if spec.name not in CALCULATORS:
                 continue
             phrase = _phrase_words(spec.display_name)
-            if len(phrase) >= 3:
+            if len(phrase) >= 2:
                 cached.append((spec.name, f" {' '.join(phrase)} "))
         _DISPLAY_PHRASES.clear()
         _DISPLAY_PHRASES[key] = cached
@@ -221,9 +234,15 @@ def calculator_name_from_text(text: str) -> Optional[str]:
                 and stem not in _FORMULA_NAME_STEM_COLLISIONS
             ):
                 stems.append(name)
-    display = calculators_named_by_display(raw)
-    for group in (full, display, triples, pairs, stems):
-        uniq = list(dict.fromkeys(group))
+    hits, subsumed = _display_hits(raw)
+    display = [name for name, phrase in hits.items() if len(phrase.split()) >= 3]
+    # A two-word display name is also a take-off or lookup phrase ("Concrete
+    # volume"): it names the calculator only when no id rule does and the ask
+    # gives a figure to compute with.
+    two_word = ([name for name, phrase in hits.items() if len(phrase.split()) == 2]
+                if re.search(r"\d", raw) else [])
+    for group in (full, display, triples, pairs, stems, two_word):
+        uniq = [name for name in dict.fromkeys(group) if name not in subsumed]
         if len(uniq) == 1:
             return uniq[0]
         if len(uniq) > 1:
@@ -1552,8 +1571,25 @@ def _coerce_list(val: Any) -> Any:
         return [coerced]
     return val
 
-def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
-    """Strip unit suffixes from numeric strings; wrap list-typed scalars."""
+def _stated_percents(text: Any) -> frozenset:
+    """Every figure the user's words write as a percentage ("150%",
+    "12.5 %"), as numbers."""
+    found = set()
+    for match in re.finditer(r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)\s*(?:%|per\s*cent\b|percent\b)", str(text or ""), re.I):
+        try:
+            found.add(round(float(match.group(1).replace(",", "")), 9))
+        except ValueError:
+            continue
+    return frozenset(found)
+
+def _coerce_bound_values(fn: Any, bound: Dict[str, Any], converted: frozenset = frozenset(),
+                         stated_percents: frozenset = frozenset()) -> Dict[str, Any]:
+    """Strip unit suffixes from numeric strings; wrap list-typed scalars.
+    ``converted``: inputs the unit converter already put in their declared
+    unit (150% already became 1.5); they are not re-read as percentages.
+    ``stated_percents``: the figures the user wrote as percentages; a value
+    that is one of them divided by 100 is already a fraction, whatever its
+    declared range, and is not divided again."""
     try:
         sig = _inspect.signature(fn)
     except (TypeError, ValueError):
@@ -1581,9 +1617,17 @@ def _coerce_bound_values(fn: Any, bound: Dict[str, Any]) -> Dict[str, Any]:
         # Values in (1, 100] are percents; 1.25 stays a multiplier. An input
         # declared as a fraction whose name says it is a percentage
         # (waste_pct, markup_pct) reads a bare 10 as 10% the same way.
+        if key in converted:
+            continue
         if key in {"bulking_factor", "swell_factor"} or _percent_named_fraction(key, declared.get(key)):
             number = out[key]
-            if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0:
+            # A figure already inside the input's declared range is taken as
+            # given (150% bound as 1.5 on a 0..2 fraction is not divided again).
+            declared_param = spec.params.get(key) if spec else None
+            hi = getattr(declared_param, "hi", None)
+            in_range = hi is not None and isinstance(number, (int, float)) and float(number) <= float(hi)
+            already_fraction = isinstance(number, (int, float)) and round(float(number) * 100.0, 9) in stated_percents
+            if isinstance(number, (int, float)) and 1.0 < float(number) <= 100.0 and not in_range                     and not already_fraction:
                 out[key] = float(number) / 100.0
     return out
 
@@ -1629,6 +1673,20 @@ def _norm_unit_token(raw: Any) -> str:
 # A declared unit that is not written next to the figure. A bare number
 # can bind to one of these, and only when it is the only one still missing.
 _BARE_KINDS = frozenset({"", "-", "currency", "ratio", "count", "no", "nr"})
+
+
+def _same_kind(written: str, declared: str) -> bool:
+    """A written unit measures what the declared unit measures (kg and t
+    are both a mass)."""
+    try:
+        from app.agents.base.formulas.construction_formulas_planning import parse_unit
+
+        a, b = parse_unit(written), parse_unit(declared)
+        if a is not None and b is not None:
+            return a.dimension == b.dimension
+    except Exception:  # noqa: BLE001 -- fall back to the token rule
+        logger.debug("unit dimension lookup failed", exc_info=True)
+    return binding_kind(written) == binding_kind(declared)
 
 
 def binding_kind(unit: str) -> str:
@@ -1706,6 +1764,14 @@ def _text_label_map(fn: Any) -> Dict[str, str]:
         dest = _unique_semantic_dest(_snake_key(incoming), accepted_norm)
         if dest:
             add(incoming, dest)
+    # The registry's declared labels are the words a user reads: each names
+    # its own input, over any word built from a signature name.
+    spec = _formula_spec(fn)
+    for dest, param in (spec.params.items() if spec else ()):
+        key = _norm_label(param.label or "")
+        if key and dest in accepted_list:
+            out[key] = dest
+            ambiguous.discard(key)
     return out
 
 # English dimension adjectives written after the figure ("12 m long",
@@ -1768,6 +1834,39 @@ def _bind_grade_labels(fn: Any, grades: List[Tuple[Tuple[int, int], str, float, 
             found[owners[0]] = formula_registry.grade_value(params[owners[0]], strength, label)
 
 
+#: Currency codes and symbols written in front of a figure ("USD 150000",
+#: "$5,000"). Only these are dropped: three capitals before a number are
+#: otherwise a standard ("ACI 318") or a code and stay as written.
+_CURRENCY_CODES = ("USD", "EUR", "GBP", "SAR", "AED", "QAR", "KWD", "OMR", "BHD", "EGP", "JOD", "INR",
+                   "PKR", "CNY", "JPY", "KRW", "AUD", "NZD", "CAD", "CHF", "SGD", "HKD", "ZAR", "TRY",
+                   "MYR", "IDR", "THB", "PHP", "BRL", "MXN", "SEK", "NOK", "DKK", "PLN", "RUB", "NGN", "KES")
+_CURRENCY_BEFORE_RE = re.compile(r"(?<![A-Za-z])(?:(?:" + "|".join(_CURRENCY_CODES) + r")\s*|[$€£¥]\s*)(?=[+-]?\d)")
+_SPELLED_MAGNITUDE_RE = re.compile(r"(?<![\d.])([+-]?\d[\d,]*(?:\.\d+)?)\s*(thousand|million|billion)\b", re.IGNORECASE)
+_SPELLED_MAGNITUDE = {"thousand": 1e3, "million": 1e6, "billion": 1e9}
+_AREA_WORD_RE = (
+    (re.compile(r"\b(?:sq\.?|square)\s*(?:ft|feet|foot)\b", re.IGNORECASE), "ft2"),
+    (re.compile(r"\b(?:sq\.?|square)\s*(?:m|metres?|meters?)\b", re.IGNORECASE), "m2"),
+)
+
+
+def _normalize_ask(raw: str) -> str:
+    """The ask as the binder reads it: a written minus is a sign, an area
+    written in words is a unit, a spelled-out magnitude is part of its figure
+    (it scales any figure: "1.5 million m"), and a currency code or symbol in
+    front of a figure is dropped. Abbreviated magnitudes (k, mn, bn) are left
+    as written: after an engineering figure "MN" is a meganewton."""
+    text = raw.replace("−", "-")
+    text = re.sub(r"(?i)\bminus\s+(?=\d)", "-", text)
+    for rx, unit in _AREA_WORD_RE:
+        text = rx.sub(unit, text)
+
+    def _scale(m: "re.Match[str]") -> str:
+        value = float(m.group(1).replace(",", "")) * _SPELLED_MAGNITUDE[m.group(2).lower()]
+        return f"{int(value) if value.is_integer() else value}"
+    text = _SPELLED_MAGNITUDE_RE.sub(_scale, text)
+    return _CURRENCY_BEFORE_RE.sub("", text)
+
+
 def extract_calculation_params_from_text(
     fn: Any,
     text: str,
@@ -1779,7 +1878,7 @@ def extract_calculation_params_from_text(
     A bare number binds when exactly one still-missing required input
     declares no unit of its own. Two figures of one kind bind to neither.
     """
-    raw = str(text or "").strip()
+    raw = _normalize_ask(str(text or "").strip())
     if not raw or fn is None:
         return {}
     labels = _text_label_map(fn)
@@ -1821,7 +1920,7 @@ def extract_calculation_params_from_text(
             match = _first_open(rx, raw, _overlaps) or _first_open(glued, raw, _overlaps)
         else:
             rx = re.compile(
-                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+(?:is|of|equals)\s+|\s+)({_TEXT_NUM_RE})"
+                rf"(?<![A-Za-z0-9]){pat}(?:\s*[=:]\s*|\s+(?:is|of|equals|at)\s+|\s+)({_TEXT_NUM_RE})"
                 rf"(?:\s*({_TEXT_UNIT_RE}))?",
                 re.IGNORECASE,
             )
@@ -1861,6 +1960,41 @@ def extract_calculation_params_from_text(
         noun = _DIMENSION_ADJECTIVES[match.group(3).lower()]
         dest = labels.get(_norm_label(noun))
         if not dest or dest in found:
+            continue
+        num = _parse_text_number(match.group(1))
+        if num is None:
+            continue
+        found[dest] = _to_param_unit(num, match.group(2), dest, declared_units.get(dest, ""))
+        consumed.append(match.span())
+
+    # Figure first, label after: "120,000 m3 of concrete", "6,000 t steel".
+    # The label may be written by its last word when no other label ends
+    # with that word ("steel" for structural steel), and the figure's unit
+    # must be the kind of unit that input declares, so a figure never binds
+    # to an input of another kind on a word alone.
+    label_after = re.compile(
+        rf"{number}\s*({_TEXT_UNIT_RE})\s+(?:of\s+)?([A-Za-z][A-Za-z ]{{0,48}})",
+        re.IGNORECASE,
+    )
+
+    def _named(words: List[str]) -> Optional[str]:
+        for n in range(min(3, len(words)), 0, -1):
+            key = _norm_label(" ".join(words[:n]))
+            if key in labels:
+                return labels[key]
+            tails = {dest for lab, dest in labels.items() if lab.endswith("_" + key)}
+            if len(tails) == 1:
+                return tails.pop()
+        return None
+
+    for match in label_after.finditer(raw):
+        if _overlaps(match.span()):
+            continue
+        dest = _named(match.group(3).lower().split())
+        if not dest or dest in found:
+            continue
+        declared = str(declared_units.get(dest) or _unit_from_name(dest) or "")
+        if not declared or not _same_kind(match.group(2), declared):
             continue
         num = _parse_text_number(match.group(1))
         if num is None:
@@ -2061,13 +2195,19 @@ def run_carries_operand(
     name: str,
     params: Optional[Dict[str, Any]] = None,
     text: str = "",
+    stated: str = "",
 ) -> bool:
     """True when a call gives this calculator a figure it did not default.
 
     A passed value equal to the signature default is that default, not an
-    operand. A figure the ask text binds counts the same as a passed one.
-    An unknown calculator is left to ``run_calculation`` to report.
+    operand -- unless the user's own words (``stated``) write that figure:
+    then it is the user's figure, which happens to equal the default (lane 4:
+    "cube 7 MPa" equals the striking-time default 7, and the run was refused
+    as defaulted). A figure the ask text binds counts the same as a passed
+    one. An unknown calculator is left to ``run_calculation`` to report.
     """
+    written = {round(n, 9) for n in (_parse_text_number(m) for m in
+               re.findall(_TEXT_NUM_RE, str(stated or ""))) if n is not None}
     fn = CALCULATORS.get(str(name or "").strip())
     if fn is None:
         return True
@@ -2085,6 +2225,8 @@ def run_carries_operand(
         if value is None:
             continue
         if not _is_signature_default(signature.parameters.get(key), value):
+            return True
+        if isinstance(value, (int, float)) and round(float(value), 9) in written:
             return True
     blob = " ".join(
         str(part) for part in (
@@ -2385,9 +2527,11 @@ def _call_unit(params: Dict[str, Any]) -> Optional[str]:
 
 
 def _units_written_for(figure: float, text: str) -> List[str]:
-    """Every unit the ask writes for this figure, a chain's shared unit included."""
+    """Every unit the ask writes for this figure, a chain's shared unit included.
+    Read from the ask with its written units normalised ("sq ft" is ft2)."""
     from app.lib.construction_formulas_quantities import dimension_chains
 
+    text = _normalize_ask(text or "")
     found = [unit for chain in dimension_chains(text) for num, unit in chain
              if unit and _numbers_agree(num, figure)]
     written = re.compile(rf"(?<![\w.,])({_TEXT_NUM_RE})\s*({_TEXT_UNIT_RE})(?![A-Za-z0-9])", re.IGNORECASE)
@@ -2396,6 +2540,26 @@ def _units_written_for(figure: float, text: str) -> List[str]:
         if num is not None and _numbers_agree(num, figure):
             found.append(match.group(2))
     return found
+
+
+def _words_written_after(figure: float, text: str) -> str:
+    """The unit words the ask writes right after this figure, up to the end
+    of the clause (at most six words); empty when the figure is not written
+    or is written twice with different words."""
+    found = set()
+    num = re.compile(r"(?<![\w.,])(" + _TEXT_NUM_RE + r")(?![\d,.]*\d)")
+    for match in num.finditer(text or ""):
+        value = _parse_text_number(match.group(1))
+        if value is None or not _numbers_agree(value, figure):
+            continue
+        rest = re.split(r"[.;:?!,()]|\s(?:and|for|with|to|over|in|on)\s", text[match.end():], maxsplit=1)[0]
+        words = " ".join(rest.split()[:6]).strip()
+        if words and re.match(r"[A-Za-z%/]", words):
+            found.add(words)
+    return next(iter(found)) if len(found) == 1 else ""
+
+
+_RATE_WORDS = re.compile(r"[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?\s*(?:/\s*|\s+per\s+)[A-Za-z]+(?:-[A-Za-z]+)?")
 
 
 def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dict[str, float],
@@ -2414,6 +2578,14 @@ def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dic
     for key, figure in caller.items():
         dests = list(_partition_bound_params(fn, {key: figure})[0])
         p = declared.get(dests[0]) if len(dests) == 1 else None
+        if p is not None and p.kind == "text" and isinstance(out.get(p.name), (int, float))                 and not isinstance(out.get(p.name), bool) and _numbers_agree(out.get(p.name), figure):
+            # A text input reads the unit words written on its value ("1,500
+            # m2 per gang-day"); a bare figure gets the words the ask wrote
+            # after that figure, so the formula reads the user's unit.
+            words = _words_written_after(figure, text)
+            if words:
+                out[p.name] = f"{figure:g} {words}"
+            continue
         if (p is None or p.kind not in formula_registry.NUMERIC_KINDS or not p.unit
                 or not _numbers_agree(out.get(p.name), figure)):
             continue
@@ -2439,6 +2611,14 @@ def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dic
             unit = call_unit
         if unit and factor(unit) != 1.0:
             out[p.name] = f"{figure!r} {unit}"
+        elif not unit and not by_factor and "/" not in str(p.unit):
+            # Written as a rate ("10 lifts/h", "12 m2 per day") for an input
+            # that is not one: the rate goes with the figure, so the unit
+            # check asks instead of reading the rate as the input's unit
+            # (lane 3: "10 lifts/h" ran as a 10 t crane).
+            rate = _RATE_WORDS.match(_words_written_after(figure, text))
+            if rate:
+                out[p.name] = f"{figure!r} {rate.group(0).strip()}"
     return out
 
 
@@ -2473,6 +2653,9 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         params.pop(_POSITIONAL_KEY, None)
     caller_figures = {key: figure for key, val in params.items()
                       if not _is_junk_key(key) and (figure := _bare_figure(val)) is not None}
+    # The keys the caller sent, before the ask's words are read for more: an
+    # argument only the ask extractors produced is the server's own guess.
+    caller_keys = frozenset(str(k) for k in params)
     ask_text = _ask_blob(params)
     # Live UI pack E4: a concrete/raft ask (or leftover-L6 excavation name
     # plus "documented waste factor" in ``text``) must apply the project's
@@ -2581,11 +2764,17 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     from app.lib import formula_registry
     context = _pop_conversion_context(fn, params)
     params, unknown = _partition_bound_params(fn, params)
+    # An argument read out of the ask's words that this calculator does not
+    # take is dropped, not an error: only an argument the caller sent can be
+    # "unknown" (lane 5: "10 panels of 6 x 0.8 x 25 m" gave width_m and wall,
+    # and a complete diaphragm-wall call failed 3/3).
+    unknown = [key for key in unknown if key in caller_keys]
     if not _accepts_param(fn, "unit"):
         params = _attach_written_units(str(name), fn, params, caller_figures, ask_text, call_unit)
     params, conversions, unit_rejected = formula_registry.convert_written_units(
         str(name), params, context)
-    params = _coerce_bound_values(fn, params)
+    params = _coerce_bound_values(fn, params, frozenset(c.get("parameter") for c in conversions),
+                                  _stated_percents(ask_text))
     params, rejected = formula_registry.check_inputs(str(name), params)
     refused = {row["parameter"] for row in unit_rejected}
     rejected = unit_rejected + [row for row in rejected if row["parameter"] not in refused]

@@ -63,3 +63,91 @@ async def test_defaults_are_used_only_when_none_are_named(monkeypatch):
     systems = list(out["result"]["checklists_by_system"])
     assert len(systems) >= 2
     assert "electrical" in systems or "hvac" in systems
+
+
+class _CatalogOnlyContainer:
+    """Standard tests exist only for catalog keys, as the container does."""
+
+    KEYS = {
+        "hvac", "electrical", "fire", "plumbing", "elevator", "facade",
+        "waterproofing", "reservoir", "bms",
+    }
+
+    async def commissioning_checklist(self, input_data, params):
+        checklists = {}
+        for key in params.get("systems") or []:
+            if key in self.KEYS:
+                checklists[key] = [
+                    {"test": f"{key} functional test"},
+                    {"test": f"{key} performance test"},
+                ]
+            else:
+                checklists[key] = []
+        return {
+            "status": "success",
+            "checklists_by_system": checklists,
+            "summary": {
+                "systems_covered": len(checklists),
+                "total_tests": sum(len(v) for v in checklists.values()),
+            },
+        }
+
+
+def _items_for(result, *names):
+    by_sys = result.get("checklists_by_system") or {}
+    lowered = {str(key).lower(): value for key, value in by_sys.items()}
+    for name in names:
+        items = lowered.get(name.lower())
+        if isinstance(items, list) and items:
+            return items
+    return []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("systems", (
+    ["HVAC", "fire alarm"],
+    "HVAC, fire alarm",
+    "HVAC and fire alarm",
+))
+async def test_each_recognised_system_has_standard_tests(monkeypatch, systems):
+    monkeypatch.setattr(
+        "app.dependencies.get_block_instance",
+        lambda _name: _CatalogOnlyContainer(),
+    )
+    call = ToolCall(
+        agent=SimpleNamespace(allowed_blocks=["construction"]),
+        name="commissioning_checklist",
+        args={"systems": systems},
+        user_message="",
+    )
+    out = await handle_commissioning_checklist(call)
+    assert out["ok"] is True
+    result = out["result"]
+    hvac = _items_for(result, "hvac", "HVAC")
+    fire = _items_for(result, "fire", "fire alarm", "fire_protection")
+    assert len(hvac) > 0
+    assert len(fire) > 0
+    keys = {str(key).lower() for key in (result.get("checklists_by_system") or {})}
+    assert "electrical" not in keys
+
+
+@pytest.mark.asyncio
+async def test_unrecognised_system_gets_a_plain_words_note(monkeypatch):
+    monkeypatch.setattr(
+        "app.dependencies.get_block_instance",
+        lambda _name: _CatalogOnlyContainer(),
+    )
+    call = ToolCall(
+        agent=SimpleNamespace(allowed_blocks=["construction"]),
+        name="commissioning_checklist",
+        args={"systems": ["kitchen extract"]},
+        user_message="",
+    )
+    out = await handle_commissioning_checklist(call)
+    result = out["result"]
+    by_sys = result.get("checklists_by_system") or {}
+    assert by_sys.get("kitchen extract") in (None, [])
+    notes = " ".join(str(n) for n in (result.get("notes") or [result.get("note")]))
+    assert "kitchen extract" in notes.lower() or "kitchen" in notes.lower()
+    assert "no standard tests" in notes.lower()
+    assert "[" not in notes

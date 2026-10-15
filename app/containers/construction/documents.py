@@ -191,6 +191,42 @@ def _as_built_volume_facts_from_text(text: str) -> Optional[Dict[str, Any]]:
     }
 
 
+
+_TO_MM = {"mm": 1.0, "cm": 10.0, "m": 1000.0, "km": 1_000_000.0, "in": 25.4, "ft": 304.8}
+
+
+def _first_given(data: Dict, params: Dict, *keys: str) -> Any:
+    """The first of ``keys`` given in either the envelope or the params."""
+    for source in (data, params):
+        for key in keys:
+            value = source.get(key) if isinstance(source, dict) else None
+            if value not in (None, "", []):
+                return value
+    return None
+
+
+def _measurements(value: Any) -> List[Dict[str, Any]]:
+    """One figure, a list of figures, or labelled measurements, each as
+    {type, mm, shown, raw}. A figure with no unit is in millimetres."""
+    items = value if isinstance(value, (list, tuple)) else [value]
+    out = []
+    for item in items:
+        if isinstance(item, dict):
+            raw_value, unit = item.get("value"), str(item.get("unit") or "mm").strip().lower()
+            kind, raw = str(item.get("type") or "").strip().lower(), str(item.get("raw") or "")
+        else:
+            raw_value, unit, kind, raw = item, "mm", "", ""
+        try:
+            number = float(str(raw_value).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+        scale = _TO_MM.get(unit.rstrip("."))
+        if scale is None:
+            continue
+        out.append({"type": kind, "mm": number * scale, "scale": scale,
+                    "shown": f"{number:g} {unit}", "raw": raw})
+    return out
+
 class ConstructionDocumentsMixin:
     ui_schema = {
         "input": {
@@ -784,8 +820,8 @@ class ConstructionDocumentsMixin:
             if x
         )
         volume_note = _as_built_volume_facts_from_text(text)
-        if volume_note and not (as_built_file and design_file) and not (
-            data.get("measurements") or p.get("as_built_measurements")
+        if volume_note and not (as_built_file and design_file) and (
+            _first_given(data, p, "measurements", "as_built_measurements") is None
         ):
             return volume_note
 
@@ -803,9 +839,9 @@ class ConstructionDocumentsMixin:
                         "measurements + design_measurements as [{type, value, unit}]."
                     ),
                 }
-        elif data.get("measurements") or p.get("as_built_measurements"):
-            as_built_m = data.get("measurements") or p.get("as_built_measurements", [])
-            design_m = p.get("design_measurements", [])
+        elif _first_given(data, p, "measurements", "as_built_measurements") is not None:
+            as_built_m = _first_given(data, p, "measurements", "as_built_measurements")
+            design_m = _first_given(data, p, "design_measurements") or []
             if not design_m:
                 return {
                     "status": "error",
@@ -856,26 +892,35 @@ class ConstructionDocumentsMixin:
             ),
         }
     def _compare_measurement_sets(
-        self, as_built: List[Dict], design: List[Dict], tolerance_mm: float
+        self, as_built: Any, design: Any, tolerance_mm: float
     ) -> List[Dict]:
+        """Each as-built figure against its design figure, in millimetres.
+
+        A side may be one figure, a list of figures, or labelled measurements
+        ({type, value, unit}). Labelled ones pair by type, the rest by
+        position. A figure with no unit is taken in millimetres, the unit the
+        tolerance is given in."""
+        built, wanted = _measurements(as_built), _measurements(design)
+        by_type = {m["type"]: m for m in wanted if m["type"]}
         deviations = []
-        for ab in as_built:
-            ab_val = float(ab.get("value", 0))
-            matching = next(
-                (d for d in design if d.get("type") == ab.get("type")), None
-            )
-            if matching:
-                design_val = float(matching.get("value", 0))
-                diff = abs(ab_val - design_val)
-                if diff > tolerance_mm / 1000:
-                    deviations.append({
-                        "element": ab.get("raw", ab.get("type", "Unknown")),
-                        "design_value": f"{design_val}{ab.get('unit', '')}",
-                        "as_built_value": f"{ab_val}{ab.get('unit', '')}",
-                        "deviation": round(diff, 3),
-                        "severity": "major" if diff > tolerance_mm / 500 else "minor",
-                        "action_required": "Review and document",
-                    })
+        for i, ab in enumerate(built):
+            if ab["type"] and ab["type"] in by_type:
+                matching = by_type[ab["type"]]
+            elif i < len(wanted) and not (ab["type"] and wanted[i]["type"]):
+                matching = wanted[i]   # unlabelled: paired by position
+            else:
+                continue
+            diff_mm = abs(ab["mm"] - matching["mm"])
+            if diff_mm > tolerance_mm:
+                deviations.append({
+                    "element": ab["raw"] or ab["type"] or f"measurement {i + 1}",
+                    "design_value": matching["shown"],
+                    "as_built_value": ab["shown"],
+                    "deviation": round(diff_mm / ab["scale"], 6),  # in the as-built's own unit
+                    "deviation_mm": round(diff_mm, 3),
+                    "severity": "major" if diff_mm > 2 * tolerance_mm else "minor",
+                    "action_required": "Review and document",
+                })
         return deviations
     async def bim_analysis(self, input_data: Any, params: Dict) -> Dict:
         """Analyse a BIM / IFC model for element counts, quantities, and issues.
