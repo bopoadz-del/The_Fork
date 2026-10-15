@@ -12,11 +12,11 @@ from typing import Dict, Optional
     display_name='Payment due on a claim',
     description='Payment due on a claim: certified amount less retention and previous certificates.',
     inputs={
-        'claimed_amount': Param('currency', 0, 1e13),
-        'certified_amount': Param('currency', 0, 1e13),
+        'claimed_amount': Param('currency', 0, 1e13, label='amount claimed'),
+        'certified_amount': Param('currency', 0, 1e13, label='amount certified'),
         'retention_rate': Param('fraction', 0, 1, label='retention'),
         'cumulative_previous_certified': Param('currency', 0, 1e13, label='previously certified amount'),
-        'contract_value': Param('currency', 0, 1e13),
+        'contract_value': Param('currency', 0, 1e13, label='contract value'),
     },
     outputs={'claimed_amount': 'currency', 'certified_amount': 'currency', 'retention_held': 'currency', 'net_payment_due': 'currency', 'cumulative_certified': 'currency', 'percent_complete': '%', 'disputed_amount': 'currency', 'retention_rate_pct': '%'},
 )

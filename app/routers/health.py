@@ -55,7 +55,7 @@ def _evaluate_health() -> dict:
             "llm": probe_llm(),
             "workflows": _probe_workflows(),
         },
-        # Derived from COUNT(*) on the active chunk table, not the stale
+        # Cached estimate of the active chunk table, not the stale
         # documents.chunk_count column. A probe error does not fail liveness.
         "corpus": corpus,
         "blocks_loaded": len(block_instances),

@@ -3,6 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
+from app.agents.hats.qaqc.results import qaqc_calculator
 from app.lib.formula_registry import Param, formula
 
 
@@ -18,6 +19,7 @@ _LOD_CLASH_MM = {100: None, 200: 50.0, 300: 25.0, 350: 12.0, 400: 6.0, 500: 3.0}
     },
     outputs={'lod': '-', 'clash_tolerance_mm': 'mm'},
 )
+@qaqc_calculator
 def bim_clash_tolerance(lod: int = 350) -> dict:
     """Typical hard-clash tolerance for a BIM level of development. This is a
     BEP convention, NOT a standard constant — confirm in the project BEP."""
@@ -49,6 +51,7 @@ def bim_clash_tolerance(lod: int = 350) -> dict:
     },
     outputs={'range_m': 'm', 'estimated_accuracy_mm': 'mm'},
 )
+@qaqc_calculator
 def laser_scan_accuracy(range_m: float, accuracy_at_10m_mm: float = 2.0) -> dict:
     """Scale a scanner's stated ranging accuracy to a working range (linear
     approximation). Pass the accuracy from the scanner datasheet; the value is
@@ -63,3 +66,8 @@ def laser_scan_accuracy(range_m: float, accuracy_at_10m_mm: float = 2.0) -> dict
         "note": (f"{accuracy_at_10m_mm} mm at 10 m scaled to {r} m ~= {acc:.2f} mm "
                  "(linear approx.; use the instrument datasheet)."),
     }
+
+
+from app.agents.hats.qaqc.defaults import install_default_disclosure
+
+install_default_disclosure()

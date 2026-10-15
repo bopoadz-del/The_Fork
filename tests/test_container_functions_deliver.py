@@ -163,6 +163,75 @@ class TestProcurementListDeliver:
         assert result["procurement_list"][0]["priority"] == "critical"
         assert result["procurement_list"][1]["lead_time_weeks"] == 2
 
+    @pytest.mark.asyncio
+    async def test_line_items_keep_quantity_and_total_in_each_driver_shape(self, container):
+        """The workflow envelope carries line items; params stay empty.
+
+        A prompt copies qty/rate/amount. A fetched sheet copies its headers.
+        A fetched BOQ chunk copies the index phrases (quantity and price
+        with a trailing unit). An ingested row uses unit_cost and total_cost.
+        Each row's own extension must come back — a missing rate is not a
+        reason to price the line at zero.
+        """
+        cases = [
+            (
+                {"description": "Busbar", "unit": "nr", "qty": "12", "rate": "25.50", "amount": "306"},
+                12,
+                25.5,
+            ),
+            (
+                {"description": "Tray", "Qty": "4", "Rate": "1,500", "Amount": "6,000"},
+                4,
+                1500,
+            ),
+            (
+                {
+                    "description": "Insulation",
+                    "total quantity": "40 m",
+                    "unit price (rate)": "18",
+                    "total price (amount)": "720",
+                },
+                40,
+                18,
+            ),
+            (
+                {
+                    "description": "Panel",
+                    "unit": "m2",
+                    "quantity": 7,
+                    "unit_cost": 100,
+                    "total_cost": 700,
+                },
+                7,
+                100,
+            ),
+            (
+                {"description": "Gasket", "qty": 5, "amount": 250},
+                5,
+                50,
+            ),
+        ]
+        result = await container.procurement_list_generator(
+            {
+                "action": "procurement_list_generator",
+                "message": "Produce a procurement list for the project.",
+                "line_items": [row for row, _qty, _rate in cases],
+            },
+            {},
+        )
+        assert result["status"] == "success", result
+        by_name = {item["item"]: item for item in result["procurement_list"]}
+        expected_total = 0.0
+        for row, qty, rate in cases:
+            item = by_name[row["description"]]
+            assert item["quantity"] == pytest.approx(qty), row
+            assert item["quantity"] > 0, row
+            assert item["unit_cost"] == pytest.approx(rate), row
+            assert item["total_cost"] == pytest.approx(qty * rate), row
+            assert item["total_cost"] > 0, row
+            expected_total += qty * rate
+        assert result["total_procurement_cost"] == pytest.approx(expected_total)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3 drawing_qto

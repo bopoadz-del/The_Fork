@@ -12,9 +12,9 @@ from typing import Optional
     display_name='Material consumption',
     description='Material required for a quantity of work from the output per unit and an optional waste factor.',
     inputs={
-        'quantity_of_work': Param('-', 0, 1e12),
-        'output_per_unit': Param('-', 0, 1e12),
-        'waste_factor': Param('-', 0, 1, label='waste allowance'),
+        'quantity_of_work': Param('count', 0, 1e12, label='quantity of work'),
+        'output_per_unit': Param('count', 0, 1e12, label='output per unit'),
+        'waste_factor': Param('ratio', 0, 1, label='waste allowance'),
         'waste_percent': Param('%', 0, 100, label='waste allowance'),
     },
     outputs={'material_required': '-', 'base_without_waste': '-', 'waste_factor': '-'},
@@ -68,12 +68,12 @@ def material_consumption(
     display_name='Concrete mix material quantities',
     description='Material volumes for a concrete volume from cement, sand and aggregate proportions.',
     inputs={
-        'wet_volume': Param('-', 0, 1e7, label='wet concrete volume'),
-        'cement_parts': Param('-', 0, 20),
-        'sand_parts': Param('-', 0, 20),
-        'aggregate_parts': Param('-', 0, 20),
-        'dry_volume_factor': Param('-', 1, 2),
-        'waste_factor': Param('-', 0, 1, label='waste allowance'),
+        'wet_volume': Param('m3', 0, 1e7, label='wet concrete volume'),
+        'cement_parts': Param('ratio', 0, 20, label='cement parts'),
+        'sand_parts': Param('ratio', 0, 20, label='sand parts'),
+        'aggregate_parts': Param('ratio', 0, 20, label='aggregate parts'),
+        'dry_volume_factor': Param('ratio', 1, 2, label='dry volume factor'),
+        'waste_factor': Param('fraction', 0, 1, label='waste allowance'),
     },
     outputs={'wet_volume': '-', 'dry_volume': '-', 'dry_volume_factor': '-', 'proportions': '-', 'cement_volume': '-', 'sand_volume': '-', 'aggregate_volume': '-'},
 )
@@ -88,8 +88,10 @@ def concrete_mix_proportions(
     """Concrete mix by caller-supplied cement:sand:aggregate proportions.
 
     Dry Volume = Wet Volume × dry_volume_factor (default 1.54 from PE sheets).
-    Each constituent = Dry Volume × (parts / sum of parts). Refuses when wet
-    volume or any mix part is missing — does not invent a design mix.
+    ``waste_factor`` is a fraction from 0 to 1, so dry volume is increased by
+    that share: ×(1 + waste_factor). Each constituent = Dry Volume × (parts /
+    sum of parts). Refuses when wet volume or any mix part is missing — does
+    not invent a design mix.
     """
     missing = [
         n for n, v in (
@@ -120,7 +122,7 @@ def concrete_mix_proportions(
         }
     dry = wet * float(dry_volume_factor)
     if waste_factor is not None:
-        dry = dry * float(waste_factor)
+        dry = dry * (1.0 + float(waste_factor))
     total_parts = c + s + a
     cement_vol = dry * (c / total_parts)
     sand_vol = dry * (s / total_parts)
@@ -130,7 +132,7 @@ def concrete_mix_proportions(
         "Constituent = Dry Volume × (parts / total parts)",
     ]
     if waste_factor is not None:
-        formulas.append(f"Dry Volume × waste_factor ({waste_factor})")
+        formulas.append(f"Dry Volume × (1 + waste_factor) ({waste_factor})")
     return {
         "wet_volume": wet,
         "dry_volume": round(dry, 6),

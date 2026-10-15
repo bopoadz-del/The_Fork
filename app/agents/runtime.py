@@ -9740,6 +9740,8 @@ def _llm_config() -> dict[str, Any]:
             "url": OPENROUTER_API_URL,
             "env_key": "OPENROUTER_API_KEY",
             "default_model": _resolve_openrouter_model(os.getenv("OPENROUTER_MODEL")),
+            # OpenRouter passes a request seed to the models that take one.
+            "supports_seed": True,
         }
     # Default / fallthrough = DeepSeek (primary). No fixed_temperature:
     # DeepSeek accepts the agent's temperature on deepseek-chat and ignores
@@ -11584,7 +11586,7 @@ def _defaulted_run_refusal(
         call = dict(params or {})
         if isinstance(call.get("text"), str):
             call["text"] = _without_file_names(call["text"])
-        if run_carries_operand(name, call, ""):
+        if run_carries_operand(name, call, "", stated=_without_file_names(ask)):
             return None
         if _formula_run_authorized(ask, name):
             return None

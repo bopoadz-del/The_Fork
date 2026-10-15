@@ -12,7 +12,7 @@ from app.lib.formula_registry import Param, formula
     description='Maximum bending moment of a simply supported beam under a uniformly distributed load.',
     inputs={
         'udl_w_kn_m': Param('kN/m', 0, 100000, label='uniform load'),
-        'span_m': Param('m', 0, 200),
+        'span_m': Param('m', 0, 200, label='span'),
     },
     outputs={'max_moment_kn_m': 'kN.m'},
 )
@@ -40,7 +40,7 @@ def beam_moment_simple(udl_w_kn_m: float, span_m: float) -> dict:
     description='Maximum bending moment of a simply supported beam under one point load at a given position.',
     inputs={
         'point_load_kn': Param('kN', 0, 1e6, label='point load'),
-        'span_m': Param('m', 0, 200),
+        'span_m': Param('m', 0, 200, label='span'),
         'distance_from_left_m': Param('m', 0, 200, label='distance of the load from the left support'),
     },
     outputs={'max_moment_kn_m': 'kN.m'},
@@ -83,7 +83,7 @@ def beam_moment_point_load(
     description='Maximum shear of a simply supported beam under a distributed load and an optional central point load.',
     inputs={
         'udl_w_kn_m': Param('kN/m', 0, 100000, label='uniform load'),
-        'span_m': Param('m', 0, 200),
+        'span_m': Param('m', 0, 200, label='span'),
         'central_point_load_kn': Param('kN', 0, 1e6, label='central point load'),
     },
     outputs={'max_shear_kn': 'kN'},
@@ -114,7 +114,7 @@ def beam_shear_simple(
     description='Support and midspan bending moments of a fixed-ended beam under a uniformly distributed load.',
     inputs={
         'udl_w_kn_m': Param('kN/m', 0, 100000, label='uniform load'),
-        'span_m': Param('m', 0, 200),
+        'span_m': Param('m', 0, 200, label='span'),
     },
     outputs={'support_moment_kn_m': 'kN.m', 'midspan_moment_kn_m': 'kN.m', 'max_moment_kn_m': 'kN.m'},
 )

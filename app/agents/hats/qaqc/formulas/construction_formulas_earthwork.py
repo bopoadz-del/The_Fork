@@ -3,6 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
+from app.agents.hats.qaqc.results import qaqc_calculator
 from app.lib.formula_registry import Param, formula
 
 
@@ -17,6 +18,7 @@ from app.lib.formula_registry import Param, formula
     },
     outputs={'compaction_percent': '%', 'required_percent': '%', 'passed': '-'},
 )
+@qaqc_calculator
 def compaction_control(
     field_dry_density: float,
     max_dry_density: float,
