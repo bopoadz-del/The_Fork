@@ -21,6 +21,49 @@ from app.lib.source_labels import CALCULATOR_SUFFIX, input_phrase
 _LOG = logging.getLogger(__name__)
 _MAX_LIST = 8
 _NOT_OUTPUTS = frozenset({"note", "notes", "standard", "defaults_used", "needs_input", "not_computed"})
+#: The keys a result repeats its primary figure under, beside primary_result.
+_PRIMARY_MIRROR = frozenset({"primary_result", "value", "unit", "label"})
+
+
+def _label_without_unit(key: str, unit: str) -> str:
+    """A key in words, without trailing words that only repeat its unit
+    ("bank_volume_m3", "m3" -> "bank volume")."""
+    words = input_phrase(key, "").strip().split()
+    flat = re.sub(r"[^a-z0-9]", "", str(unit or "").lower())
+    while len(words) > 1 and flat and flat.endswith(words[-1].lower()):
+        words.pop()
+    return " ".join(words)
+
+
+def headline(envelope: Dict[str, Any]) -> str:
+    """The one sentence a calculation's answer leads with: its primary figure,
+    labelled, with its unit. Empty when the result names no primary figure."""
+    result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
+    primary = result.get("primary_result")
+    if not isinstance(primary, dict) or primary.get("value") in (None, ""):
+        # No primary figure named: the formula's first declared output the
+        # result carries as a number.
+        from app.lib import formula_registry
+
+        spec = _spec(str(envelope.get("calculation") or ""))
+        declared = dict(spec.outputs) if spec else {}
+        inputs = set(formula_registry.parameters(spec)) if spec else set()
+        figures = [k for k in declared if isinstance(result.get(k), (int, float))
+                   and not isinstance(result.get(k), bool)]
+        # A declared output that is also an input is the input echoed back,
+        # not what the formula found.
+        key = next((k for k in figures if k not in inputs), figures[0] if figures else None)
+        if key is None:
+            return ""
+        primary = {"value": result[key], "unit": declared[key], "label": _label_without_unit(key, declared[key])}
+    label = str(primary.get("label") or "").strip() or "result"
+    unit = str(primary.get("unit") or "").strip()
+    # A unit is a compact token (m3, degC, N/mm2); a declared "unit" that is a
+    # description ("same unit as specified") is not printed.
+    unit = "" if unit in ("-", "") or re.search(r"\s", unit) else " " + unit
+    value = primary["value"]
+    shown = f"{value:g}" if isinstance(value, float) else str(value)
+    return f"Headline: {label[:1].upper() + label[1:]} is {shown}{unit}."
 
 
 def _spec(calculation: str):
@@ -86,6 +129,9 @@ def render_calculation(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]
     result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
     used = {k: v for k, v in (inputs or {}).items() if k in params}
     lines = [head + "."]
+    lead = headline(envelope)
+    if lead:
+        lines.append(lead)
     if used:
         lines.append("Inputs: " + "; ".join(_phrases(used, labels, in_units)) + ".")
     lines += result_lines(envelope, inputs)
@@ -106,6 +152,10 @@ def _outputs(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]]):
     result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
     used = {k for k in (inputs or {}) if k in params}
     outputs = {k: v for k, v in result.items() if k not in used and k not in _NOT_OUTPUTS}
+    if isinstance(result.get("primary_result"), dict):
+        # value / unit / label beside primary_result repeat it; they are not
+        # results of their own.
+        outputs = {k: v for k, v in outputs.items() if k not in _PRIMARY_MIRROR}
     labels = {k: p.label for k, p in params.items() if p.label}
     return outputs, labels, (dict(spec.outputs) if spec else {})
 
