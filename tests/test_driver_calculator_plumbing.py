@@ -211,3 +211,14 @@ def test_a_one_row_result_is_still_a_table():
 
     rules = (Path(__file__).resolve().parents[1] / "config" / "driver_standing_rules.md").read_text(encoding="utf-8")
     assert "shown as a table with every row, also when there is only one row" in rules
+
+
+def test_periods_are_rows_and_their_figures_are_columns():
+    """Lane 1 on 12e9321 (order 1310Z item 9): a cash flow came out turned
+    sideways in 1 run of 3 -- periods as columns, no Month 1 row. The
+    standing rules fix the orientation: one row per period or item, its
+    figures as the columns."""
+    from pathlib import Path
+
+    rules = (Path(__file__).resolve().parents[1] / "config" / "driver_standing_rules.md").read_text(encoding="utf-8")
+    assert "one row per period or item, its figures as the columns, never turned sideways" in rules
