@@ -13,11 +13,15 @@
 #
 # This does NOT touch DNS. theshovel.ai moves only when a human moves it.
 #
-# A push to main deploys only after the tests workflow on that same commit
-# finishes green. The run checks out and ships workflow_run.head_sha, so a
-# later merge cannot change which commit this deploy builds. Manual
-# workflow_dispatch is unchanged and deploys the ref the owner selected.
-# Overlapping deploys queue; a later run does not cancel one already rolling.
+# A push to this repository's main deploys only after the tests workflow on
+# that same commit finishes green. A pull request, including one whose head
+# branch is named main on a fork, does not deploy. The run checks out and
+# ships workflow_run.head_sha, so a later merge cannot change which commit
+# this deploy builds. Manual workflow_dispatch is unchanged and deploys the
+# ref the owner selected. Overlapping deploys queue; a later run does not
+# cancel one already rolling. After the roll, the job waits for the web
+# service to be stable and for /livez build_sha to equal that commit. The
+# origin is the PUBLIC_BASE_URL repository variable.
 name: deploy-aws
 
 on:
@@ -43,12 +47,20 @@ concurrency:
 
 jobs:
   deploy:
-    # Dispatch stays unconditional. A completed tests run deploys only
-    # when that run itself succeeded.
+    # Dispatch stays unconditional. A tests run deploys only when it was a
+    # successful push to this repository's main, not a fork pull request
+    # whose branch happens to be named main.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_branch == 'main'
+      )
     runs-on: ubuntu-latest
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,7 +93,6 @@ jobs:
       - name: Build and push
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           IMAGE="$REGISTRY/$ECR_REPOSITORY"
           # ECS sets none of the env vars the liveness route reads for build_sha
@@ -131,3 +142,56 @@ jobs:
           else
             echo "$svc: not created"
           fi
+
+      - name: Wait until the web service is stable
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          # aws ecs wait polls every 15s and gives up after 40 tries.
+          # timeout(1) is the hard bound around that waiter.
+          timeout 600 aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services the-fork
+
+      - name: Confirm live build_sha matches the deployed commit
+        timeout-minutes: 5
+        env:
+          DEPLOY_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          base="${DEPLOY_BASE_URL%/}"
+          if [ -z "$base" ]; then
+            echo "::error::repository variable PUBLIC_BASE_URL is empty"
+            exit 1
+          fi
+          case "$base" in
+            https://*) ;;
+            *)
+              echo "::error::repository variable PUBLIC_BASE_URL must be an https origin"
+              exit 1
+              ;;
+          esac
+          url="$base/livez"
+          attempts=12
+          echo "polling $url for build_sha=$DEPLOY_SHA ($attempts attempts)"
+          for attempt in $(seq 1 "$attempts"); do
+            code=$(curl --proto '=https' --max-time 15 -sS -o /tmp/livez.json -w '%{http_code}' "$url" || echo "000")
+            sha=$(python3 -c 'import json, pathlib
+path = pathlib.Path("/tmp/livez.json")
+raw = path.read_text(encoding="utf-8") if path.exists() else ""
+try:
+    value = json.loads(raw or "{}").get("build_sha") or ""
+except json.JSONDecodeError:
+    value = ""
+print(str(value).strip())')
+            echo "attempt $attempt/$attempts: HTTP $code build_sha=${sha:-<empty>}"
+            if [ "$code" = "200" ] && [ "$sha" = "$DEPLOY_SHA" ]; then
+              echo "live build_sha matches $DEPLOY_SHA"
+              exit 0
+            fi
+            if [ "$attempt" != "$attempts" ]; then
+              sleep 10
+            fi
+          done
+          echo "::error::/livez did not report build_sha $DEPLOY_SHA after $attempts attempts"
+          exit 1
