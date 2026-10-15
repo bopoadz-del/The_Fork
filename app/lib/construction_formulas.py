@@ -2195,13 +2195,19 @@ def run_carries_operand(
     name: str,
     params: Optional[Dict[str, Any]] = None,
     text: str = "",
+    stated: str = "",
 ) -> bool:
     """True when a call gives this calculator a figure it did not default.
 
     A passed value equal to the signature default is that default, not an
-    operand. A figure the ask text binds counts the same as a passed one.
-    An unknown calculator is left to ``run_calculation`` to report.
+    operand -- unless the user's own words (``stated``) write that figure:
+    then it is the user's figure, which happens to equal the default (lane 4:
+    "cube 7 MPa" equals the striking-time default 7, and the run was refused
+    as defaulted). A figure the ask text binds counts the same as a passed
+    one. An unknown calculator is left to ``run_calculation`` to report.
     """
+    written = {round(n, 9) for n in (_parse_text_number(m) for m in
+               re.findall(_TEXT_NUM_RE, str(stated or ""))) if n is not None}
     fn = CALCULATORS.get(str(name or "").strip())
     if fn is None:
         return True
@@ -2219,6 +2225,8 @@ def run_carries_operand(
         if value is None:
             continue
         if not _is_signature_default(signature.parameters.get(key), value):
+            return True
+        if isinstance(value, (int, float)) and round(float(value), 9) in written:
             return True
     blob = " ".join(
         str(part) for part in (

@@ -11586,7 +11586,7 @@ def _defaulted_run_refusal(
         call = dict(params or {})
         if isinstance(call.get("text"), str):
             call["text"] = _without_file_names(call["text"])
-        if run_carries_operand(name, call, ""):
+        if run_carries_operand(name, call, "", stated=_without_file_names(ask)):
             return None
         if _formula_run_authorized(ask, name):
             return None
