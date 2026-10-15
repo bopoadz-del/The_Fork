@@ -122,10 +122,11 @@ async def handle_search_project_documents(call: ToolCall) -> dict:
     except (TypeError, ValueError):
         top_k = 5
     results = await search_project_documents(project_id, query, top_k)
+    from app.agents.runtime import _off_loop
     return {
         "name": "search_project_documents",
         "ok": True,
-        "result": {"results": _labelled_hits(results, project_id)},
+        "result": {"results": await _off_loop(_labelled_hits, results, project_id)},
     }
 
 

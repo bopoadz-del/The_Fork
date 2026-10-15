@@ -78,10 +78,8 @@ def exit_check(answer: str, msgs: List[Dict[str, Any]], shared: bool = False,
     # stored file name, in the model's words and the platform's own alike.
     for stored, label in sorted(sources.project_labels(msgs).items(), key=lambda kv: -len(kv[0])):
         out = re.sub(r"(?<![A-Za-z0-9])" + re.escape(stored) + r"(?![A-Za-z0-9])", label, out)
-    if project_id:
-        from app.core import document_labels
-
-        out = document_labels.for_project(project_id).text(out)
+    # The turn's redactor carries the project's document names and identity
+    # set, built once off the loop: nothing here queries the database.
     from app.core import project_identity
 
     out = project_identity.redact(out)

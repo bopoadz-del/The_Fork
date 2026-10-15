@@ -91,8 +91,11 @@ def derive(project: dict[str, Any], document_names: Iterable[str] = (), *, gener
 class Redactor:
     """Replaces every member of one project's identity set."""
 
-    def __init__(self, project_id: str, members: Iterable[str]) -> None:
+    def __init__(self, project_id: str, members: Iterable[str], documents: Any = None) -> None:
         self.project_id = project_id
+        #: The project's document-name guard (app.core.document_labels), built
+        #: once per turn with the set, so no exit check queries the database.
+        self.documents = documents
         self.replacement = neutral_id(project_id)
         self.members = sorted({m for m in members if m and len(m) >= 2}, key=len, reverse=True)
         parts = []
@@ -104,7 +107,11 @@ class Redactor:
         self._re = re.compile(r"(?<![A-Za-z0-9])(?:" + "|".join(parts) + r")(?![A-Za-z0-9])") if parts else None
 
     def text(self, value: Any) -> Any:
-        if not isinstance(value, str) or self._re is None or not value:
+        if not isinstance(value, str) or not value:
+            return value
+        if self.documents is not None:
+            value = self.documents.text(value)
+        if self._re is None:
             return value
         return self._re.sub(self.replacement, value)
 
@@ -162,7 +169,9 @@ def redactor_for(project_id: str | None) -> Redactor | None:
     if not project_id:
         return None
     try:
-        return Redactor(project_id, refresh(project_id))
+        from app.core import document_labels
+
+        return Redactor(project_id, refresh(project_id), documents=document_labels.for_project(project_id))
     except Exception:  # noqa: BLE001
         _LOG.warning("project_identity: identity set could not be refreshed for %s", project_id, exc_info=True)
     # Not fail-open: the set stored at the last ingest still applies.

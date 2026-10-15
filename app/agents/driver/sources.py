@@ -146,13 +146,8 @@ def neutral_label(hit: Dict[str, Any]) -> str:
     can carry a client's or a project's real name)."""
     doc_id = str(hit.get("document_id") or hit.get("doc_id") or "").strip()
     kind = str(hit.get("doc_type") or "").strip()
-    if not kind and doc_id:
-        try:
-            from app.core import projects
-
-            kind = str((projects.get_document(doc_id) or {}).get("doc_type") or "").strip()
-        except Exception:  # noqa: BLE001 -- the type is a label, never a gate
-            kind = ""
+    # The type the hit carries; never a per-row lookup (the Sources panel is
+    # built on the event loop).
     from app.core.document_labels import label
 
     return label(doc_id, kind)
