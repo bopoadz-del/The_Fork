@@ -154,6 +154,71 @@ def test_parallel_cold_calls_refresh_once(monkeypatch):
     assert sum(1 for row in results if row.get("source") == "warming") == workers - 1
 
 
+def test_env_ttl_overrides_take_effect(monkeypatch):
+    """Both TTLs come from the environment. Defaults stay 300s and 30s."""
+    assert health_probes._corpus_ttl_s() == 300
+    assert health_probes._corpus_negative_ttl_s() == 30
+
+    monkeypatch.setenv("CORPUS_CHUNK_CACHE_TTL_S", "12")
+    monkeypatch.setenv("CORPUS_CHUNK_CACHE_NEGATIVE_TTL_S", "3")
+    assert health_probes._corpus_ttl_s() == 12
+    assert health_probes._corpus_negative_ttl_s() == 3
+
+    calls = []
+
+    def refresher(timeout_s: float = 1.5):
+        calls.append(timeout_s)
+        if len(calls) == 1:
+            raise RuntimeError("db down")
+        return _ok(9)
+
+    monkeypatch.setattr(health_probes, "_refresh_corpus_count", refresher)
+    probe_corpus_chunks()
+    cached_failure = probe_corpus_chunks()
+    assert calls == [1.5]
+    assert cached_failure["source"] == "cached"
+    assert "db down" in cached_failure["error"]
+
+    # 4s is past the overridden negative window and inside the 30s default.
+    with health_probes._corpus_cache_lock:
+        health_probes._corpus_cache_at = time.monotonic() - 4
+    refreshed = probe_corpus_chunks()
+    assert calls == [1.5, 1.5]
+    assert refreshed["chunks"] == 9
+    assert refreshed["source"] == "estimate"
+
+    still_fresh = probe_corpus_chunks()
+    assert calls == [1.5, 1.5]
+    assert still_fresh["source"] == "cached"
+    assert still_fresh["chunks"] == 9
+
+    # 13s is past the overridden success TTL and inside the 300s default.
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow(timeout_s: float = 1.5):
+        calls.append(timeout_s)
+        started.set()
+        release.wait(2)
+        return _ok(10, "exact")
+
+    monkeypatch.setattr(health_probes, "_refresh_corpus_count", slow)
+    with health_probes._corpus_cache_lock:
+        health_probes._corpus_cache_at = time.monotonic() - 13
+    try:
+        stale = probe_corpus_chunks()
+        assert stale["stale"] is True
+        assert stale["chunks"] == 9
+        assert stale["source"] == "estimate"
+        assert started.wait(2)
+    finally:
+        release.set()
+        thread = health_probes._corpus_refresh_thread
+        if thread is not None:
+            thread.join(2)
+    assert calls == [1.5, 1.5, 1.5]
+
+
 def test_refresher_error_is_payload_and_does_not_raise(monkeypatch):
     def refresher(timeout_s: float = 1.5):
         raise RuntimeError("db down")

@@ -11,6 +11,7 @@ can hang or crash the health endpoint is worse than the lie it replaces.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -68,14 +69,39 @@ def reset_corpus_chunk_cache() -> None:
         _corpus_refresh_error = None
 
 
+_DEFAULT_CORPUS_TTL_S = 300.0
+_DEFAULT_CORPUS_NEGATIVE_TTL_S = 30.0
+
+
+def _env_float(name: str, default: float) -> float:
+    """Same numeric-env reader as the other core watchdogs.
+
+    Missing, blank, or non-numeric values keep ``default``.
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def _corpus_cache_config() -> Dict[str, float]:
     """Tunables for the corpus-count probe.
 
     ``ttl_s`` is how long a successful count is served with no database work.
     ``negative_ttl_s`` is how long a failed refresh is remembered so a down
     database is not queried again on every /health hit.
+    Both are read from the environment on each call. Unset values stay at
+    ``CORPUS_CHUNK_CACHE_TTL_S`` 300 and ``CORPUS_CHUNK_CACHE_NEGATIVE_TTL_S`` 30.
     """
-    return {"ttl_s": 300, "negative_ttl_s": 30}
+    return {
+        "ttl_s": _env_float("CORPUS_CHUNK_CACHE_TTL_S", _DEFAULT_CORPUS_TTL_S),
+        "negative_ttl_s": _env_float(
+            "CORPUS_CHUNK_CACHE_NEGATIVE_TTL_S", _DEFAULT_CORPUS_NEGATIVE_TTL_S
+        ),
+    }
 
 
 def _corpus_ttl_s() -> float:
@@ -121,8 +147,6 @@ def _refresh_corpus_count(timeout_s: float = 1.5) -> Dict[str, Any]:
     started = time.monotonic()
     table = None
     try:
-        import os
-
         from sqlalchemy import text
 
         from app.core.db import SessionLocal
@@ -268,12 +292,13 @@ def probe_corpus_chunks(timeout_s: float = 1.5) -> Dict[str, Any]:
 
     The first call reads Postgres ``pg_class.reltuples`` and falls back to
     ``COUNT(*)`` only when that estimate is missing or -1, under the same
-    statement timeout as before. Later calls inside the TTL from config
-    return the cached figure (``source="cached"``, ``age_s``) and do no
-    database work. After that TTL the last figure is returned at once with
-    ``stale: true`` while a single background thread refreshes it. Concurrent
-    cold callers get one refresh; the rest receive a warming payload. A
-    failed refresh is remembered for the negative TTL from config so a down
+    statement timeout as before. Later calls inside the TTL from the
+    environment return the cached figure (``source="cached"``, ``age_s``)
+    and do no database work. After that TTL the last figure is returned at
+    once with ``stale: true`` while a single background thread refreshes it.
+    Concurrent cold callers get one refresh; the rest receive a warming
+    payload. A failed refresh is remembered for the negative TTL from the
+    environment so a down
     database is not queried on every probe. A probe error is a field on the
     payload. This function does not raise.
     """
