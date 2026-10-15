@@ -124,10 +124,11 @@ def test_health_corpus_uses_chunk_table_not_column(monkeypatch, tmp_path):
         session.commit()
     assert projects.get_document(doc["id"])["chunk_count"] == 999
 
-    from app.core.health_probes import probe_corpus_chunks
+    from app.core.health_probes import probe_corpus_chunks, reset_corpus_chunk_cache
 
+    reset_corpus_chunk_cache()
     probe = probe_corpus_chunks()
-    assert probe["source"] == "chunk_table_count"
+    assert probe["source"] == "exact"
     assert probe["error"] is None
     assert probe["chunks"] == live
     assert probe["chunks"] != 999
@@ -138,7 +139,10 @@ def test_health_payload_exposes_corpus_query(monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app
 
+    from app.core.health_probes import reset_corpus_chunk_cache
+
     with TestClient(app) as client:
+        reset_corpus_chunk_cache()
         data = client.get("/health").json()
     assert "corpus" in data
-    assert data["corpus"]["source"] == "chunk_table_count"
+    assert data["corpus"]["source"] in {"exact", "estimate"}
