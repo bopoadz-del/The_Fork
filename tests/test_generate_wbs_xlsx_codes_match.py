@@ -23,8 +23,9 @@ from app.core.conversation_wbs import stage_conversation_wbs
 from app.core.predefined_reasoning import format_wbs_outline
 from app.main import app
 from tests.conftest import requires_construction_kit
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 BRIEF = "Generate a high-level WBS for a 10-storey office tower."

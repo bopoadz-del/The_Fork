@@ -1,7 +1,7 @@
 """Tests for the JWT-aware require_api_key dependency — Stream B fix.
 
 require_api_key must now accept BOTH:
-  - Legacy API keys (cb_dev_key, env-based keys) — unchanged
+  - Legacy API keys (the dev key, env-based keys) — unchanged
   - Valid JWTs minted via jwt_auth.create_token — NEW
 
 All returned-dict keys must be present so every caller pattern works:
@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from app.dependencies import require_api_key
 from app.core import jwt_auth, users as users_store
+from tests._dev_key import DEV_KEY
 
 
 @pytest.fixture
@@ -70,9 +71,9 @@ def test_valid_jwt_is_accepted_and_returns_superset_dict(app_client, isolated_us
     assert data["user"]  # non-empty (email or id)
 
 
-def test_legacy_cb_dev_key_still_works(app_client):
-    """cb_dev_key (legacy path) must keep working after the JWT fix."""
-    r = app_client.get("/protected", headers={"Authorization": "Bearer cb_dev_key"})
+def test_the_dev_key_still_works(app_client):
+    """the dev key (legacy path) must keep working after the JWT fix."""
+    r = app_client.get("/protected", headers={"Authorization": "Bearer " + DEV_KEY})
     assert r.status_code == 200
     data = r.json()
     assert data.get("valid") is True

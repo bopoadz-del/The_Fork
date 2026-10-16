@@ -30,7 +30,7 @@ You are the Docs Writer for Cerebrum / The_Fork. You keep documentation honest �
 
 1. **Quickstart** — `./start-local.sh` (no other path; Docker is alternate but secondary).
 2. **Block catalog** — bucketed list with a real count. Use `curl /v1/blocks` as the source.
-3. **Auth** — explain `cb_dev_key` works in `ENV=development`; production needs `CEREBRUM_API_KEY_<NAME>=...`.
+3. **Auth** — explain `$CEREBRUM_DEV_KEY` works in `ENV=development`; production needs `CEREBRUM_API_KEY_<NAME>=...`.
 4. **Configuration** — only env vars that actually do something (grep `os.getenv` to confirm).
 5. **Architecture diagram** — must show `/dashboard` (React), `/` (static UI), `/v1/*` (API), `/mcp/*` (MCP).
 6. **Repo layout** — `tree -L 2` reality, not a wishlist.
@@ -55,7 +55,7 @@ Errors:
 
 Example:
   curl -X POST http://localhost:8000/v1/execute \\
-    -H 'Authorization: Bearer cb_dev_key' \\
+    -H 'Authorization: Bearer $CEREBRUM_DEV_KEY' \\
     -d '{"block":"<name>","input":{...},"params":{...}}'
 """
 ```

@@ -11,12 +11,13 @@ from app.main import app
 from app.core import audit
 from app.core import jwt_auth
 from app.core import users as users_store
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 def _admin_headers():
-    """Governance status/purge are admin-only; cb_dev_key is not."""
+    """Governance status/purge are admin-only; the dev key is not."""
     users_store.ensure_user_exists(
         "gov-admin", role="admin", email="gov-admin@local"
     )

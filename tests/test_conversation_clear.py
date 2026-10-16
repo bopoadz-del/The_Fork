@@ -17,9 +17,10 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core import agent_memory
+from tests._dev_key import DEV_KEY
 
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 @pytest.fixture(scope="module")

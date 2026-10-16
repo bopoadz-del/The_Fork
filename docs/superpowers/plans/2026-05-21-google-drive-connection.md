@@ -230,7 +230,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core import drive_auth
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer $CEREBRUM_DEV_KEY"}
 
 
 @pytest.fixture(autouse=True)

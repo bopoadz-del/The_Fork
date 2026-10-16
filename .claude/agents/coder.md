@@ -38,7 +38,7 @@ You are the Coder for Cerebrum / The_Fork. You write and edit code anywhere in t
 - **No `--no-verify` pushes.** If a hook fails, fix the cause.
 - **Reuse before adding.** If `cache_manager`, `monitoring`, `auth`, `document_engine`, `boq_processor` already covers a step, use it. Don't re-implement.
 - **Match existing styles.** This repo doesn't use Black/Prettier formatting in CI yet — match neighboring code's spacing and quote style.
-- **Frontend: keep `cb_dev_key` as the default,** with `?key=...` and `localStorage` overrides intact (`app/static/index.html`).
+- **Frontend: keep `$CEREBRUM_DEV_KEY` as the default,** with `?key=...` and `localStorage` overrides intact (`app/static/index.html`).
 
 ## When to hand off
 

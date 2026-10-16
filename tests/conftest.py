@@ -20,7 +20,7 @@ except ImportError:
     pass
 
 # Disable per-caller rate limiting for the test suite — the full suite makes
-# far more than a minute's quota of requests under one identity (cb_dev_key).
+# far more than a minute's quota of requests under one identity (the dev key).
 # The rate limiter's own tests re-enable it explicitly via monkeypatch.
 os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
 
@@ -32,6 +32,7 @@ os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
 # override happens at collection time, BEFORE app modules import, so the
 # resolved path on first read is the temp directory.
 import tempfile as _tempfile
+from tests._dev_key import DEV_KEY
 _TEST_DATA_DIR = _tempfile.mkdtemp(prefix="thefork-tests-")
 # Force the override — start-local.sh sets DATA_DIR=$PWD/data so a developer
 # running pytest in the same shell after the server would otherwise inherit
@@ -351,7 +352,7 @@ def data_dir():
 
 @pytest.fixture
 def dev_key_is_admin(monkeypatch):
-    """Give ``cb_dev_key`` the admin role for one test.
+    """Give ``the dev key`` the admin role for one test.
 
     Only the admin path adds to a project's knowledge base
     (``app/core/privileges.caller_may_add_to_project_rag``); the dev key has no
@@ -364,7 +365,7 @@ def dev_key_is_admin(monkeypatch):
 
     def _validate(credentials):
         principal = original(credentials)
-        if getattr(credentials, "credentials", None) == "cb_dev_key":
+        if getattr(credentials, "credentials", None) == DEV_KEY:
             principal = {**principal, "role": "admin"}
         return principal
 

@@ -71,7 +71,7 @@ append-only — entries are never rewritten.
 ## Confidentiality
 
 - All `/v1/*` endpoints require an API key (`Authorization: Bearer <key>`).
-- The `cb_dev_key` development key works **only** in development/test
+- The `$CEREBRUM_DEV_KEY` development key works **only** in development/test
   environments — it is rejected when `ENV` is production.
 - Project memory is scoped to a single project; facts never leak across
   projects.

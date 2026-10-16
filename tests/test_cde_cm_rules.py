@@ -28,8 +28,9 @@ from app.core.cde.events import event_from_payload
 from app.core.cde.poll import run_poll_once
 from app.core.delay_advice import DelayKind, classify_delay
 from app.main import app
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 @pytest.fixture

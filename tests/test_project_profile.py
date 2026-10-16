@@ -7,8 +7,9 @@ from fastapi.testclient import TestClient
 
 from app.core import jwt_auth
 from app.core import users as users_store
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 def _admin_headers():

@@ -24,7 +24,7 @@ Use exactly three severities:
 2. **Whitelist filter for quantity counts** lives in `app/containers/construction.py:_calculate_quantities`. Any new quantity emitter must respect it (or expand the whitelist with a justification in the diff).
 3. **No Render references.** Search for `onrender.com` or `RENDER_DEPLOY` — those should not appear in new code. The fork README explicitly drops Render.
 4. **Local CORS list** in `app/main.py` must keep `localhost:3000/4173/5173/8000` and `127.0.0.1:*`. If a change replaces these with prod-only origins, that's Critical.
-5. **Dev key (`cb_dev_key`) only valid in `ENV=development`.** Any change weakening that check in `app/core/auth.py` is Critical.
+5. **Dev key (`$CEREBRUM_DEV_KEY`) only valid in `ENV=development`.** Any change weakening that check in `app/core/auth.py` is Critical.
 6. **BLOCK_REGISTRY sync.** If a new block file appears in `app/blocks/`, it must also appear in `app/blocks/__init__.py` BLOCK_REGISTRY with a matching import.
 7. **Panel.data shape.** Any new panel emitted by `auto_pipeline` (or chained equivalents) must match the frontend renderer in `app/static/index.html:renderPanels`. Common mismatch: server emits `panel.line_items`, renderer reads `panel.data.procurement_list`.
 8. **Security scanner.** If a new file uses eval/exec/os.system/shell=True/ctypes/pickle.loads, it must be in `scripts/security_scan.py` ALLOWLIST or removed. The CI runs this on every push.

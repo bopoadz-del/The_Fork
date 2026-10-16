@@ -105,12 +105,13 @@ class AuthBlock(LegoBlock):
         if not api_key:
             return {"valid": False, "reason": "no_key_provided"}
         
-        # Dev key fallback — only in development environments
-        if api_key == "cb_dev_key":
-            env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
-            if env in {"dev", "development", "local", "test", "testing"}:
-                return {"valid": True, "role": "admin", "owner": "dev", "name": "dev_key"}
-            return {"valid": False, "reason": "dev_key_disabled_in_production"}
+        # The development key (app.core.auth.dev_key): from the environment
+        # only, in a development environment only; never a value in the source.
+        from app.core.auth import dev_key
+
+        dev = dev_key()
+        if dev is not None and api_key == dev:
+            return {"valid": True, "role": "admin", "owner": "dev", "name": "dev_key"}
         
         # Check if revoked/blocked
         if self.memory_block:

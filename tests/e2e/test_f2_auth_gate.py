@@ -18,10 +18,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._dev_key import DEV_KEY
 
-VALID = {"Authorization": "Bearer cb_dev_key"}
+VALID = {"Authorization": "Bearer " + DEV_KEY}
 UNKNOWN = {"Authorization": "Bearer cb_not_a_real_key_00000000"}
-MALFORMED = {"Authorization": "cb_dev_key"}          # no scheme
+MALFORMED = {"Authorization": DEV_KEY}          # no scheme
 
 # Routes that must never serve an anonymous caller. Kept small and concrete:
 # one read, one write, one admin-scoped.
@@ -64,7 +65,7 @@ def test_a_valid_key_passes_the_gate(client, path):
 
 
 def test_an_authenticated_non_admin_is_still_denied_admin_actions(client):
-    """`cb_dev_key` authenticates but carries no admin role.
+    """`the dev key` authenticates but carries no admin role.
 
     This is the specific hole the api-key normalisation had to avoid:
     defaulting a missing `role` from the system user (which IS admin) would

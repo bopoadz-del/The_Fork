@@ -10,6 +10,7 @@ import pathlib
 import tempfile
 
 import pytest
+from tests._dev_key import DEV_KEY
 
 
 def test_audit_writer_writes_one_jsonl_row_per_call(monkeypatch, tmp_path):
@@ -552,7 +553,7 @@ def test_rag_debug_query_param_propagates_to_chat_stream(monkeypatch, tmp_path):
         r = client.post(
             "/v1/agents/project-assistant/chat/stream?rag_debug=true",
             json={"message": "hi"},
-            headers={"Authorization": "Bearer cb_dev_key"},
+            headers={"Authorization": "Bearer " + DEV_KEY},
         )
     assert r.status_code == 200
     assert captured["rag_debug"] is True

@@ -37,7 +37,7 @@ You are a Block Implementer for the Cerebrum / The_Fork repository. Your job is 
    disown
    sleep 7
    curl -s http://localhost:8000/v1/health
-   curl -s -X POST http://localhost:8000/v1/execute -H "Authorization: Bearer cb_dev_key" -H "Content-Type: application/json" -d '{"block":"<name>","input":...,"params":...}'
+   curl -s -X POST http://localhost:8000/v1/execute -H "Authorization: Bearer $CEREBRUM_DEV_KEY" -H "Content-Type: application/json" -d '{"block":"<name>","input":...,"params":...}'
    ```
    Confirm `blocks_loaded` increased by 1 and the execute call returns `status: success`.
 

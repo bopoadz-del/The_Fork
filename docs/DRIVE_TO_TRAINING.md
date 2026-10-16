@@ -30,7 +30,7 @@ Trigger hydration manually (or let the nightly scheduler do it):
 
 ```bash
 curl -X POST http://localhost:8000/v1/execute \
-  -H "Authorization: Bearer cb_dev_key" \
+  -H "Authorization: Bearer $CEREBRUM_DEV_KEY" \
   -d '{"block":"learning_engine","input_data":{"operation":"hydrate"}}'
 ```
 
@@ -40,7 +40,7 @@ Check progress:
 
 ```bash
 curl http://localhost:8000/v1/execute \
-  -H "Authorization: Bearer cb_dev_key" \
+  -H "Authorization: Bearer $CEREBRUM_DEV_KEY" \
   -d '{"block":"learning_engine","input_data":{"operation":"hydration_latest","scope":"project","project_id":"construction_proj"}}'
 ```
 
@@ -92,7 +92,7 @@ Saves a LoRA adapter to `data/learning/adapters/construction_v1/`. PR 3a's `loca
 
 ```bash
 curl -X POST http://localhost:8000/v1/execute \
-  -H "Authorization: Bearer cb_dev_key" \
+  -H "Authorization: Bearer $CEREBRUM_DEV_KEY" \
   -d '{"block":"chat","input_data":{"text":"what is the minimum concrete cover for a slab in moderate exposure?","use_local_model":true}}'
 ```
 

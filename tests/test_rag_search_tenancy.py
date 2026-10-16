@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from app.core import jwt_auth
 from app.core import users as users_store
 from app.main import app
+from tests._dev_key import DEV_KEY
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ def two_tenants(client, dev_key_is_admin):
     # project is seeded by an admin; what is under test is who may SEARCH it.
     r = client.post(
         f"/v1/projects/{pid}/documents",
-        headers={"Authorization": "Bearer cb_dev_key"},
+        headers={"Authorization": "Bearer " + DEV_KEY},
         files={
             "file": (
                 "notes.txt",

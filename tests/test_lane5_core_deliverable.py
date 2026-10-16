@@ -8,6 +8,7 @@ import pytest
 from app.core.predefined_reasoning import DELIVER_REGISTRY, WORKFLOW_REGISTRY
 from app.schemas.execution_plan import ExecutionPlan
 from tests.lane5_core_support import call
+from tests._dev_key import DEV_KEY
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +65,7 @@ def test_naming_one_workflow_does_not_run_another(monkeypatch):
             raw = client.post(
                 "/v1/chat/stream",
                 json={"message": "Prepare the panel ledger.", "project_id": None, "history": []},
-                headers={"Authorization": "Bearer cb_dev_key", "X-Fork-Driver": "on"},
+                headers={"Authorization": "Bearer " + DEV_KEY, "X-Fork-Driver": "on"},
             ).text
     finally:
         for key in keys:

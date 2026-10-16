@@ -3,6 +3,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from tests._dev_key import DEV_KEY
 
 _RUN = uuid.uuid4().hex[:8]
 
@@ -30,7 +31,7 @@ def test_project_audit_records_user_id(client):
 
 
 def test_legacy_audit_records_system_user(client):
-    legacy = {"Authorization": "Bearer cb_dev_key"}
+    legacy = {"Authorization": "Bearer " + DEV_KEY}
     pid = client.post("/v1/projects", json={"name": "Legacy Audited"},
                       headers=legacy).json()["id"]
     entries = client.get(f"/v1/projects/{pid}/audit", headers=legacy).json()["entries"]

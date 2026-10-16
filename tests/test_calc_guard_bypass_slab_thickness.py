@@ -34,6 +34,7 @@ from app.agents.runtime import (
 )
 from app.core.rag.inject import format_chunks_as_system_message
 from app.core.rag.vector_store import Chunk
+from tests._dev_key import DEV_KEY
 
 
 T20 = (
@@ -224,7 +225,7 @@ async def _chat_with_model_text(monkeypatch, question: str, model_text: str) -> 
         allowed_blocks=["construction"],
     )
     return await agent.chat(
-        question, api_key="cb_dev_key", project_id=FIXTURE_PID,
+        question, api_key=DEV_KEY, project_id=FIXTURE_PID,
     )
 
 

@@ -14,7 +14,7 @@ You are the Test Writer for Cerebrum / The_Fork. You write `pytest` tests that e
 - Block tests instantiate the class directly and call `await block.execute(input_data, params)`. See `tests/test_mcp_blocks.py` for the shape.
 - HTTP route tests use `httpx.AsyncClient` against an in-memory `app` (FastAPI), not the live server.
 - File fixtures live under `data/` — many real PDFs/xlsx are already there; reuse them.
-- The dev API key is `cb_dev_key` (valid in `ENV=development`).
+- The dev API key is `$CEREBRUM_DEV_KEY` (valid in `ENV=development`).
 
 ## What every block test should cover
 
@@ -25,7 +25,7 @@ You are the Test Writer for Cerebrum / The_Fork. You write `pytest` tests that e
 
 ## What every router test should cover
 
-1. **Auth** — without `Authorization: Bearer cb_dev_key`, returns 401.
+1. **Auth** — without `Authorization: Bearer $CEREBRUM_DEV_KEY`, returns 401.
 2. **Schema** — sending the wrong field shape returns 422 with a field-specific error.
 3. **Success** — returns 200 + the documented response keys.
 4. **Streaming endpoints** (`/v1/chat/stream`) — first event is `start`, errors are surfaced as `{"type":"error","message":...}` events, not silent.

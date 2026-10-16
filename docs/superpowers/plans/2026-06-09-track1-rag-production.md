@@ -1500,7 +1500,7 @@ def test_rag_debug_query_param_doubles_llm_call(monkeypatch, tmp_path):
         r = client.post(
             "/v1/agents/project-assistant/chat/stream?rag_debug=true",
             json={"message": "hi", "project_id": "p1"},
-            headers={"Authorization": "Bearer cb_dev_key"},
+            headers={"Authorization": "Bearer $CEREBRUM_DEV_KEY"},
         )
     assert r.status_code == 200
     # The SSE stream contains a rag_debug-marked end event.

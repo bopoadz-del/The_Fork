@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.dependencies import require_api_key
+from tests._dev_key import DEV_KEY
 from app.infra.monitoring import (
     BlockMetricsRegistry,
     JsonLogFormatter,
@@ -119,7 +120,7 @@ def test_metrics_endpoint_returns_block_snapshot(client: TestClient):
 @pytest.fixture
 def client():
     from app.main import app
-    return TestClient(app, headers={"Authorization": "Bearer cb_dev_key"})
+    return TestClient(app, headers={"Authorization": "Bearer " + DEV_KEY})
 
 
 def test_configure_structured_logging_sets_root_to_info_in_prod(monkeypatch):

@@ -8,6 +8,29 @@ from fastapi import HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 
+#: The environment variable that holds the development API key. There is no
+#: built-in value: a key in the source would be a credential anyone can read.
+DEV_KEY_ENV = "CEREBRUM_DEV_KEY"
+_DEV_ENVS = {"dev", "development", "local", "test", "testing"}
+
+
+def is_dev_environment() -> bool:
+    import sys
+
+    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
+    return env in _DEV_ENVS or "pytest" in sys.modules
+
+
+def dev_key() -> Optional[str]:
+    """The development API key: the value of ``CEREBRUM_DEV_KEY`` in a
+    development environment, None anywhere else or when it is unset (then no
+    dev key is accepted -- fail closed)."""
+    if not is_dev_environment():
+        return None
+    value = os.getenv(DEV_KEY_ENV, "").strip()
+    return value or None
+
+
 class APIKeyAuth:
     """Simple API key authentication with usage tracking."""
     
@@ -19,26 +42,10 @@ class APIKeyAuth:
     
     @staticmethod
     def _is_dev_environment() -> bool:
-        import sys
-        env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
-        if env in {"dev", "development", "local", "test", "testing"}:
-            return True
-        # Allow dev key during pytest runs
-        if "pytest" in sys.modules:
-            return True
-        return False
+        return is_dev_environment()
 
     def _load_keys(self) -> Dict[str, Dict]:
         keys = {}
-
-        # cb_dev_key only works in development environments
-        if self._is_dev_environment():
-            keys["cb_dev_key"] = {
-                "user": "dev",
-                "tier": "unlimited",
-                "rate_limit": float('inf'),
-                "created_at": time.time()
-            }
 
         master = os.getenv("CEREBRUM_MASTER_KEY")
         if master:
@@ -68,13 +75,17 @@ class APIKeyAuth:
 
         key = credentials.credentials
 
-        # cb_dev_key only valid in dev environments
-        if key == "cb_dev_key":
-            if self._is_dev_environment():
-                return {"user": "dev", "tier": "unlimited", "valid": True}
-            raise HTTPException(status_code=401, detail="Dev key disabled in production")
+        # The development key: read from the environment at every check, valid
+        # only in a development environment, and only when it is set.
+        dev = dev_key()
+        if dev is not None and key == dev:
+            return {"user": "dev", "tier": "unlimited", "valid": True}
 
         if key not in self._keys:
+            if dev is None and self._is_dev_environment():
+                raise HTTPException(status_code=401, detail=(
+                    f"Invalid API key. No development key is configured: set {DEV_KEY_ENV} "
+                    "to use one in this environment."))
             raise HTTPException(status_code=401, detail="Invalid API key")
 
         key_data = self._keys[key].copy()

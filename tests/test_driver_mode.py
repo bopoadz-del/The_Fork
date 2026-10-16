@@ -11,6 +11,7 @@ import pytest
 
 from app.agents import driver
 from app.agents.driver import context, llm, loop, tools
+from tests._dev_key import DEV_KEY
 
 
 @pytest.mark.parametrize("value,expected", [("", False), ("0", False), ("1", True), ("on", True)])
@@ -363,7 +364,7 @@ def test_only_the_request_that_asks_takes_the_driver(monkeypatch):
     seen = []
     monkeypatch.setattr(llm, "call", _scripted([{"content": "From the driver."}], seen))
     body = {"message": "hello", "project_id": None, "history": []}
-    h = {"Authorization": "Bearer cb_dev_key"}
+    h = {"Authorization": "Bearer " + DEV_KEY}
     with TestClient(app) as client:
         asked = client.post("/v1/chat/stream", json=body, headers={**h, "X-Fork-Driver": "on"}).text
     events = [json.loads(line[len("data: "):]) for line in asked.split("\n") if line.startswith("data: ")]
@@ -386,7 +387,7 @@ def test_a_request_that_does_not_ask_keeps_the_old_path(monkeypatch):
     monkeypatch.setattr(loop, "stream", no_driver)
     with TestClient(app) as client:
         text = client.post("/v1/chat/stream", json={"message": "hello", "history": []},
-                           headers={"Authorization": "Bearer cb_dev_key"}).text
+                           headers={"Authorization": "Bearer " + DEV_KEY}).text
     assert '"mode": "driver"' not in text
 
 
