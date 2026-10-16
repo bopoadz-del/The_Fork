@@ -37,7 +37,7 @@ A1_ANSWER = (
     "**SAR 8,640,000.00**."
 )
 A5_ANSWER = "Delay Damages are **0.2%** of the Accepted Contract Amount per day."
-A9_ANSWER = "The Engineer is **Jane Fixture** of Example Consulting."
+A9_ANSWER = "The Engineer is **Named Engineer** of Example Consulting."
 
 
 def _turns(*pairs: tuple[str, str]) -> list[dict[str, str]]:
@@ -115,7 +115,7 @@ def test_collects_a1_through_a9_with_figures_intact():
     assert [p["label"] for p in pairs] == [f"A{i}" for i in range(1, 10)]
     assert "8,640,000.00" in pairs[0]["answer"]
     assert "0.2%" in pairs[4]["answer"]
-    assert "Jane Fixture" in pairs[8]["answer"]
+    assert "Named Engineer" in pairs[8]["answer"]
 
 
 def test_skips_the_export_ask_and_the_ready_confirmation():
@@ -159,7 +159,7 @@ def test_report_docx_opens_and_keeps_figures():
     assert "A1" in doc and "A9" in doc
     assert "8,640,000.00" in doc
     assert "0.2%" in doc
-    assert "Jane Fixture" in doc
+    assert "Named Engineer" in doc
     assert "**" not in doc
 
 
@@ -423,7 +423,7 @@ def test_scope_answers_returns_a_docx_of_a1_a9(_export_http):
     z = zipfile.ZipFile(io.BytesIO(res.content))
     doc = z.read("word/document.xml").decode()
     assert "8,640,000.00" in doc
-    assert "Jane Fixture" in doc
+    assert "Named Engineer" in doc
     footer = next(
         n for n in z.namelist()
         if n.startswith("word/footer") and n.endswith(".xml")
@@ -442,7 +442,7 @@ def test_default_scope_is_still_last_message_only(_export_http):
     assert res.status_code == 200, res.text
     z = zipfile.ZipFile(io.BytesIO(res.content))
     doc = z.read("word/document.xml").decode()
-    assert "Jane Fixture" in doc
+    assert "Named Engineer" in doc
     assert "8,640,000.00" not in doc
     assert "Conversation Excerpt" in doc
 

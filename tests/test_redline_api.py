@@ -168,7 +168,7 @@ def test_redline_cross_tenant_404(client):
     h_a = _headers(tok_a)
     h_b = _headers(tok_b)
 
-    pid = _create_project(client, h_a, "Alice Redline Project")
+    pid = _create_project(client, h_a, "Redline Owner Project")
     img_bytes = _make_png_bytes(200, 200)
     doc_id = _upload_file(client, h_a, pid, "alice.pdf", _as_drawing_pdf(img_bytes))
 
