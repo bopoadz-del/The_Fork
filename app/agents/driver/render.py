@@ -20,7 +20,7 @@ from app.lib.source_labels import CALCULATOR_SUFFIX, input_phrase
 
 _LOG = logging.getLogger(__name__)
 _MAX_LIST = 8
-_NOT_OUTPUTS = frozenset({"note", "notes", "standard"})
+_NOT_OUTPUTS = frozenset({"note", "notes", "standard", "defaults_used", "needs_input", "not_computed"})
 
 
 def _spec(calculation: str):
@@ -118,19 +118,75 @@ def _items(value: Any) -> List[str]:
             if not isinstance(v, (dict, list, tuple, set)) and str(v).strip()]
 
 
+def _title(key: str, labels: Dict[str, str]) -> str:
+    return labels.get(key) or input_phrase(key, "").strip().capitalize() or str(key)
+
+
+def _mapping_rows(value: Any) -> List[str]:
+    """A mapping output as labelled rows, one per entry with a plain value."""
+    if not isinstance(value, dict):
+        return []
+    rows = []
+    for key, item in list(value.items())[:_MAX_LIST]:
+        shown = _value(item)
+        if shown is not None:
+            rows.append(f"- {_title(str(key), {})}: {shown}")
+    return rows
+
+
+def _record_table(value: Any) -> List[str]:
+    """A list of records as one table: the same columns, in the same order,
+    on every row (a field a record lacks is left blank)."""
+    if not isinstance(value, (list, tuple)) or not value or not all(isinstance(v, dict) for v in value):
+        return []
+    columns: List[str] = []
+    for record in value[:_MAX_LIST]:
+        for key, item in record.items():
+            if key not in columns and _value(item) is not None:
+                columns.append(key)
+    if not columns:
+        return []
+    out = ["| " + " | ".join(_title(c, {}) for c in columns) + " |",
+           "|" + "|".join(" --- " for _ in columns) + "|"]
+    for record in value[:_MAX_LIST]:
+        out.append("| " + " | ".join(_value(record.get(c)) or "" for c in columns) + " |")
+    return out
+
+
+def _defaults_line(envelope: Dict[str, Any]) -> Optional[str]:
+    result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
+    rows = result.get("defaults_used") or envelope.get("defaults_used") or []
+    if isinstance(rows, dict):
+        rows = [{"parameter": k, "value": v} for k, v in rows.items()]
+    parts = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        shown = _value(row.get("value"))
+        if shown is not None:
+            label = row.get("label") or input_phrase(str(row.get("parameter") or ""), "").strip()
+            parts.append(f"{label} {shown}")
+    return ("Assumed, not given: " + "; ".join(parts) + ".") if parts else None
+
+
 def result_lines(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> List[str]:
-    """A successful calculation's result: its figures, then each list output's
-    rows, one per line."""
+    """A successful calculation's result: its figures; then each list output
+    as rows, each mapping output as labelled rows, each list of records as a
+    table; then any optional input the run took from a default."""
     outputs, labels, units = _outputs(envelope, inputs)
     lines = []
     shown = _phrases(outputs, labels, units)
     if shown:
         lines.append("Result: " + "; ".join(shown) + ".")
     for key, value in outputs.items():
-        rows = _items(value)
+        rows = _items(value) and [f"- {row}" for row in _items(value)]
+        rows = rows or _mapping_rows(value) or _record_table(value)
         if rows:
-            lines.append(f"{labels.get(key) or input_phrase(key, '').strip().capitalize()}:")
-            lines += [f"- {row}" for row in rows]
+            lines.append(f"{_title(key, labels)}:")
+            lines += rows
+    defaults = _defaults_line(envelope)
+    if defaults:
+        lines.append(defaults)
     return lines
 
 
