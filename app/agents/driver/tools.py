@@ -118,7 +118,10 @@ def _build_calculator_schema(hat: Optional[str]) -> Dict[str, Any]:
     if others:
         lines.append("Other calculators (in another hat; call them the same way):")
         for spec in others:
-            inputs = "; ".join(f"{k} = {p.label or k.replace('_', ' ')}"
+            # Optional inputs are marked here too: an input the model cannot
+            # see is optional reads as one it must find or ask for (LANE3:
+            # "using your standard rates" refused, or priced from a document).
+            inputs = "; ".join(f"{k} = {p.label or k.replace('_', ' ')}" + ("" if p.required else " (optional)")
                                for k, p in formula_registry.parameters(spec).items())
             lines.append(f"- {spec.name}: {spec.display_name} ({spec.owner}). Inputs: {inputs or 'none'}.")
     specs = specs + others
@@ -134,7 +137,10 @@ def _build_calculator_schema(hat: Optional[str]) -> Dict[str, Any]:
                 "\"21,528 sq ft\"): never change its sign, never convert or normalise its unit. "
                 "The calculator reads the sign and unit from that text, converts what it can, and "
                 "decides whether a negative or zero figure can be used. Leave out an input "
-                "the user did not give: the calculator asks for it. Never invent a value. "
+                "the user did not give: a required one the calculator asks for; an optional one "
+                "runs on the calculator's own declared default, and the answer states that "
+                "default. A figure read from a document goes in only when the user asks for "
+                "that document's or project's figures. Never invent a value. "
                 "In the answer, name inputs and the calculator by their labels and display "
                 "name, never by the identifiers below.\n" + "\n".join(lines)
             ),
