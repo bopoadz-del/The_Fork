@@ -2559,6 +2559,16 @@ def _words_written_after(figure: float, text: str) -> str:
     return next(iter(found)) if len(found) == 1 else ""
 
 
+def _written_only_negative(figure: float, text: str) -> bool:
+    """True when the ask writes this figure only with a minus sign ("-120 m2
+    per day") -- so a positive value in the call dropped the user's sign."""
+    num = re.compile(r"(?<![\w.,])(" + _TEXT_NUM_RE + r")(?![\d,.]*\d)")
+    values = [_parse_text_number(m.group(1)) for m in num.finditer(text or "")]
+    values = [v for v in values if v is not None]
+    return (any(_numbers_agree(v, -figure) for v in values)
+            and not any(_numbers_agree(v, figure) for v in values))
+
+
 _RATE_WORDS = re.compile(r"[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?\s*(?:/\s*|\s+per\s+)[A-Za-z]+(?:-[A-Za-z]+)?")
 
 
@@ -2576,6 +2586,14 @@ def _attach_written_units(name: str, fn: Any, bound: Dict[str, Any], caller: Dic
     declared = formula_registry.parameters(spec)
     out = dict(bound)
     for key, figure in caller.items():
+        if isinstance(figure, (int, float)) and figure > 0 and _written_only_negative(figure, text):
+            # The ask wrote this figure with a minus sign and the call dropped
+            # it: the user's own figure goes to the formula, which refuses it
+            # and asks -- a sign is never silently normalised away.
+            for dest in _partition_bound_params(fn, {key: figure})[0]:
+                if _numbers_agree(out.get(dest), figure):
+                    out[dest] = -figure
+            figure = -figure
         dests = list(_partition_bound_params(fn, {key: figure})[0])
         p = declared.get(dests[0]) if len(dests) == 1 else None
         if p is not None and p.kind == "text" and isinstance(out.get(p.name), (int, float))                 and not isinstance(out.get(p.name), bool) and _numbers_agree(out.get(p.name), figure):
@@ -2847,7 +2865,13 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
                                   "and no value is assumed.")
     if _result_is_failure(result):
         if isinstance(result.get("needs_input"), list) and result["needs_input"]:
-            return _input_rejection_envelope(str(name), [], list(result["needs_input"]))
+            env = _input_rejection_envelope(str(name), [], list(result["needs_input"]))
+            # The calculator's own reason (e.g. "-120 was given") comes first:
+            # the user sees why the value is asked for again.
+            reason = str(result.get("error") or "").strip()
+            if reason and reason not in str(env.get("error") or ""):
+                env["error"] = f"{reason} {env.get('error') or ''}".strip()
+            return env
         err = result["error"]
         if name in _CALC_REQUIRED_HELP and "needs" in err.lower():
             err = _CALC_REQUIRED_HELP[name]
