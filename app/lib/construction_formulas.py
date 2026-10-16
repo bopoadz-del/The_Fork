@@ -29,6 +29,7 @@ import json
 
 import logging
 
+import contextvars
 import re
 
 from app.agents.base.formulas.construction_formulas_planning import (
@@ -1267,6 +1268,25 @@ def _ask_float(raw: str) -> float:
 
 def _ask_present(params: Dict[str, Any], *keys: str) -> bool:
     return any(params.get(k) not in (None, "") for k in keys)
+
+#: The user's own words for this turn, set where the turn starts
+#: (app.agents.core.loop). Every calculator run reads its units from them, by
+#: whatever path the call arrived: a model's paraphrase in ``text`` can drop
+#: the unit the user wrote ("21,528 sq ft"), the user's turn cannot.
+_CURRENT_ASK: contextvars.ContextVar[str] = contextvars.ContextVar("calc_current_ask", default="")
+
+
+def set_current_ask(text: str):
+    """This turn's user words for every calculator run in this context."""
+    return _CURRENT_ASK.set(str(text or ""))
+
+
+def _with_current_ask(text: str) -> str:
+    ask = _CURRENT_ASK.get()
+    if not ask or ask in (text or ""):
+        return text or ""
+    return f"{text} {ask}".strip()
+
 
 def _ask_blob(params: Dict[str, Any]) -> str:
     return " ".join(
@@ -2788,7 +2808,8 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     # and a complete diaphragm-wall call failed 3/3).
     unknown = [key for key in unknown if key in caller_keys]
     if not _accepts_param(fn, "unit"):
-        params = _attach_written_units(str(name), fn, params, caller_figures, ask_text, call_unit)
+        params = _attach_written_units(str(name), fn, params, caller_figures,
+                                       _with_current_ask(ask_text), call_unit)
     params, conversions, unit_rejected = formula_registry.convert_written_units(
         str(name), params, context)
     params = _coerce_bound_values(fn, params, frozenset(c.get("parameter") for c in conversions),

@@ -45,12 +45,29 @@ async def chat(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
 
     token = start_turn_memo()
     turn, turn_token = answer_exit.begin_turn()
+    from app.lib import construction_formulas as _calc_words
+
+    # The user's own words reach every calculator run this turn makes.
+    ask_token = _calc_words.set_current_ask(_user_message_of(self, args, kwargs))
     try:
         result = await self._chat_impl(*args, **kwargs)
         return await off_loop(answer_exit.check_result, result, turn)
     finally:
+        _calc_words._CURRENT_ASK.reset(ask_token)
         answer_exit.reset_turn(turn_token)
         end_turn_memo(token)
+
+
+def _user_message_of(agent: Any, args: tuple, kwargs: dict) -> str:
+    """The user turn a ``chat`` call carries, by name or by position."""
+    import inspect
+
+    try:
+        bound = inspect.signature(agent._chat_impl).bind_partial(*args, **kwargs)
+    except (TypeError, ValueError):
+        return str(kwargs.get("user_message") or "")
+    value = bound.arguments.get("user_message")
+    return value if isinstance(value, str) else ""
 
 
 async def _chat_impl(
@@ -961,6 +978,10 @@ async def chat_stream(
     # Opened before the producer task exists, so the task (and the threads it
     # offloads to) record this turn's evidence into the same record.
     _exit_turn = answer_exit.open_turn()
+    # The user's own words reach every calculator run this turn makes.
+    from app.lib import construction_formulas as _calc_words
+
+    _calc_words.set_current_ask(user_message)
     _streamed: list[str] = []
     _leak_guard = _EmitLeakGuard()
     import time as _time
