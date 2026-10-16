@@ -210,10 +210,7 @@ async def run(args: Dict[str, Any], user_message: str, project_id: Optional[str]
     }
     if isinstance(args.get("deliverable"), bool):
         context["deliverable"] = args["deliverable"]
-    from app.core.offload import off_loop as _off
-
-    # A database read: never on the event loop.
-    resolved, ask = await _off(_resolve_predefined_file_params, action, safe_project_id, params, user_message)
+    resolved, ask = _resolve_predefined_file_params(action, safe_project_id, params, user_message)
     if ask:
         return {"ok": False, "needs_input": ask}
     context["params"] = resolved

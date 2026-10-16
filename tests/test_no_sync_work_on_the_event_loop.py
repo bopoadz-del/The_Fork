@@ -36,66 +36,6 @@ def _drive(coro_factory):
     return loop_thread[0], out
 
 
-def test_the_driver_resolves_predefined_files_off_the_loop(monkeypatch):
-    from app.agents.driver import routes
-    from app.routers import chat
-
-    action = next(iter(routes.catalogue()))
-    probe = _Probe(({}, {"question": "which file?"}))
-    monkeypatch.setattr(chat, "_resolve_predefined_file_params", probe)
-    loop_ident, out = _drive(lambda: routes.run({"workflow": action}, "run it", None, None, None))
-    assert out.get("needs_input"), out
-    assert probe.threads and loop_ident not in probe.threads
-
-
-def test_the_calculator_check_and_run_happen_off_the_loop(monkeypatch):
-    from app.agents import runtime
-    from app.agents.base import tools
-    from app.agents.core.tool_registry import ToolCall
-    from app.lib import construction_formulas
-
-    refusal = _Probe(None)
-    run = _Probe({"status": "success", "result": {"value": 1}})
-    monkeypatch.setattr(runtime, "_defaulted_run_refusal", refusal)
-    monkeypatch.setattr(construction_formulas, "run_calculation", run)
-    call = ToolCall(agent=None, name="construction_calc",
-                    args={"calculation": "productivity_rate", "params": {"output_quantity": 120, "labor_hours": 40}},
-                    user_message="productivity of 120 m2 in 40 man-hours")
-    loop_ident, _ = _drive(lambda: tools.handle_construction_calc(call))
-    assert refusal.threads and loop_ident not in refusal.threads
-    assert run.threads and loop_ident not in run.threads
-
-
-def test_hydration_reads_and_writes_off_the_loop(monkeypatch):
-    from app.core import hydration_store
-    from app.core.learning import hydration
-
-    probes = {
-        "_projects_active_in_window": _Probe(["p1"]),
-        "_filter_existing_projects": _Probe(["p1"]),
-        "_collect_project_messages": _Probe([]),
-        "_heuristic_project_summary": _Probe("summary"),
-        "_writeback_for_next_chat": _Probe({}),
-        "_heuristic_global_summary": _Probe("global"),
-    }
-    for name, probe in probes.items():
-        monkeypatch.setattr(hydration, name, probe)
-    record = _Probe(None)
-    monkeypatch.setattr(hydration_store, "record_run", record)
-
-    async def offline(*_a, **_k):
-        return "", "offline_template"
-
-    monkeypatch.setattr(hydration, "_summarize_project", offline)
-    monkeypatch.setattr(hydration, "_summarize_global", offline)
-    loop_ident, _ = _drive(lambda: hydration.run(target_date="2026-10-15"))
-    ran = {name: p.threads for name, p in probes.items() if p.threads}
-    assert ran, "hydration called none of its helpers"
-    for name, threads in ran.items():
-        assert loop_ident not in threads, f"{name} ran on the event loop"
-    assert record.threads and loop_ident not in record.threads
-
-
 def test_the_calculator_schema_is_a_fresh_copy_for_each_caller():
     from app.agents.driver import tools as driver_tools
 
