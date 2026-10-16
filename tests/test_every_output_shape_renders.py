@@ -36,7 +36,29 @@ def test_an_input_taken_from_its_default_is_disclosed():
     assert "Assumed, not given:" in render.render_calculation(env, {"floor_area_m2": 2000})
 
 
-def test_an_input_the_caller_gave_is_not_called_a_default():
-    env = cf.run_calculation("electrical_installation_sequence", {"floor_area_m2": 2000, "num_floors": 3})
-    params = {row["parameter"] for row in env["result"].get("defaults_used", [])}
-    assert "num_floors" not in params
+def test_an_input_is_called_a_default_only_when_it_was_not_given():
+    """A pair, so neither half can pass by the field simply being absent."""
+    missing = cf.run_calculation("electrical_installation_sequence", {"floor_area_m2": 2000})
+    given = cf.run_calculation("electrical_installation_sequence", {"floor_area_m2": 2000, "num_floors": 3})
+    assert "num_floors" in {row["parameter"] for row in missing["result"]["defaults_used"]}
+    assert "num_floors" not in {row["parameter"] for row in given["result"].get("defaults_used", [])}
+
+
+def test_a_capped_list_says_how_many_rows_it_left_out():
+    rows = [{"bidder": f"Bidder {i}", "rank": i} for i in range(1, 13)]
+    text = render.render_calculation(_env({"ranked": rows}, calculation="evaluate_tender"))
+    assert "- and 4 more" in text
+
+
+def test_only_a_declared_input_is_disclosed_as_assumed():
+    env = _env({"total_days": 60, "defaults_used": [
+        {"parameter": "num_floors", "value": 1, "label": "number of floors"},
+        {"parameter": "_internal_switch", "value": 2, "label": "internal switch"}]})
+    text = render.render_calculation(env)
+    assert "number of floors 1" in text and "internal switch" not in text
+
+
+def test_an_answer_carries_a_mapping_result_only_with_its_figures():
+    env = _env({"stages": {"first_fix": 40, "testing": 20}})
+    assert render.carried(env, {}, "First fix takes 40 days, testing 20 days.")
+    assert not render.carried(env, {}, "First fix takes 40 days.")

@@ -131,7 +131,7 @@ def _mapping_rows(value: Any) -> List[str]:
         shown = _value(item)
         if shown is not None:
             rows.append(f"- {_title(str(key), {})}: {shown}")
-    return rows
+    return rows + _more(len(value))
 
 
 def _record_table(value: Any) -> List[str]:
@@ -150,17 +150,30 @@ def _record_table(value: Any) -> List[str]:
            "|" + "|".join(" --- " for _ in columns) + "|"]
     for record in value[:_MAX_LIST]:
         out.append("| " + " | ".join(_value(record.get(c)) or "" for c in columns) + " |")
-    return out
+    return out + _more(len(value))
+
+
+def _more(count: int) -> List[str]:
+    """What a capped list left out, said rather than dropped."""
+    return [f"- and {count - _MAX_LIST} more"] if count > _MAX_LIST else []
 
 
 def _defaults_line(envelope: Dict[str, Any]) -> Optional[str]:
+    from app.lib import formula_registry
+
     result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
     rows = result.get("defaults_used") or envelope.get("defaults_used") or []
     if isinstance(rows, dict):
         rows = [{"parameter": k, "value": v} for k, v in rows.items()]
+    spec = _spec(str(envelope.get("calculation") or ""))
+    declared = formula_registry.parameters(spec) if spec else {}
     parts = []
     for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, dict):
+        # Only an input the formula declares to its users: a switch or an
+        # internal option the formula keeps to itself is not "assumed".
+        if not isinstance(row, dict) or str(row.get("parameter")) not in declared:
+            continue
+        if isinstance(row.get("value"), bool):
             continue
         shown = _value(row.get("value"))
         if shown is not None:
@@ -179,7 +192,7 @@ def result_lines(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]] = No
     if shown:
         lines.append("Result: " + "; ".join(shown) + ".")
     for key, value in outputs.items():
-        rows = _items(value) and [f"- {row}" for row in _items(value)]
+        rows = _items(value) and ([f"- {row}" for row in _items(value)] + _more(len(value)))
         rows = rows or _mapping_rows(value) or _record_table(value)
         if rows:
             lines.append(f"{_title(key, labels)}:")
@@ -217,6 +230,25 @@ def carried(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]], answer: 
                 return False
         elif any(row.lower() not in text for row in _items(value)):
             return False
+        elif not _figures_written(value, written, text):
+            return False
+    return True
+
+
+def _figures_written(value: Any, written: List[float], text: str) -> bool:
+    """Every figure and name a mapping or a list of records holds (up to the
+    rows shown) is in the answer -- the same test plain outputs pass."""
+    records = [value] if isinstance(value, dict) else (
+        list(value[:_MAX_LIST]) if isinstance(value, (list, tuple)) and value and all(isinstance(v, dict) for v in value) else [])
+    for record in records:
+        for item in record.values():
+            if isinstance(item, bool) or isinstance(item, (dict, list, tuple, set)):
+                continue
+            if isinstance(item, (int, float)):
+                if not any(abs(w - item) <= max(abs(item) * 0.005, 0.005) for w in written):
+                    return False
+            elif isinstance(item, str) and item.strip() and item.strip().lower() not in text:
+                return False
     return True
 
 
