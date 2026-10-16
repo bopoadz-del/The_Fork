@@ -78,7 +78,26 @@ def _input_line(key: str, p: Any) -> str:
     return f"{key} = {label}" + (f" ({', '.join(bits)})" if bits else "")
 
 
+_SCHEMA_CACHE: Dict[Any, Dict[str, Any]] = {}
+
+
 def calculator_schema(hat: Optional[str]) -> Dict[str, Any]:
+    """The calculator schema for ``hat``, built once per registry state: it
+    was rebuilt on every turn, on the event loop (a 268 ms LOOP_STALL in
+    production). Keyed on the hat and the registry's exact contents, so a
+    registered, replaced or removed formula is never stale; each caller gets
+    its own copy."""
+    import copy
+
+    from app.lib import formula_registry
+
+    key = (hat, tuple((spec.name, id(spec)) for spec in formula_registry.all_specs()))
+    if key not in _SCHEMA_CACHE:
+        _SCHEMA_CACHE[key] = _build_calculator_schema(hat)
+    return copy.deepcopy(_SCHEMA_CACHE[key])
+
+
+def _build_calculator_schema(hat: Optional[str]) -> Dict[str, Any]:
     """The platform calculator as the model sees it in driver mode, built from
     the formula registry: the formulas offered to this hat (base plus its own),
     each with its display name, what it does, and every input's label, unit,
