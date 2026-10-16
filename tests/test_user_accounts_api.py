@@ -51,15 +51,16 @@ def test_register_returns_user_no_secrets(client):
     r = _register(client, "reg1@example.com")
     assert r.status_code == 201, r.text
     body = r.json()
+    # The one neutral reply (#978): the address as typed, nothing else about
+    # the account -- no secrets, no role, no id.
+    assert set(body) == {"email", "registration_received", "message"}
     assert body["email"] == "reg1@example.com"
-    assert "password_hash" not in body and "salt" not in body
-    assert body["role"] == "user"
 
 
-def test_register_duplicate_email_409(client):
-    _register(client, "dup-api@example.com")
+def test_register_duplicate_email_answers_like_a_new_one(client):
+    first = _register(client, "dup-api@example.com")
     r = _register(client, "dup-api@example.com")
-    assert r.status_code == 409
+    assert r.status_code == 201 and r.json() == first.json()
 
 
 def test_login_returns_jwt(client):
