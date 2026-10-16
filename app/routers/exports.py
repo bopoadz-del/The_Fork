@@ -695,6 +695,18 @@ def _persist_and_index(
             project_id, exc_info=True)
 
 
+async def _boq_processor_block():
+    """The BOQ block class, loaded in a worker thread: its first import pulls
+    in the parse stack, and a first import on the event loop froze every
+    user (LANE5 #984/#992)."""
+    import importlib
+
+    from app.core.offload import off_loop
+
+    module = await off_loop(importlib.import_module, "app.blocks.boq_processor")
+    return module.BOQProcessorBlock
+
+
 @router.post("/v1/projects/{project_id}/price-boq")
 async def price_boq(
     project_id: str,
@@ -731,7 +743,7 @@ async def price_boq(
                  f"'{req.asset_type}'. Valid: {currencies}")
 
     # Extract UNPRICED line items from the document (rate is 0 -- expected).
-    from app.blocks.boq_processor import BOQProcessorBlock
+    BOQProcessorBlock = await _boq_processor_block()
     res = await BOQProcessorBlock().process(
         {"file_path": doc["file_path"], "project_id": project_id})
     if res.get("status") != "success" or not res.get("line_items"):
@@ -1462,7 +1474,7 @@ async def export_schedule_from_boq(
     if not doc.get("file_path"):
         raise HTTPException(404, "document not found")
 
-    from app.blocks.boq_processor import BOQProcessorBlock
+    BOQProcessorBlock = await _boq_processor_block()
     res = await BOQProcessorBlock().process(
         {"file_path": doc["file_path"], "project_id": project_id})
     if res.get("status") != "success" or not res.get("line_items"):
