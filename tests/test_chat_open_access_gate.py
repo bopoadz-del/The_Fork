@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core import projects as store
+from tests._fixture_values import PW_10
 
 
 @pytest.fixture
@@ -26,9 +27,9 @@ def client():
 
 
 def _register(client, email):
-    r = client.post("/v1/users/register", json={"email": email, "password": "pw123456"})
+    r = client.post("/v1/users/register", json={"email": email, "password": PW_10})
     assert r.status_code in (201, 409), r.text
-    r = client.post("/v1/users/login", json={"email": email, "password": "pw123456"})
+    r = client.post("/v1/users/login", json={"email": email, "password": PW_10})
     return {"token": r.json()["token"], "id": r.json()["user"]["id"]}
 
 
