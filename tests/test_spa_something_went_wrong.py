@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routers.chat_watchdog import PROVIDER_FAILURE_MESSAGE
+from tests._fixture_values import PW_06
 
 _SPA = Path("frontend/src/pages/ProjectWorkspace.tsx")
 _GENERIC = "Something went wrong. Please try again."
@@ -48,9 +49,9 @@ def client():
 
 def _register(client: TestClient, label: str) -> dict:
     email = f"spa-{label}-{uuid.uuid4().hex[:8]}@x.com"
-    r = client.post("/v1/users/register", json={"email": email, "password": "password12"})
+    r = client.post("/v1/users/register", json={"email": email, "password": PW_06})
     assert r.status_code in (200, 201, 409), r.text
-    r = client.post("/v1/users/login", json={"email": email, "password": "password12"})
+    r = client.post("/v1/users/login", json={"email": email, "password": PW_06})
     assert r.status_code == 200, r.text
     body = r.json()
     return {"token": body["token"], "id": body["user"]["id"]}

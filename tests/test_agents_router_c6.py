@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.agents.runtime import Agent, load_agents, AGENT_REGISTRY
+from tests._fixture_values import PW_06
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,8 +43,8 @@ def _stub_llm_key(monkeypatch):
 
 def _register_and_login(client, suffix):
     email = f"c6-{suffix}-{_RUN}@x.com"
-    client.post("/v1/users/register", json={"email": email, "password": "password12"})
-    token = client.post("/v1/users/login", json={"email": email, "password": "password12"}).json()["token"]
+    client.post("/v1/users/register", json={"email": email, "password": PW_06})
+    token = client.post("/v1/users/login", json={"email": email, "password": PW_06}).json()["token"]
     return {"Authorization": f"Bearer {token}"}
 
 

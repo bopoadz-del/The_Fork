@@ -18,6 +18,7 @@ from PIL import Image
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._fixture_values import PW_06
 
 # Run-unique suffix so parallel test runs don't collide on user emails.
 _RUN = uuid.uuid4().hex[:8]
@@ -32,9 +33,9 @@ def client():
 def _user_token(client, email: str) -> str:
     """Register + login a user; return the JWT token string."""
     client.post("/v1/users/register",
-                json={"email": email, "password": "password12"})
+                json={"email": email, "password": PW_06})
     r = client.post("/v1/users/login",
-                    json={"email": email, "password": "password12"})
+                    json={"email": email, "password": PW_06})
     assert r.status_code == 200, r.text
     return r.json()["token"]
 

@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._fixture_values import PW_06
 
 _RUN = uuid.uuid4().hex[:8]
 _STEPS = [{"block": "formula_executor", "params": {}, "label": "Compute"}]
@@ -23,9 +24,9 @@ def client():
 
 def _register_and_login(client, suffix: str) -> dict:
     email = f"wf-{suffix}-{_RUN}@x.com"
-    client.post("/v1/users/register", json={"email": email, "password": "password12"})
+    client.post("/v1/users/register", json={"email": email, "password": PW_06})
     token = client.post(
-        "/v1/users/login", json={"email": email, "password": "password12"}
+        "/v1/users/login", json={"email": email, "password": PW_06}
     ).json()["token"]
     return {"Authorization": f"Bearer {token}"}
 

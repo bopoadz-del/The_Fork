@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.agents.runtime import Agent
 from app.main import app
+from tests._fixture_values import PW_06
 
 _RUN = uuid.uuid4().hex[:8]
 
@@ -29,11 +30,11 @@ def client():
 def _register(client, suffix: str) -> dict:
     email = f"sess-{suffix}-{_RUN}@x.com"
     reg = client.post(
-        "/v1/users/register", json={"email": email, "password": "password12"}
+        "/v1/users/register", json={"email": email, "password": PW_06}
     )
     assert reg.status_code in (200, 201, 409), reg.text
     token = client.post(
-        "/v1/users/login", json={"email": email, "password": "password12"}
+        "/v1/users/login", json={"email": email, "password": PW_06}
     ).json()["token"]
     return {"Authorization": f"Bearer {token}"}
 

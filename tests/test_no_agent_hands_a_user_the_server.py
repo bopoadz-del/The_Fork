@@ -22,6 +22,7 @@ import re
 import uuid
 
 import pytest
+from tests._fixture_values import PW_06
 
 from app.core.privileges import (
     PRIVILEGED_BLOCKS,
@@ -232,9 +233,9 @@ def user_client():
 
     with TestClient(app) as c:
         email = f"pin-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post(
-            "/v1/users/login", json={"email": email, "password": "password12"}
+            "/v1/users/login", json={"email": email, "password": PW_06}
         ).json()["token"]
         yield c, {"Authorization": f"Bearer {token}"}
 
