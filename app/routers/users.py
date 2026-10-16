@@ -197,7 +197,7 @@ async def login(req: LoginRequest):
         raise HTTPException(
             403,
             "Email address not verified. Check your inbox for the confirmation "
-            "link, or request a new one at /v1/users/resend-verification.",
+            'link, or use "Resend confirmation email" on the sign-in page.',
         )
     return {
         "token": jwt_auth.create_token(user["id"]),
