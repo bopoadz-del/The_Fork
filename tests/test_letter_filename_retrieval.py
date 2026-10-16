@@ -36,7 +36,7 @@ PLOT_NAME = "Wadi Example - Plot Agreement Proposal.pdf"
 LETTER_TEXT = (
     "Letter to ACMC on Completion and transfer of responsibility — "
     "XBCC Concrete Batching Plant at Wadi Example.\n"
-    "Signed: Barry Muir\n"
+    "Signed: Project Signatory\n"
     "Engineer's Representative\n"
     "EXCON Example Limited\n"
 )
@@ -204,7 +204,7 @@ def test_d1_retrieves_letter_when_only_vol5_is_in_the_semantic_pool(monkeypatch)
     names = [getattr(c, "source_name", "") for c in chunks]
     texts = " ".join(c.text for c in chunks)
     assert any("letter" in (n or "").lower() for n in names), names
-    assert "Barry Muir" in texts
+    assert "Project Signatory" in texts
     assert "Engineer's Representative" in texts
     assert "EXCON Example Limited" in texts
     assert chunks[0].doc_id == LETTER_DOC
@@ -214,7 +214,7 @@ def test_d1_lifts_a_buried_letter_already_in_the_pool(monkeypatch):
     ret = _install_d1_corpus(monkeypatch, letter_in_semantic=True)
     chunks, _ = ret.retrieve_with_filter(D1_QUERY, ACTIVE, k=5)
     assert chunks[0].doc_id == LETTER_DOC
-    assert "Barry Muir" in chunks[0].text
+    assert "Project Signatory" in chunks[0].text
 
 
 def test_mutation_filename_bonus_is_what_lifts_the_letter(monkeypatch):
