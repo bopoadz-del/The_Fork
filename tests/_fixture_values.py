@@ -18,7 +18,7 @@ class _RunValues:
         self._rng = random.Random(seed)
 
     def token_hex(self, nbytes: int = 16) -> str:
-        return "%0*x" % (nbytes * 2, self._rng.getrandbits(nbytes * 8))
+        return f"{self._rng.getrandbits(nbytes * 8):0{nbytes * 2}x}"
 
     def token_urlsafe(self, nbytes: int = 16) -> str:
         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
