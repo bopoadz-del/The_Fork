@@ -32,6 +32,7 @@ import pytest
 
 from app.agents import runtime
 from app.agents.runtime import Agent, _SynthStreamError
+from tests._fixture_values import STUB_KEY_05, STUB_KEY_06, STUB_KEY_10
 
 _LLM_ENV = (
     "LLM_PROVIDER", "LLM_FALLBACK_PROVIDER",
@@ -150,13 +151,13 @@ def _agent(model="deepseek-chat", temperature=0.3):
 
 def _deepseek(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_KEY_05)
 
 
 async def _drain(agent, **kw):
     return [chunk async for chunk in agent._stream_synthesis(
         [{"role": "user", "content": "summarise the findings"}],
-        kw.pop("api_key", "ds-test-key"), **kw)]
+        kw.pop("api_key", STUB_KEY_05), **kw)]
 
 
 # ── the provider gate ────────────────────────────────────────────────────
@@ -165,20 +166,20 @@ async def _drain(agent, **kw):
 async def test_openrouter_streams_like_groq(monkeypatch, stream):
     """OpenRouter is OpenAI-compatible; SYNTHESIS_STREAMING must not skip it."""
     monkeypatch.setenv("LLM_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_KEY_06)
     stream(_StreamResponse(_sse("ok")))
 
-    assert await _drain(_agent(), api_key="or-test-key") == ["ok"]
+    assert await _drain(_agent(), api_key=STUB_KEY_06) == ["ok"]
 
 
 @pytest.mark.asyncio
 async def test_deepseek_streams_like_groq(monkeypatch, stream):
     """DeepSeek is OpenAI-compatible; SYNTHESIS_STREAMING must not skip it."""
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_KEY_05)
     stream(_StreamResponse(_sse("ok")))
 
-    assert await _drain(_agent(), api_key="ds-test-key") == ["ok"]
+    assert await _drain(_agent(), api_key=STUB_KEY_05) == ["ok"]
 
 
 @pytest.mark.asyncio
@@ -199,7 +200,7 @@ async def test_an_unverified_provider_is_refused_before_the_call(monkeypatch, st
     calls = stream(_StreamResponse(_sse("never")))
 
     with pytest.raises(_SynthStreamError, match="only verified"):
-        await _drain(_agent(), api_key="some-key")
+        await _drain(_agent(), api_key=STUB_KEY_10)
     assert calls == [], "an unverified provider was called before the gate fired"
 
 
@@ -222,7 +223,7 @@ async def test_reasoning_deltas_are_never_yielded_as_answer_text(monkeypatch, st
         answer=["Retention is ", "typically 5% to 10%."],
     )))
 
-    assert await _drain(_agent(), api_key="ds-test-key") == [
+    assert await _drain(_agent(), api_key=STUB_KEY_05) == [
         "Retention is ", "typically 5% to 10%.",
     ]
 
@@ -248,7 +249,7 @@ async def test_a_thinking_only_response_yields_nothing_and_says_why(
     stream(_StreamResponse(_reasoning_sse(thinking=["thinking ", "hard "], answer=[])))
 
     with mock.patch.object(runtime._LOG, "warning") as warn:
-        assert await _drain(_agent(), api_key="ds-test-key") == []
+        assert await _drain(_agent(), api_key=STUB_KEY_05) == []
     logged = " ".join(str(c.args[0]) for c in warn.call_args_list if c.args)
     assert "reasoning deltas and no content" in logged, (
         "a thinking-only response was indistinguishable from a dead provider"
@@ -338,7 +339,7 @@ async def test_non_standard_message_fields_never_reach_the_provider(monkeypatch,
 
     messages = [{"role": "assistant", "content": "t", "reasoning": "chain of thought"},
                 {"role": "user", "content": "and now?"}]
-    async for _ in _agent()._stream_synthesis(messages, "ds-test-key"):
+    async for _ in _agent()._stream_synthesis(messages, STUB_KEY_05):
         pass
 
     sent = calls[0]["payload"]["messages"]
@@ -391,7 +392,7 @@ async def test_a_mid_stream_drop_surfaces_after_the_tokens_already_emitted(
     emitted = []
     with pytest.raises(_SynthStreamError):
         async for chunk in _agent()._stream_synthesis(
-                [{"role": "user", "content": "q"}], "ds-test-key"):
+                [{"role": "user", "content": "q"}], STUB_KEY_05):
             emitted.append(chunk)
 
     assert emitted == ["The notice ", "period is "], (

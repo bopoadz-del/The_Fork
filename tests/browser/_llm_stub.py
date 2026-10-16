@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from tests._fixture_values import STUB_KEY_02
 
 _CATALOG = Path(__file__).resolve().parents[1] / "fixtures" / "ui_phys" / "questions.json"
 
@@ -95,7 +96,7 @@ def stub_provider_env() -> dict[str, str]:
     """
     return {
         "LLM_PROVIDER": "deepseek",
-        "DEEPSEEK_API_KEY": "ui-phys-stub-not-a-real-key",
+        "DEEPSEEK_API_KEY": STUB_KEY_02,
     }
 
 

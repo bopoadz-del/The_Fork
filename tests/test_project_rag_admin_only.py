@@ -24,10 +24,11 @@ from app.core import privileges
 from app.core import projects as store
 from app.dependencies import require_api_key, require_user
 from app.main import app
+from tests._fixture_values import STUB_KEY_01
 
 USER = {"user_id": "rag-rule-user", "role": "user"}
 ADMIN = {"user_id": "rag-rule-admin", "role": "admin"}
-NO_KEY = {"Authorization": "Bearer unused-dependency-is-overridden"}
+NO_KEY = {"Authorization": "Bearer " + STUB_KEY_01}
 
 SAMPLE_CATEGORIES = [
     {"name": "Site Works", "items": [
