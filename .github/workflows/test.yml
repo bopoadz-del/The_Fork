@@ -108,6 +108,18 @@ jobs:
       - name: Security scan
         run: python scripts/security_scan.py
 
+      - name: Run the timing tests (first, no coverage instrumentation)
+        # Same assertions, same limits; only the coverage tracer is off, so
+        # the measurement is the event loop's, not the tracer's lock. Run
+        # before the suite: after it, the runner's state from the whole
+        # suite was part of the measurement (#979).
+        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data-timing
+          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
+          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
+
       - name: Run tests
         # --cov-fail-under is a regression FLOOR (current coverage ~57%);
         # the global gate fails the job if coverage drops below it or if no
@@ -158,16 +170,6 @@ jobs:
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data-serial
-          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
-          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
-
-      - name: Run the timing tests (no coverage instrumentation)
-        # Same assertions, same limits; only the coverage tracer is off, so
-        # the measurement is the event loop's, not the tracer's lock.
-        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
-        env:
-          ENV: testing
-          DATA_DIR: ${{ runner.temp }}/data-timing
           CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
           CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
 
@@ -351,17 +353,6 @@ jobs:
           RAG_EMBEDDING_MODEL: fake
           COVERAGE_FILE: .coverage.shard${{ matrix.shard }}
 
-      - name: Run the timing tests (shard 1, no coverage instrumentation)
-        if: matrix.shard == 1
-        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
-        env:
-          ENV: testing
-          DATA_DIR: ${{ runner.temp }}/data-timing
-          CEREBRUM_VIRGIN: "true"
-          CEREBRUM_DOMAIN_KITS: ""
-          RAG_EMBEDDING_MODEL: fake
-          COVERAGE_FILE: .coverage.shard${{ matrix.shard }}
-
       - name: Keep this shard's coverage and durations
         if: always()
         uses: actions/upload-artifact@v4
@@ -373,13 +364,90 @@ jobs:
           include-hidden-files: true
           retention-days: 3
 
+  test-timing:
+    # The timing tests (the event loop under 15 users, 250 ms) on a runner and
+    # a database of their own, with nothing run before them: shard 1 ran them
+    # after its whole suite, so the measurement depended on what that runner
+    # had just done (PR runs and main differed). Same service, setup and
+    # schema as a shard; the threshold is the test's own. test-postgres (the
+    # required check) needs this job.
+    name: test-timing (PostgreSQL, alone)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: thefork
+          POSTGRES_PASSWORD: thefork
+          POSTGRES_DB: thefork
+        ports:
+          - 5432:5432
+        # Docker gives a container 64 MB of /dev/shm; with several workers
+        # building HNSW indexes at once Postgres ran out of it ("could not
+        # resize shared memory segment ... No space left on device").
+        options: >-
+          --shm-size=1g
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://thefork:thefork@localhost:5432/thefork
+      PYTEST_USE_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system deps for OCR + PDF
+        # A stuck apt mirror held jobs at this step for 25+ min (2026-10-07).
+        # Each attempt now times out and is retried; the step itself is capped.
+        timeout-minutes: 10
+        run: |
+          APT_OPTS='-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
+          # Some GitHub-hosted 24.04 images ship a Microsoft prod repo that 403s
+          # and is unsigned; it aborts apt-get update. Drop that list up front.
+          sudo grep -l packages.microsoft.com /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null | xargs -r sudo rm -f || true
+          for attempt in 1 2 3; do
+            if sudo timeout 180 apt-get $APT_OPTS update -qq && sudo timeout 180 apt-get $APT_OPTS install -y -qq tesseract-ocr poppler-utils antiword catdoc; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed; retrying"
+            sleep 10
+          done
+          exit 1
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout pytest-xdist pytest-split
+
+      - name: Apply Alembic schema
+        run: alembic upgrade head
+
+      - name: Run the timing tests (alone, no coverage instrumentation)
+        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data-timing
+          CEREBRUM_VIRGIN: "true"
+          CEREBRUM_DOMAIN_KITS: ""
+          RAG_EMBEDDING_MODEL: fake
+
   test-postgres:
     # The required check. Passes only when every shard passed; then the four
     # shards' coverage is combined and held to the same floor the single job
     # enforced (--cov-fail-under=25).
     name: test-postgres
     runs-on: ubuntu-latest
-    needs: [changes, test-postgres-shard]
+    needs: [changes, test-postgres-shard, test-timing]
     if: always() && needs.changes.outputs.docs_only != 'true'
     timeout-minutes: 10
     steps:
@@ -387,6 +455,8 @@ jobs:
         run: |
           echo "shards: ${{ needs.test-postgres-shard.result }}"
           test "${{ needs.test-postgres-shard.result }}" = "success"
+          echo "timing: ${{ needs.test-timing.result }}"
+          test "${{ needs.test-timing.result }}" = "success"
 
       - uses: actions/checkout@v4
 
