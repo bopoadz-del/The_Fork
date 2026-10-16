@@ -51,7 +51,9 @@ def test_infra_auth_follows_the_same_rule(monkeypatch):
     monkeypatch.setenv("CEREBRUM_DEV_KEY", KEY)
     assert _infra(KEY)["valid"] is True
     monkeypatch.delenv("CEREBRUM_DEV_KEY", raising=False)
-    assert _infra(KEY)["valid"] is False
+    refused = _infra(KEY)
+    assert refused["valid"] is False and refused["reason"] == "dev_key_not_configured"
+    assert "CEREBRUM_DEV_KEY" in refused["message"]
     monkeypatch.setenv("CEREBRUM_DEV_KEY", KEY)
     monkeypatch.setattr(core_auth, "is_dev_environment", lambda: False)
     assert _infra(KEY)["valid"] is False
