@@ -48,13 +48,26 @@ def test_an_unverified_login_points_at_the_sign_in_page_not_a_route(monkeypatch)
     assert "Resend confirmation email" in text
 
 
+def test_registering_an_existing_address_answers_exactly_like_a_new_one(monkeypatch):
+    """LANE4 #978: a registration must not reveal that an account exists."""
+    _configured(monkeypatch)
+    existing = f"routes-{uuid.uuid4().hex[:10]}@example.com"
+    fresh = f"routes-{uuid.uuid4().hex[:10]}@example.com"
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=_Resp()), TestClient(app) as c:
+        c.post("/v1/users/register", json={"email": existing, "password": "password12"})
+        again = c.post("/v1/users/register", json={"email": existing, "password": "other-pass-34"})
+        new = c.post("/v1/users/register", json={"email": fresh, "password": "password12"})
+    assert again.status_code == new.status_code == 201
+    assert {**again.json(), "email": "x"} == {**new.json(), "email": "x"}
+    assert "already" not in again.text.lower() and existing.split("@")[0] in again.text  # echoes only what was typed
+
+
 def test_other_auth_failures_name_no_route_either(monkeypatch):
     _configured(monkeypatch)
     addr = f"routes-{uuid.uuid4().hex[:10]}@example.com"
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=_Resp()), TestClient(app) as c:
         c.post("/v1/users/register", json={"email": addr, "password": "password12"})
         responses = [
-            c.post("/v1/users/register", json={"email": addr, "password": "password12"}),
             c.post("/v1/users/login", json={"email": addr, "password": "wrong-password"}),
             c.post("/v1/users/login", json={"email": f"nobody-{uuid.uuid4().hex[:6]}@example.com",
                                              "password": "password12"}),
