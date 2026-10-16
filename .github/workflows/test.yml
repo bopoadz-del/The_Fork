@@ -108,6 +108,18 @@ jobs:
       - name: Security scan
         run: python scripts/security_scan.py
 
+      - name: Run the timing tests (first, no coverage instrumentation)
+        # Same assertions, same limits; only the coverage tracer is off, so
+        # the measurement is the event loop's, not the tracer's lock. Run
+        # before the suite: after it, the runner's state from the whole
+        # suite was part of the measurement (#979).
+        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data-timing
+          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
+          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
+
       - name: Run tests
         # --cov-fail-under is a regression FLOOR (current coverage ~57%);
         # the global gate fails the job if coverage drops below it or if no
@@ -158,16 +170,6 @@ jobs:
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data-serial
-          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
-          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
-
-      - name: Run the timing tests (no coverage instrumentation)
-        # Same assertions, same limits; only the coverage tracer is off, so
-        # the measurement is the event loop's, not the tracer's lock.
-        run: pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120 -m timing --no-cov
-        env:
-          ENV: testing
-          DATA_DIR: ${{ runner.temp }}/data-timing
           CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
           CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
 
