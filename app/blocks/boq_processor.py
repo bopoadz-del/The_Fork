@@ -5,6 +5,10 @@ import logging
 import os
 import time
 from typing import Any, Dict, List, Tuple
+# Imported with the block, not inside a request: their first import (SQLAlchemy
+# and more) ran on the event loop and froze it ~0.45 s (CI timing job).
+from app.core.doc_index import _document_size_mb
+from app.core.file_crypto import open_plaintext
 from app.core.universal_base import UniversalBlock
 from app.lib.boq_units import reconcile_unit
 
@@ -125,6 +129,10 @@ def _resolve_via_project(project_id: str, raw: str) -> str:
     return raw
 
 
+def _plaintext_size_mb(file_path: str) -> float:
+    return _document_size_mb(file_path)
+
+
 class BOQProcessorBlock(UniversalBlock):
     name = "boq_processor"
     version = "1.1.0"
@@ -230,7 +238,6 @@ class BOQProcessorBlock(UniversalBlock):
             # open_plaintext transparently decrypts when DATA_ENCRYPTION_KEY is
             # set on the server (uploads go through file_crypto.write_document)
             # and is a no-op for legacy plaintext files.
-            from app.core.file_crypto import open_plaintext
             with open_plaintext(file_path) as plain_path:
                 if ext == ".csv":
                     return await self._parse_csv(plain_path, params)
@@ -334,10 +341,11 @@ class BOQProcessorBlock(UniversalBlock):
         # BOQ-named files) so the live 26.9 MB priced bill is not 413'd
         # after it already OCR'd. Measure plaintext, not Fernet ciphertext
         # (same class as #449). See memory the-fork-boq-always-xlsx.
-        from app.core.doc_index import _document_size_mb
-
         max_mb = _boq_pdf_max_mb(source_name or os.path.basename(file_path))
-        size_mb = _document_size_mb(file_path)
+        # Importing doc_index (first time: SQLAlchemy and more) and measuring
+        # the plaintext are blocking work: in the thread, never on the event
+        # loop (CI: the loop froze 0.46 s on that first import).
+        size_mb = await asyncio.to_thread(_plaintext_size_mb, file_path)
         if size_mb > max_mb:
             return {
                 "status": "error",
