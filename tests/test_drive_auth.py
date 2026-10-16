@@ -2,13 +2,14 @@ import json, time, os
 import pytest
 from pathlib import Path
 from app.core import drive_auth
+from tests._fixture_values import ENV_SECRET_05
 
 
 @pytest.fixture
 def tmp_data(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", ENV_SECRET_05)
     return tmp_path
 
 

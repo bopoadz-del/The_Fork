@@ -102,3 +102,28 @@ API_KEY_A = "cb_live_" + secrets.token_hex(12)
 API_KEY_B = "cb_live_" + secrets.token_hex(12)
 API_KEY_C = "cb_live_" + secrets.token_hex(12)
 GARBAGE_TOKEN = "garbage." + secrets.token_hex(6) + ".value"
+
+
+def _like(value_len: int, lead: str) -> str:
+    import string
+
+    body = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(max(1, value_len - len(lead))))
+    return lead + body
+
+
+# Secret-named environment values the tests set, generated per run with the
+# same length and leading word as before (length checks see what they saw).
+ENV_SECRET_01 = _like(1, '')
+ENV_SECRET_02 = _like(1, '')
+ENV_SECRET_03 = _like(3, '')
+ENV_SECRET_04 = _like(10, 'live-')
+ENV_SECRET_05 = _like(7, '')
+ENV_SECRET_06 = _like(13, 'a-')
+ENV_SECRET_07 = _like(20, 'explicit-')
+ENV_SECRET_08 = _like(7, 'gk-')
+ENV_SECRET_09 = _like(30, 'super-')
+ENV_SECRET_10 = _like(4, '')
+ENV_SECRET_11 = _like(10, 'top-')
+ENV_SECRET_12 = _like(8, 'gsk_')
+ENV_SECRET_13 = _like(20, 'PLANTED-')
+
