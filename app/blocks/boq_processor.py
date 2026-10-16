@@ -8,6 +8,16 @@ from typing import Any, Dict, List, Optional, Tuple
 # Imported with the block, not inside a request: their first import (SQLAlchemy
 # and more) ran on the event loop and froze it ~0.45 s (CI timing job).
 from app.core.doc_index import _document_size_mb
+
+# The parse libraries load with the block as well: a C-extension's first
+# import holds the GIL even in a worker thread and froze the event loop
+# (0.40 s, CI production-like). Optional: when missing, the parse reports the
+# missing dependency as before.
+try:  # noqa: SIM105
+    import pandas as _pandas  # noqa: F401
+    import pdfplumber as _pdfplumber  # noqa: F401
+except ImportError:  # the lazy import inside the parse raises with a clear message
+    _pandas = _pdfplumber = None
 from app.core.file_crypto import open_plaintext
 from app.core.universal_base import UniversalBlock
 from app.lib.boq_units import reconcile_unit
