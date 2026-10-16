@@ -1,5 +1,34 @@
 """Values the auth tests type in: generated per run, never written in the source."""
-import secrets
+import os
+import random
+import secrets as _secrets
+
+
+class _RunValues:
+    """Random per test run, identical in every pytest-xdist worker of that run.
+
+    Values appear in parametrized test ids, and xdist requires every worker
+    to collect the same ids: each worker imports this module on its own, so
+    independent random draws made the workers disagree (#991 CI). All values
+    come from one seed per run -- the run id xdist shares with every worker,
+    else a fresh random seed for a single process. Not for real secrets:
+    these are test stand-ins that must never be fixed literals."""
+
+    def __init__(self, seed: str):
+        self._rng = random.Random(seed)
+
+    def token_hex(self, nbytes: int = 16) -> str:
+        return "%0*x" % (nbytes * 2, self._rng.getrandbits(nbytes * 8))
+
+    def token_urlsafe(self, nbytes: int = 16) -> str:
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        return "".join(self._rng.choice(alphabet) for _ in range(max(1, nbytes * 4 // 3)))
+
+    def choice(self, seq):
+        return self._rng.choice(seq)
+
+
+secrets = _RunValues(os.environ.get("PYTEST_XDIST_TESTRUNUID") or _secrets.token_hex(16))
 
 PASSWORD = "pw-" + secrets.token_hex(8)
 OTHER_PASSWORD = "pw-" + secrets.token_hex(8)
