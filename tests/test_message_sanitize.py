@@ -12,6 +12,7 @@ import asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
 
 from app.agents.runtime import Agent, _sanitize_messages_for_provider
+from tests._fixture_values import ENV_SECRET_08
 
 
 def test_strips_reasoning_and_extras_keeps_standard():
@@ -84,7 +85,7 @@ def test_call_llm_sends_sanitized_payload(monkeypatch):
     """End-to-end: the actual JSON _call_llm POSTs must carry no `reasoning`
     (or other extra) field, so Groq never 400s again."""
     monkeypatch.setenv("LLM_PROVIDER", "groq")
-    monkeypatch.setenv("GROQ_API_KEY", "gk-test")
+    monkeypatch.setenv("GROQ_API_KEY", ENV_SECRET_08)
     monkeypatch.delenv("LLM_FALLBACK_PROVIDER", raising=False)
     agent = Agent(name="t", description="", system_prompt="x", allowed_blocks=[])
 
@@ -108,7 +109,7 @@ def test_call_llm_sends_sanitized_payload(monkeypatch):
         {"role": "tool", "tool_call_id": "c1", "name": "commissioning_checklist", "content": "{}"},
     ]
     with patch("app.agents.runtime.httpx.AsyncClient", return_value=client):
-        asyncio.run(agent._call_llm(contaminated, "gk-test", with_tools=False))
+        asyncio.run(agent._call_llm(contaminated, ENV_SECRET_08, with_tools=False))
 
     sent = client.post.await_args_list[0].kwargs["json"]["messages"]
     assert all("reasoning" not in m for m in sent), sent

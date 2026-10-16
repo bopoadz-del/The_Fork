@@ -17,6 +17,7 @@ import httpx
 import pytest
 
 from app.agents import answer_exit
+from tests._fixture_values import ENV_SECRET_01
 
 _SEEDS = range(20261009, 20261009 + 12)
 _NOUNS = ("specification", "contract", "drainage", "tender", "survey", "method", "addendum", "schedule",
@@ -83,7 +84,7 @@ def _deepseek(monkeypatch):
     for name in ("LLM_PROVIDER", "LLM_FALLBACK_PROVIDER", "OPENROUTER_API_KEY", "USAGE_DAILY_CAP_USD"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", ENV_SECRET_01)
 
 
 @pytest.mark.parametrize("seed,frac", _CUT_CASES[::3])
@@ -172,7 +173,7 @@ def test_streamed_turn_cut_part_way_ends_on_a_sentence(monkeypatch, seed, frac):
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: {
         "provider": "deepseek", "url": "https://api.deepseek.com/v1/chat/completions",
         "env_key": "DEEPSEEK_API_KEY", "default_model": "deepseek-chat"})
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", ENV_SECRET_01)
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
     monkeypatch.setenv("AGENT_COMMISSIONING_PREDISPATCH", "0")
     full = _paragraphs(seed)

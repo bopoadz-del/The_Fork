@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from app.core import drive_auth
-from tests._fixture_values import PW_06
+from tests._fixture_values import ENV_SECRET_05, PW_06
 
 
 @pytest.fixture(autouse=True)
@@ -190,7 +190,7 @@ def test_user_y_cannot_list_or_import_through_user_xs_connection(monkeypatch):
     from app.main import app
 
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", ENV_SECRET_05)
     with TestClient(app) as c:
         x, x_id = _user(c)
         y, _ = _user(c)
