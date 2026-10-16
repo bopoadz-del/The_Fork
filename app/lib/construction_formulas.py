@@ -2537,6 +2537,31 @@ def _bare_figure(value: Any) -> Optional[float]:
     return None
 
 
+_WRITTEN_ZERO_RE = re.compile(r"(?<![\w.,])0+(?:\.0+)?(?![\d.,]*\d)|\b(?:zero|none|no|nil|without)\b", re.I)
+
+
+def _drop_unwritten_zeros(fn: Any, params: Dict[str, Any], user_words: str) -> Dict[str, Any]:
+    """A zero the caller sent that the user's own words never write is not the
+    user's input: it is left out, so the calculator asks for it (or uses its
+    declared default) instead of refusing "0 was given" (LANE2: a crane hire
+    cost refused a phantom crane count of 0 the user never gave). Switches
+    (inputs whose default is True/False) keep their value: 0 there is "off"."""
+    if not user_words or _WRITTEN_ZERO_RE.search(user_words):
+        return params
+    try:
+        signature = _inspect.signature(fn)
+    except (TypeError, ValueError):
+        return params
+    out = dict(params)
+    for key, val in params.items():
+        p = signature.parameters.get(key)
+        if p is None or isinstance(p.default, bool) or isinstance(val, bool):
+            continue
+        if (isinstance(val, (int, float)) and val == 0) or (isinstance(val, str) and val.strip() in ("0", "0.0")):
+            out.pop(key)
+    return out
+
+
 def _call_unit(params: Dict[str, Any]) -> Optional[str]:
     """The one unit a call states for its figures (``"unit": "ft"``)."""
     for source in [params] + [coerce_calc_params(params.get(k)) for k in _FLATTEN_NEST_KEYS]:
@@ -2801,6 +2826,7 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             }
     from app.lib import formula_registry
     context = _pop_conversion_context(fn, params)
+    params = _drop_unwritten_zeros(fn, params, _CURRENT_ASK.get())
     params, unknown = _partition_bound_params(fn, params)
     # An argument read out of the ask's words that this calculator does not
     # take is dropped, not an error: only an argument the caller sent can be
