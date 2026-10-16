@@ -130,7 +130,9 @@ def _build_calculator_schema(hat: Optional[str]) -> Dict[str, Any]:
                 "Run one of the platform's deterministic calculators. Choose the calculation "
                 "that does what the user asks, then fill params from the user's own words: "
                 "match each figure to an input by its label and unit. Give every figure in the "
-                "unit the user stated; the calculator converts units it can. Leave out an input "
+                "unit the user stated; the calculator converts units it can. Keep every figure's "
+                "sign as written: a negative or zero figure goes in as written, and the calculator "
+                "decides whether it can be used. Leave out an input "
                 "the user did not give: the calculator asks for it. Never invent a value. "
                 "In the answer, name inputs and the calculator by their labels and display "
                 "name, never by the identifiers below.\n" + "\n".join(lines)
