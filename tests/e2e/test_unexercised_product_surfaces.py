@@ -24,6 +24,7 @@ from PIL import Image
 
 from app.main import app
 from tests.conftest import is_extended_boot, requires_construction_kit
+from tests._dev_key import DEV_KEY
 
 _RUN = uuid.uuid4().hex[:10]
 _FIXTURE_IFC = Path(__file__).resolve().parents[1] / "fixtures" / "sample_office.ifc"
@@ -38,7 +39,7 @@ _PREVIOUSLY_UNPINNED_HATS = (
 # neither offered them nor able to name them -- see
 # tests/test_no_agent_hands_a_user_the_server.py.
 _ADMIN_ONLY_HATS = ("external-mcp", "document-ingestion")
-_API_KEY = {"Authorization": "Bearer cb_dev_key"}
+_API_KEY = {"Authorization": "Bearer " + DEV_KEY}
 
 
 @pytest.fixture

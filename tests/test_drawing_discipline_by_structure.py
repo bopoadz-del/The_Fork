@@ -27,6 +27,7 @@ import app.core.projects as projects_store
 from app.blocks import drawing_qto as dq
 from app.blocks.drawing_qto import DrawingQTOBlock
 from tests.conftest import requires_construction_kit
+from tests._dev_key import DEV_KEY
 
 DN = "MVP.FR.ELX.0427"
 TITLE = "GROUND FLOOR LIGHTING LAYOUT"
@@ -154,7 +155,7 @@ def test_the_mapping_is_read_from_the_stored_project_profile(tmp_path):
 
     from app.main import app
 
-    h = {"Authorization": "Bearer cb_dev_key"}
+    h = {"Authorization": "Bearer " + DEV_KEY}
     with TestClient(app) as c:
         pid = c.post("/v1/projects", json={"name": "Fenwick Reach Library"}, headers=h).json()["id"]
         projects_store.set_fact(pid, dq.DISCIPLINE_CODES_FACT,

@@ -3,6 +3,7 @@ import os
 import importlib
 import pytest
 from fastapi.testclient import TestClient
+from tests._dev_key import DEV_KEY
 
 
 @pytest.fixture(scope="module")
@@ -88,6 +89,6 @@ def test_me_with_jwt(client):
 
 
 def test_me_with_legacy_api_key_is_system_user(client):
-    r = client.get("/v1/users/me", headers={"Authorization": "Bearer cb_dev_key"})
+    r = client.get("/v1/users/me", headers={"Authorization": "Bearer " + DEV_KEY})
     assert r.status_code == 200
     assert r.json()["user_id"] == "system"

@@ -11,8 +11,9 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 import app.routers.chat as chat_mod
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 def _events_from_generator(action, message, project_id, monkeypatch, doc_ids=None):

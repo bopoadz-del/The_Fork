@@ -40,11 +40,12 @@ from app.lib.boq_schedule import (
 )
 from app.main import app
 from tests.conftest import requires_construction_kit
+from tests._dev_key import DEV_KEY
 
 # Verbatim live H2 ask (UI-PHYS "Question (ask exactly)").
 H2_EXPORT_ASK = "Export F1 WBS as xlsx"
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 F1_ASK = (

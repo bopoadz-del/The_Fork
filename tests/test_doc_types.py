@@ -7,12 +7,13 @@ from app.main import app
 from app.core import doc_types
 from app.core import jwt_auth
 from app.core import users as users_store
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 def _admin_headers():
-    """Mutations on the global registry are admin-only; cb_dev_key is not."""
+    """Mutations on the global registry are admin-only; the dev key is not."""
     users_store.ensure_user_exists(
         "doc-types-admin", role="admin", email="doc-types-admin@local"
     )

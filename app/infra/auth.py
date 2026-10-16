@@ -105,12 +105,13 @@ class AuthBlock(LegoBlock):
         if not api_key:
             return {"valid": False, "reason": "no_key_provided"}
         
-        # Dev key fallback — only in development environments
-        if api_key == "cb_dev_key":
-            env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
-            if env in {"dev", "development", "local", "test", "testing"}:
-                return {"valid": True, "role": "admin", "owner": "dev", "name": "dev_key"}
-            return {"valid": False, "reason": "dev_key_disabled_in_production"}
+        # The development key (app.core.auth.dev_key): from the environment
+        # only, in a development environment only; never a value in the source.
+        from app.core.auth import dev_key
+
+        dev = dev_key()
+        if dev is not None and api_key == dev:
+            return {"valid": True, "role": "admin", "owner": "dev", "name": "dev_key"}
         
         # Check if revoked/blocked
         if self.memory_block:
@@ -128,7 +129,7 @@ class AuthBlock(LegoBlock):
             })
             
             if not key_data.get("hit"):
-                return {"valid": False, "reason": "key_not_found"}
+                return self._not_found()
             
             metadata = key_data.get("value", {})
             return {
@@ -139,8 +140,20 @@ class AuthBlock(LegoBlock):
                 "name": metadata.get("name")
             }
         
-        return {"valid": False, "reason": "key_not_found"}
+        return self._not_found()
     
+
+    @staticmethod
+    def _not_found() -> Dict:
+        """An unknown key. In development with no development key configured,
+        the refusal says so and names the variable (fail closed, never a
+        built-in value)."""
+        from app.core.auth import DEV_KEY_ENV, dev_key, is_dev_environment
+
+        if is_dev_environment() and dev_key() is None:
+            return {"valid": False, "reason": "dev_key_not_configured",
+                    "message": f"No development key is configured: set {DEV_KEY_ENV} to use one in this environment."}
+        return {"valid": False, "reason": "key_not_found"}
     async def _check_rate_limit(self, api_key: str) -> Dict:
         """Check if request is within rate limit"""
         validation = await self._validate_key(api_key)

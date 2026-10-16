@@ -225,6 +225,22 @@ jobs:
         # CI never sees the names). Stdlib only.
         run: python scripts/scan_repo_hygiene.py
 
+  gitleaks:
+    # A credential written anywhere in the tree fails the build (order 0255Z,
+    # LANE4 #981). The checked-out tree is scanned, not history: history is
+    # closed by the move to the clean repository. Values are redacted in the
+    # log. Pinned release; nothing else installed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gitleaks (pinned)
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks version
+      - name: No credential in the tree
+        run: ./gitleaks detect --source . --no-git --redact --exit-code 1 --verbose
+
   eslint:
     # BLOCKING, unlike ruff above. This gate exists because of a specific
     # production incident: on 2026-08-03 a `useMemo` added below an early

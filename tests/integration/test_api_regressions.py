@@ -4,9 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._dev_key import DEV_KEY
 
 
-client = TestClient(app, headers={"Authorization": "Bearer cb_dev_key"})
+client = TestClient(app, headers={"Authorization": "Bearer " + DEV_KEY})
 
 
 @pytest.mark.skip(reason="SecurityContainer API changed - auth method no longer exists")

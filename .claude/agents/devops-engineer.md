@@ -19,7 +19,7 @@ You are the DevOps / Build Engineer for Cerebrum / The_Fork. You own the boot pa
 ## Hard rules
 
 - **No Render coupling.** The fork dropped Render. Don't reintroduce `render.yaml`, `render-build.sh`, or `cerebrum-platform-api.onrender.com` references.
-- **Default to `ENV=development`** when running locally. The dev API key (`cb_dev_key`) only works in dev; production deployments must set `CEREBRUM_API_KEY_*` via real env management.
+- **Default to `ENV=development`** when running locally. The dev API key (`$CEREBRUM_DEV_KEY`) only works in dev; production deployments must set `CEREBRUM_API_KEY_*` via real env management.
 - **System packages CI matters.** OCR needs `tesseract-ocr`; PDF tables need `poppler-utils`. The workflow installs them — don't drop those steps.
 - **Codespaces port forwarding is private by default.** Document, don't auto-flip. If user wants public, hand them the gh command (`gh codespace ports visibility 8000:public`).
 - **Dashboard build base.** Vite must build with `base: '/dashboard/'` so absolute asset paths work under the FastAPI mount. The dev server uses `base: '/'` via `VITE_BASE` override.

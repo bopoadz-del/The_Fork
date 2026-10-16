@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests._dev_key import DEV_KEY
 from app.agents.runtime import (
     _MASTER_CORPUS_FALLBACK_NOTE,
     _apply_rag_context,
@@ -372,7 +373,7 @@ async def test_live_empty_fixture_chat_calls_calc_without_mc_bleed(
         system_prompt="t",
         allowed_blocks=["construction"],
     )
-    out = await agent.chat(q, api_key="cb_dev_key", project_id=FIXTURE_PID)
+    out = await agent.chat(q, api_key=DEV_KEY, project_id=FIXTURE_PID)
     assert out["status"] == "success", out
     names = [t.get("name") for t in (out.get("tool_calls") or [])]
     assert "construction_calc" in names, names
@@ -539,7 +540,7 @@ async def test_hex_fixture_chat_calls_calc_without_mc_bleed(
         system_prompt="t",
         allowed_blocks=["construction"],
     )
-    out = await agent.chat(q, api_key="cb_dev_key", project_id=HEX_FIXTURE_PID)
+    out = await agent.chat(q, api_key=DEV_KEY, project_id=HEX_FIXTURE_PID)
     assert out["status"] == "success", out
     names = [t.get("name") for t in (out.get("tool_calls") or [])]
     assert "construction_calc" in names, names
@@ -588,7 +589,7 @@ async def test_reprobe_empty_fixture_chat_calls_calc_without_mc_bleed(
         system_prompt="t",
         allowed_blocks=["construction"],
     )
-    out = await agent.chat(q, api_key="cb_dev_key", project_id=FIXTURE_PID)
+    out = await agent.chat(q, api_key=DEV_KEY, project_id=FIXTURE_PID)
     assert out["status"] == "success", out
     names = [t.get("name") for t in (out.get("tool_calls") or [])]
     assert "construction_calc" in names, names

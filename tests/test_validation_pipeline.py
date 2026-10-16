@@ -9,6 +9,7 @@ import math
 import pytest
 
 from app.blocks.validation_pipeline import ValidationPipelineBlock
+from tests._dev_key import DEV_KEY
 
 
 @pytest.fixture
@@ -404,7 +405,7 @@ async def test_execute_validation_pipeline_unit_returns_non_500():
                 "input": {"value": 120, "unit": "m3"},
                 "params": {},
             },
-            headers={"Authorization": "Bearer cb_dev_key"},
+            headers={"Authorization": "Bearer " + DEV_KEY},
         )
     assert r.status_code == 200, r.text
     body = r.json()

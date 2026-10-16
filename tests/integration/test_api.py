@@ -4,8 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from tests.conftest import listable_block_count
+from tests._dev_key import DEV_KEY
 
-client = TestClient(app, headers={"Authorization": "Bearer cb_dev_key"})
+client = TestClient(app, headers={"Authorization": "Bearer " + DEV_KEY})
 
 class TestAPIEndpoints:
     """Test suite for API endpoints."""
@@ -76,7 +77,7 @@ class TestExecuteEndpoint:
         assert "result" in data
     
     def test_execute_web_block(self):
-        """`web` fetches any URL from inside the network: admin-only. cb_dev_key
+        """`web` fetches any URL from inside the network: admin-only. the dev key
         is deliberately NOT an admin (test_hardening), so it is refused. What
         the block does is covered in tests/blocks/test_web.py."""
         response = client.post("/execute", json={
@@ -165,7 +166,7 @@ class TestDriveEndpoints:
 
     def test_local_drive_list(self):
         """`local_drive` reads and writes the data disk, which holds every
-        user's uploads: admin-only, so the non-admin cb_dev_key is refused.
+        user's uploads: admin-only, so the non-admin the dev key is refused.
         What the block does is covered in tests/blocks/test_local_drive.py."""
         response = client.post("/execute", json={
             "block": "local_drive",
@@ -177,7 +178,7 @@ class TestDriveEndpoints:
     
     def test_google_drive_mock(self):
         """`google_drive` falls back to a server-wide token when none is passed:
-        admin-only, so the non-admin cb_dev_key is refused. Users reach their
+        admin-only, so the non-admin the dev key is refused. Users reach their
         own drive through /v1/drive/*."""
         response = client.post("/execute", json={
             "block": "google_drive",
@@ -189,7 +190,7 @@ class TestDriveEndpoints:
     
     def test_onedrive_mock(self):
         """`onedrive` falls back to a server-wide token when none is passed:
-        admin-only, so the non-admin cb_dev_key is refused. Users reach their
+        admin-only, so the non-admin the dev key is refused. Users reach their
         own drive through /v1/drive/*."""
         response = client.post("/execute", json={
             "block": "onedrive",

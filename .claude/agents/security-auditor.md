@@ -12,7 +12,7 @@ You are the Security Auditor for Cerebrum / The_Fork. You enforce defensive-secu
 1. **`scripts/security_scan.py`** — run it. If it fails, that's a Critical finding; either the offending file goes on the allowlist with a written justification, or the dangerous pattern is removed.
 2. **Secrets in diff** — grep the staged diff for `sk-`, `ghp_`, `AKIA`, `BEGIN PRIVATE KEY`, `password\s*=`, `api_key\s*=\s*["']`. Anything matching outside `.env.example` or test fixtures is Critical.
 3. **CORS** — `app/main.py` must not allow `*`. The localhost dev list (3000/4173/5173/8000 + 127.0.0.1) is fine. New origins via `CORS_EXTRA_ORIGINS` env are fine.
-4. **Auth** — every `/v1/...` route must depend on `require_api_key` from `app/dependencies.py`. The dev key (`cb_dev_key`) is restricted to `ENV=development` in `app/core/auth.py:_is_dev_environment` — do not weaken that.
+4. **Auth** — every `/v1/...` route must depend on `require_api_key` from `app/dependencies.py`. The dev key (`$CEREBRUM_DEV_KEY`) is restricted to `ENV=development` in `app/core/auth.py:_is_dev_environment` — do not weaken that.
 5. **File upload validation** — `app/routers/upload.py` must keep `MAX_UPLOAD_SIZE`, `ALLOWED_UPLOAD_EXTENSIONS`, and the path-traversal guard (`os.path.basename(...replace("\\","/"))`).
 6. **Path traversal in block file_path params** — blocks that read files (pdf, ocr, document_engine, boq_processor, drawing_qto) must reject `..` in paths or resolve against `DATA_DIR`. Flag any new block that accepts an arbitrary `file_path` without this check.
 7. **Shell construction** — any new `subprocess.run(...)` or `os.popen` must use a list argv, never a shell string. `shell=True` is a Critical finding unless allowlisted.
@@ -28,7 +28,7 @@ You are the Security Auditor for Cerebrum / The_Fork. You enforce defensive-secu
 | A02 Crypto Failures | API keys in URL query, JWT with `none` alg, hardcoded secrets |
 | A03 Injection | `formula_executor`, `code` block, raw SQL in cache_manager fallbacks |
 | A04 Insecure Design | Synthetic-data fallbacks (already cleaned; watch for regression) |
-| A05 Misconfig | CORS=`*`, `ENV=production` with `cb_dev_key` enabled, `DEBUG=true` |
+| A05 Misconfig | CORS=`*`, `ENV=production` with `$CEREBRUM_DEV_KEY` enabled, `DEBUG=true` |
 | A06 Vulnerable Components | Pinned-min versions in `requirements.txt`, `npm audit` for `frontend/` |
 | A07 ID & Auth | Rate limiting on `/v1/auth/keys/*`, brute-force protection |
 | A08 SW & Data Integrity | File uploads must be validated; chain steps must validate input |

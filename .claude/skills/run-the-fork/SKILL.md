@@ -70,7 +70,7 @@ ENV=development PYTHONIOENCODING=utf-8 DATA_DIR="$PWD/data" \
 
 or `./start-local.sh` (bash; sets the same env and runs uvicorn). Then open
 `http://localhost:8000/` (chat UI) or `http://localhost:8000/docs` (Swagger).
-Ctrl-C to stop. `/v1/*` endpoints need header `Authorization: Bearer cb_dev_key`
+Ctrl-C to stop. `/v1/*` endpoints need header `Authorization: Bearer $CEREBRUM_DEV_KEY`
 (the dev key works **only** when `ENV=development`).
 
 ## Test
@@ -87,7 +87,7 @@ Direct invocation without the server (for block/internal changes):
 - **`PYTHONIOENCODING=utf-8` is mandatory on Windows.** Startup logs contain
   emoji; without it the app crashes with a `cp1252` `UnicodeEncodeError`. The
   driver and `start-local.sh` both set it.
-- **`ENV=development` is required for the `cb_dev_key` API key.** With `ENV`
+- **`ENV=development` is required for the `$CEREBRUM_DEV_KEY` API key.** With `ENV`
   unset/production the dev key is rejected (`401 "Dev key disabled in
   production"`) and every `/v1/*` call fails.
 - **README is stale on the frontend.** It lists a React dashboard at

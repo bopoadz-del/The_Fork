@@ -31,8 +31,9 @@ from app.core import file_crypto
 from app.core import projects as store
 from app.dependencies import require_api_key
 from app.main import app
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 @pytest.fixture(scope="module")

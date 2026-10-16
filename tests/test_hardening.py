@@ -1,6 +1,7 @@
 """Regression tests for the High/Medium production-hardening fixes."""
 
 import pytest
+from tests._dev_key import DEV_KEY
 
 
 # ── file_crypto: decrypt fails loud on a key mismatch ───────────────────────────
@@ -215,12 +216,12 @@ def test_code_blocks_are_admin_only_via_chain():
 
 
 def test_non_admin_api_key_cannot_hit_privileged_blocks():
-    """cb_dev_key authenticates but must not inherit the system user's admin role."""
+    """the dev key authenticates but must not inherit the system user's admin role."""
     from fastapi.testclient import TestClient
 
     from app.main import app
 
-    key = {"Authorization": "Bearer cb_dev_key"}
+    key = {"Authorization": "Bearer " + DEV_KEY}
     with TestClient(app) as c:
         exe = c.post("/v1/execute", headers=key, json={"block": "code", "input": "x"})
         assert exe.status_code == 403, (exe.status_code, exe.text)
@@ -250,7 +251,7 @@ def test_chain_500_does_not_leak_exception_text():
         with TestClient(app) as c:
             r = c.post(
                 "/v1/chain",
-                headers={"Authorization": "Bearer cb_dev_key"},
+                headers={"Authorization": "Bearer " + DEV_KEY},
                 json={"steps": [{"block": "translate", "params": {"target": "en"}}]},
             )
         assert r.status_code == 500, (r.status_code, r.text)
@@ -273,7 +274,7 @@ def test_upload_json_omits_file_path():
     with TestClient(app) as c:
         r = c.post(
             "/v1/upload",
-            headers={"Authorization": "Bearer cb_dev_key"},
+            headers={"Authorization": "Bearer " + DEV_KEY},
             files={"file": ("note.txt", b"hello upload", "text/plain")},
         )
         assert r.status_code == 200, r.text
@@ -358,7 +359,7 @@ def test_drive_token_is_per_user(tmp_path, monkeypatch):
         ).json()["token"]
         user_b = {"Authorization": f"Bearer {token}"}
 
-        # The 'system' user (legacy cb_dev_key) connects Drive.
+        # The 'system' user (legacy the dev key) connects Drive.
         drive_auth.save_token("system", {
             "access_token": "AT", "refresh_token": "RT",
             "expiry": time.time() + 9999, "email": "system@example.com",
@@ -366,7 +367,7 @@ def test_drive_token_is_per_user(tmp_path, monkeypatch):
 
         # System sees it connected; user B must not.
         sys_status = c.get(
-            "/v1/drive/status", headers={"Authorization": "Bearer cb_dev_key"}
+            "/v1/drive/status", headers={"Authorization": "Bearer " + DEV_KEY}
         ).json()
         assert sys_status["connected"] is True
 

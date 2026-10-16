@@ -6,7 +6,7 @@ Routes:
     POST /v1/agents/{name}/chat           — single-turn JSON response (with tool calls)
     POST /v1/agents/{name}/chat/stream    — SSE: start / tool_call / tool_result / token / end / error
 
-Auth: same Bearer cb_dev_key (or any registered key) as the rest of /v1.
+Auth: the same Bearer key (the development key from CEREBRUM_DEV_KEY, or any registered key) as the rest of /v1.
 """
 
 from app.core.offload import off_loop as _off_loop

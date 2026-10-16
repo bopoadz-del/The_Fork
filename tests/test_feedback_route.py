@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import construction_kit_markers
+from tests._dev_key import DEV_KEY
 
 pytestmark = construction_kit_markers
 
@@ -42,7 +43,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     _router.invalidate_model_cache()
 
 
-_AUTH = {"Authorization": "Bearer cb_dev_key"}
+_AUTH = {"Authorization": "Bearer " + DEV_KEY}
 
 
 def test_feedback_route_writes_corrected_pattern(isolated_data_dir):

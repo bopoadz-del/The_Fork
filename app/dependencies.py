@@ -164,7 +164,7 @@ async def require_api_key(
     email/auth_method).
 
     If JWT decode fails (InvalidTokenError), fall through to the legacy
-    auth_manager.validate_key() path unchanged so cb_dev_key and real API keys
+    auth_manager.validate_key() path unchanged so the development key and real API keys
     keep working exactly as before.
     """
     if credentials is not None:

@@ -84,7 +84,7 @@ Each is a separate file in `app/blocks/` that the container often calls:
 - **Smoke test recipe** (after any change):
   ```bash
   curl -s -X POST http://localhost:8000/v1/execute \
-    -H 'Authorization: Bearer cb_dev_key' -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer $CEREBRUM_DEV_KEY' -H 'Content-Type: application/json' \
     -d '{"block":"construction","input":{"file_path":"data/<real-file>"},"params":{"action":"auto_pipeline","doc_type":"auto"}}'
   ```
   Then verify each `panel.type` matches the renderer's expected `data` shape.

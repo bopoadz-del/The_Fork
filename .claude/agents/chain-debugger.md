@@ -31,7 +31,7 @@ You are the Chain Debugger for Cerebrum / The_Fork. Your job is to find the *roo
 | Office file (.xlsx/.docx) crashes silently | `_process_drawing` uses `fitz` which only handles PDFs | `app/containers/construction.py:_process_office_document` covers it |
 | `mcp_consumer` 500s on a known server | npx package not installed or wrong server name | `app/blocks/mcp_consumer.py` |
 | `/mcp/sse` 503 | `mcp` package missing SSE transport | `app/routers/mcp.py:mcp_router_available` |
-| 401 on landing page | Hardcoded master key not in env; needs `cb_dev_key` fallback | `app/static/index.html:API_KEY` IIFE |
+| 401 on landing page | Hardcoded master key not in env; needs `$CEREBRUM_DEV_KEY` fallback | `app/static/index.html:API_KEY` IIFE |
 | dashboard 404 | `frontend/dist/` not built; mount skipped | `app/main.py` dashboard mount |
 
 ## Hard rules

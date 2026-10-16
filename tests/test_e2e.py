@@ -10,6 +10,7 @@ from typing import Dict
 import pytest
 
 from tests.conftest import listable_block_count, requires_construction_kit
+from tests._dev_key import DEV_KEY
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -463,7 +464,7 @@ class TestLearningEngine:
 class TestAPIEndpoints:
     """Test the HTTP layer — these catch bugs that block-level tests miss."""
 
-    API_KEY = "cb_dev_key"
+    API_KEY = DEV_KEY
 
     @pytest.fixture
     def client(self):

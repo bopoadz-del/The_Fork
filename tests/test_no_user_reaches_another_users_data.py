@@ -23,6 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._dev_key import DEV_KEY
 
 
 _RUN = uuid.uuid4().hex[:8]
@@ -716,8 +717,8 @@ ADMIN_PATHS = [
     ("GET", "/v1/debug/env", None),
     ("GET", "/v1/auth/keys", None),
     ("POST", "/v1/auth/keys", None),
-    ("POST", "/v1/auth/keys/revoke", {"api_key": "cb_dev_key"}),
-    ("POST", "/v1/auth/keys/rotate", {"api_key": "cb_dev_key"}),
+    ("POST", "/v1/auth/keys/revoke", {"api_key": DEV_KEY}),
+    ("POST", "/v1/auth/keys/rotate", {"api_key": DEV_KEY}),
     ("GET", "/v1/metrics", None),
 ]
 
@@ -751,16 +752,16 @@ def test_plain_user_cannot_probe_other_api_keys(client, world):
     h = _h(world["a"])
     # JWT user probing the well-known dev key must not learn its validity.
     for path, payload in (
-        ("/v1/auth/validate", {"api_key": "cb_dev_key"}),
-        ("/v1/auth/check", {"api_key": "cb_dev_key", "block": "chat"}),
+        ("/v1/auth/validate", {"api_key": DEV_KEY}),
+        ("/v1/auth/check", {"api_key": DEV_KEY, "block": "chat"}),
     ):
         resp = client.post(path, headers=h, json=payload)
         assert resp.status_code in (401, 403, 404), (
             f"{path}: expected deny, got {resp.status_code} {resp.text[:200]}"
         )
-    usage = client.get("/v1/auth/usage", headers=h, params={"key": "cb_dev_key"})
+    usage = client.get("/v1/auth/usage", headers=h, params={"key": DEV_KEY})
     assert usage.status_code in (401, 403, 404)
-    stolen = client.delete("/v1/auth/keys/cb_dev_key", headers=h)
+    stolen = client.delete("/v1/auth/keys/" + DEV_KEY, headers=h)
     assert stolen.status_code in (401, 403, 404)
 
 

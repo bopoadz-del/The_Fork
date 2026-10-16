@@ -18,8 +18,9 @@ from app.main import app
 from app.core import projects as store
 from app.lib import boq_pricing
 from app.lib.boq_excel import evaluate_workbook_total
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 

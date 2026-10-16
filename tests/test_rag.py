@@ -19,6 +19,7 @@ import time
 import numpy as np
 import pytest
 from sqlalchemy import select
+from tests._dev_key import DEV_KEY
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -500,11 +501,11 @@ def test_rag_search_route_happy_path(isolated_data_dir, monkeypatch):
 
     # Auth: tests typically use a dev API key. Check the env the auth
     # router reads; fall back to bypassing if no key needed in test mode.
-    # The auth router accepts the built-in dev key "cb_dev_key" via Bearer.
+    # The auth router accepts the built-in dev key DEV_KEY via Bearer.
 
     # The route now resolves the caller's access to the project before it
     # retrieves (see routers/rag.py::_searchable_project_or_404), so the id
-    # needs a real row. Owned by "system", which is who cb_dev_key resolves
+    # needs a real row. Owned by "system", which is who the dev key resolves
     # to — this test is about retrieval, not about the gate.
     projects_mod.create_project(name="Route Probe", project_id="proj_route")
 
@@ -514,7 +515,7 @@ def test_rag_search_route_happy_path(isolated_data_dir, monkeypatch):
         r = client.post(
             "/v1/rag/search",
             json={"query": "alpha beta gamma", "project_id": "proj_route", "k": 2},
-            headers={"Authorization": "Bearer cb_dev_key"},
+            headers={"Authorization": "Bearer " + DEV_KEY},
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -527,12 +528,12 @@ def test_rag_search_route_validates_query(isolated_data_dir, monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app
 
-    # The auth router accepts the built-in dev key "cb_dev_key" via Bearer.
+    # The auth router accepts the built-in dev key DEV_KEY via Bearer.
     with TestClient(app) as client:
         r = client.post(
             "/v1/rag/search",
             json={"query": "", "project_id": "proj_route"},
-            headers={"Authorization": "Bearer cb_dev_key"},
+            headers={"Authorization": "Bearer " + DEV_KEY},
         )
         # Pydantic rejects empty query (min_length=1)
         assert r.status_code == 422
@@ -554,12 +555,12 @@ def test_rag_search_route_unknown_project_is_not_readable(isolated_data_dir, mon
     # Isolate from any general-knowledge corpus: with GK merge on (PR #107) a
     # seeded GK project would otherwise contribute background chunks.
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
-    # The auth router accepts the built-in dev key "cb_dev_key" via Bearer.
+    # The auth router accepts the built-in dev key DEV_KEY via Bearer.
     with TestClient(app) as client:
         r = client.post(
             "/v1/rag/search",
             json={"query": "anything", "project_id": "never_existed", "k": 5},
-            headers={"Authorization": "Bearer cb_dev_key"},
+            headers={"Authorization": "Bearer " + DEV_KEY},
         )
         assert r.status_code == 404
         assert "chunks" not in r.json()

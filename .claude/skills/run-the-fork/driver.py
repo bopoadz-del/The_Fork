@@ -27,7 +27,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 PORT = int(os.environ.get("PORT", "8000"))
 BASE = f"http://127.0.0.1:{PORT}"
-DEV_KEY = "cb_dev_key"  # accepted only when ENV=development
+DEV_KEY = os.environ.get("CEREBRUM_DEV_KEY", "")  # the app accepts it only when ENV=development
 
 
 def _req(method, path, body=None, auth=False):

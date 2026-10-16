@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from app.dependencies import require_user
 from app.core import jwt_auth, users as users_store
+from tests._dev_key import DEV_KEY
 
 
 @pytest.fixture
@@ -36,7 +37,7 @@ def app_client(isolated_users):
 
 
 def test_legacy_api_key_maps_to_system_user(app_client):
-    r = app_client.get("/whoami", headers={"Authorization": "Bearer cb_dev_key"})
+    r = app_client.get("/whoami", headers={"Authorization": "Bearer " + DEV_KEY})
     assert r.status_code == 200
     assert r.json()["user_id"] == "system"
     assert r.json()["auth_method"] == "api_key"

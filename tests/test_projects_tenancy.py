@@ -3,8 +3,9 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from tests._dev_key import DEV_KEY
 
-LEGACY = {"Authorization": "Bearer cb_dev_key"}
+LEGACY = {"Authorization": "Bearer " + DEV_KEY}
 
 # Run-unique suffix so each test run creates fresh users with no prior history.
 _RUN = uuid.uuid4().hex[:8]

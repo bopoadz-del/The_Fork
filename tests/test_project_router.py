@@ -8,8 +8,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.routers import project as project_router
 from app.core.session_store import InMemorySessionStore
+from tests._dev_key import DEV_KEY
 
-_HEADERS = {"Authorization": "Bearer cb_dev_key"}
+_HEADERS = {"Authorization": "Bearer " + DEV_KEY}
 
 
 @pytest.fixture

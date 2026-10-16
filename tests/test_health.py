@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core import redis_client
+from tests._dev_key import DEV_KEY
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +20,7 @@ def _reset_redis(monkeypatch):
 def client(monkeypatch):
     monkeypatch.delenv("REDIS_URL", raising=False)
     from app.main import app
-    with TestClient(app, headers={"Authorization": "Bearer cb_dev_key"}) as client:
+    with TestClient(app, headers={"Authorization": "Bearer " + DEV_KEY}) as client:
         yield client
 
 
