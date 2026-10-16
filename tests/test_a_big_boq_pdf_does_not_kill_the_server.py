@@ -186,3 +186,30 @@ def test_the_event_loop_keeps_running_while_a_pdf_is_parsed(blank_pdf, monkeypat
     # whole second; scheduler noise on a loaded machine reached exactly 0.20 s
     # (virgin-mode run, 23 Sep). The bound sits between the two, not on the noise.
     assert worst < 0.4, f"event loop frozen for {worst:.2f}s while a PDF was parsed"
+
+
+def test_the_plaintext_read_and_the_parse_run_off_the_loop(tmp_path, monkeypatch):
+    """LANE5 #984: decrypting (open_plaintext) and parsing are one blocking
+    job; neither may run on the event loop's thread."""
+    import contextlib
+    import threading
+
+    path = tmp_path / "bill.csv"
+    path.write_text("Item,Description,Qty,Unit,Rate\n1,Concrete,10,m3,100\n", encoding="utf-8")
+    seen: list = []
+
+    @contextlib.contextmanager
+    def probe(file_path):
+        seen.append(threading.get_ident())
+        yield file_path
+
+    monkeypatch.setattr(bp, "open_plaintext", probe)
+
+    async def scenario():
+        loop_thread = threading.get_ident()
+        result = await bp.BOQProcessorBlock().process({"file_path": str(path)}, {})
+        return loop_thread, result
+
+    loop_thread, result = asyncio.run(scenario())
+    assert seen and loop_thread not in seen
+    assert result.get("status") != "error", result
