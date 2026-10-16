@@ -19,9 +19,10 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import STUB_KEY_03
 
 VALID = {"Authorization": "Bearer " + DEV_KEY}
-UNKNOWN = {"Authorization": "Bearer cb_not_a_real_key_00000000"}
+UNKNOWN = {"Authorization": "Bearer " + STUB_KEY_03}
 MALFORMED = {"Authorization": DEV_KEY}          # no scheme
 
 # Routes that must never serve an anonymous caller. Kept small and concrete:
