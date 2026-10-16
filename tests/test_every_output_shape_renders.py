@@ -62,3 +62,34 @@ def test_an_answer_carries_a_mapping_result_only_with_its_figures():
     env = _env({"stages": {"first_fix": 40, "testing": 20}})
     assert render.carried(env, {}, "First fix takes 40 days, testing 20 days.")
     assert not render.carried(env, {}, "First fix takes 40 days.")
+
+
+def test_a_mapping_result_is_carried_only_with_its_row_labels():
+    """LANE2 (#986 repair 2): an answer with the right figures under invented
+    row names -- the electrical stage table with 5 fake stages -- does not
+    carry the result."""
+    env = _env({"stages": {"first_fix": 40, "testing": 20}})
+    assert render.carried(env, {}, "First fix: 40 days. Testing: 20 days.")
+    assert not render.carried(env, {}, "Stage A: 40 days. Stage B: 20 days.")
+
+
+def test_a_record_dropped_from_the_answer_fails_carried():
+    rows = [{"bidder": "Bidder A", "score": 81.5}, {"bidder": "Bidder B", "score": 77.0},
+            {"bidder": "Bidder C", "score": 70.25}]
+    env = _env({"ranked": rows}, calculation="evaluate_tender")
+    every = "Bidder A 81.5; Bidder B 77.0; Bidder C 70.25."
+    assert render.carried(env, {}, every)
+    assert not render.carried(env, {}, "Bidder A 81.5; Bidder B 77.0.")
+
+
+def test_carried_reads_the_same_capped_rows_the_renderer_shows():
+    """A mapping past the cap: the answer must carry the rows the renderer
+    shows (and the renderer says how many it left out), not the hidden ones."""
+    stages = {f"stage_{i}": 10 + i for i in range(1, 13)}
+    env = _env({"stages": stages})
+    text = render.render_calculation(env)
+    assert "- and 4 more" in text
+    assert render.carried(env, {}, text)
+    shown_only = "; ".join(f"Stage {i}: {10 + i}" for i in range(1, 9))
+    assert render.carried(env, {}, shown_only)
+    assert not render.carried(env, {}, "; ".join(f"Stage {i}: {10 + i}" for i in range(1, 8)))

@@ -236,10 +236,20 @@ def carried(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]], answer: 
 
 
 def _figures_written(value: Any, written: List[float], text: str) -> bool:
-    """Every figure and name a mapping or a list of records holds (up to the
-    rows shown) is in the answer -- the same test plain outputs pass."""
-    records = [value] if isinstance(value, dict) else (
-        list(value[:_MAX_LIST]) if isinstance(value, (list, tuple)) and value and all(isinstance(v, dict) for v in value) else [])
+    """The rows a mapping or a list of records renders (the same capped rows
+    the renderer shows) are all in the answer: every figure and name, and for
+    a mapping every row's label as well -- a table with the right total and
+    invented row names does not carry the result (LANE2)."""
+    if isinstance(value, dict):
+        rows = [(key, item) for key, item in list(value.items())[:_MAX_LIST] if _value(item) is not None]
+        for key, _item in rows:
+            if not _label_written(str(key), text):
+                return False
+        records = [dict(rows)]
+    elif isinstance(value, (list, tuple)) and value and all(isinstance(v, dict) for v in value):
+        records = list(value[:_MAX_LIST])
+    else:
+        records = []
     for record in records:
         for item in record.values():
             if isinstance(item, bool) or isinstance(item, (dict, list, tuple, set)):
@@ -250,6 +260,13 @@ def _figures_written(value: Any, written: List[float], text: str) -> bool:
             elif isinstance(item, str) and item.strip() and item.strip().lower() not in text:
                 return False
     return True
+
+
+def _label_written(key: str, text: str) -> bool:
+    """A mapping row's label is in the answer: as the renderer titles it, or
+    as the key itself written in words."""
+    forms = {_title(key, {}).lower(), key.lower(), key.replace("_", " ").lower()}
+    return any(form and form in text for form in forms)
 
 
 def _identifier_map() -> Dict[str, str]:
