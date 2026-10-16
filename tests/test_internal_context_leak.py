@@ -25,6 +25,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
+from tests._fixture_values import STUB_TOKEN_04
 
 from app.agents.runtime import (
     Agent,
@@ -152,7 +153,7 @@ def _disable_commissioning_remaining(monkeypatch):
 @pytest.fixture
 def deepseek_streaming(monkeypatch):
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
 
 

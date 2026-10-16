@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core import projects as store
-from tests._fixture_values import PW_10
+from tests._fixture_values import PW_10, STUB_TOKEN_02
 
 
 @pytest.fixture
@@ -209,7 +209,7 @@ def test_regular_user_can_open_system_seed_gk_conversation(client, world, monkey
         "app.agents.runtime.project_is_rag_ready", lambda _pid: True
     )
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
 
     gk_id = f"oag_gkchat_{uuid.uuid4().hex[:10]}"
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", gk_id)

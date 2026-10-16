@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncIterator, Dict, List
 from unittest.mock import AsyncMock, patch
+from tests._fixture_values import STUB_TOKEN_01
 
 from app.agents.runtime import (
     Agent,
@@ -55,7 +56,7 @@ def _hat_activation_recorded(events: List[Dict[str, Any]]) -> bool:
 def _stream_with_mock(monkeypatch, message: str):
     monkeypatch.setenv("FORK_HATS_ENABLED", "1")
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_01)
     agent = _pa()
     mock = AsyncMock(return_value={
         "status": "success",
@@ -176,7 +177,7 @@ def test_contracts_question_produces_nonempty_hat_signals(monkeypatch):
 def test_project_assistant_stream_no_hat_signals_when_flag_off(monkeypatch):
     monkeypatch.delenv("FORK_HATS_ENABLED", raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_01)
     agent = _pa()
     mock = AsyncMock(return_value={
         "status": "success",

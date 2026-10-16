@@ -30,6 +30,7 @@ import os
 from typing import Callable, Iterable
 
 import pytest
+from tests._fixture_values import STUB_TOKEN_06
 
 PAGE = 8192
 READ_BUDGET = 50 * 1024 * 1024
@@ -152,7 +153,7 @@ def test_one_question_stays_inside_its_database_budget(monkeypatch):
 
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", GK)
     monkeypatch.setenv("MASTER_CORPUS_SOURCE_PROJECT_ID", CORPUS)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_06)
 
     engine = get_engine()
     table = vector_store.get_store(dim=get_embedder().dim)._table_name

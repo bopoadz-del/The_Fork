@@ -33,6 +33,7 @@ from unittest.mock import patch
 import pytest
 
 from app.agents.runtime import _EMPTY_RESPONSE_FALLBACK, Agent
+from tests._fixture_values import STUB_TOKEN_04
 
 _DEEPSEEK_CFG = {
     "provider": "deepseek",
@@ -58,7 +59,7 @@ def _no_predispatch(monkeypatch):
 @pytest.fixture
 def deepseek_streaming(monkeypatch):
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
     monkeypatch.setenv("CHAT_STREAM_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("CHAT_STREAM_HEARTBEAT_SECONDS", "20")

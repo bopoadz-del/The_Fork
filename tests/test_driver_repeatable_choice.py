@@ -15,6 +15,7 @@ import random
 import pytest
 
 from app.agents.driver import llm, loop, tools
+from tests._fixture_values import STUB_TOKEN_09
 
 
 def _agent():
@@ -86,7 +87,7 @@ def test_the_non_streamed_call_sends_the_decision_settings(monkeypatch):
     import httpx
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_09)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     asyncio.run(llm.call(_agent(), [{"role": "user", "content": "hi"}], _SYNTHETIC_TOOLS))
     assert sent["temperature"] == 0.0

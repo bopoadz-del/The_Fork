@@ -2,7 +2,7 @@
 
 import pytest
 from tests._dev_key import DEV_KEY
-from tests._fixture_values import PW_06
+from tests._fixture_values import PW_06, STUB_TOKEN_16
 
 
 # ── file_crypto: decrypt fails loud on a key mismatch ───────────────────────────
@@ -72,7 +72,7 @@ def _prod_env_complete(monkeypatch):
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("SECRET_KEY", "a-real-secret")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/test")
-    monkeypatch.setenv("DATA_ENCRYPTION_KEY", "test-fernet-key-not-used")
+    monkeypatch.setenv("DATA_ENCRYPTION_KEY", STUB_TOKEN_16)
     monkeypatch.setenv("CEREBRUM_VIRGIN", "false")
     monkeypatch.setenv("CEREBRUM_DOMAIN_KITS", "construction")
 

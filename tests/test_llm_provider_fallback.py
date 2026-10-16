@@ -39,6 +39,7 @@ from copy import deepcopy
 
 import httpx
 import pytest
+from tests._fixture_values import STUB_TOKEN_01, STUB_TOKEN_03
 
 from app.agents.runtime import (
     DEEPSEEK_API_URL,
@@ -162,24 +163,24 @@ def _agent(name="project-assistant", model="deepseek-chat", temperature=0.3,
 
 def _deepseek_primary(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_01)
     monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
 
 
 def _openrouter_primary(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_TOKEN_03)
     monkeypatch.delenv("OPENROUTER_MAX_TOKENS", raising=False)
 
 
 def _openrouter_fallback(monkeypatch):
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_TOKEN_03)
 
 
 def _deepseek_fallback(monkeypatch):
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_01)
 
 
 USER = [{"role": "user", "content": "What is the notice period?"}]
@@ -201,7 +202,7 @@ async def test_the_attempt_list_is_what_these_tests_assume(monkeypatch, http):
     _openrouter_fallback(monkeypatch)
     fake = http(_Resp(429, text="rate limited"), _Resp(200))
 
-    await _agent()._call_llm(list(USER), "ds-test-key")
+    await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert fake.urls == [DEEPSEEK_API_URL, OPENROUTER_API_URL], (
         f"the ladder is not deepseek -> openrouter: {fake.urls}"
@@ -215,7 +216,7 @@ async def test_with_no_fallback_configured_there_is_exactly_one_attempt(monkeypa
     _deepseek_primary(monkeypatch)
     fake = http(_Resp(500, text="server error"))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 1, f"an unconfigured fallback was attempted: {fake.urls}"
     assert result["status"] == "error"
@@ -230,7 +231,7 @@ async def test_a_retryable_status_falls_back_to_the_next_provider(monkeypatch, h
     _openrouter_fallback(monkeypatch)
     fake = http(_Resp(status, text="upstream said no"), _Resp(200, _ok_body("recovered")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, f"HTTP {status} did not trigger the fallback"
     assert result["status"] == "success", result
@@ -251,7 +252,7 @@ async def test_a_non_retryable_status_does_not_fall_back(monkeypatch, http, stat
     _openrouter_fallback(monkeypatch)
     fake = http(_Resp(status, text="bad request"), _Resp(200, _ok_body("should never run")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 1, (
         f"HTTP {status} is not retryable but a second provider was called anyway: "
@@ -297,7 +298,7 @@ async def test_tool_pairing_400_falls_back_to_the_next_provider(monkeypatch, htt
         {"role": "tool", "tool_call_id": "fetch_document:3", "name": "fetch_document", "content": "{}"},
         {"role": "tool", "tool_call_id": "fetch_document:4", "name": "fetch_document", "content": "{}"},
     ]
-    result = await _agent()._call_llm(broken, "ds-test-key")
+    result = await _agent()._call_llm(broken, STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, (
         f"tool-pairing 400 did not fall back: {fake.urls}"
@@ -334,7 +335,7 @@ async def test_http_400_content_filter_falls_back(monkeypatch, http):
         _Resp(200, _ok_body("as-built 40 m3 / 11.43%")),
     )
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, fake.urls
     assert fake.urls == [DEEPSEEK_API_URL, OPENROUTER_API_URL], fake.urls
@@ -357,7 +358,7 @@ async def test_content_filter_200_falls_back(monkeypatch, http):
     }
     fake = http(_Resp(200, filtered), _Resp(200, _ok_body("recovered")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, fake.urls
     assert result["status"] == "success", result
@@ -379,7 +380,7 @@ async def test_empty_200_falls_back(monkeypatch, http):
     }
     fake = http(_Resp(200, empty), _Resp(200, _ok_body("claim notice")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, fake.urls
     assert result["status"] == "success", result
@@ -395,7 +396,7 @@ async def test_tokenization_400_falls_back(monkeypatch, http):
         _Resp(200, _ok_body("recovered")),
     )
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, fake.urls
     assert result["status"] == "success", result
@@ -408,7 +409,7 @@ async def test_generic_400_still_does_not_fall_back(monkeypatch, http):
     _openrouter_fallback(monkeypatch)
     fake = http(_Resp(400, text="bad request"), _Resp(200, _ok_body("should never run")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 1, fake.urls
     assert result["status"] == "error", result
@@ -422,7 +423,7 @@ async def test_a_timeout_falls_back(monkeypatch, http):
     _openrouter_fallback(monkeypatch)
     fake = http(httpx.TimeoutException("read timeout"), _Resp(200, _ok_body("recovered")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, "a timeout did not fall back"
     assert result["status"] == "success", result
@@ -434,7 +435,7 @@ async def test_a_transport_error_falls_back(monkeypatch, http):
     _openrouter_fallback(monkeypatch)
     fake = http(httpx.ConnectError("dns failure"), _Resp(200, _ok_body("recovered")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, "a connect error did not fall back"
     assert result["status"] == "success", result
@@ -448,7 +449,7 @@ async def test_when_every_provider_fails_the_last_error_is_returned(monkeypatch,
     _openrouter_fallback(monkeypatch)
     fake = http(_Resp(429, text="deepseek rate limited"), _Resp(503, text="openrouter unavailable"))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2
     assert result["status"] == "error"
@@ -468,7 +469,7 @@ async def test_each_attempt_gets_the_temperature_its_own_provider_accepts(monkey
     _openrouter_fallback(monkeypatch)
     fake = http(_Resp(429, text="rate limited"), _Resp(200))
 
-    await _agent(temperature=0.3)._call_llm(list(USER), "ds-test-key")
+    await _agent(temperature=0.3)._call_llm(list(USER), STUB_TOKEN_01)
 
     assert fake.temperatures == [0.3, 0.3], (
         f"temperature is not being decided per attempt: {fake.temperatures}"
@@ -486,7 +487,7 @@ async def test_deepseek_is_never_sent_a_forced_tool_choice(monkeypatch, http):
     _deepseek_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent()._call_llm(list(DELIVERABLE), "ds-test-key")
+    await _agent()._call_llm(list(DELIVERABLE), STUB_TOKEN_01)
 
     assert fake.tool_choices == ["auto"], (
         f"a forced tool_choice was sent to deepseek: {fake.tool_choices}"
@@ -498,7 +499,7 @@ async def test_openrouter_is_never_sent_a_forced_tool_choice(monkeypatch, http):
     _openrouter_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent(model="openrouter/free")._call_llm(list(DELIVERABLE), "or-test-key")
+    await _agent(model="openrouter/free")._call_llm(list(DELIVERABLE), STUB_TOKEN_03)
 
     assert fake.tool_choices == ["auto"], fake.tool_choices
 
@@ -508,7 +509,7 @@ async def test_an_ordinary_question_is_not_forced_to_call_a_tool(monkeypatch, ht
     _deepseek_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent()._call_llm(list(USER), "ds-test-key")
+    await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert fake.tool_choices == ["auto"], fake.tool_choices
 
@@ -519,7 +520,7 @@ async def test_with_tools_disabled_no_tools_and_no_tool_choice_are_sent(monkeypa
     _deepseek_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent()._call_llm(list(DELIVERABLE), "ds-test-key", with_tools=False)
+    await _agent()._call_llm(list(DELIVERABLE), STUB_TOKEN_01, with_tools=False)
 
     payload = fake.calls[0]["payload"]
     assert "tools" not in payload, "tools were sent with with_tools=False"
@@ -532,7 +533,7 @@ async def test_excluded_tools_are_withheld(monkeypatch, http):
     _deepseek_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent()._call_llm(list(USER), "ds-test-key",
+    await _agent()._call_llm(list(USER), STUB_TOKEN_01,
                              exclude_tools={"construction_calc"})
 
     names = {t["function"]["name"] for t in fake.calls[0]["payload"]["tools"]}
@@ -553,7 +554,7 @@ async def test_llama_native_tool_markup_is_recovered_from_a_400(monkeypatch, htt
     fake = http(_Resp(400, _tool_use_failed_body(markup), text=json.dumps(
         _tool_use_failed_body(markup))))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert result["status"] == "success", (
         f"recoverable tool markup was returned as an error instead: {result}"
@@ -576,7 +577,7 @@ async def test_a_tool_call_emitted_as_prose_falls_back_instead_of_erroring(monke
     fake = http(_Resp(400, body, text=json.dumps(body)),
                 _Resp(200, _ok_body("recovered")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, (
         "unrecoverable tool_use_failed did not fall back -- the turn dies on a "
@@ -593,7 +594,7 @@ async def test_prose_tool_use_failed_with_no_fallback_is_an_error(monkeypatch, h
     body = _tool_use_failed_body("## prose checklist, not a tool call")
     fake = http(_Resp(400, body, text=json.dumps(body)))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert result["status"] == "error", result
     assert len(fake.calls) == 1
@@ -610,7 +611,7 @@ async def test_a_legacy_placeholder_model_is_replaced_by_the_provider_default(
     _deepseek_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent(model="kimi-k2.6")._call_llm(list(USER), "ds-test-key")
+    await _agent(model="kimi-k2.6")._call_llm(list(USER), STUB_TOKEN_01)
 
     assert fake.models == ["deepseek-chat"], (
         f"a dead provider's model name was sent upstream: {fake.models}"
@@ -624,7 +625,7 @@ async def test_an_agent_that_pinned_a_live_model_keeps_it(monkeypatch, http):
     _deepseek_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent(model="deepseek-reasoner")._call_llm(list(USER), "ds-test-key")
+    await _agent(model="deepseek-reasoner")._call_llm(list(USER), STUB_TOKEN_01)
 
     assert fake.models == ["deepseek-reasoner"], fake.models
 
@@ -634,12 +635,12 @@ async def test_openrouter_remaps_a_foreign_pin_but_keeps_a_free_slug(monkeypatch
     _openrouter_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent(model="kimi-k2.6")._call_llm(list(USER), "or-test-key")
+    await _agent(model="kimi-k2.6")._call_llm(list(USER), STUB_TOKEN_03)
     assert fake.models == ["openrouter/free"], fake.models
 
     fake2 = http(_Resp(200))
     await _agent(model="meta-llama/llama-3.3-70b-instruct:free")._call_llm(
-        list(USER), "or-test-key")
+        list(USER), STUB_TOKEN_03)
     assert fake2.models == ["meta-llama/llama-3.3-70b-instruct:free"], fake2.models
 
 
@@ -656,7 +657,7 @@ async def test_non_standard_message_fields_never_reach_the_provider(monkeypatch,
     messages = [{"role": "assistant", "content": "thinking",
                  "reasoning": "internal chain of thought"},
                 {"role": "user", "content": "and now?"}]
-    await _agent()._call_llm(messages, "ds-test-key")
+    await _agent()._call_llm(messages, STUB_TOKEN_01)
 
     sent = fake.calls[0]["payload"]["messages"]
     assert not any("reasoning" in m for m in sent), (
@@ -678,7 +679,7 @@ async def test_a_user_over_the_daily_cap_is_refused_before_any_spend(monkeypatch
     monkeypatch.setattr(usage_tracker, "daily_total", lambda user_id: {"cost_usd": 7.5})
     fake = http(_Resp(200))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key", user_id="u1")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01, user_id="u1")
 
     assert fake.calls == [], "the provider was called despite the cap being hit"
     assert result["status"] == "error"
@@ -696,7 +697,7 @@ async def test_an_internal_call_with_no_user_is_not_capped(monkeypatch, http):
                         lambda user_id, cap: pytest.fail("cap checked with no user_id"))
     fake = http(_Resp(200))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 1 and result["status"] == "success", result
 
@@ -716,7 +717,7 @@ async def test_a_broken_usage_tracker_does_not_block_the_call(monkeypatch, http)
     monkeypatch.setattr(usage_tracker, "is_over_cap", _boom)
     fake = http(_Resp(200))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key", user_id="u1")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01, user_id="u1")
 
     assert result["status"] == "success", result
     assert len(fake.calls) == 1
@@ -731,7 +732,7 @@ async def test_an_unparseable_cap_disables_the_check(monkeypatch, http):
                         lambda user_id, cap: pytest.fail("checked an unparseable cap"))
     fake = http(_Resp(200))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key", user_id="u1")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01, user_id="u1")
     assert result["status"] == "success" and len(fake.calls) == 1
 
 
@@ -744,7 +745,7 @@ async def test_a_successful_call_returns_the_providers_choice_and_raw_body(
     body = _ok_body("28 days under clause 20.1", model="deepseek-chat")
     http(_Resp(200, body))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert result["status"] == "success"
     assert result["choice"]["message"]["content"] == "28 days under clause 20.1"
@@ -764,7 +765,7 @@ async def test_a_malformed_success_body_falls_back(monkeypatch, http):
 
     fake = http(_Garbage(200), _Resp(200, _ok_body("recovered")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert len(fake.calls) == 2, "an unparseable 200 did not fall back"
     assert result["status"] == "success", result
@@ -775,9 +776,9 @@ async def test_the_api_key_is_sent_as_a_bearer_header(monkeypatch, http):
     _deepseek_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent()._call_llm(list(USER), "ds-test-key")
+    await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
-    assert fake.calls[0]["headers"]["Authorization"] == "Bearer ds-test-key"
+    assert fake.calls[0]["headers"]["Authorization"] == "Bearer " + STUB_TOKEN_01
 
 
 @pytest.mark.asyncio
@@ -802,10 +803,10 @@ async def test_the_fallback_attempt_uses_the_fallback_providers_own_key(
     _openrouter_fallback(monkeypatch)
     fake = http(_Resp(429, text="rate limited"), _Resp(200))
 
-    await _agent()._call_llm(list(USER), "ds-test-key")
+    await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
-    assert fake.calls[0]["headers"]["Authorization"] == "Bearer ds-test-key"
-    assert fake.calls[1]["headers"]["Authorization"] == "Bearer or-test-key", (
+    assert fake.calls[0]["headers"]["Authorization"] == "Bearer " + STUB_TOKEN_01
+    assert fake.calls[1]["headers"]["Authorization"] == "Bearer " + STUB_TOKEN_03, (
         "the fallback was called with the primary's key"
     )
 
@@ -819,7 +820,7 @@ async def test_a_successful_primary_never_touches_the_fallback(monkeypatch, http
     fake = http(_Resp(200, _ok_body("primary ok")),
                 _Resp(200, _ok_body("SHOULD NOT REACH")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert result["choice"]["message"]["content"] == "primary ok"
     assert len(fake.calls) == 1, f"the fallback was called on success: {fake.urls}"
@@ -839,7 +840,7 @@ def test_fallback_config_is_none_when_it_names_the_primary(monkeypatch):
     from app.agents.runtime import _llm_fallback_config
 
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_01)
     assert _llm_fallback_config({"provider": "deepseek"}) is None
 
 
@@ -857,7 +858,7 @@ def test_fallback_config_resolves_openrouter(monkeypatch):
     from app.agents.runtime import OPENROUTER_API_URL, _llm_fallback_config
 
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_TOKEN_03)
     cfg = _llm_fallback_config({"provider": "deepseek"})
     assert cfg is not None
     assert cfg["provider"] == "openrouter"
@@ -870,7 +871,7 @@ def test_fallback_config_resolves_deepseek(monkeypatch):
     from app.agents.runtime import DEEPSEEK_API_URL, _llm_fallback_config
 
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_01)
     cfg = _llm_fallback_config({"provider": "openrouter"})
     assert cfg is not None
     assert cfg["provider"] == "deepseek"
@@ -893,7 +894,7 @@ def test_fallback_ladder_is_the_single_cross_provider_target(monkeypatch):
     from app.agents.runtime import _llm_fallback_ladder
 
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_TOKEN_03)
     ladder = _llm_fallback_ladder({"provider": "deepseek", "default_model": "deepseek-chat"})
     assert [c["provider"] for c in ladder] == ["openrouter"], ladder
 
@@ -980,12 +981,12 @@ async def test_deepseek_402_insufficient_credit_falls_back_to_openrouter(
         _Resp(200, _ok_body("recovered on openrouter")),
     )
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert result["status"] == "success", result
     assert fake.urls == [DEEPSEEK_API_URL, OPENROUTER_API_URL], fake.urls
-    assert fake.calls[0]["headers"]["Authorization"] == "Bearer ds-test-key"
-    assert fake.calls[1]["headers"]["Authorization"] == "Bearer or-test-key"
+    assert fake.calls[0]["headers"]["Authorization"] == "Bearer " + STUB_TOKEN_01
+    assert fake.calls[1]["headers"]["Authorization"] == "Bearer " + STUB_TOKEN_03
     content = result["choice"]["message"]["content"]
     assert content == "recovered on openrouter"
 
@@ -997,12 +998,12 @@ async def test_deepseek_primary_falls_back_to_openrouter(monkeypatch, http):
     _openrouter_fallback(monkeypatch)
     fake = http(_Resp(429, text="rate limited"), _Resp(200, _ok_body("recovered")))
 
-    result = await _agent()._call_llm(list(USER), "ds-test-key")
+    result = await _agent()._call_llm(list(USER), STUB_TOKEN_01)
 
     assert result["status"] == "success", result
     assert fake.urls == [DEEPSEEK_API_URL, OPENROUTER_API_URL], fake.urls
-    assert fake.calls[0]["headers"]["Authorization"] == "Bearer ds-test-key"
-    assert fake.calls[1]["headers"]["Authorization"] == "Bearer or-test-key"
+    assert fake.calls[0]["headers"]["Authorization"] == "Bearer " + STUB_TOKEN_01
+    assert fake.calls[1]["headers"]["Authorization"] == "Bearer " + STUB_TOKEN_03
     assert fake.models[0] == "deepseek-chat"
     # Neither provider pins temperature.
     assert fake.temperatures == [0.3, 0.3], fake.temperatures
@@ -1013,7 +1014,7 @@ async def test_deepseek_sends_tool_choice_auto(monkeypatch, http):
     _deepseek_primary(monkeypatch)
     fake = http(_Resp(200))
 
-    await _agent()._call_llm(list(DELIVERABLE), "ds-test-key")
+    await _agent()._call_llm(list(DELIVERABLE), STUB_TOKEN_01)
 
     assert fake.urls == [DEEPSEEK_API_URL]
     assert fake.tool_choices == ["auto"], fake.tool_choices
@@ -1045,7 +1046,7 @@ async def test_openrouter_402_in_flight_retries_same_hop(monkeypatch, http, no_s
     )
 
     result = await _agent(model="openrouter/free")._call_llm(
-        list(USER), "or-test-key",
+        list(USER), STUB_TOKEN_03,
     )
 
     assert result["status"] == "success", result
@@ -1066,7 +1067,7 @@ async def test_openrouter_402_afford_fewer_lowers_max_tokens(
     )
 
     result = await _agent(model="openrouter/free")._call_llm(
-        list(USER), "or-test-key",
+        list(USER), STUB_TOKEN_03,
     )
 
     assert result["status"] == "success", result
@@ -1084,7 +1085,7 @@ async def test_openrouter_402_generic_does_not_retry(monkeypatch, http, no_sleep
     )
 
     result = await _agent(model="openrouter/free")._call_llm(
-        list(USER), "or-test-key",
+        list(USER), STUB_TOKEN_03,
     )
 
     assert result["status"] == "error", result
@@ -1110,7 +1111,7 @@ async def test_openrouter_hop_compacts_large_tool_payload(monkeypatch, http):
     fake = http(_Resp(200, _ok_body("852 days")))
 
     result = await _agent(model="openrouter/free")._call_llm(
-        messages, "or-test-key",
+        messages, STUB_TOKEN_03,
     )
 
     assert result["status"] == "success", result
@@ -1134,7 +1135,7 @@ async def test_openrouter_402_does_not_fall_back_to_deepseek(
     )
 
     result = await _agent(model="openrouter/free")._call_llm(
-        list(USER), "or-test-key",
+        list(USER), STUB_TOKEN_03,
     )
 
     assert result["status"] == "error", result
@@ -1175,7 +1176,7 @@ async def test_openrouter_402_prompt_limit_compacts_and_retries(
     )
 
     result = await _agent(model="openrouter/free")._call_llm(
-        messages, "or-test-key",
+        messages, STUB_TOKEN_03,
     )
 
     assert result["status"] == "success", result
@@ -1206,7 +1207,7 @@ async def test_openrouter_429_retries_same_provider(monkeypatch, http):
     )
 
     result = await _agent(model="openrouter/free")._call_llm(
-        list(USER), "or-test-key",
+        list(USER), STUB_TOKEN_03,
     )
 
     assert result["status"] == "success", result

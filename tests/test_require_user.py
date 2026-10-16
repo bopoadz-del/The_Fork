@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.dependencies import require_user
 from app.core import jwt_auth, users as users_store
 from tests._dev_key import DEV_KEY
-from tests._fixture_values import PW_06
+from tests._fixture_values import GARBAGE_TOKEN, PW_06
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ def test_missing_credentials_401(app_client):
 
 
 def test_garbage_bearer_401(app_client):
-    r = app_client.get("/whoami", headers={"Authorization": "Bearer garbage.token"})
+    r = app_client.get("/whoami", headers={"Authorization": "Bearer " + GARBAGE_TOKEN})
     assert r.status_code == 401
 
 
