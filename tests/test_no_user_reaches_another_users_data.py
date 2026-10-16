@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import OTHER_PASSWORD, PASSWORD
 
 
 _RUN = uuid.uuid4().hex[:8]
@@ -875,30 +876,39 @@ def test_execute_plain_user_cannot_pass_foreign_project_id(client, world):
 
 # ── accounts ────────────────────────────────────────────────────────────────
 
-def test_duplicate_email_is_409(client):
+def test_a_duplicate_email_answers_like_a_new_one_and_changes_nothing(client):
+    """#978: the reply never reveals an existing account, and the second
+    registration neither creates a second account nor resets the first."""
     email = f"dup-{_RUN}@example.com"
     first = client.post(
-        "/v1/users/register", json={"email": email, "password": "pw123456"}
+        "/v1/users/register", json={"email": email, "password": PASSWORD}
     )
-    assert first.status_code in (201, 409)
     second = client.post(
-        "/v1/users/register", json={"email": email, "password": "pw123456"}
+        "/v1/users/register", json={"email": email, "password": OTHER_PASSWORD}
     )
-    assert second.status_code == 409
+    assert first.status_code == second.status_code == 201
+    assert first.json() == second.json()
+    assert client.post("/v1/users/login", json={"email": email, "password": OTHER_PASSWORD}).status_code == 401
 
 
 def test_email_case_and_whitespace_collapse(client):
     email = f"Case-{_RUN}@Example.COM"
     r = client.post(
         "/v1/users/register",
-        json={"email": f"  {email}  ", "password": "pw123456"},
+        json={"email": f"  {email}  ", "password": PASSWORD},
     )
-    assert r.status_code in (201, 409)
+    assert r.status_code == 201
     again = client.post(
         "/v1/users/register",
-        json={"email": email.lower(), "password": "pw123456"},
+        json={"email": email.lower(), "password": OTHER_PASSWORD},
     )
-    assert again.status_code == 409
+    assert again.status_code == 201
+    # One account, under the collapsed address: the second registration did
+    # not create another, and its password does not open the first.
+    from app.core import users as users_store
+
+    assert users_store.get_user_by_email(email.lower()) is not None
+    assert client.post("/v1/users/login", json={"email": email.lower(), "password": OTHER_PASSWORD}).status_code == 401
 
 
 def test_weak_password_rejected(client):

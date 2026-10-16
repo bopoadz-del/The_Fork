@@ -123,31 +123,26 @@ async def register(req: RegisterRequest):
             str(req.email), req.password, display_name=req.display_name,
             email_verified=auto_verified,
         )
-    except ValueError as e:
-        if auto_verified:
-            # Local builds with no mail provider: nobody to enumerate.
-            raise HTTPException(409, str(e))
-        # The same reply as a new address: a registration must not reveal
-        # whether an account exists (LANE4, #978).
-        return _registration_pending(str(req.email))
-
-    if user.get("email_verified"):
-        return {**user, "verification_email_sent": False}
-
-    await _send_verification(user)
-    return _registration_pending(str(req.email))
+    except ValueError:
+        # An existing address gets the same reply as a new one: a
+        # registration never reveals whether an account exists (#978).
+        return _registration_received(str(req.email))
+    if not user.get("email_verified"):
+        await _send_verification(user)
+    # One reply for every registration -- new address or existing, mail
+    # configured or not, sent or not.
+    return _registration_received(str(req.email))
 
 
-#: What every registration that needs a confirmed address answers -- new
-#: address or existing one, mail sent or not -- so the reply tells a caller
-#: nothing about which accounts exist.
+#: What every registration answers -- new address or existing one, mail
+#: configured or not, sent or not -- so the reply tells a caller nothing about
+#: which accounts exist.
 _PENDING_MESSAGE = ("If this address can be registered, a confirmation link is on its way. "
                     'If none arrives, use "Resend confirmation email" on the sign-in page.')
 
 
-def _registration_pending(email: str) -> dict:
-    return {"email": email, "email_verified": False, "verification_pending": True,
-            "message": _PENDING_MESSAGE}
+def _registration_received(email: str) -> dict:
+    return {"email": email, "registration_received": True, "message": _PENDING_MESSAGE}
 
 
 @router.get("/v1/users/verify-email")

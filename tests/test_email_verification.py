@@ -30,6 +30,7 @@ from app.core import email as email_service
 from app.core import jwt_auth
 from app.core import users as users_store
 from app.main import app
+from tests._fixture_values import OTHER_PASSWORD, PASSWORD, RESEND_TEST_KEY, WRONG_PASSWORD
 
 
 class _Resp:
@@ -48,7 +49,7 @@ def _email() -> str:
 
 def _configured(monkeypatch):
     """Make the app believe email delivery is available."""
-    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("RESEND_API_KEY", RESEND_TEST_KEY)
     monkeypatch.setenv("EMAIL_FROM", "The Shovel <noreply@theshovel.ai>")
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://theshovel.ai")
 
@@ -88,13 +89,13 @@ def test_registration_sends_a_real_verification_email(monkeypatch):
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock,
                return_value=_Resp()) as post, TestClient(app) as c:
         r = c.post("/v1/users/register",
-                   json={"email": addr, "password": "password12"})
+                   json={"email": addr, "password": PASSWORD})
 
     assert r.status_code == 201, r.text
     # The reply is the neutral one (it never says whether mail went out);
     # the email itself is asserted from what actually left the process.
-    assert r.json()["verification_pending"] is True
-    assert r.json()["email_verified"] is False
+    assert r.json()["registration_received"] is True
+    assert users_store.get_user_by_email(addr)["email_verified"] is False
 
     calls = _sent_calls(post)
     assert calls, "no request reached the email provider"
@@ -118,9 +119,9 @@ def test_unverified_user_cannot_log_in_then_can_after_verifying(monkeypatch):
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock,
                return_value=_Resp()) as post, TestClient(app) as c:
         c.post("/v1/users/register",
-               json={"email": addr, "password": "password12"})
+               json={"email": addr, "password": PASSWORD})
         blocked = c.post("/v1/users/login",
-                         json={"email": addr, "password": "password12"})
+                         json={"email": addr, "password": PASSWORD})
         assert blocked.status_code == 403, blocked.text
 
         import re
@@ -133,7 +134,7 @@ def test_unverified_user_cannot_log_in_then_can_after_verifying(monkeypatch):
         assert users_store.get_user_by_email(addr)["email_verified"] is True
 
         ok = c.post("/v1/users/login",
-                    json={"email": addr, "password": "password12"})
+                    json={"email": addr, "password": PASSWORD})
     assert ok.status_code == 200, ok.text
     assert ok.json()["token"]
 
@@ -144,7 +145,7 @@ def test_tampered_and_expired_links_do_not_verify(monkeypatch):
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock,
                return_value=_Resp()), TestClient(app) as c:
         c.post("/v1/users/register",
-               json={"email": addr, "password": "password12"})
+               json={"email": addr, "password": PASSWORD})
         uid = users_store.get_user_by_email(addr)["id"]
 
         expired = jwt_auth.create_purpose_token(
@@ -171,7 +172,7 @@ def test_registration_refuses_when_email_is_unconfigured_in_production(monkeypat
     addr = _email()
     with TestClient(app) as c:
         r = c.post("/v1/users/register",
-                   json={"email": addr, "password": "password12"})
+                   json={"email": addr, "password": PASSWORD})
     assert r.status_code == 503, r.text
     # And it must not leave an orphan behind that blocks a later retry.
     assert users_store.get_user_by_email(addr) is None
@@ -189,9 +190,9 @@ def test_send_failure_keeps_the_account_recoverable(monkeypatch):
                return_value=_Resp(status_code=422, payload={"message": "nope"})):
         with TestClient(app) as c:
             r = c.post("/v1/users/register",
-                       json={"email": addr, "password": "password12"})
+                       json={"email": addr, "password": PASSWORD})
     assert r.status_code == 201, r.text
-    assert r.json()["verification_pending"] is True  # same reply whether mail went out or not
+    assert r.json()["registration_received"] is True  # same reply whether mail went out or not
     assert users_store.get_user_by_email(addr) is not None
 
 
@@ -202,7 +203,7 @@ def test_resend_verification_is_not_an_account_oracle(monkeypatch):
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock,
                return_value=_Resp()), TestClient(app) as c:
         c.post("/v1/users/register",
-               json={"email": addr, "password": "password12"})
+               json={"email": addr, "password": PASSWORD})
         known = c.post("/v1/users/resend-verification", json={"email": addr})
         unknown = c.post("/v1/users/resend-verification",
                          json={"email": "nobody-here@example.invalid"})
