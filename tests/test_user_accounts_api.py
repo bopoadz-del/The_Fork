@@ -4,6 +4,7 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import PASSWORD, WRONG_PASSWORD
 
 
 @pytest.fixture(scope="module")
@@ -43,7 +44,7 @@ def client(tmp_data_dir):
         yield c
 
 
-def _register(client, email, pw="pw-123456", name="Test"):
+def _register(client, email, pw=PASSWORD, name="Test"):
     return client.post("/v1/users/register",
                         json={"email": email, "password": pw, "display_name": name})
 
@@ -65,25 +66,25 @@ def test_register_duplicate_email_answers_like_a_new_one(client):
 
 
 def test_login_returns_jwt(client):
-    _register(client, "login1@example.com", pw="goodpassword")
+    _register(client, "login1@example.com", pw=PASSWORD)
     r = client.post("/v1/users/login",
-                     json={"email": "login1@example.com", "password": "goodpassword"})
+                     json={"email": "login1@example.com", "password": PASSWORD})
     assert r.status_code == 200, r.text
     assert "token" in r.json() and r.json()["token"]
 
 
 def test_login_wrong_password_401(client):
-    _register(client, "login2@example.com", pw="rightpw99")
+    _register(client, "login2@example.com", pw=PASSWORD)
     r = client.post("/v1/users/login",
-                     json={"email": "login2@example.com", "password": "wrongpw"})
+                     json={"email": "login2@example.com", "password": WRONG_PASSWORD})
     assert r.status_code == 401
 
 
 def test_me_with_jwt(client):
-    _register(client, "me1@example.com", pw="mypassword1")
+    _register(client, "me1@example.com", pw=PASSWORD)
     token = client.post("/v1/users/login",
                          json={"email": "me1@example.com",
-                               "password": "mypassword1"}).json()["token"]
+                               "password": PASSWORD}).json()["token"]
     r = client.get("/v1/users/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     assert r.json()["email"] == "me1@example.com"
