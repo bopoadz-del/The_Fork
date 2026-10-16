@@ -39,3 +39,47 @@ def test_a_range_dash_is_not_a_minus_sign():
     assert cf._written_only_negative(150, "between 120-150 m2 per day") is False
     assert cf._written_only_negative(120, "gang does -120 m2 per day") is True
     assert cf._written_only_negative(120, "120 m2 per day, not -120") is False
+
+
+# LANE2 on f2de03b, 3/3: the call reaches the calculator with the user's
+# words only in this turn's ask (not in ``text``), the rate under any key,
+# as a number or as "120 m2/day", sometimes beside the model's own positive
+# paraphrase. The user's minus survives every one of those shapes.
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def negative_ask():
+    token = cf.set_current_ask(NEGATIVE)
+    yield
+    cf._CURRENT_ASK.reset(token)
+
+
+@pytest.mark.parametrize("params", [
+    {"quantity": 4800, "productivity": 120},
+    {"quantity": 4800, "productivity": 120, "unit": "m2/day"},
+    {"quantity": 4800, "productivity": "120 m2/day"},
+    {"quantity": 4800, "daily_production": 120},
+    {"quantity": 4800, "productivity": 120, "text": "Plastering 4800 m2 at 120 m2/day"},
+])
+def test_the_users_minus_survives_every_call_shape(negative_ask, params):
+    out = cf.run_calculation("productivity_manpower_duration", params)
+    assert out["status"] == "error", out
+    assert "-120" in out["error"], out["error"]
+    assert not (out.get("result") or {}).get("duration")
+
+
+def test_a_positive_rate_in_any_shape_still_gives_days():
+    token = cf.set_current_ask(POSITIVE)
+    try:
+        for params in ({"quantity": 4800, "productivity": "120 m2/day"}, {"quantity": 4800, "productivity": 120}):
+            assert cf.run_calculation("productivity_manpower_duration", params)["result"]["duration"] == 40.0
+    finally:
+        cf._CURRENT_ASK.reset(token)
+
+
+def test_the_model_is_told_to_keep_signs():
+    from app.agents.driver import tools as driver_tools
+
+    text = driver_tools.calculator_schema(None)["function"]["description"]
+    assert "sign as written" in text
