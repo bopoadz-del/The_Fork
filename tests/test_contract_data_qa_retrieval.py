@@ -25,8 +25,8 @@ from app.core import projects as projects_mod
 # Synthetic particulars — fake employer, fake figures, North Spur package.
 NORTH_SPUR_EXCL_VAT = "SAR 1,234,567.89"
 NORTH_SPUR_EXCL_VAT_WORDS = (
-    "Saudi Riyals One Million Two Hundred Thirty-Four Thousand "
-    "Five Hundred Sixty-Seven and Eighty-Nine Halalas"
+    "Saudi Riyals one million two hundred thirty-four thousand "
+    "five hundred sixty-seven and eighty-nine halalas"
 )
 NORTH_SPUR_DELAY = "0.1% of the Contract Price per day"
 NORTH_SPUR_TFC = "365 calendar days"
@@ -93,7 +93,7 @@ def test_parser_keeps_excl_vat_digits_and_words_on_one_row():
     key, val = matched[0]
     blob = f"{key} {val}"
     assert NORTH_SPUR_EXCL_VAT in blob
-    assert "One Million Two Hundred Thirty-Four Thousand" in blob
+    assert "one million two hundred thirty-four thousand" in blob
 
 
 def test_parser_keeps_delay_damages_rate_on_the_same_row():
@@ -134,7 +134,7 @@ def test_word_chunker_splits_the_table_but_particulars_chunker_does_not():
     excl = [c for c in cd_chunks if NORTH_SPUR_EXCL_VAT in c]
     assert excl, f"excl-VAT figure missing from particulars chunks: {cd_chunks[:2]}"
     assert all(
-        "One Million Two Hundred Thirty-Four Thousand" in c for c in excl
+        "one million two hundred thirty-four thousand" in c for c in excl
     ), "digits vs words of the ACA were split across chunks"
 
     delay = [c for c in cd_chunks if "0.1%" in c and "delay damages" in c.lower()]

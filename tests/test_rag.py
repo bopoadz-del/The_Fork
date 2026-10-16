@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 from sqlalchemy import select
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import STUB_TOKEN_05
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -429,7 +430,7 @@ def _chat_capture_fixture(monkeypatch, captured: dict):
         captured["message"] = message
         return {"status": "success", "response": "ok"}
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_05)
 
 
 @pytest.mark.asyncio

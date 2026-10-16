@@ -30,7 +30,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routers.chat_watchdog import PROVIDER_FAILURE_MESSAGE
-from tests._fixture_values import PW_06
+from tests._fixture_values import PW_06, STUB_TOKEN_10, STUB_TOKEN_11
 
 _SPA = Path("frontend/src/pages/ProjectWorkspace.tsx")
 _GENERIC = "Something went wrong. Please try again."
@@ -130,9 +130,9 @@ def deepseek_402(monkeypatch):
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_10)
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-not-real")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_TOKEN_11)
 
     async def outage(self, *a, **k):
         return {"status": "error", "error": _LIVE_402}
@@ -176,9 +176,9 @@ def deepseek_402_openrouter_ok(monkeypatch):
     from app.agents.runtime import DEEPSEEK_API_URL
 
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_10)
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-not-real")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_TOKEN_11)
 
     class _Resp:
         def __init__(self, status_code, payload=None, text=""):

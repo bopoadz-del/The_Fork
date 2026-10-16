@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from app.agents.runtime import Agent
 from app.core.rag.vector_store import Chunk
 from app.infra.monitoring import request_id_ctx
-from tests._fixture_values import PW_06
+from tests._fixture_values import PW_06, STUB_TOKEN_02
 
 TRACE_LOGGER = "app.rag.retrieval_trace"
 TRACE_EVENT = "rag_retrieval_trace"
@@ -80,7 +80,7 @@ def _env(monkeypatch):
     monkeypatch.setenv("MAX_RAG_TOKENS", "4000")
     monkeypatch.delenv("RAG_RETRIEVAL_TRACE", raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
 
 
 def _fake_retrieve(scale=1.0):

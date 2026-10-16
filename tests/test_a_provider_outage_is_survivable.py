@@ -26,10 +26,10 @@ import httpx
 import pytest
 
 from app.agents.runtime import DEEPSEEK_API_URL, OPENROUTER_API_URL
-from tests._fixture_values import PW_06
+from tests._fixture_values import PW_06, STUB_TOKEN_12, STUB_TOKEN_14
 
-DS_KEY = "ds-TESTKEY-1111"
-OR_KEY = "or-TESTKEY-2222"
+DS_KEY = STUB_TOKEN_12
+OR_KEY = STUB_TOKEN_14
 PRIMARY = "PRIMARY says: a programme sequences the works in time."
 FALLBACK = "FALLBACK says: a programme sequences the works in time."
 UPSTREAM = '{"error":{"message":"upstream exploded on node gpu-7 req=zz9","type":"server_error"}}'

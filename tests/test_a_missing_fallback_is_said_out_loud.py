@@ -9,6 +9,7 @@ import logging
 import pytest
 
 from app.core.health_probes import probe_llm
+from tests._fixture_values import STUB_TOKEN_06, STUB_TOKEN_08
 
 _ENV = ("LLM_PROVIDER", "LLM_FALLBACK_PROVIDER", "DEEPSEEK_API_KEY",
         "OPENROUTER_API_KEY", "OPENROUTER_MODEL")
@@ -19,20 +20,20 @@ def clean(monkeypatch):
     for name in _ENV:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_06)
 
 
 def test_deepseek_with_an_openrouter_fallback_is_ready(monkeypatch):
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_TOKEN_08)
     assert probe_llm() == {"primary_ready": True, "fallback_ready": True}
 
 
 @pytest.mark.parametrize("fallback,key", [
-    ("kimi", "or-test"),        # the live value: a removed provider
-    ("deepseek", "or-test"),    # names the primary itself
+    ("kimi", STUB_TOKEN_08),        # the live value: a removed provider
+    ("deepseek", STUB_TOKEN_08),    # names the primary itself
     ("openrouter", None),       # the right provider, no key
-    (None, "or-test"),          # unset
+    (None, STUB_TOKEN_08),          # unset
 ])
 def test_a_fallback_that_cannot_work_is_reported_as_not_ready(monkeypatch, fallback, key):
     if fallback:
@@ -74,14 +75,14 @@ def test_boot_warns_when_there_is_no_usable_fallback(monkeypatch, boot_log):
     _warn_when_the_llm_has_no_fallback()
     text = " ".join(boot_log.lines)
     assert "NO USABLE FALLBACK" in text
-    assert "ds-test" not in text
+    assert STUB_TOKEN_06 not in text
 
 
 def test_boot_is_quiet_when_the_fallback_works(monkeypatch, boot_log):
     from app.main import _warn_when_the_llm_has_no_fallback
 
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_TOKEN_08)
     _warn_when_the_llm_has_no_fallback()
     assert "FALLBACK" not in " ".join(boot_log.lines)
 
@@ -92,7 +93,7 @@ def test_health_shows_it_and_names_nothing(monkeypatch):
     from app.main import app
 
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "kimi")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_TOKEN_08)
     with TestClient(app) as c:
         body = c.get("/health").json()
     assert body["checks"]["llm"] == {"primary_ready": True, "fallback_ready": False}
