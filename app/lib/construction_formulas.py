@@ -29,6 +29,7 @@ import json
 
 import logging
 
+import contextvars
 import re
 
 from app.agents.base.formulas.construction_formulas_planning import (
@@ -1272,7 +1273,7 @@ def _ask_present(params: Dict[str, Any], *keys: str) -> bool:
 #: (app.agents.core.loop). Every calculator run reads its units from them, by
 #: whatever path the call arrived: a model's paraphrase in ``text`` can drop
 #: the unit the user wrote ("21,528 sq ft"), the user's turn cannot.
-_CURRENT_ASK: "contextvars.ContextVar[str]" = __import__("contextvars").ContextVar("calc_current_ask", default="")
+_CURRENT_ASK: contextvars.ContextVar[str] = contextvars.ContextVar("calc_current_ask", default="")
 
 
 def set_current_ask(text: str):
