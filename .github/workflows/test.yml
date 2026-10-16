@@ -26,6 +26,11 @@ jobs:
       docs_only: ${{ steps.diff.outputs.docs_only }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: A random development key for this run
+        # The app and the tests read CEREBRUM_DEV_KEY; no value is in the
+        # source, and none repeats between runs.
+        run: echo "CEREBRUM_DEV_KEY=dev-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
         with:
           fetch-depth: 0
       - id: diff
@@ -59,6 +64,11 @@ jobs:
     name: test (${{ matrix.profile }})
     steps:
       - uses: actions/checkout@v4
+
+      - name: A random development key for this run
+        # The app and the tests read CEREBRUM_DEV_KEY; no value is in the
+        # source, and none repeats between runs.
+        run: echo "CEREBRUM_DEV_KEY=dev-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
         with:
           # diff-cover (per-PR coverage gate below) does a three-dot
           # diff (origin/<base>...HEAD) which needs the merge base.
@@ -290,6 +300,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: A random development key for this run
+        # The app and the tests read CEREBRUM_DEV_KEY; no value is in the
+        # source, and none repeats between runs.
+        run: echo "CEREBRUM_DEV_KEY=dev-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -400,6 +415,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: A random development key for this run
+        # The app and the tests read CEREBRUM_DEV_KEY; no value is in the
+        # source, and none repeats between runs.
+        run: echo "CEREBRUM_DEV_KEY=dev-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -459,6 +479,11 @@ jobs:
           test "${{ needs.test-timing.result }}" = "success"
 
       - uses: actions/checkout@v4
+
+      - name: A random development key for this run
+        # The app and the tests read CEREBRUM_DEV_KEY; no value is in the
+        # source, and none repeats between runs.
+        run: echo "CEREBRUM_DEV_KEY=dev-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:
