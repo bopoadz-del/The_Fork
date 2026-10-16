@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from tests._dev_key import DEV_KEY
-from tests._fixture_values import OTHER_PASSWORD, PASSWORD
+from tests._fixture_values import OTHER_PASSWORD, PASSWORD, WEAK_PASSWORD, WRONG_PASSWORD
 
 
 _RUN = uuid.uuid4().hex[:8]
@@ -39,7 +39,7 @@ def client():
         yield c
 
 
-def _register(client: TestClient, email: str, password: str = "pw123456") -> dict:
+def _register(client: TestClient, email: str, password: str = PASSWORD) -> dict:
     r = client.post("/v1/users/register", json={"email": email, "password": password})
     assert r.status_code in (201, 409), r.text
     r = client.post("/v1/users/login", json={"email": email, "password": password})
@@ -914,21 +914,21 @@ def test_email_case_and_whitespace_collapse(client):
 def test_weak_password_rejected(client):
     r = client.post(
         "/v1/users/register",
-        json={"email": f"weak-{_RUN}@example.com", "password": "short"},
+        json={"email": f"weak-{_RUN}@example.com", "password": WEAK_PASSWORD},
     )
     assert r.status_code == 422
 
 
 def test_login_errors_identical_for_missing_and_wrong_password(client):
     known = f"login-{_RUN}@example.com"
-    client.post("/v1/users/register", json={"email": known, "password": "pw123456"})
+    client.post("/v1/users/register", json={"email": known, "password": PASSWORD})
     missing = client.post(
         "/v1/users/login",
-        json={"email": f"no-such-{_RUN}@example.com", "password": "pw123456"},
+        json={"email": f"no-such-{_RUN}@example.com", "password": PASSWORD},
     )
     wrong = client.post(
         "/v1/users/login",
-        json={"email": known, "password": "wrong-password"},
+        json={"email": known, "password": WRONG_PASSWORD},
     )
     assert missing.status_code == 401
     assert wrong.status_code == 401
@@ -937,7 +937,7 @@ def test_login_errors_identical_for_missing_and_wrong_password(client):
 
 def test_resend_verification_does_not_enumerate(client):
     known = f"rs-{_RUN}@example.com"
-    client.post("/v1/users/register", json={"email": known, "password": "pw123456"})
+    client.post("/v1/users/register", json={"email": known, "password": PASSWORD})
     a = client.post("/v1/users/resend-verification", json={"email": known})
     b = client.post(
         "/v1/users/resend-verification",
@@ -985,8 +985,8 @@ def test_login_before_verify_is_403(client):
     from app.core import users as users_store
 
     email = f"unverified-{_RUN}@example.com"
-    users_store.create_user(email, "pw123456", email_verified=False)
-    r = client.post("/v1/users/login", json={"email": email, "password": "pw123456"})
+    users_store.create_user(email, PASSWORD, email_verified=False)
+    r = client.post("/v1/users/login", json={"email": email, "password": PASSWORD})
     assert r.status_code == 403
     assert "verified" in r.text.lower()
 
@@ -996,7 +996,7 @@ def test_verify_token_mismatch_does_not_verify(client):
     from app.core import users as users_store
 
     email = f"vtok-{_RUN}@example.com"
-    user = users_store.create_user(email, "pw123456", email_verified=False)
+    user = users_store.create_user(email, PASSWORD, email_verified=False)
     session = jwt_auth.create_token(user["id"])
     garbage = client.get(
         "/v1/users/verify-email",
