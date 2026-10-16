@@ -2671,6 +2671,7 @@ def _defaults_taken(fn: Any, params: Dict[str, Any], name: str) -> List[Dict[str
     try:
         signature = inspect.signature(fn)
     except (TypeError, ValueError):
+        logger.debug("defaults: no signature for %s; nothing to disclose", name, exc_info=True)
         return []
     rows = []
     for key, p in signature.parameters.items():
