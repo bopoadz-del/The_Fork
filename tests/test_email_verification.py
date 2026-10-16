@@ -91,7 +91,9 @@ def test_registration_sends_a_real_verification_email(monkeypatch):
                    json={"email": addr, "password": "password12"})
 
     assert r.status_code == 201, r.text
-    assert r.json()["verification_email_sent"] is True
+    # The reply is the neutral one (it never says whether mail went out);
+    # the email itself is asserted from what actually left the process.
+    assert r.json()["verification_pending"] is True
     assert r.json()["email_verified"] is False
 
     calls = _sent_calls(post)
@@ -189,7 +191,7 @@ def test_send_failure_keeps_the_account_recoverable(monkeypatch):
             r = c.post("/v1/users/register",
                        json={"email": addr, "password": "password12"})
     assert r.status_code == 201, r.text
-    assert r.json()["verification_email_sent"] is False
+    assert r.json()["verification_pending"] is True  # same reply whether mail went out or not
     assert users_store.get_user_by_email(addr) is not None
 
 

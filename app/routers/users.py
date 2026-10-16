@@ -117,19 +117,37 @@ async def register(req: RegisterRequest):
             "configured, so the address could not be verified.",
         )
 
+    auto_verified = dev and not email_service.is_configured()
     try:
         user = users_store.create_user(
             str(req.email), req.password, display_name=req.display_name,
-            email_verified=dev and not email_service.is_configured(),
+            email_verified=auto_verified,
         )
     except ValueError as e:
-        raise HTTPException(409, str(e))
+        if auto_verified:
+            # Local builds with no mail provider: nobody to enumerate.
+            raise HTTPException(409, str(e))
+        # The same reply as a new address: a registration must not reveal
+        # whether an account exists (LANE4, #978).
+        return _registration_pending(str(req.email))
 
     if user.get("email_verified"):
         return {**user, "verification_email_sent": False}
 
-    sent = await _send_verification(user)
-    return {**user, "verification_email_sent": sent}
+    await _send_verification(user)
+    return _registration_pending(str(req.email))
+
+
+#: What every registration that needs a confirmed address answers -- new
+#: address or existing one, mail sent or not -- so the reply tells a caller
+#: nothing about which accounts exist.
+_PENDING_MESSAGE = ("If this address can be registered, a confirmation link is on its way. "
+                    'If none arrives, use "Resend confirmation email" on the sign-in page.')
+
+
+def _registration_pending(email: str) -> dict:
+    return {"email": email, "email_verified": False, "verification_pending": True,
+            "message": _PENDING_MESSAGE}
 
 
 @router.get("/v1/users/verify-email")

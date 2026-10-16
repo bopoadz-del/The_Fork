@@ -128,10 +128,11 @@ export default function Login() {
         if (result.verificationRequired) {
           // The account exists but has no session yet. Navigating to the app
           // would bounce off ProtectedRoute; tell them to check their mail.
+          // The reply is the same for a new and an existing address, so it
+          // says what happens next without claiming an account was made.
           setNotice(
-            result.verificationEmailSent
-              ? `Account created. We sent a confirmation link to ${emailVal} - follow it to finish signing in.`
-              : `Account created, but the confirmation email could not be sent. Use "Resend confirmation email" below.`,
+            `If ${emailVal} can be registered, a confirmation link is on its way - follow it to finish signing in. ` +
+              `If none arrives, use "Resend confirmation email" below.`,
           )
           setMode('signin')
           return
