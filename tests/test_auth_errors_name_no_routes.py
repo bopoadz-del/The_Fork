@@ -1,31 +1,76 @@
 """A user-facing auth error never names an API route.
 
-Order 0010Z item 3 (LANE2 sign-up root cause): the unverified-login 403
-told a person to "request a new one at /v1/users/resend-verification" -- a
-path, not something a user can do. Every HTTPException text in the auth
-router is read from the source, so a new one is covered too.
+An error a person reads says what to do in the product ("Resend confirmation
+email" on the sign-in page), never which endpoint to call. Checked through
+real requests, and over every HTTPException text in the auth router.
 """
 import ast
+import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+from fastapi.testclient import TestClient
+
+from app.main import app
 
 AUTH_ROUTER = Path(__file__).resolve().parents[1] / "app" / "routers" / "users.py"
 
 
-def _error_texts():
+class _Resp:
+    status_code = 200
+    text = "{}"
+
+    def json(self):
+        return {"id": "msg_test"}
+
+
+def _configured(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("EMAIL_FROM", "The Shovel <noreply@theshovel.ai>")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://theshovel.ai")
+
+
+def _detail(resp) -> str:
+    body = resp.json()
+    detail = body.get("detail", body) if isinstance(body, dict) else body
+    return detail if isinstance(detail, str) else str(detail)
+
+
+def test_an_unverified_login_points_at_the_sign_in_page_not_a_route(monkeypatch):
+    _configured(monkeypatch)
+    addr = f"routes-{uuid.uuid4().hex[:10]}@example.com"
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=_Resp()), TestClient(app) as c:
+        c.post("/v1/users/register", json={"email": addr, "password": "password12"})
+        blocked = c.post("/v1/users/login", json={"email": addr, "password": "password12"})
+    assert blocked.status_code == 403, blocked.text
+    text = _detail(blocked)
+    assert "/v1/" not in text
+    assert "Resend confirmation email" in text
+
+
+def test_other_auth_failures_name_no_route_either(monkeypatch):
+    _configured(monkeypatch)
+    addr = f"routes-{uuid.uuid4().hex[:10]}@example.com"
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=_Resp()), TestClient(app) as c:
+        c.post("/v1/users/register", json={"email": addr, "password": "password12"})
+        responses = [
+            c.post("/v1/users/register", json={"email": addr, "password": "password12"}),
+            c.post("/v1/users/login", json={"email": addr, "password": "wrong-password"}),
+            c.post("/v1/users/login", json={"email": f"nobody-{uuid.uuid4().hex[:6]}@example.com",
+                                             "password": "password12"}),
+        ]
+    for resp in responses:
+        assert resp.status_code >= 400, resp.text
+        assert "/v1/" not in _detail(resp), resp.text
+
+
+def test_no_auth_error_text_in_the_router_names_a_route():
     tree = ast.parse(AUTH_ROUTER.read_text(encoding="utf-8"))
+    leaks = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", "")) == "HTTPException":
             for arg in list(node.args) + [k.value for k in node.keywords]:
                 for sub in ast.walk(arg):
-                    if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
-                        yield node.lineno, sub.value
-
-
-def test_no_auth_error_names_an_api_route():
-    leaks = [(line, text) for line, text in _error_texts() if "/v1/" in text]
+                    if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and "/v1/" in sub.value:
+                        leaks.append((node.lineno, sub.value))
     assert not leaks, leaks
-
-
-def test_the_unverified_message_points_at_the_sign_in_page_control():
-    texts = " ".join(t for _, t in _error_texts())
-    assert "Resend confirmation email" in texts
