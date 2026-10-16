@@ -332,13 +332,13 @@ async def handle_construction_calc(call: ToolCall) -> dict:
         if val is None or val == "":
             continue
         calc_params[key] = val
-    refusal = _defaulted_run_refusal(calc_name, calc_params, user_message)
+    from app.core.offload import off_loop as _calc_off
+
+    # Parameter extraction and the run are CPU work: never on the event loop.
+    refusal = await _calc_off(_defaulted_run_refusal, calc_name, calc_params, user_message)
     if refusal is not None:
         return {"name": "construction_calc", "ok": True, "result": refusal}
-    result = _cf.run_calculation(
-        calc_name,
-        calc_params,
-    )
+    result = await _calc_off(_cf.run_calculation, calc_name, calc_params)
     return {
         "name": "construction_calc",
         "ok": isinstance(result, dict) and result.get("status") != "error",
