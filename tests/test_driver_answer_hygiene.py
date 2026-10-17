@@ -64,3 +64,23 @@ def test_a_calculator_answer_lists_only_passages_it_used():
 def test_brackets_emptied_by_the_exit_check_are_removed():
     assert loop._tidy("The volume is 6 m3 (). Rate ( ; ) applies [ ].") == "The volume is 6 m3. Rate applies."
     assert loop._tidy("Total (incl. VAT) is due.") == "Total (incl. VAT) is due."
+
+
+def test_a_figure_the_user_typed_earlier_is_still_the_users():
+    """CORE: a figure the user typed in an earlier turn was tagged as a
+    document's because only the latest turn counted as the user's words."""
+    from app.agents import citation_provenance as cp
+
+    msgs = [
+        {"role": "user", "content": "The slab is 240 mm thick."},
+        {"role": "assistant", "content": "Noted."},
+        {"role": "user", "content": "So what is its self-weight per square metre?"},
+        {"role": "tool", "name": "search_project_documents", "content": json.dumps({"ok": True, "result": {
+            "results": [{"document_id": "d1", "filename": "Spec.pdf", "snippet": "Slabs are 240 mm thick.",
+                         "score": 0.8}]}})},
+    ]
+    _, trail = cp.figure_provenance("For the 240 mm slab, I need the density to go on.", None, msgs,
+                                    enforce=False, tool_passages=True)
+    entry = next(e for e in trail if "240" in e["figure"])
+    from app.agents import provenance_trail as pt
+    assert entry["source"] == pt.SOURCE_USER

@@ -1356,6 +1356,23 @@ def _nums(text: str) -> list[float]:
     return out
 
 
+_MAGNITUDE_WORDS = {"thousand": 1e3, "million": 1e6, "billion": 1e9}
+_WRITTEN_MAGNITUDE_RE = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)\s*(thousand|million|billion)\b", re.IGNORECASE)
+
+
+def _written_nums(text: str) -> list[float]:
+    """The figures a person wrote, as numbers: digits, and a number followed
+    by a magnitude word as the amount it says ("10 million" is 10,000,000)."""
+    out = _nums(text)
+    for m in _WRITTEN_MAGNITUDE_RE.finditer(text or ""):
+        try:
+            out.append(float(m.group(1).replace(",", "")) * _MAGNITUDE_WORDS[m.group(2).lower()])
+        except ValueError:
+            continue
+    return out
+
+
 def _match(value: float, pool: Iterable[float]) -> bool:
     return any(_close(value, p) for p in pool)
 
@@ -1411,10 +1428,13 @@ def figure_provenance(
         if not text or not text.strip():
             return text, []
         ev = build_evidence(rag_sys_msg, messages, tool_passages=tool_passages)
+        # Every figure the user typed in this conversation is the user's own,
+        # whichever turn it was typed in. Taking only the latest turn credited
+        # a figure typed earlier to whatever document also held it.
         user_vals: set[float] = set()
         for rec in ev.records:
             if rec.kind == "user":
-                user_vals = set(_nums(rec.text))  # the latest operator turn wins
+                user_vals |= set(_written_nums(rec.text))
         calc_entries: list[tuple[set[float], dict[str, Any]]] = []
         for credit in _calculator_credits(ev):
             nums = set(credit.result_numbers) | set(_nums(json.dumps(credit.inputs, default=str)))
