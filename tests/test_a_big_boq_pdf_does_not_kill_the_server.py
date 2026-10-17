@@ -223,3 +223,25 @@ def test_a_pdf_table_parse_runs_in_the_isolated_child(blank_pdf, monkeypatch, ch
     _run(blank_pdf(2))
     pids = {e[1] for e in child_log.events() if e[0] == "pid"}
     assert pids and os.getpid() not in pids, f"the PDF table parse ran in the server process: {pids}"
+
+
+def test_the_time_budget_stops_the_parse_the_child_runs(blank_pdf, monkeypatch, child_log):
+    """The isolated child runs BOQProcessorBlock._parse_pdf_sync; here it runs
+    in this process, so its budget check is proven on the exact code the
+    child executes (and coverage, which does not follow the forked child,
+    sees it run)."""
+    monkeypatch.setenv("BOQ_PDF_PARSE_SECONDS", "0.5")
+    now = [0.0]
+    monkeypatch.setattr(bp, "_parse_clock", lambda: now[0])
+
+    def slow(self, *a, **k):
+        child_log.add("parsed")
+        now[0] += 0.3
+        return []
+
+    monkeypatch.setattr(pdfplumber.page.Page, "extract_tables", slow)
+    out = bp.BOQProcessorBlock()._parse_pdf_sync(blank_pdf(8), {})
+    assert len(child_log.events()) == 2, "the budget must stop the parse"
+    assert out["status"] == "error" and out.get("boq_pdf_parse_timeout") is True
+    assert "stopped at page 3" in out["error"]
+    assert "total_cost" not in out and "line_items" not in out
