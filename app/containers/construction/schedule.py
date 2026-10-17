@@ -3073,8 +3073,12 @@ class ConstructionScheduleMixin:
                 activities, overrides
             )
 
-        enriched, summary, cpm_error = self._attach_cpm_to_activities(
-            activities, start_date
+        # The CPM pass is CPU work (a production LOOP_STALL): never on the
+        # event loop.
+        from app.core.offload import off_loop
+
+        enriched, summary, cpm_error = await off_loop(
+            self._attach_cpm_to_activities, activities, start_date
         )
         from app.core.conversation_wbs import stamp_hierarchical_wbs_codes
         enriched = stamp_hierarchical_wbs_codes(enriched, wbs_tree)
