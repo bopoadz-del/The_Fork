@@ -282,6 +282,32 @@ def create_user(
     return _public(get_user_by_id(uid))
 
 
+def password_fingerprint(user: Dict[str, Any]) -> str:
+    """A short fingerprint of the user's current password hash. A reset link
+    carries it, so the link stops working once the password changes -- it is
+    single-use without a token table."""
+    raw = f"{user.get('salt') or ''}:{user.get('password_hash') or ''}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def set_password(user_id: str, new_password: str) -> bool:
+    """Replace a user's password (new salt). True if the user exists."""
+    _ensure_db()
+    creds = hash_password(new_password)
+    with _lock:
+        session = SessionLocal()
+        try:
+            user = session.get(User, user_id)
+            if user is None:
+                return False
+            user.password_hash = creds["hash"]
+            user.salt = creds["salt"]
+            session.commit()
+            return True
+        finally:
+            session.close()
+
+
 def mark_email_verified(user_id: str) -> bool:
     """Flip a user's address to verified. True if a row changed.
 
