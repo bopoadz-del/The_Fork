@@ -133,3 +133,50 @@ def _fresh_schema_cache():
     cache.clear()
     yield
     cache.clear()
+
+
+def test_the_driver_exit_check_runs_off_the_loop(monkeypatch):
+    """Every streamed piece is exit-checked (citations, figures, identity):
+    CPU work that ran inline on the loop for each sentence."""
+    from app.agents.driver import llm, loop
+    from app.agents.runtime import Agent
+
+    async def fake_stream(agent, messages, offered, model="", timeout=120.0):
+        yield "content", "The slab is cast in two pours. "
+        yield "done", {"status": "success", "message": {"content": "The slab is cast in two pours. "}}
+
+    monkeypatch.setattr(llm, "stream", fake_stream)
+    real = loop.exit_check
+    threads: list[int] = []
+
+    def probe(*args, **kwargs):
+        threads.append(threading.get_ident())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(loop, "exit_check", probe)
+    agent = Agent(name="loop-probe", description="probe", system_prompt="", allowed_blocks=[])
+
+    async def run():
+        return [e async for e in loop.stream(agent, user_message="How is the slab cast?")]
+
+    loop_ident, events = _drive(run)
+    assert any(e.get("type") == "end" for e in events)
+    assert threads and loop_ident not in threads
+
+
+def test_the_schedule_cpm_pass_runs_off_the_loop(monkeypatch):
+    from app.containers.construction import schedule
+
+    container_cls = next(v for v in vars(schedule).values()
+                         if isinstance(v, type) and hasattr(v, "_attach_cpm_to_activities"))
+    threads: list[int] = []
+
+    def probe(self, activities, start_date):
+        threads.append(threading.get_ident())
+        return activities, {}, None
+
+    monkeypatch.setattr(container_cls, "_attach_cpm_to_activities", probe)
+    from app.containers.construction import ConstructionContainer
+
+    loop_ident, _ = _drive(lambda: ConstructionContainer().generate_wbs({}, {"brief": "A two-storey office block."}))
+    assert threads and loop_ident not in threads
