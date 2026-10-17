@@ -108,6 +108,8 @@ class FormulaSpec:
     inputs: Dict[str, str] = field(default_factory=dict)
     outputs: Dict[str, str] = field(default_factory=dict)
     params: Dict[str, Param] = field(default_factory=dict)
+    #: The one output an answer leads with (empty: none declared).
+    main_output: str = ""
 
 
 _REGISTRY: Dict[str, FormulaSpec] = {}
@@ -125,6 +127,7 @@ def formula(
     inputs: Dict[str, Union[str, Param]],
     outputs: Dict[str, str],
     name: Optional[str] = None,
+    main_output: str = "",
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Declare a formula. Raises at import on an unknown owner, an empty
     description, an empty display name or a duplicate name -- a formula
@@ -136,6 +139,8 @@ def formula(
         raise ValueError("a formula needs a description")
     if not (display_name or "").strip():
         raise ValueError("a formula needs a display_name")
+    if main_output and main_output not in outputs:
+        raise ValueError(f"main_output {main_output!r} is not one of the declared outputs")
 
     def _register(fn: Callable[..., Any]) -> Callable[..., Any]:
         key = name or fn.__name__
@@ -146,7 +151,7 @@ def formula(
         _REGISTRY[key] = FormulaSpec(key, fn, owner, description.strip(),
                                      display_name.strip(),
                                      {k: p.unit for k, p in params.items()},
-                                     dict(outputs), params)
+                                     dict(outputs), params, main_output)
         fn.__formula__ = _REGISTRY[key]  # type: ignore[attr-defined]
         return fn
 
