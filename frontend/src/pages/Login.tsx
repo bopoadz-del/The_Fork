@@ -18,7 +18,11 @@ export default function Login() {
   const [resetToken] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get('reset'),
   )
-  const [mode, setMode] = useState<Mode>(() => (resetToken ? 'reset' : 'signin'))
+  // The front page's "Create an account" opens the form on registration.
+  const [mode, setMode] = useState<Mode>(() => {
+    if (resetToken) return 'reset'
+    return new URLSearchParams(window.location.search).get('mode') === 'register' ? 'register' : 'signin'
+  })
   // Pre-fill from the last "Remember me" sign-in. Only ever the address --
   // the password is the browser password manager's job, never ours.
   const [email, setEmail] = useState(() => getRememberedEmail() ?? '')

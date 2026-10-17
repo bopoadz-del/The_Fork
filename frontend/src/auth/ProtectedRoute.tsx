@@ -34,16 +34,20 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   }
 
   if (!user) {
-    // Carry the query string across the redirect. The email-verification link
-    // lands on /?verified=success for a signed-OUT user, so bouncing to a bare
-    // /login would swallow the one piece of feedback that confirms the click
-    // worked. Any future landing flag inherits this for free.
-    return (
-      <Navigate
-        to={{ pathname: '/login', search: window.location.search }}
-        replace
-      />
-    )
+    // A link from an email (/?verified=..., /?reset=...) goes to the sign-in
+    // page with its query string: bouncing to a bare page would swallow the
+    // one piece of feedback that confirms the click worked. Any other
+    // signed-out visitor sees the public front page.
+    const params = new URLSearchParams(window.location.search)
+    if (params.has('verified') || params.has('reset')) {
+      return (
+        <Navigate
+          to={{ pathname: '/login', search: window.location.search }}
+          replace
+        />
+      )
+    }
+    return <Navigate to="/welcome" replace />
   }
 
   return <>{children}</>
