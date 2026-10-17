@@ -195,6 +195,11 @@ _PUBLIC_ROUTES = {
     ("GET", "/v1/users/verify-email"),
     ("POST", "/v1/users/register"),
     ("POST", "/v1/users/login"),
+    # A locked-out user cannot sign in: asking for a reset link and setting
+    # the new password are public by design (one neutral reply; a single-use
+    # signed link). Order 0735Z item 3f.
+    ("POST", "/v1/users/forgot-password"),
+    ("POST", "/v1/users/reset-password"),
     ("POST", "/v1/users/resend-verification"),
     ("GET", "/v1/drive/callback"),
     # Catalog / liveness extras that currently have no Depends. Adding a

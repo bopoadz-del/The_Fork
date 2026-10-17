@@ -7,13 +7,18 @@ import BrandMark from '../components/BrandMark'
 import './pages.css'
 import './auth.css'
 
-type Mode = 'signin' | 'register'
+type Mode = 'signin' | 'register' | 'reset'
 
 export default function Login() {
   const { user, loading, login, register } = useAuth()
   const navigate = useNavigate()
 
-  const [mode, setMode] = useState<Mode>('signin')
+  // A password-reset link lands here as /?reset=<token>: the page opens on
+  // the new-password form, with the token held only in memory.
+  const [resetToken] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get('reset'),
+  )
+  const [mode, setMode] = useState<Mode>(() => (resetToken ? 'reset' : 'signin'))
   // Pre-fill from the last "Remember me" sign-in. Only ever the address --
   // the password is the browser password manager's job, never ours.
   const [email, setEmail] = useState(() => getRememberedEmail() ?? '')
@@ -45,11 +50,13 @@ export default function Login() {
       : 'That confirmation link is invalid or has expired. Request a new one below.'
   })
 
-  // Strip the flag so a refresh does not re-announce a stale outcome.
+  // Strip the flags so a refresh does not re-announce a stale outcome, and so
+  // the reset token does not stay in the address bar or the history.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    if (!params.has('verified')) return
+    if (!params.has('verified') && !params.has('reset')) return
     params.delete('verified')
+    params.delete('reset')
     const rest = params.toString()
     window.history.replaceState({}, '', window.location.pathname + (rest ? `?${rest}` : ''))
   }, [])
@@ -97,6 +104,44 @@ export default function Login() {
       setNotice(`If ${email} needs confirming, a new link is on its way.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not request a new link.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleForgot() {
+    setError(null)
+    setNotice(null)
+    setSubmitting(true)
+    try {
+      await apiPost('/v1/users/forgot-password', { email })
+      // Same 202 whether or not the address has an account: the notice must
+      // not imply one was found.
+      setNotice(`If ${email} has an account, a reset link is on its way. It works once, for 1 hour.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not request a reset link.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleReset(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setError(null)
+    setNotice(null)
+    const newPassword = passwordRef.current?.value ?? password
+    if (newPassword.length < 8) {
+      setError('Choose a password of at least 8 characters.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await apiPost('/v1/users/reset-password', { token: resetToken, new_password: newPassword })
+      setMode('signin')
+      setPassword('')
+      setNotice('Password changed. Sign in with your new password.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not change the password.')
     } finally {
       setSubmitting(false)
     }
@@ -161,11 +206,41 @@ export default function Login() {
         </div>
 
         <h1 className="auth-card__title">
-          {mode === 'signin' ? 'Sign in' : 'Create account'}
+          {mode === 'signin' ? 'Sign in' : mode === 'register' ? 'Create account' : 'Choose a new password'}
         </h1>
         <p className="auth-card__subtitle">Construction Intelligence Platform</p>
 
+        {mode === 'reset' && (
+          <form className="auth-form" onSubmit={handleReset} noValidate>
+            <div className="auth-field">
+              <label className="auth-label" htmlFor="newPassword">New password</label>
+              <input
+                ref={passwordRef}
+                id="newPassword"
+                className="auth-input"
+                type="password"
+                autoComplete="new-password"
+                placeholder="Minimum 8 characters"
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
+              />
+            </div>
+            {error && (
+              <div className="auth-error" role="alert">
+                {error}
+              </div>
+            )}
+            <button className="auth-submit" type="submit" disabled={submitting}>
+              {submitting ? 'Saving…' : 'Set new password'}
+            </button>
+          </form>
+        )}
+
         {/* Form */}
+        {mode !== 'reset' && (
         <form className="auth-form" onSubmit={handleSubmit} noValidate>
           {mode === 'register' && (
             <div className="auth-field">
@@ -261,9 +336,19 @@ export default function Login() {
               : (mode === 'signin' ? 'Sign in' : 'Create account')}
           </button>
         </form>
+        )}
 
         {mode === 'signin' && (
           <div className="auth-toggle">
+            <button
+              className="auth-toggle__link"
+              type="button"
+              onClick={handleForgot}
+              disabled={submitting || !email}
+            >
+              Forgot password?
+            </button>
+            {' · '}
             <button
               className="auth-toggle__link"
               type="button"
@@ -276,6 +361,7 @@ export default function Login() {
         )}
 
         {/* Toggle */}
+        {mode !== 'reset' && (
         <div className="auth-toggle">
           {mode === 'signin' ? (
             <>
@@ -301,6 +387,7 @@ export default function Login() {
             </>
           )}
         </div>
+        )}
       </div>
     </div>
   )

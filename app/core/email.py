@@ -92,6 +92,18 @@ async def send_email(to: str, subject: str, html: str) -> str:
         ) from exc
 
 
+def password_reset_html(reset_url: str) -> str:
+    """The body of the password-reset message: one link, shown raw as well."""
+    return (
+        "<p>Someone asked to reset the password for this account.</p>"
+        f'<p><a href="{reset_url}">Choose a new password</a></p>'
+        "<p>If the link does not work, paste this into your browser:<br>"
+        f"{reset_url}</p>"
+        "<p>This link expires in 1 hour and works once. If you did not ask "
+        "for a reset, ignore this message: your password stays as it is.</p>"
+    )
+
+
 def verification_html(verify_url: str) -> str:
     """The body of the address-confirmation message.
 
