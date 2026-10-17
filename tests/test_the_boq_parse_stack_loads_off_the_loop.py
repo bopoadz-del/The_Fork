@@ -132,3 +132,19 @@ def test_no_async_export_handler_imports_the_block_itself():
              and any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "_boq_processor_block"
                      for c in ast.walk(n))]
     assert len(users) >= 2, users
+
+
+def test_the_parse_libraries_are_warmed_after_the_port_opens(monkeypatch):
+    """Live users never pay the parse stack's first import: the post-start
+    warm-up imports it (the boot check keeps it out of startup itself)."""
+    import importlib as _importlib
+
+    from app import main
+
+    names = []
+    monkeypatch.setattr(_importlib, "import_module", lambda name, package=None: names.append(name))
+    main._warm_parse_libraries()
+    assert {"pandas", "pdfplumber"} <= set(names)
+    source = pathlib.Path(main.__file__).read_text(encoding="utf-8")
+    warm = source[source.index("async def _warm_models"):source.index("async def _warm_models") + 3000]
+    assert "_warm_parse_libraries" in warm
