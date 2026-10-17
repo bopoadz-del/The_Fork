@@ -101,7 +101,15 @@ def test_a_boq_parse_imports_decrypts_and_parses_off_the_loop(import_threads, bo
     import_threads.clear()
     loop_ident, _ = _drive(lambda: bp.BOQProcessorBlock().process({"file_path": boq_files[kind]}, {}))
     assert opened and loop_ident not in opened, "the plaintext read ran on the event loop"
+    from app.core import extract_isolated
+
+    # A PDF's table parse runs in the isolated child where fork exists: its
+    # libraries are then imported in the child, never in this process.
+    in_child = kind == "pdf" and extract_isolated.isolation_available()
     for lib in (*libs, "app.core.file_crypto"):
+        if in_child and lib not in ("app.core.file_crypto", "app.core.doc_index"):
+            assert loop_ident not in import_threads.get(lib, []), f"{lib} was imported on the event loop"
+            continue
         assert import_threads.get(lib), f"{lib} was never imported by the parse -- the probe saw nothing"
         assert loop_ident not in import_threads[lib], f"{lib} was imported on the event loop"
 
