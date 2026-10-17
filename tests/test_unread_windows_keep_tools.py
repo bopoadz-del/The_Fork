@@ -133,6 +133,7 @@ import asyncio
 from unittest.mock import patch
 
 from app.agents.runtime import Agent
+from tests._fixture_values import STUB_TOKEN_04
 
 
 def _recording_llm(second_content: str = "The m3 item is 945 under D550.9."):
@@ -191,7 +192,7 @@ def _plain_turn(monkeypatch):
     """A non-streaming turn with a key present: this is about which call
     carries tools, not about how the answer is delivered."""
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_GROQ_CFG))
-    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_API_KEY", STUB_TOKEN_04)
     monkeypatch.setenv("AGENT_COMMISSIONING_PREDISPATCH", "0")
     monkeypatch.setenv("SYNTHESIS_STREAMING", "0")
 

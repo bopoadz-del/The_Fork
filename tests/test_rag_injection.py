@@ -10,6 +10,8 @@ import pathlib
 import tempfile
 
 import pytest
+from tests._dev_key import DEV_KEY
+from tests._fixture_values import ENV_SECRET_10
 
 
 def test_audit_writer_writes_one_jsonl_row_per_call(monkeypatch, tmp_path):
@@ -470,7 +472,7 @@ def test_chat_stream_injects_rag_system_message_for_project_assistant(monkeypatc
     monkeypatch.setenv("MAX_RAG_TOKENS", "1500")
     monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", ENV_SECRET_10)
 
     captured = {}
 
@@ -552,7 +554,7 @@ def test_rag_debug_query_param_propagates_to_chat_stream(monkeypatch, tmp_path):
         r = client.post(
             "/v1/agents/project-assistant/chat/stream?rag_debug=true",
             json={"message": "hi"},
-            headers={"Authorization": "Bearer cb_dev_key"},
+            headers={"Authorization": "Bearer " + DEV_KEY},
         )
     assert r.status_code == 200
     assert captured["rag_debug"] is True

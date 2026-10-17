@@ -74,7 +74,7 @@ async def submit_routing_correction(
 
     pid = req.project_id
     # JWT callers must not stamp another tenant's real project_id.
-    # API-key callers are the operator identity (cb_dev_key / SYSTEM_USER):
+    # API-key callers are the operator identity (the development key / SYSTEM_USER):
     # existing tests and the e2e surface walk post a learning-scope id
     # that is not owned by that singleton. Skip the grant for them.
     if (

@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.dependencies import require_api_key, require_user
 from app.core import projects as projects_mod
+from tests._fixture_values import STUB_TOKEN_13
 
 
 @pytest.fixture
@@ -134,7 +135,7 @@ def test_approve_from_drive_creates_row_and_slugs_name(client, monkeypatch):
     app.dependency_overrides[require_user] = fake
 
     async def fake_token(_user_id):
-        return "fake-access-token"
+        return STUB_TOKEN_13
 
     async def fake_worker(**_kw):
         return None

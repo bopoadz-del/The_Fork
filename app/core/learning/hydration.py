@@ -39,6 +39,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.offload import off_loop_in
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,7 @@ async def run(
     if project_ids:
         pids: List[str] = [str(p) for p in project_ids if p]
     else:
-        pids = _projects_active_in_window(window_start, window_end)
+        pids = await off_loop_in("background", _projects_active_in_window, window_start, window_end)
 
     # Drop project_ids with no row in the projects table before doing any
     # (expensive) per-project work: hydration_runs.project_id is a FK to
@@ -73,7 +75,7 @@ async def run(
     # referenced by an old conversation — would raise ForeignKeyViolation on
     # Postgres (PYTHON-FASTAPI-7). Skip silently; a deleted project has nothing
     # to hydrate.
-    pids = _filter_existing_projects(pids)
+    pids = await off_loop_in("background", _filter_existing_projects, pids)
 
     results_per_project: List[Dict[str, Any]] = []
     global_errors: List[str] = []
@@ -99,10 +101,11 @@ async def run(
         results_per_project, target_date
     )
     if global_provider in ("offline_template", "unavailable", "error"):
-        global_summary_md = _heuristic_global_summary(
-            target_date, results_per_project, global_errors
+        global_summary_md = await off_loop_in("background", 
+            _heuristic_global_summary, target_date, results_per_project, global_errors
         )
-    hydration_store.record_run(
+    await off_loop_in("background", 
+        hydration_store.record_run,
         run_date=target_date,
         scope="global",
         project_id=None,
@@ -156,21 +159,21 @@ async def _hydrate_project(
 ) -> Dict[str, Any]:
     from app.core import hydration_store
 
-    messages = _collect_project_messages(project_id, window_start, window_end)
+    messages = await off_loop_in("background", _collect_project_messages, project_id, window_start, window_end)
     if len(messages) > _MAX_MESSAGES_PER_PROJECT:
         messages = messages[-_MAX_MESSAGES_PER_PROJECT:]
 
     summary_md, provider = await _summarize_project(project_id, messages, run_date)
     if provider in ("offline_template", "unavailable", "error"):
-        summary_md = _heuristic_project_summary(project_id, run_date, messages)
+        summary_md = await off_loop_in("background", _heuristic_project_summary, project_id, run_date, messages)
 
     # ── Close the loop: write back to surfaces the next chat will read.
     # Failures here are non-fatal — the operator-facing row is still useful
     # even if e.g. the learning_engine's storage is read-only.
     writeback_summary: Dict[str, Any] = {}
     try:
-        writeback_summary = _writeback_for_next_chat(
-            project_id, messages, run_date
+        writeback_summary = await off_loop_in("background", 
+            _writeback_for_next_chat, project_id, messages, run_date
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("hydration writeback for project %s failed: %s", project_id, exc)
@@ -180,7 +183,8 @@ async def _hydrate_project(
         "messages_seen": len(messages),
         "writeback": writeback_summary,
     }
-    hydration_store.record_run(
+    await off_loop_in("background", 
+        hydration_store.record_run,
         run_date=run_date,
         scope="project",
         project_id=project_id,

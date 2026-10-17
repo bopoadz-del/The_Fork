@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from tests.conftest import requires_construction_kit
+from tests._dev_key import DEV_KEY
 from app.core.artifacts import (
     code_artifact,
     make_artifact,
@@ -12,7 +13,7 @@ from app.core.artifacts import (
     table_artifact,
 )
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 @pytest.fixture(scope="module")

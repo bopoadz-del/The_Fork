@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.routers import project as project_router
 from app.core.session_store import InMemorySessionStore
+from tests._dev_key import DEV_KEY
+from tests._fixture_values import PW_06
 
 _RUN = uuid.uuid4().hex[:8]
 
@@ -40,9 +42,9 @@ def client(tmp_path_factory):
 
 def _token(client, email):
     client.post("/v1/users/register",
-                json={"email": email, "password": "password12"})
+                json={"email": email, "password": PW_06})
     return client.post("/v1/users/login",
-                       json={"email": email, "password": "password12"}).json()["token"]
+                       json={"email": email, "password": PW_06}).json()["token"]
 
 
 def test_session_is_owned_by_creator(client):
@@ -69,7 +71,7 @@ def test_owner_can_continue_own_session(client):
 
 
 def test_legacy_key_session_works(client):
-    legacy = {"Authorization": "Bearer cb_dev_key"}
+    legacy = {"Authorization": "Bearer " + DEV_KEY}
     assert client.post("/v1/project/ask",
                        json={"session_id": f"legacy-{_RUN}-003", "request": "hi"},
                        headers=legacy).status_code == 200

@@ -71,17 +71,20 @@ def _api(params: dict) -> dict:
     return json.loads(body.decode("utf-8"))
 
 
-def resolve(title: str) -> dict:
-    """Current direct URL + licence for one Commons file title."""
+def resolve(title: str = "", pageid: int = 0) -> dict:
+    """Current direct URL + licence for one Commons file, named by its title
+    or by its page id (an entry whose title would carry a person's name names
+    the file by id instead)."""
     data = _api({
-        "action": "query", "format": "json", "titles": title,
+        "action": "query", "format": "json", **({"pageids": str(pageid)} if pageid else {"titles": title}),
         "prop": "imageinfo", "iiprop": "url|extmetadata",
         "iiurlwidth": str(MAX_WIDTH),
     })
     pages = (data.get("query", {}) or {}).get("pages", {}) or {}
     for page in pages.values():
         if "missing" in page:
-            raise LookupError(f"not found on Commons: {title}")
+            raise LookupError(f"not found on Commons: {title or pageid}")
+        title = title or page.get("title") or ""
         info = (page.get("imageinfo") or [{}])[0]
         meta = info.get("extmetadata", {}) or {}
         return {
@@ -106,9 +109,9 @@ def main() -> int:
 
     records, failures = [], []
     for entry in photos:
-        pid, title = entry["id"], entry["title"]
+        pid, title = entry["id"], entry.get("title", "")
         try:
-            resolved = resolve(title)
+            resolved = resolve(title, int(entry.get("pageid") or 0))
         except Exception as exc:
             failures.append(f"{pid}: {type(exc).__name__}: {exc}")
             print(f"  FAIL {pid}: {exc}")
@@ -129,7 +132,7 @@ def main() -> int:
         status = "ok" if args.check else ("cached" if existed else "downloaded")
         print(f"  {status:<10} {pid:<32} {licence}")
         records.append({
-            "id": pid, "file": target.name, "title": title,
+            "id": pid, "file": target.name, "title": title or f"pageid {entry.get('pageid')}",
             "licence_at_fetch": licence, "licence_in_manifest": entry.get("licence"),
             "page": resolved["page"], "artist": resolved["artist"],
         })

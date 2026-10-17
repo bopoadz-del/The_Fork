@@ -4,7 +4,15 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+# The app's own database and crypto modules load with the block (the server
+# imports both at startup anyway). Their first import -- SQLAlchemy and the
+# cryptography extension -- holds the GIL even in a worker thread, and in a
+# cold process froze the event loop up to 0.41 s during the first parse (CI
+# test-timing). The parse libraries (pandas, pdfplumber) stay lazy: the boot
+# check keeps them out of startup.
+from app.core import doc_index as _doc_index  # noqa: F401
+from app.core import file_crypto as _file_crypto  # noqa: F401
 from app.core.universal_base import UniversalBlock
 from app.lib.boq_units import reconcile_unit
 
@@ -227,24 +235,12 @@ class BOQProcessorBlock(UniversalBlock):
             str(data.get("file_path") or params.get("file_path") or file_path)
         )
         try:
-            # open_plaintext transparently decrypts when DATA_ENCRYPTION_KEY is
-            # set on the server (uploads go through file_crypto.write_document)
-            # and is a no-op for legacy plaintext files.
-            from app.core.file_crypto import open_plaintext
-            with open_plaintext(file_path) as plain_path:
-                if ext == ".csv":
-                    return await self._parse_csv(plain_path, params)
-                elif ext in (".xlsx", ".xls"):
-                    return await self._parse_excel(plain_path, params)
-                elif ext == ".pdf":
-                    return await self._parse_pdf(
-                        plain_path, params, source_name=source_name
-                    )
-                else:
-                    return {
-                        "status": "error",
-                        "error": f"Unsupported format: {ext}. Use .xlsx, .csv, or .pdf",
-                    }
+            # Decrypting, measuring and parsing are one blocking job, and so
+            # are the first imports they trigger (file_crypto, doc_index,
+            # pandas, pdfplumber): all of it runs in one worker thread, never
+            # on the event loop (LANE5 #984/#992). Imports stay lazy, so
+            # nothing heavy loads at boot.
+            return await asyncio.to_thread(self._process_file, file_path, ext, params, source_name)
         except ImportError as e:
             return {
                 "status": "error",
@@ -309,6 +305,25 @@ class BOQProcessorBlock(UniversalBlock):
         df.columns = [str(c).strip() for c in raw.iloc[hdr].tolist()]
         return self._process_dataframe(df, params)
 
+    def _process_file(self, file_path: str, ext: str, params: Dict, source_name: str) -> Dict:
+        """Decrypt and parse in the calling worker thread. open_plaintext
+        decrypts when DATA_ENCRYPTION_KEY is set (uploads go through
+        file_crypto.write_document) and is a no-op for plaintext files."""
+        from app.core.file_crypto import open_plaintext
+
+        with open_plaintext(file_path) as plain_path:
+            if ext == ".csv":
+                return self._parse_csv_sync(plain_path, params)
+            if ext in (".xlsx", ".xls"):
+                return self._parse_excel_sync(plain_path, params)
+            if ext == ".pdf":
+                return (self._pdf_too_large(plain_path, source_name)
+                        or self._parse_pdf_sync(plain_path, params))
+            return {
+                "status": "error",
+                "error": f"Unsupported format: {ext}. Use .xlsx, .csv, or .pdf",
+            }
+
     async def _parse_pdf(
         self, file_path: str, params: Dict, source_name: str = ""
     ) -> Dict:
@@ -334,6 +349,15 @@ class BOQProcessorBlock(UniversalBlock):
         # BOQ-named files) so the live 26.9 MB priced bill is not 413'd
         # after it already OCR'd. Measure plaintext, not Fernet ciphertext
         # (same class as #449). See memory the-fork-boq-always-xlsx.
+        refusal = await asyncio.to_thread(self._pdf_too_large, file_path, source_name)
+        if refusal:
+            return refusal
+        return await asyncio.to_thread(self._parse_pdf_sync, file_path, params)
+
+    @staticmethod
+    def _pdf_too_large(file_path: str, source_name: str = "") -> Optional[Dict]:
+        """The refusal for a PDF too large to table-parse, or None. Blocking
+        (it measures the plaintext and imports doc_index): worker thread only."""
         from app.core.doc_index import _document_size_mb
 
         max_mb = _boq_pdf_max_mb(source_name or os.path.basename(file_path))
@@ -353,8 +377,7 @@ class BOQProcessorBlock(UniversalBlock):
                 "size_mb": round(size_mb, 1),
                 "max_mb": max_mb,
             }
-
-        return await asyncio.to_thread(self._parse_pdf_sync, file_path, params)
+        return None
 
     def _parse_pdf_sync(self, file_path: str, params: Dict) -> Dict:
         import pdfplumber

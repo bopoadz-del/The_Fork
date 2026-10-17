@@ -5,7 +5,7 @@ written — a Fork API key in a recovery runbook and a Render key hardcoded in
 a scheduled-task script. A third pair survived the FIRST version of the
 scanner, because it was written as
 
-    TOK=rnd_QqJ5...
+    TOK=rnd_<32 letters and digits>
 
 with no quotes and a variable name (`TOK`) that no secret-name pattern
 matches. That near-miss is why the provider-prefix rule exists and why
@@ -27,6 +27,9 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import random
+import string
+
 import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -47,20 +50,31 @@ def _hits(line: str, *, test_path: bool = False):
 
 # ── the ones that were really in the tree ─────────────────────────────────
 
+# Every vector is generated here, in the committed shape, so no credential --
+# not even a revoked one -- is stored in the tree.
+_RNG = random.Random(20261016)
+
+
+def _fake(prefix: str, n: int, alphabet: str = string.ascii_letters + string.digits) -> str:
+    return prefix + "".join(_RNG.choices(alphabet, k=n))
+
+
+_PROVIDER = _fake("rnd" + "_", 32)
+_KEY_BLOCK = "-----BEGIN " + "{}PRIVATE KEY-----"
+
 MUST_CATCH = [
     # The exact shape that slipped past the first version: bare, unquoted,
     # and assigned to a name no secret-name pattern matches.
-    ("TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0", "provider-credential"),  # pragma: allowlist secret
-    ("$RenderApiKey   = 'rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0'", "provider-credential"),  # pragma: allowlist secret
-    ('export FORK_API_KEY="o1JrikYGj4BtJDYGipGlRGfchTwMTLTA6QsT01IXZPQ"',  # pragma: allowlist secret
-     "assigned-long-literal"),
-    ("aws_access_key_id = AKIAIOSFODNN7EXAMPLE", "aws-access-key-id"),  # pragma: allowlist secret
-    ("-----BEGIN RSA PRIVATE KEY-----", "private-key-block"),  # pragma: allowlist secret
-    ("-----BEGIN PRIVATE KEY-----", "private-key-block"),  # pragma: allowlist secret
-    ("OPENAI_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz012345", "provider-credential"),  # pragma: allowlist secret
-    ("GROQ=gsk_abcdefghijklmnopqrstuvwxyz0123", "provider-credential"),  # pragma: allowlist secret
-    ("hf_token: hf_abcdefghijklmnopqrstuvwxyz01234567", "provider-credential"),  # pragma: allowlist secret
-    ("token = ghp_abcdefghijklmnopqrstuvwxyz0123456789", "provider-credential"),  # pragma: allowlist secret
+    ("TOK=" + _PROVIDER, "provider-credential"),
+    ("$RenderApiKey   = '" + _PROVIDER + "'", "provider-credential"),
+    ('export FORK_API_KEY="' + _fake("", 43) + '"', "assigned-long-literal"),
+    ("aws_access_key_id = " + _fake("AK" + "IA", 16, string.ascii_uppercase + string.digits), "aws-access-key-id"),
+    (_KEY_BLOCK.format("RSA "), "private-key-block"),
+    (_KEY_BLOCK.format(""), "private-key-block"),
+    ("OPENAI_KEY=" + _fake("sk" + "-proj-", 32, string.ascii_lowercase + string.digits), "provider-credential"),
+    ("GROQ=" + _fake("gsk" + "_", 30, string.ascii_lowercase + string.digits), "provider-credential"),
+    ("hf_token: " + _fake("hf" + "_", 36, string.ascii_lowercase + string.digits), "provider-credential"),
+    ("token = " + _fake("gh" + "p_", 36, string.ascii_lowercase + string.digits), "provider-credential"),
 ]
 
 
@@ -73,8 +87,9 @@ def test_the_shapes_that_were_committed_are_caught(line, expected_rule):
 def test_an_unquoted_assignment_is_not_a_blind_spot():
     """Dotenv and shell lines are bare, and those are the ones pasted into
     runbooks. The first version required quotes and missed them."""
-    assert _hits("SECRET_KEY=0123456789abcdef0123456789abcdef")  # pragma: allowlist secret
-    assert _hits('SECRET_KEY="0123456789abcdef0123456789abcdef"')  # pragma: allowlist secret
+    value = _fake("", 32, "0123456789abcdef")
+    assert _hits("SECRET_KEY=" + value)
+    assert _hits('SECRET_KEY="' + value + '"')
 
 
 # ── things that must NOT fire, or nobody will run it ──────────────────────
@@ -122,7 +137,7 @@ def test_a_fernet_key_built_from_a_literal_is_caught():
 # ── the allowlist has to work, or people will delete the check ────────────
 
 def test_an_allowlisted_line_is_ignored_by_the_walk(tmp_path, monkeypatch):
-    marked = f"TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0  # {scan_secrets.ALLOW_MARKER}"  # pragma: allowlist secret
+    marked = f"TOK={_PROVIDER}  # {scan_secrets.ALLOW_MARKER}"  # pragma: allowlist secret
     (tmp_path / "runbook.md").write_text(marked, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(scan_secrets, "tracked_files", lambda: ["runbook.md"])
@@ -132,7 +147,7 @@ def test_an_allowlisted_line_is_ignored_by_the_walk(tmp_path, monkeypatch):
 
 def test_the_walk_reports_an_unmarked_secret(tmp_path, monkeypatch):
     (tmp_path / "runbook.md").write_text(
-        "TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0", encoding="utf-8"  # pragma: allowlist secret
+        "TOK=" + _PROVIDER, encoding="utf-8"  # pragma: allowlist secret
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(scan_secrets, "tracked_files", lambda: ["runbook.md"])

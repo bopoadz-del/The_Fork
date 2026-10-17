@@ -3,6 +3,7 @@
 Moved unchanged by scripts/move_formulas.py (F-DRIVER Phase A).
 """
 from __future__ import annotations
+import re
 from app.lib.formula_registry import Param, formula
 import math
 from typing import Optional
@@ -40,9 +41,14 @@ def _fillet_parent_metal(value):
         return None
     return _FILLET_PARENT_METAL.get(int("".join(digits)))
 
+# Every way the Eurocode steel family is written: EC, EC3, Eurocode 3,
+# EN 1993-1-8, BS EN 1993 ... Anything else is the AISC/ACI family.
+_EC_CODE_RE = re.compile(r"^(?:bs\s*)?(?:ec\s*\d*|eurocode(?:\s*\d+)?|en(?:\s*1993\S*)?)\b", re.IGNORECASE)
+
+
 def _norm_code(code: str) -> str:
-    c = (code or "").strip().lower()
-    if c in ("ec", "eurocode", "en", "en1993"):
+    c = (code or "").strip()
+    if _EC_CODE_RE.match(c):
         return _EC
     return _ACI  # default AISC/ACI family
 
@@ -204,14 +210,27 @@ def bolt_shear_capacity(
     alpha = float(alpha_v)
     if fub <= 0:
         return {"error": "shear_strength_mpa must be > 0."}
+    bolt_class = None
     if grade not in (None, "") and cc == _EC:
         key = _bolt_class_key(grade)
         if key not in _BOLT_FUB_MPA:
             return {"error": f"Bolt property class {grade} is not tabulated."}
+        bolt_class = key
         if shear_strength_mpa == 372.0:
             fub = _BOLT_FUB_MPA[key]
         if alpha_v == 0.6:
             alpha = _BOLT_ALPHA_V[key]
+    elif cc == _EC and alpha_v == 0.6:
+        # No class given: the shear coefficient still comes from the
+        # standard's class table, read through the given fub when that fub
+        # belongs to classes sharing one coefficient (1000 MPa is 10.9,
+        # alpha_v 0.5). An fub two classes share with different coefficients
+        # (400: 4.6 and 4.8) keeps the 0.6 and says the class was not given.
+        classes = sorted(k for k, v in _BOLT_FUB_MPA.items() if abs(v - fub) < 1e-9)
+        alphas = {_BOLT_ALPHA_V[k] for k in classes}
+        if len(alphas) == 1:
+            alpha = alphas.pop()
+            bolt_class = " / ".join(classes)
     if cc == _EC:
         cap_n = alpha * fub * ab * n / 1.25
         std = "EN 1993-1-8 Table 3.4 (gM2=1.25)"
@@ -226,7 +245,10 @@ def bolt_shear_capacity(
         "capacity_kn": round(cap_kn, 2),
         "n_shear_planes": n,
         "standard": std,
-        "note": f"{expr} = {cap_n:.0f} N = {cap_kn:.2f} kN (one bolt).",
+        **({"bolt_class": bolt_class, "alpha_v": alpha} if cc == _EC else {}),
+        "note": (f"{expr} = {cap_n:.0f} N = {cap_kn:.2f} kN (one bolt)."
+                 + (f" Property class {bolt_class}, alpha_v {alpha} (EN 1993-1-8 Table 3.4)." if cc == _EC and bolt_class
+                    else (" The property class was not given; alpha_v 0.6 is used." if cc == _EC else ""))),
     }
 
 @formula(

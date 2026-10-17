@@ -14,6 +14,7 @@ import pytest
 
 from app.agents.runtime import Agent
 from tests.conftest import requires_construction_kit
+from tests._fixture_values import STUB_TOKEN_02
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +32,7 @@ def _stub_llm_key(monkeypatch):
     """
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
     # Remaining commissioning predispatch would draft the checklist before
     # iter-0 and force synthesis immediately. These tests pin the older
     # "model calls the tool, THEN we lock" path.

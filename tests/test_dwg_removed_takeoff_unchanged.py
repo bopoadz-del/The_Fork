@@ -19,8 +19,9 @@ import pytest
 from app.blocks.drawing_qto import DrawingQTOBlock
 from app.core.cad_formats import DWG_NOT_SUPPORTED
 from tests.conftest import requires_construction_kit
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 def test_the_message_is_the_owner_wording():

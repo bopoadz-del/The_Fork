@@ -31,7 +31,7 @@ pick files → they appear as project documents.
 
 ## OAuth flow — `app/routers/drive.py`
 
-All routes require `Authorization: Bearer cb_dev_key` like other `/v1/*`,
+All routes require `Authorization: Bearer $CEREBRUM_DEV_KEY` like other `/v1/*`,
 **except `/v1/drive/callback`** — Google calls that directly and cannot send our
 header, so it is protected by the OAuth `state` value instead.
 

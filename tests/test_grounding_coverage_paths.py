@@ -24,9 +24,10 @@ from app.main import app
 from app.agents.runtime import _CG_REFUSAL
 from app.routers import project as project_router
 from app.core.session_store import InMemorySessionStore
+from tests._dev_key import DEV_KEY
 
 _RUN = uuid.uuid4().hex[:8]
-_LEGACY = {"Authorization": "Bearer cb_dev_key"}
+_LEGACY = {"Authorization": "Bearer " + DEV_KEY}
 
 # ── A rate-semantic retrieved chunk that grounds "220–280 SAR/m3" ──────────
 _RATE_SNIPPET = (

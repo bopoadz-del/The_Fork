@@ -1,6 +1,8 @@
 """Regression tests for the High/Medium production-hardening fixes."""
 
 import pytest
+from tests._dev_key import DEV_KEY
+from tests._fixture_values import ENV_SECRET_05, ENV_SECRET_06, PW_06, STUB_TOKEN_16
 
 
 # ── file_crypto: decrypt fails loud on a key mismatch ───────────────────────────
@@ -46,7 +48,7 @@ def test_production_startup_requires_secret_key(monkeypatch):
 
     # With SECRET_KEY and DATABASE_URL set, the next required prod secret is
     # DATA_ENCRYPTION_KEY — encryption at rest is not optional in production.
-    monkeypatch.setenv("SECRET_KEY", "a-real-secret")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_06)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/test")
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     with pytest.raises(RuntimeError, match="DATA_ENCRYPTION_KEY"):
@@ -58,7 +60,7 @@ def test_production_startup_requires_data_encryption_key(monkeypatch):
     from app.main import _validate_startup_env
 
     monkeypatch.setenv("ENV", "production")
-    monkeypatch.setenv("SECRET_KEY", "a-real-secret")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_06)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/test")
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     with pytest.raises(RuntimeError, match="DATA_ENCRYPTION_KEY"):
@@ -68,9 +70,9 @@ def test_production_startup_requires_data_encryption_key(monkeypatch):
 def _prod_env_complete(monkeypatch):
     """Minimum env for production startup validation to succeed."""
     monkeypatch.setenv("ENV", "production")
-    monkeypatch.setenv("SECRET_KEY", "a-real-secret")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_06)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/test")
-    monkeypatch.setenv("DATA_ENCRYPTION_KEY", "test-fernet-key-not-used")
+    monkeypatch.setenv("DATA_ENCRYPTION_KEY", STUB_TOKEN_16)
     monkeypatch.setenv("CEREBRUM_VIRGIN", "false")
     monkeypatch.setenv("CEREBRUM_DOMAIN_KITS", "construction")
 
@@ -130,9 +132,9 @@ def test_doc_types_mutation_is_admin_only():
 
     with TestClient(app) as c:
         email = f"dt-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post(
-            "/v1/users/login", json={"email": email, "password": "password12"}
+            "/v1/users/login", json={"email": email, "password": PW_06}
         ).json()["token"]
         user = {"Authorization": f"Bearer {token}"}
 
@@ -159,9 +161,9 @@ def test_code_blocks_are_admin_only_via_execute():
 
     with TestClient(app) as c:
         email = f"ex-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post(
-            "/v1/users/login", json={"email": email, "password": "password12"}
+            "/v1/users/login", json={"email": email, "password": PW_06}
         ).json()["token"]
         user = {"Authorization": f"Bearer {token}"}
 
@@ -188,9 +190,9 @@ def test_code_blocks_are_admin_only_via_chain():
 
     with TestClient(app) as c:
         email = f"ch-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post(
-            "/v1/users/login", json={"email": email, "password": "password12"}
+            "/v1/users/login", json={"email": email, "password": PW_06}
         ).json()["token"]
         user = {"Authorization": f"Bearer {token}"}
 
@@ -215,12 +217,12 @@ def test_code_blocks_are_admin_only_via_chain():
 
 
 def test_non_admin_api_key_cannot_hit_privileged_blocks():
-    """cb_dev_key authenticates but must not inherit the system user's admin role."""
+    """the dev key authenticates but must not inherit the system user's admin role."""
     from fastapi.testclient import TestClient
 
     from app.main import app
 
-    key = {"Authorization": "Bearer cb_dev_key"}
+    key = {"Authorization": "Bearer " + DEV_KEY}
     with TestClient(app) as c:
         exe = c.post("/v1/execute", headers=key, json={"block": "code", "input": "x"})
         assert exe.status_code == 403, (exe.status_code, exe.text)
@@ -250,7 +252,7 @@ def test_chain_500_does_not_leak_exception_text():
         with TestClient(app) as c:
             r = c.post(
                 "/v1/chain",
-                headers={"Authorization": "Bearer cb_dev_key"},
+                headers={"Authorization": "Bearer " + DEV_KEY},
                 json={"steps": [{"block": "translate", "params": {"target": "en"}}]},
             )
         assert r.status_code == 500, (r.status_code, r.text)
@@ -273,7 +275,7 @@ def test_upload_json_omits_file_path():
     with TestClient(app) as c:
         r = c.post(
             "/v1/upload",
-            headers={"Authorization": "Bearer cb_dev_key"},
+            headers={"Authorization": "Bearer " + DEV_KEY},
             files={"file": ("note.txt", b"hello upload", "text/plain")},
         )
         assert r.status_code == 200, r.text
@@ -345,20 +347,20 @@ def test_drive_token_is_per_user(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", ENV_SECRET_05)
 
     from app.main import app
     from app.core import drive_auth
 
     with TestClient(app) as c:
         email = f"drv-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post(
-            "/v1/users/login", json={"email": email, "password": "password12"}
+            "/v1/users/login", json={"email": email, "password": PW_06}
         ).json()["token"]
         user_b = {"Authorization": f"Bearer {token}"}
 
-        # The 'system' user (legacy cb_dev_key) connects Drive.
+        # The 'system' user (legacy the dev key) connects Drive.
         drive_auth.save_token("system", {
             "access_token": "AT", "refresh_token": "RT",
             "expiry": time.time() + 9999, "email": "system@example.com",
@@ -366,7 +368,7 @@ def test_drive_token_is_per_user(tmp_path, monkeypatch):
 
         # System sees it connected; user B must not.
         sys_status = c.get(
-            "/v1/drive/status", headers={"Authorization": "Bearer cb_dev_key"}
+            "/v1/drive/status", headers={"Authorization": "Bearer " + DEV_KEY}
         ).json()
         assert sys_status["connected"] is True
 

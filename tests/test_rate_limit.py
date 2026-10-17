@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.core import rate_limit
 from app.core import redis_client
+from tests._fixture_values import BEARER_TOKEN
 
 
 def test_check_and_record_allows_then_blocks(monkeypatch):
@@ -81,7 +82,7 @@ def test_middleware_returns_429_over_the_limit(monkeypatch):
     rate_limit.reset_for_tests()
 
     client = TestClient(_rate_limited_app())
-    headers = {"Authorization": "Bearer rate-limit-probe-token"}
+    headers = {"Authorization": "Bearer " + BEARER_TOKEN}
     codes = [client.get("/v1/projects", headers=headers).status_code
              for _ in range(5)]
 

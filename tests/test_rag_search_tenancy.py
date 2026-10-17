@@ -25,6 +25,8 @@ from fastapi.testclient import TestClient
 from app.core import jwt_auth
 from app.core import users as users_store
 from app.main import app
+from tests._dev_key import DEV_KEY
+from tests._fixture_values import PW_01
 
 
 @pytest.fixture
@@ -36,7 +38,7 @@ def client():
 def _tenant(tag: str):
     user = users_store.create_user(
         f"rag-{tag}-{uuid.uuid4().hex[:8]}@example.test",
-        "Correct-Horse-Battery-9!",
+        PW_01,
         email_verified=True,
     )
     return user, {"Authorization": f"Bearer {jwt_auth.create_token(user['id'])}"}
@@ -53,7 +55,7 @@ def two_tenants(client, dev_key_is_admin):
     # project is seeded by an admin; what is under test is who may SEARCH it.
     r = client.post(
         f"/v1/projects/{pid}/documents",
-        headers={"Authorization": "Bearer cb_dev_key"},
+        headers={"Authorization": "Bearer " + DEV_KEY},
         files={
             "file": (
                 "notes.txt",
@@ -150,7 +152,7 @@ def master_corpus_world(client, monkeypatch):
 
     member = users_store.create_user(
         f"mc-member-{tag}@example.test",
-        "Correct-Horse-Battery-9!",
+        PW_01,
         email_verified=True,
     )
     headers = {"Authorization": f"Bearer {jwt_auth.create_token(member['id'])}"}

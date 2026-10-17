@@ -206,6 +206,21 @@ def _daily_production_from_rate_alias(
         return rate
     return None
 
+
+def _must_be_positive(field: str, value: float, required: list) -> dict:
+    """A zero or negative input is refused in the input's own words and asked
+    for again -- never normalised (a negative rate is not read as positive)."""
+    from app.lib import formula_registry
+
+    spec = formula_registry.get("productivity_manpower_duration")
+    params = formula_registry.parameters(spec) if spec is not None else {}
+    label = (params[field].label if field in params and params[field].label else field.replace("_", " "))
+    return {
+        "error": f"The {label} must be greater than zero; {value:g} was given, so it cannot be used.",
+        "needs_input": [field],
+        "required": required,
+    }
+
 @formula(
     owner='planning',
     display_name='Quantity, productivity, manpower and duration',
@@ -295,6 +310,16 @@ def productivity_manpower_duration(
     crew_cost = _crew_cost_from_aliases(
         crew_cost_per_day, day_rate, gang_cost_per_day,
     )
+    # A zero or negative rate given under its alias is refused in its own
+    # words like every other input here -- never dropped as "not given",
+    # which turned -120 into a generic "needs paired inputs" (LANE2).
+    if productivity_rate not in (None, ""):
+        try:
+            alias_rate = float(productivity_rate)
+        except (TypeError, ValueError):
+            alias_rate = None
+        if alias_rate is not None and alias_rate <= 0:
+            return _must_be_positive("productivity_rate", alias_rate, ["quantity", "productivity_rate"])
     if daily_production is None:
         aliased_daily = _daily_production_from_rate_alias(
             productivity_rate=productivity_rate,
@@ -333,10 +358,7 @@ def productivity_manpower_duration(
     if quantity_executed is not None and man_hours is not None:
         mh = float(man_hours)
         if mh <= 0:
-            return {
-                "error": "man_hours must be > 0 to compute productivity.",
-                "required": ["quantity_executed", "man_hours"],
-            }
+            return _must_be_positive("man_hours", mh, ["quantity_executed", "man_hours"])
         prod = float(quantity_executed) / mh
         results["productivity"] = round(prod, 6)
         results["formulas_used"].append(
@@ -350,10 +372,7 @@ def productivity_manpower_duration(
     if quantity is not None and productivity is not None:
         prod = float(productivity)
         if prod <= 0:
-            return {
-                "error": "productivity must be > 0 to compute manhours required.",
-                "required": ["quantity", "productivity"],
-            }
+            return _must_be_positive("productivity", prod, ["quantity", "productivity"])
         mh_req = float(quantity) / prod
         results["manhours_required"] = round(mh_req, 4)
         results["formulas_used"].append(
@@ -376,10 +395,7 @@ def productivity_manpower_duration(
     if remaining_manhours is not None and available_hours is not None:
         avail = float(available_hours)
         if avail <= 0:
-            return {
-                "error": "available_hours must be > 0 to compute required manpower.",
-                "required": ["remaining_manhours", "available_hours"],
-            }
+            return _must_be_positive("available_hours", avail, ["remaining_manhours", "available_hours"])
         req_mp = float(remaining_manhours) / avail
         results["required_manpower"] = round(req_mp, 4)
         results["formulas_used"].append(
@@ -391,10 +407,7 @@ def productivity_manpower_duration(
     if quantity is not None and daily_production is not None:
         daily = float(daily_production)
         if daily <= 0:
-            return {
-                "error": "daily_production must be > 0 to compute duration.",
-                "required": ["quantity", "daily_production"],
-            }
+            return _must_be_positive("daily_production", daily, ["quantity", "daily_production"])
         dur = float(quantity) / daily
         results["duration"] = round(dur, 4)
         results["formulas_used"].append(
@@ -413,10 +426,7 @@ def productivity_manpower_duration(
     if remaining_qty is not None and remaining_days is not None:
         days = float(remaining_days)
         if days <= 0:
-            return {
-                "error": "remaining_days must be > 0 to compute daily required production.",
-                "required": ["remaining_qty", "remaining_days"],
-            }
+            return _must_be_positive("remaining_days", days, ["remaining_qty", "remaining_days"])
         daily_req = float(remaining_qty) / days
         results["daily_required_production"] = round(daily_req, 6)
         results["formulas_used"].append(

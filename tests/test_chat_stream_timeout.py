@@ -23,6 +23,7 @@ from typing import Any, AsyncIterator, Dict, List
 from unittest.mock import patch
 
 from app.agents.runtime import Agent
+from tests._fixture_values import STUB_TOKEN_01
 
 
 def _agent() -> Agent:
@@ -44,7 +45,7 @@ def _collect(gen: AsyncIterator[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _setup_provider(monkeypatch) -> None:
     """Bypass the api-key gate so the agent loop actually starts."""
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_01)
 
 
 # ── test 1: hung LLM → wall-clock timeout fires ──────────────────────────────

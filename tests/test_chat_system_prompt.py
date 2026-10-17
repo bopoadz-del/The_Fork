@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from app.blocks.chat import ChatBlock
+from tests._fixture_values import STUB_TOKEN_05
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ def _install_cloud_stub(monkeypatch, captured: dict):
         }
 
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_05)
 
 
 # ── 1. Literal system_prompt ──────────────────────────────────────────────

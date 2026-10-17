@@ -5,8 +5,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._dev_key import DEV_KEY
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 @pytest.fixture(scope="module")
@@ -24,7 +25,7 @@ def test_unauthenticated_requests_are_rejected(client):
 
 
 def test_memory_flush_and_keys_require_admin(client):
-    """Destructive/enumerating memory actions are admin-only. cb_dev_key
+    """Destructive/enumerating memory actions are admin-only. the dev key
     authenticates but carries no admin role, so flush/keys are forbidden while
     ordinary actions still pass the gate."""
     assert client.post("/v1/memory/flush", json={}, headers=H).status_code == 403

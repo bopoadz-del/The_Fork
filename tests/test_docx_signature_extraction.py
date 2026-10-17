@@ -3,7 +3,7 @@
 Construction letters put the sign-off (name / role / company) in a nested
 table or a Word text-box (w:txbxContent), not in body paragraphs.
 python-docx `.paragraphs` + top-level `.tables` / `cell.text` drop that
-text, so the indexer never saw "Barry Muir". These fixtures prove the
+text, so the indexer never saw "Project Signatory". These fixtures prove the
 production extractor used by doc_index (`extract_document_text`) now
 returns that text, without dumping XML tags or depending on Drive/prod.
 """
@@ -19,7 +19,7 @@ BODY_PHRASE = "XBCC Concrete Batching Plant at Wadi Example"
 BODY_DATE = "March 2024"
 BODY_WORKS = "in-situ"
 
-SIGNATORY = "Barry Muir"
+SIGNATORY = "Project Signatory"
 ROLE = "Engineer's Representative"
 COMPANY = "EXCON Example Limited"
 

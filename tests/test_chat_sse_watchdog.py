@@ -322,3 +322,43 @@ def test_the_watchdog_never_catches_baseexception():
     }
     assert "BaseException" not in caught, caught
     assert "Exception" in caught
+
+
+# -- an `end` with no answer (order 0230Z item 9) --------------------------
+#: LANE3: a driver turn ended with an empty answer and no mode; LANE4: the
+#: stream ended with no final answer after a tool call. The producer DID send
+#: `end` -- so the terminal guard above passed it -- but nothing to read.
+EMPTY_AFTER_TOOL = [
+    frame({"type": "start", "agent": "driver"}),
+    frame({"type": "tool_call", "name": "construction_calc"}),
+    frame({"type": "tool_result", "name": "construction_calc", "ok": True}),
+    frame({"type": "end", "iterations": 2, "sources": [{"title": "s"}]}),
+]
+
+
+@pytest.mark.asyncio
+async def test_an_end_with_no_answer_gets_the_fallback_and_a_named_error():
+    """Mutation killed: treating any `end` as a finished turn."""
+    out = await _drain(guarantee_terminal(_gen(EMPTY_AFTER_TOOL), request_id="r1"))
+    kinds = _types(out)
+    assert kinds[-3:] == ["token", "error", "end"], kinds
+    assert json.loads(out[-3].split("data:", 1)[1])["content"] == SILENT_TURN_FALLBACK
+    error = json.loads(out[-2].split("data:", 1)[1])
+    assert "tool_result" in error["message"] and error["request_id"] == "r1"
+    assert out[-1] == EMPTY_AFTER_TOOL[-1], "the producer's own end (its sources) is kept"
+
+
+@pytest.mark.asyncio
+async def test_an_end_that_carries_the_answer_is_not_touched():
+    """Mutation killed: ignoring `content` on `end`, which the UI renders in
+    place of the streamed tokens."""
+    src = EMPTY_AFTER_TOOL[:-1] + [frame({"type": "end", "content": "Volume 24 m3.", "sources": []})]
+    out = await _drain(guarantee_terminal(_gen(src)))
+    assert out == src
+
+
+@pytest.mark.asyncio
+async def test_an_end_after_tokens_is_not_touched():
+    src = EMPTY_AFTER_TOOL[:-1] + [frame({"type": "token", "content": "24 m3"}), EMPTY_AFTER_TOOL[-1]]
+    out = await _drain(guarantee_terminal(_gen(src)))
+    assert out == src

@@ -13,6 +13,7 @@ import os
 import pytest
 
 from app.core import projects
+from tests._fixture_values import PW_02
 
 _ON_POSTGRES = os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() in ("1", "true", "yes")
 
@@ -22,8 +23,8 @@ def two_projects(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     from app.core import users
     users.init_db()
-    u1 = users.create_user("owner-one@example.invalid", "pw-123456-synthetic")["id"]
-    u2 = users.create_user("owner-two@example.invalid", "pw-123456-synthetic")["id"]
+    u1 = users.create_user("owner-one@example.invalid", PW_02)["id"]
+    u2 = users.create_user("owner-two@example.invalid", PW_02)["id"]
     own = projects.create_project("Synthetic Harbour Works", user_id=u1)
     other = projects.create_project("Synthetic Ridge Road", user_id=u2)
     return own["id"], other["id"], u1, u2

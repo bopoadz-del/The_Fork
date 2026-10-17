@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.runtime import Agent, _UNINDEXED_PROJECT_MESSAGE
+from tests._fixture_values import STUB_TOKEN_02
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +26,7 @@ def _stub_llm_key(monkeypatch):
     collection time) and make them run against the real API with a fake key.
     """
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
 
 
 def make_test_agent() -> Agent:

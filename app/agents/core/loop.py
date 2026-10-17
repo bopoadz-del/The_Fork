@@ -12,6 +12,24 @@ import asyncio  # noqa: F401 -- annotations
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 
+def _log_turn_timing(marks: dict, conversation_id: str | None) -> None:
+    """One line per streamed turn: milliseconds from receipt to each mark."""
+    import json as _json
+    import logging as _logging
+    import time as _time
+
+    log = _logging.getLogger("app.agents.core.loop")
+    try:
+        start = marks.get("received")
+        if start is None:
+            return
+        out = {k: round((v - start) * 1000) for k, v in marks.items() if k != "received"}
+        out["closed"] = round((_time.monotonic() - start) * 1000)
+        log.info("TURN_TIMING %s", _json.dumps({"conversation": conversation_id or "", **out}))
+    except Exception:  # noqa: BLE001 -- timing is evidence, never a failure
+        log.debug("turn timing not logged", exc_info=True)
+
+
 # ── Public chat API ───────────────────────────────────────────────────
 async def chat(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
     """One turn. Identical retrievals within it are answered once
@@ -27,12 +45,29 @@ async def chat(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
 
     token = start_turn_memo()
     turn, turn_token = answer_exit.begin_turn()
+    from app.lib import construction_formulas as _calc_words
+
+    # The user's own words reach every calculator run this turn makes.
+    ask_token = _calc_words.set_current_ask(_user_message_of(self, args, kwargs))
     try:
         result = await self._chat_impl(*args, **kwargs)
         return await off_loop(answer_exit.check_result, result, turn)
     finally:
+        _calc_words._CURRENT_ASK.reset(ask_token)
         answer_exit.reset_turn(turn_token)
         end_turn_memo(token)
+
+
+def _user_message_of(agent: Any, args: tuple, kwargs: dict) -> str:
+    """The user turn a ``chat`` call carries, by name or by position."""
+    import inspect
+
+    try:
+        bound = inspect.signature(agent._chat_impl).bind_partial(*args, **kwargs)
+    except (TypeError, ValueError):
+        return str(kwargs.get("user_message") or "")
+    value = bound.arguments.get("user_message")
+    return value if isinstance(value, str) else ""
 
 
 async def _chat_impl(
@@ -943,16 +978,29 @@ async def chat_stream(
     # Opened before the producer task exists, so the task (and the threads it
     # offloads to) record this turn's evidence into the same record.
     _exit_turn = answer_exit.open_turn()
+    # The user's own words reach every calculator run this turn makes.
+    from app.lib import construction_formulas as _calc_words
+
+    _calc_words.set_current_ask(user_message)
     _streamed: list[str] = []
     _leak_guard = _EmitLeakGuard()
+    import time as _time
+
+    # Where a streamed turn's time goes (order 0520Z): one TURN_TIMING line
+    # per turn with the offsets of its first event, first token, end event
+    # and close -- no content, the conversation id only.
+    _marks: dict[str, float] = {"received": _time.monotonic()}
     try:
         async for event in _inner():
+            _marks.setdefault("first_event", _time.monotonic())
             event = _leak_guard.check(event)
             if event is None:
                 continue
             if isinstance(event, dict) and event.get("type") == "token" and isinstance(event.get("content"), str):
+                _marks.setdefault("first_token", _time.monotonic())
                 _streamed.append(event["content"])
             if isinstance(event, dict) and event.get("type") == "end":
+                _marks["end_event"] = _time.monotonic()
                 event = await off_loop(answer_exit.check_end_event, event, "".join(_streamed), _exit_turn)
             if (
                 isinstance(event, dict)
@@ -978,6 +1026,8 @@ async def chat_stream(
         yield {"type": "error", "message": f"chat_stream crashed: {exc}"}
         terminal_emitted = True
         return
+    finally:
+        _log_turn_timing(_marks, conversation_id)
 
     # Inner generator completed without exception but emitted no terminal
     # event — synthesise one so the SSE consumer sees a clean close.

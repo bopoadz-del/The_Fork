@@ -34,6 +34,7 @@ from typing import Any, AsyncIterator, Dict, List
 from unittest.mock import patch
 
 import pytest
+from tests._fixture_values import STUB_TOKEN_01
 
 from app.agents.runtime import (
     _EMPTY_RESPONSE_FALLBACK,
@@ -64,7 +65,7 @@ def _collect(gen: AsyncIterator[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _setup_provider(monkeypatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_01)
 
 
 def _ok(content: str) -> Dict[str, Any]:

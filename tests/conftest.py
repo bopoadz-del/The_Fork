@@ -20,7 +20,7 @@ except ImportError:
     pass
 
 # Disable per-caller rate limiting for the test suite — the full suite makes
-# far more than a minute's quota of requests under one identity (cb_dev_key).
+# far more than a minute's quota of requests under one identity (the dev key).
 # The rate limiter's own tests re-enable it explicitly via monkeypatch.
 os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
 
@@ -32,6 +32,7 @@ os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
 # override happens at collection time, BEFORE app modules import, so the
 # resolved path on first read is the temp directory.
 import tempfile as _tempfile
+from tests._dev_key import DEV_KEY
 _TEST_DATA_DIR = _tempfile.mkdtemp(prefix="thefork-tests-")
 # Force the override — start-local.sh sets DATA_DIR=$PWD/data so a developer
 # running pytest in the same shell after the server would otherwise inherit
@@ -351,7 +352,7 @@ def data_dir():
 
 @pytest.fixture
 def dev_key_is_admin(monkeypatch):
-    """Give ``cb_dev_key`` the admin role for one test.
+    """Give ``the dev key`` the admin role for one test.
 
     Only the admin path adds to a project's knowledge base
     (``app/core/privileges.caller_may_add_to_project_rag``); the dev key has no
@@ -364,8 +365,31 @@ def dev_key_is_admin(monkeypatch):
 
     def _validate(credentials):
         principal = original(credentials)
-        if getattr(credentials, "credentials", None) == "cb_dev_key":
+        if getattr(credentials, "credentials", None) == DEV_KEY:
             principal = {**principal, "role": "admin"}
         return principal
 
     monkeypatch.setattr(auth_manager, "validate_key", _validate)
+
+
+_CREDENTIAL_ROLES: dict = {}
+
+
+def pytest_make_parametrize_id(config, val, argname):
+    """A generated test credential appears in a test id by its role -- the
+    fixture constant's name -- never by its value: values are random per
+    process, and pytest-xdist needs every worker to collect the same ids."""
+    # Only a value long enough to be told from an ordinary string: a short
+    # generated value (kept at the length of the literal it replaced) can
+    # equal a real parameter such as the unit "m" and must not rename it.
+    if not isinstance(val, str) or len(val) < 8:
+        return None
+    if not _CREDENTIAL_ROLES:
+        from tests import _fixture_values
+
+        for name, value in vars(_fixture_values).items():
+            if name.isupper() and isinstance(value, str):
+                _CREDENTIAL_ROLES.setdefault(value, name)
+        _CREDENTIAL_ROLES.setdefault(DEV_KEY, "DEV_KEY")
+    return _CREDENTIAL_ROLES.get(val)
+

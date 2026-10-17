@@ -21,6 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from app.blocks.chat import ChatBlock
+from tests._fixture_values import API_KEY_A
 
 
 class _FakeStream:
@@ -144,8 +145,8 @@ async def test_a_real_api_key_does_send_the_authorization_header():
     block = ChatBlock()
     with _patch_stream(fake, recorder=seen):
         await _drain(await block._call_cloud(
-            "hi", "m", 10, 0.0, True, "sk-live", CFG, None))
-    assert (seen.get("headers") or {}).get("Authorization") == "Bearer sk-live"
+            "hi", "m", 10, 0.0, True, API_KEY_A, CFG, None))
+    assert (seen.get("headers") or {}).get("Authorization") == "Bearer " + API_KEY_A
 
 
 @pytest.mark.asyncio

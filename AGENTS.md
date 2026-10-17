@@ -44,7 +44,7 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   `CEREBRUM_VIRGIN=false CEREBRUM_DOMAIN_KITS=construction ENV=development \
   DATA_DIR="$PWD/data" .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`
 - `ENV=development` is mandatory: it skips the production startup guard and
-  enables the dev API key. All `/v1/*` calls need `Authorization: Bearer cb_dev_key`
+  enables the dev API key. All `/v1/*` calls need `Authorization: Bearer $CEREBRUM_DEV_KEY`
   (that key is rejected unless `ENV=development`).
 - No database is required locally: with `DATABASE_URL` unset the app uses SQLite
   at `$DATA_DIR/the_fork.db`. Postgres 16 + pgvector is the production config only.

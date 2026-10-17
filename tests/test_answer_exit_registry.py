@@ -35,6 +35,7 @@ import uuid
 import pytest
 
 from app.lib import formula_registry
+from tests._fixture_values import STUB_TOKEN_02
 
 try:
     answer_exit = importlib.import_module("app.agents.answer_exit")
@@ -490,7 +491,7 @@ def _llm_agent(monkeypatch, reply: str, docs: list[dict]):
     from app.agents.runtime import Agent
 
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
     agent = Agent(name="exit-check-agent", description="t", system_prompt="t", allowed_blocks=[])
 
     async def fake_call_llm(messages, api_key, **kwargs):

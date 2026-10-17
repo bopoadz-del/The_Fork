@@ -7,7 +7,7 @@ echo "Pilot smoke against ${BASE}"
 
 curl -sf "${BASE}/health" | grep -q '"status"' && echo "✓ /health"
 
-BLOCKS=$(curl -sf "${BASE}/blocks" -H "Authorization: Bearer cb_dev_key")
+BLOCKS=$(curl -sf "${BASE}/blocks" -H "Authorization: Bearer $CEREBRUM_DEV_KEY")
 echo "${BLOCKS}" | grep -q '"chat"' && echo "✓ /blocks lists chat"
 
 if echo "${BLOCKS}" | grep -q '"construction"'; then

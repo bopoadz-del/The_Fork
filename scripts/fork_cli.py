@@ -11,7 +11,7 @@ depend on Render's log levels.
 Auth (either):
   --token <JWT>            or env FORK_TOKEN     (from /v1/users/login)
   --api-key <key>          or env FORK_API_KEY   (CEREBRUM_MASTER_KEY, or
-                                                  cb_dev_key in dev)
+                                                  the development key in dev)
   --email/--password       or env FORK_EMAIL / FORK_PASSWORD  (logs in for you)
 
 Usage:
@@ -218,7 +218,7 @@ def main():
     p = argparse.ArgumentParser(description="Thin CLI for The Fork")
     p.add_argument("--base", default=DEFAULT_BASE, help=f"API base URL (default {DEFAULT_BASE})")
     p.add_argument("--token", help="JWT from /v1/users/login")
-    p.add_argument("--api-key", help="API key (CEREBRUM_MASTER_KEY / cb_dev_key)")
+    p.add_argument("--api-key", help="API key (CEREBRUM_MASTER_KEY / the development key from CEREBRUM_DEV_KEY)")
     p.add_argument("--email")
     p.add_argument("--password")
     sub = p.add_subparsers(dest="cmd", required=True)

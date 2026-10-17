@@ -74,6 +74,24 @@ def watchdog_seconds() -> float:
     return value if value > 0 else DEFAULT_WATCHDOG_SECONDS
 
 
+def _end_carries_answer(raw: str) -> bool:
+    """True when an ``end`` frame carries the answer itself: the UI renders a
+    non-empty ``content`` on ``end`` in place of the streamed tokens."""
+    for line in (raw or "").splitlines():
+        line = line.strip()
+        if line.startswith("data:"):
+            try:
+                body = json.loads(line[len("data:"):].strip())
+            except (ValueError, TypeError) as exc:
+                # Not our JSON: it carries no answer, so the empty-end guard
+                # applies. Logged, because a malformed end frame is a fault.
+                _LOG.warning("sse watchdog: unreadable end frame (%s)", type(exc).__name__)
+                return False
+            content = body.get("content") if isinstance(body, dict) else None
+            return isinstance(content, str) and bool(content.strip())
+    return False
+
+
 def frame(payload: dict) -> str:
     return f"data: {json.dumps(payload, default=str)}\n\n"
 
@@ -234,6 +252,22 @@ async def guarantee_terminal(
                 saw_terminal = True
                 return
             kind = event_type(raw)
+            if kind == "end" and not saw_token and not saw_terminal and not _end_carries_answer(raw):
+                # An `end` with no answer before it and none on it is an
+                # empty answer (LANE3: a driver turn ended with no text and no
+                # mode; LANE4: no final answer after a tool call). The bubble
+                # gets the fallback and an error naming where the turn stopped,
+                # then the producer's own `end`, so its sources still arrive.
+                _LOG.warning("sse watchdog: turn ended empty after %r (request_id=%s)",
+                             last_type, request_id)
+                yield frame({"type": "token", "content": SILENT_TURN_FALLBACK})
+                yield frame({
+                    "type": "error",
+                    "message": ("The turn ended after %r with no answer. This is a platform "
+                                "fault, not a refusal; please retry." % last_type),
+                    "request_id": request_id,
+                })
+                saw_token = True
             if kind:
                 last_type = kind
                 if kind == "token":

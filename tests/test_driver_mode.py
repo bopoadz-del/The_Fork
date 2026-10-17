@@ -11,6 +11,8 @@ import pytest
 
 from app.agents import driver
 from app.agents.driver import context, llm, loop, tools
+from tests._dev_key import DEV_KEY
+from tests._fixture_values import STUB_TOKEN_09
 
 
 @pytest.mark.parametrize("value,expected", [("", False), ("0", False), ("1", True), ("on", True)])
@@ -195,7 +197,7 @@ def test_the_model_call_lets_the_model_choose(monkeypatch):
     import httpx
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_09)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     offered = [tools.select_hat_schema(["qaqc", "planning"])]
     out = asyncio.run(llm.call(_agent(), [{"role": "user", "content": "hi"}], offered))
@@ -363,7 +365,7 @@ def test_only_the_request_that_asks_takes_the_driver(monkeypatch):
     seen = []
     monkeypatch.setattr(llm, "call", _scripted([{"content": "From the driver."}], seen))
     body = {"message": "hello", "project_id": None, "history": []}
-    h = {"Authorization": "Bearer cb_dev_key"}
+    h = {"Authorization": "Bearer " + DEV_KEY}
     with TestClient(app) as client:
         asked = client.post("/v1/chat/stream", json=body, headers={**h, "X-Fork-Driver": "on"}).text
     events = [json.loads(line[len("data: "):]) for line in asked.split("\n") if line.startswith("data: ")]
@@ -386,7 +388,7 @@ def test_a_request_that_does_not_ask_keeps_the_old_path(monkeypatch):
     monkeypatch.setattr(loop, "stream", no_driver)
     with TestClient(app) as client:
         text = client.post("/v1/chat/stream", json={"message": "hello", "history": []},
-                           headers={"Authorization": "Bearer cb_dev_key"}).text
+                           headers={"Authorization": "Bearer " + DEV_KEY}).text
     assert '"mode": "driver"' not in text
 
 
@@ -546,7 +548,7 @@ def test_the_streamed_call_assembles_content_and_tool_calls(monkeypatch):
     import httpx
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_09)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
 
     async def go():
@@ -625,10 +627,10 @@ def test_a_shared_documents_name_is_shown_as_stored(monkeypatch):
     from app.agents.driver import sources
 
     trail = [{"role": "tool", "name": "search_general_knowledge", "content": json.dumps(
-        {"ok": True, "result": {"results": [{"document_id": "g1", "filename": "General Spec.pdf",
+        {"ok": True, "result": {"results": [{"document_id": "g1", "filename": "general_specification.pdf",
                                               "score": 0.9, "origin": "master_corpus", "snippet": "x"}]}})}]
     out = sources.panel(trail, [])
-    assert out and out[0]["doc_name"] == "General Spec.pdf" and out[0]["layer"] == "master_corpus"
+    assert out and out[0]["doc_name"] == "general_specification.pdf" and out[0]["layer"] == "master_corpus"
 
 
 def test_streamed_pieces_keep_their_line_breaks(monkeypatch):

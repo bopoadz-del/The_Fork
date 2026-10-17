@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from tests._dev_key import DEV_KEY
 
 
 def test_retrieval_workers_run_at_normal_priority(monkeypatch):
@@ -45,7 +46,7 @@ def test_the_rate_limit_check_runs_off_the_event_loop(monkeypatch):
 
     monkeypatch.setattr(main._rate_limit, "check_and_record", spy)
     with TestClient(main.app) as client:
-        client.get("/v1/projects", headers={"Authorization": "Bearer cb_dev_key"})
+        client.get("/v1/projects", headers={"Authorization": "Bearer " + DEV_KEY})
     assert seen["thread"] is not threading.main_thread()
 
 

@@ -60,7 +60,7 @@
     },
     {
       "id": "q07_rebar_stacks",
-      "title": "File:2013.06 - 'Street still-life of piles of reinforcement bars', in concrete and iron struts at the metro construction Vijzelgracht in Amsterdam; urban photography in the Netherlands, Fons Heijnsbroek (10351027425).jpg",
+      "pageid": 97254175,
       "licence": "CC0",
       "contains": "Bundles of reinforcement bar stacked on a metro construction site - stored material, not exposed rebar in a member.",
       "expect": ["rust on steel rebar", "exposed reinforcement bar"],

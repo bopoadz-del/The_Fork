@@ -30,10 +30,14 @@ import pytest
 from app.core import extract_isolated
 
 
-def test_limit_is_relative_to_the_parent_not_absolute():
+def test_limit_is_relative_to_the_parent_not_absolute(monkeypatch):
     """The whole bug in one assertion: the ceiling must exceed what the child
-    already inherits, or it is unsatisfiable before a single byte is read."""
+    already inherits, or it is unsatisfiable before a single byte is read.
+    The parent's size is read ONCE and the limit is computed from that same
+    reading: read twice, a busy process grows in between (CI saw the two
+    reads differ by 17 MB) and the exact assertion compared two moments."""
     parent = extract_isolated._parent_virtual_bytes()
+    monkeypatch.setattr(extract_isolated, "_parent_virtual_bytes", lambda: parent)
     if parent is None:
         pytest.skip("/proc/self/status unavailable (non-Linux)")
 

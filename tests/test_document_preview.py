@@ -15,8 +15,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._dev_key import DEV_KEY
+from tests._fixture_values import PW_10
 
-H = {"Authorization": "Bearer cb_dev_key"}
+H = {"Authorization": "Bearer " + DEV_KEY}
 
 
 @pytest.fixture(scope="module")
@@ -957,9 +959,9 @@ def test_patch_drive_file_id_owner_then_preview_hydrates(
 
 
 def _register(client, email):
-    r = client.post("/v1/users/register", json={"email": email, "password": "pw123456"})
+    r = client.post("/v1/users/register", json={"email": email, "password": PW_10})
     assert r.status_code in (201, 409), r.text
-    r = client.post("/v1/users/login", json={"email": email, "password": "pw123456"})
+    r = client.post("/v1/users/login", json={"email": email, "password": PW_10})
     assert r.status_code == 200, r.text
     return {"token": r.json()["token"], "id": r.json()["user"]["id"]}
 

@@ -3,8 +3,10 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from tests._dev_key import DEV_KEY
+from tests._fixture_values import PW_06
 
-LEGACY = {"Authorization": "Bearer cb_dev_key"}
+LEGACY = {"Authorization": "Bearer " + DEV_KEY}
 
 # Run-unique suffix so each test run creates fresh users with no prior history.
 _RUN = uuid.uuid4().hex[:8]
@@ -18,9 +20,9 @@ def client():
 
 def _user_token(client, email):
     client.post("/v1/users/register",
-                json={"email": email, "password": "password12"})
+                json={"email": email, "password": PW_06})
     return client.post("/v1/users/login",
-                       json={"email": email, "password": "password12"}).json()["token"]
+                       json={"email": email, "password": PW_06}).json()["token"]
 
 
 def test_user_only_sees_own_projects(client):

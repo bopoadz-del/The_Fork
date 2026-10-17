@@ -239,6 +239,13 @@ def concrete_thermal_cracking_check(core_temp_c: float, surface_temp_c: float) -
         "thermal_cracking_risk": not (core_ok and delta_ok), "notes": notes,
     }
 
+
+def _pressure_in(n_mm2: float, unit: str) -> float:
+    """A pressure in N/mm2 in another unit, by the platform's one conversion table."""
+    from app.lib.construction_formulas import _convert_units
+
+    return float(_convert_units(float(n_mm2), "N/mm2", unit)["value_out"])
+
 @formula(
     owner='qaqc',
     display_name='Post-tensioning grout checks',
@@ -268,8 +275,10 @@ def grout_pressure_calc(
         "duct_area_mm2": round(area_mm2, 2),
         "grout_volume_l_m": round(area_mm2 * 1000 / 1e6, 3),
         "pressure_n_mm2": required_pressure_n_mm2,
-        "pressure_kg_cm2": round(required_pressure_n_mm2 * 10.197, 1),
-        "pressure_psi": round(required_pressure_n_mm2 * 145.038, 0),
+        # One conversion table for every unit (the platform's converter), not
+        # factors written here: 0.5 N/mm2 = 72.5 psi = 5.1 kgf/cm2.
+        "pressure_kg_cm2": round(_pressure_in(required_pressure_n_mm2, "kgf/cm2"), 1),
+        "pressure_psi": round(_pressure_in(required_pressure_n_mm2, "psi"), 1),
         "strength_28d_n_mm2": strength_28d_n_mm2,
         "strength_7d_n_mm2": strength_7d_n_mm2,
         "mixing_time_min": mixing_time_minutes,

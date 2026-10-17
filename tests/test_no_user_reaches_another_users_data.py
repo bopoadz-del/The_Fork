@@ -23,6 +23,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._dev_key import DEV_KEY
+from tests._fixture_values import OTHER_PASSWORD, PASSWORD, WEAK_PASSWORD, WRONG_PASSWORD
 
 
 _RUN = uuid.uuid4().hex[:8]
@@ -37,7 +39,7 @@ def client():
         yield c
 
 
-def _register(client: TestClient, email: str, password: str = "pw123456") -> dict:
+def _register(client: TestClient, email: str, password: str = PASSWORD) -> dict:
     r = client.post("/v1/users/register", json={"email": email, "password": password})
     assert r.status_code in (201, 409), r.text
     r = client.post("/v1/users/login", json={"email": email, "password": password})
@@ -716,8 +718,8 @@ ADMIN_PATHS = [
     ("GET", "/v1/debug/env", None),
     ("GET", "/v1/auth/keys", None),
     ("POST", "/v1/auth/keys", None),
-    ("POST", "/v1/auth/keys/revoke", {"api_key": "cb_dev_key"}),
-    ("POST", "/v1/auth/keys/rotate", {"api_key": "cb_dev_key"}),
+    ("POST", "/v1/auth/keys/revoke", {"api_key": DEV_KEY}),
+    ("POST", "/v1/auth/keys/rotate", {"api_key": DEV_KEY}),
     ("GET", "/v1/metrics", None),
 ]
 
@@ -751,16 +753,16 @@ def test_plain_user_cannot_probe_other_api_keys(client, world):
     h = _h(world["a"])
     # JWT user probing the well-known dev key must not learn its validity.
     for path, payload in (
-        ("/v1/auth/validate", {"api_key": "cb_dev_key"}),
-        ("/v1/auth/check", {"api_key": "cb_dev_key", "block": "chat"}),
+        ("/v1/auth/validate", {"api_key": DEV_KEY}),
+        ("/v1/auth/check", {"api_key": DEV_KEY, "block": "chat"}),
     ):
         resp = client.post(path, headers=h, json=payload)
         assert resp.status_code in (401, 403, 404), (
             f"{path}: expected deny, got {resp.status_code} {resp.text[:200]}"
         )
-    usage = client.get("/v1/auth/usage", headers=h, params={"key": "cb_dev_key"})
+    usage = client.get("/v1/auth/usage", headers=h, params={"key": DEV_KEY})
     assert usage.status_code in (401, 403, 404)
-    stolen = client.delete("/v1/auth/keys/cb_dev_key", headers=h)
+    stolen = client.delete("/v1/auth/keys/" + DEV_KEY, headers=h)
     assert stolen.status_code in (401, 403, 404)
 
 
@@ -874,50 +876,59 @@ def test_execute_plain_user_cannot_pass_foreign_project_id(client, world):
 
 # ── accounts ────────────────────────────────────────────────────────────────
 
-def test_duplicate_email_is_409(client):
+def test_a_duplicate_email_answers_like_a_new_one_and_changes_nothing(client):
+    """#978: the reply never reveals an existing account, and the second
+    registration neither creates a second account nor resets the first."""
     email = f"dup-{_RUN}@example.com"
     first = client.post(
-        "/v1/users/register", json={"email": email, "password": "pw123456"}
+        "/v1/users/register", json={"email": email, "password": PASSWORD}
     )
-    assert first.status_code in (201, 409)
     second = client.post(
-        "/v1/users/register", json={"email": email, "password": "pw123456"}
+        "/v1/users/register", json={"email": email, "password": OTHER_PASSWORD}
     )
-    assert second.status_code == 409
+    assert first.status_code == second.status_code == 201
+    assert first.json() == second.json()
+    assert client.post("/v1/users/login", json={"email": email, "password": OTHER_PASSWORD}).status_code == 401
 
 
 def test_email_case_and_whitespace_collapse(client):
     email = f"Case-{_RUN}@Example.COM"
     r = client.post(
         "/v1/users/register",
-        json={"email": f"  {email}  ", "password": "pw123456"},
+        json={"email": f"  {email}  ", "password": PASSWORD},
     )
-    assert r.status_code in (201, 409)
+    assert r.status_code == 201
     again = client.post(
         "/v1/users/register",
-        json={"email": email.lower(), "password": "pw123456"},
+        json={"email": email.lower(), "password": OTHER_PASSWORD},
     )
-    assert again.status_code == 409
+    assert again.status_code == 201
+    # One account, under the collapsed address: the second registration did
+    # not create another, and its password does not open the first.
+    from app.core import users as users_store
+
+    assert users_store.get_user_by_email(email.lower()) is not None
+    assert client.post("/v1/users/login", json={"email": email.lower(), "password": OTHER_PASSWORD}).status_code == 401
 
 
 def test_weak_password_rejected(client):
     r = client.post(
         "/v1/users/register",
-        json={"email": f"weak-{_RUN}@example.com", "password": "short"},
+        json={"email": f"weak-{_RUN}@example.com", "password": WEAK_PASSWORD},
     )
     assert r.status_code == 422
 
 
 def test_login_errors_identical_for_missing_and_wrong_password(client):
     known = f"login-{_RUN}@example.com"
-    client.post("/v1/users/register", json={"email": known, "password": "pw123456"})
+    client.post("/v1/users/register", json={"email": known, "password": PASSWORD})
     missing = client.post(
         "/v1/users/login",
-        json={"email": f"no-such-{_RUN}@example.com", "password": "pw123456"},
+        json={"email": f"no-such-{_RUN}@example.com", "password": PASSWORD},
     )
     wrong = client.post(
         "/v1/users/login",
-        json={"email": known, "password": "wrong-password"},
+        json={"email": known, "password": WRONG_PASSWORD},
     )
     assert missing.status_code == 401
     assert wrong.status_code == 401
@@ -926,7 +937,7 @@ def test_login_errors_identical_for_missing_and_wrong_password(client):
 
 def test_resend_verification_does_not_enumerate(client):
     known = f"rs-{_RUN}@example.com"
-    client.post("/v1/users/register", json={"email": known, "password": "pw123456"})
+    client.post("/v1/users/register", json={"email": known, "password": PASSWORD})
     a = client.post("/v1/users/resend-verification", json={"email": known})
     b = client.post(
         "/v1/users/resend-verification",
@@ -974,8 +985,8 @@ def test_login_before_verify_is_403(client):
     from app.core import users as users_store
 
     email = f"unverified-{_RUN}@example.com"
-    users_store.create_user(email, "pw123456", email_verified=False)
-    r = client.post("/v1/users/login", json={"email": email, "password": "pw123456"})
+    users_store.create_user(email, PASSWORD, email_verified=False)
+    r = client.post("/v1/users/login", json={"email": email, "password": PASSWORD})
     assert r.status_code == 403
     assert "verified" in r.text.lower()
 
@@ -985,7 +996,7 @@ def test_verify_token_mismatch_does_not_verify(client):
     from app.core import users as users_store
 
     email = f"vtok-{_RUN}@example.com"
-    user = users_store.create_user(email, "pw123456", email_verified=False)
+    user = users_store.create_user(email, PASSWORD, email_verified=False)
     session = jwt_auth.create_token(user["id"])
     garbage = client.get(
         "/v1/users/verify-email",
