@@ -21,6 +21,67 @@ from app.lib.source_labels import CALCULATOR_SUFFIX, input_phrase
 _LOG = logging.getLogger(__name__)
 _MAX_LIST = 8
 _NOT_OUTPUTS = frozenset({"note", "notes", "standard", "defaults_used", "needs_input", "not_computed"})
+#: The keys a result repeats its primary figure under, beside primary_result.
+_PRIMARY_MIRROR = frozenset({"primary_result", "value", "unit", "label"})
+
+
+def _label_without_unit(key: str, unit: str) -> str:
+    """A key in words, without trailing words that only repeat its unit
+    ("bank_volume_m3", "m3" -> "bank volume")."""
+    words = input_phrase(key, "").strip().split()
+    flat = re.sub(r"[^a-z0-9]", "", str(unit or "").lower())
+    while len(words) > 1 and flat and flat.endswith(words[-1].lower()):
+        words.pop()
+    # A currency amount's key ends in its currency code ("price_sar"): that
+    # word repeats the unit, whatever the code.
+    tokens = {t for t in re.split(r"[^a-z0-9]+", str(unit or "").lower()) if t}
+    if len(words) > 1 and (flat.startswith("currency") and re.fullmatch(r"[a-z]{3}", words[-1].lower())
+                           or words[-1].lower() in tokens):
+        words.pop()
+        while len(words) > 1 and flat.endswith(words[-1].lower()):
+            words.pop()
+    return " ".join(words)
+
+
+def headline(envelope: Dict[str, Any]) -> str:
+    """The one sentence a calculation's answer leads with: its primary figure,
+    labelled, with its unit. Empty when the result names no primary figure."""
+    result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
+    spec0 = _spec(str(envelope.get("calculation") or ""))
+    main = getattr(spec0, "main_output", "") if spec0 else ""
+    primary = result.get("primary_result")
+    if main and isinstance(result.get(main), (int, float)) and not isinstance(result.get(main), bool):
+        # The formula declares the output its answer leads with.
+        unit = currency_unit(main, dict(spec0.outputs).get(main, ""))
+        primary = {"value": result[main], "unit": unit, "label": _label_without_unit(main, unit)}
+    if not isinstance(primary, dict) or primary.get("value") in (None, ""):
+        # No primary figure named: the formula's first declared output the
+        # result carries as a number.
+        from app.lib import formula_registry
+
+        spec = _spec(str(envelope.get("calculation") or ""))
+        declared = dict(spec.outputs) if spec else {}
+        inputs = set(formula_registry.parameters(spec)) if spec else set()
+        figures = [k for k in declared if isinstance(result.get(k), (int, float))
+                   and not isinstance(result.get(k), bool)]
+        # A declared output that is also an input is the input echoed back,
+        # not what the formula found.
+        key = next((k for k in figures if k not in inputs), figures[0] if figures else None)
+        if key is None:
+            return ""
+        unit = currency_unit(key, declared[key])
+        primary = {"value": result[key], "unit": unit, "label": _label_without_unit(key, unit)}
+    label = str(primary.get("label") or "").strip() or "result"
+    unit = str(primary.get("unit") or "").strip()
+    # A unit is a compact token (m3, degC, N/mm2); a declared "unit" that is a
+    # description ("same unit as specified") is not printed.
+    unit = "" if unit in ("-", "") or re.search(r"\s", unit) else " " + unit
+    value = primary["value"]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        shown = f"{value:,.2f}".rstrip("0").rstrip(".") if abs(value) >= 1000 else f"{value:g}"
+    else:
+        shown = str(value)
+    return f"Headline: {label[:1].upper() + label[1:]} is {shown}{unit}."
 
 
 def _spec(calculation: str):
@@ -86,6 +147,9 @@ def render_calculation(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]
     result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
     used = {k: v for k, v in (inputs or {}).items() if k in params}
     lines = [head + "."]
+    lead = headline(envelope)
+    if lead:
+        lines.append(lead)
     if used:
         lines.append("Inputs: " + "; ".join(_phrases(used, labels, in_units)) + ".")
     lines += result_lines(envelope, inputs)
@@ -106,8 +170,28 @@ def _outputs(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]]):
     result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
     used = {k for k in (inputs or {}) if k in params}
     outputs = {k: v for k, v in result.items() if k not in used and k not in _NOT_OUTPUTS}
+    if isinstance(result.get("primary_result"), dict):
+        # value / unit / label beside primary_result repeat it; they are not
+        # results of their own.
+        outputs = {k: v for k, v in outputs.items() if k not in _PRIMARY_MIRROR}
     labels = {k: p.label for k, p in params.items() if p.label}
-    return outputs, labels, (dict(spec.outputs) if spec else {})
+    units = {k: currency_unit(k, u) for k, u in (dict(spec.outputs) if spec else {}).items()}
+    return outputs, labels, units
+
+
+def currency_unit(key: str, unit: str) -> str:
+    """A declared money unit in the currency the output's own key names:
+    "currency/m3" on selling_price_sar_m3 reads "SAR/m3". The code comes from
+    the platform's currency table, never a fixed string; a key that names no
+    currency keeps "currency"."""
+    text = str(unit or "")
+    if not text.lower().startswith("currency"):
+        return text
+    from app.lib.construction_formulas import _CURRENCY_CODES
+
+    codes = {c.lower(): c for c in _CURRENCY_CODES}
+    named = [codes[part] for part in re.split(r"[^a-z]+", str(key).lower()) if part in codes]
+    return (named[0] + text[len("currency"):]) if len(set(named)) == 1 else text
 
 
 def _items(value: Any) -> List[str]:
@@ -233,6 +317,63 @@ def carried(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]], answer: 
         elif not _figures_written(value, written, text):
             return False
     return True
+
+
+def record_lists(result: Any) -> List[list]:
+    """Every list of records (rows of the same kind, each a mapping) directly
+    inside a tool's result."""
+    if not isinstance(result, dict):
+        return []
+    return [v for v in result.values() if isinstance(v, list) and v and all(isinstance(r, dict) for r in v)]
+
+
+def _row_figures(record: Dict[str, Any]) -> List[float]:
+    return [float(v) for v in record.values() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+
+
+def _near(a: float, b: float) -> bool:
+    return abs(a - b) <= max(abs(b) * 0.005, 0.005)
+
+
+def rows_presented(rows: list, text: str) -> bool:
+    """The answer shows this list: a figure of one of its rows is written."""
+    written = _numbers(text)
+    return any(any(_near(w, f) for w in written for f in _row_figures(r) if f) for r in rows[:_MAX_LIST])
+
+
+def rows_carried(rows: list, text: str) -> bool:
+    """Each shown row is a row of the answer: one line carries at least two of
+    its figures (or its one figure). A sideways table puts one field of many
+    rows on a line, and bullets put one figure on a line -- neither passes."""
+    lines = [_numbers(line) for line in (text or "").splitlines()]
+    for record in rows[:_MAX_LIST]:
+        figures = [f for f in _row_figures(record)]
+        need = min(2, len(figures))
+        if need == 0:
+            continue
+        if not any(_matched(figures, line) >= need for line in lines):
+            return False
+    return True
+
+
+def _matched(figures: List[float], written: List[float]) -> int:
+    """How many of ``figures`` a line writes, each written number counted for
+    one figure only (a month whose billing and cumulative are equal is not
+    two figures on a line that writes the number once)."""
+    left = list(written)
+    count = 0
+    for f in figures:
+        for i, w in enumerate(left):
+            if _near(w, f):
+                del left[i]
+                count += 1
+                break
+    return count
+
+
+def record_table(rows: list) -> List[str]:
+    """``rows`` as one table, one row per record (the renderer's own form)."""
+    return _record_table(rows)
 
 
 def _figures_written(value: Any, written: List[float], text: str) -> bool:

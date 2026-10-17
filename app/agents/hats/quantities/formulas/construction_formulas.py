@@ -101,7 +101,8 @@ def crane_cost_estimate(
         'markup_pct': Param('fraction', 0, 1, label='markup'),
         'waste_pct': Param('fraction', 0, 1, label='waste allowance'),
     },
-    outputs={'material_cost_sar_m3': 'm3', 'direct_cost_sar_m3': 'm3', 'selling_price_sar_m3': 'm3', 'total_project_value_sar': 'currency'},
+    outputs={'material_cost_sar_m3': 'currency/m3', 'direct_cost_sar_m3': 'currency/m3', 'selling_price_sar_m3': 'currency/m3', 'total_project_value_sar': 'currency'},
+    main_output='selling_price_sar_m3',
 )
 def cost_buildup_concrete(
     quantity_m3: float,
@@ -188,7 +189,8 @@ def cost_buildup_concrete(
         'indirect_pct': Param('fraction', 0, 1, label='indirect cost share'),
         'markup_pct': Param('fraction', 0, 1, label='markup'),
     },
-    outputs={'material_sar_t': 't', 'labour_sar_t': 't', 'equipment_sar_t': 't', 'selling_price_sar_t': 't', 'total_project_value_sar': 'currency'},
+    outputs={'material_sar_t': 'currency/t', 'labour_sar_t': 'currency/t', 'equipment_sar_t': 'currency/t', 'selling_price_sar_t': 'currency/t', 'total_project_value_sar': 'currency'},
+    main_output='selling_price_sar_t',
 )
 def cost_buildup_rebar(
     quantity_kg: float,
@@ -235,7 +237,8 @@ def cost_buildup_rebar(
         'indirect_pct': Param('fraction', 0, 1, label='indirect cost share'),
         'markup_pct': Param('fraction', 0, 1, label='markup'),
     },
-    outputs={'shuttering_sar_m2': 'm2', 'scaffolding_sar_m2': 'm2', 'material_sar_m2': 'm2', 'labour_sar_m2': 'm2', 'selling_price_sar_m2': 'm2', 'total_for_area_sar': 'currency'},
+    outputs={'shuttering_sar_m2': 'currency/m2', 'scaffolding_sar_m2': 'currency/m2', 'material_sar_m2': 'currency/m2', 'labour_sar_m2': 'currency/m2', 'selling_price_sar_m2': 'currency/m2', 'total_for_area_sar': 'currency'},
+    main_output='selling_price_sar_m2',
 )
 def cost_buildup_formwork(
     area_m2: float,
@@ -290,6 +293,7 @@ NOTE_REMOTE_AREA = (
         'remote_area_factor': Param('ratio', 1, 3, label='remote area factor'),
     },
     outputs={'num_personnel': '-', 'duration_months': '-', 'camp_type': '-', 'remote_area_factor': '-', 'breakdown': '-', 'recurring_monthly_sar': 'currency', 'total_recurring_sar': 'currency', 'total_fixed_sar': 'currency', 'grand_total_sar': 'currency'},
+    main_output='grand_total_sar',
 )
 def mobilization_cost_estimate(
     num_personnel: int,

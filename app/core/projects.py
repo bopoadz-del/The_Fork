@@ -441,6 +441,8 @@ def _patch_legacy_columns() -> None:
                 conn.commit()
             if "profile" not in cols:  # 0028 (driver mode: the project profile)
                 conn.execute(sqla_text("ALTER TABLE projects ADD COLUMN profile TEXT"))
+            if "identity" not in cols:  # 0031 (the project's identity set)
+                conn.execute(sqla_text("ALTER TABLE projects ADD COLUMN identity TEXT"))
                 conn.commit()
 
             doc_cols = {row[1] for row in conn.execute(
@@ -548,6 +550,31 @@ def _find_active_project_by_name(name: str) -> Optional[Dict[str, Any]]:
     return _project_as_dict(row)
 
 
+def _identity_changed(project_id: Optional[str]) -> None:
+    """Mark the project's stored identity set (app.core.project_identity) stale
+    after its record, profile or documents changed: the next turn derives it
+    once and stores it. One small UPDATE in this thread -- no background
+    thread, which a forked ingest child could inherit mid-lock (CI: a child
+    process hung 120 s)."""
+    if not project_id:
+        return
+    try:
+        with SessionLocal() as session:
+            row = session.get(Project, project_id)
+            if row is None:
+                return
+            try:
+                stored = json.loads(row.identity) if row.identity else {}
+            except (TypeError, ValueError):
+                stored = {}
+            added = stored.get("added") if isinstance(stored, dict) else None
+            # Admin-added members survive; the derived part is redone on read.
+            row.identity = json.dumps({"stale": True, "added": added or []})
+            session.commit()
+    except Exception:  # noqa: BLE001 -- logged; the next turn still derives a set
+        logger.warning("project %s: identity set not marked stale", project_id, exc_info=True)
+
+
 def create_project(
     name: str,
     client: Optional[str] = None,
@@ -594,6 +621,7 @@ def create_project(
                 )
             )
             session.commit()
+    _identity_changed(pid)
     return get_project(pid)
 
 
@@ -608,6 +636,7 @@ def set_project_location(project_id: str, location: Optional[str]) -> Optional[D
                 return None
             project.location = (location or "").strip() or None
             session.commit()
+    _identity_changed(project_id)
     return get_project(project_id)
 
 
@@ -623,6 +652,7 @@ def set_project_profile(project_id: str, profile: Optional[Dict[str, Any]]) -> O
                 return None
             project.profile = json.dumps(clean) if clean else None
             session.commit()
+    _identity_changed(project_id)
     return get_project(project_id)
 
 
@@ -1210,6 +1240,7 @@ def add_document(
     with SessionLocal() as session:
         document = session.get(Document, did)
     assert document is not None
+    _identity_changed(project_id)
     return _document_as_dict(document)
 
 
@@ -2214,6 +2245,7 @@ def delete_document(doc_id: str) -> Optional[Dict[str, Any]]:
                 delete_document_chunks(session, doc_id)
                 session.delete(document)
                 session.commit()
+    _identity_changed((doc or {}).get("project_id"))
     return doc
 
 
