@@ -82,7 +82,10 @@ def _end_carries_answer(raw: str) -> bool:
         if line.startswith("data:"):
             try:
                 body = json.loads(line[len("data:"):].strip())
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                # Not our JSON: it carries no answer, so the empty-end guard
+                # applies. Logged, because a malformed end frame is a fault.
+                _LOG.warning("sse watchdog: unreadable end frame (%s)", type(exc).__name__)
                 return False
             content = body.get("content") if isinstance(body, dict) else None
             return isinstance(content, str) and bool(content.strip())
