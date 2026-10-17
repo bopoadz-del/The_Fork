@@ -78,8 +78,44 @@ def test_a_positive_rate_in_any_shape_still_gives_days():
         cf._CURRENT_ASK.reset(token)
 
 
-def test_the_model_is_told_to_keep_signs():
+def test_the_model_is_told_to_pass_figures_verbatim():
+    """The contract: each figure as the user wrote it, as a string with its
+    sign and unit; signs never changed, units never converted or normalised."""
     from app.agents.driver import tools as driver_tools
 
-    text = driver_tools.calculator_schema(None)["function"]["description"]
-    assert "sign as written" in text
+    driver_tools._SCHEMA_CACHE.clear()
+    fn = driver_tools.calculator_schema(None)["function"]
+    text = fn["description"]
+    assert "exactly as the user wrote it, as a string with its sign and unit" in text
+    assert "never change its sign, never convert or normalise its unit" in text
+    assert "sign and unit included" in fn["parameters"]["properties"]["params"]["description"]
+
+
+# LANE2/LANE3 (#993 parked on a split): the model stripped the minus for every
+# alias of the rate. Every alias this calculator takes, in every shape a call
+# can carry, refuses the user's -120 in its own words; never a generic
+# "needs paired inputs", never a duration.
+@pytest.mark.parametrize("key", ["productivity", "daily_production", "productivity_rate"])
+@pytest.mark.parametrize("value", [120, -120, "120 m2 per day", "-120 m2 per day"])
+def test_every_rate_alias_in_every_shape_refuses_the_users_minus(negative_ask, key, value):
+    out = cf.run_calculation("productivity_manpower_duration", {"quantity": 4800, key: value})
+    assert out["status"] == "error", out
+    # Refused in the user's own figure and asked again: by the formula
+    # ("must be greater than zero; -120 was given") or by the input's range
+    # ("given (-120) is outside ... accepts (0 to ...)").
+    assert "-120" in out["error"], out["error"]
+    assert out.get("needs_input") and out.get("question"), out
+    assert "paired inputs" not in out["error"]
+    assert not (out.get("result") or {}).get("duration")
+
+
+@pytest.mark.parametrize("key", ["productivity", "daily_production", "productivity_rate"])
+@pytest.mark.parametrize("value", [120, "120 m2 per day"])
+def test_every_rate_alias_with_a_positive_rate_gives_days(key, value):
+    token = cf.set_current_ask(POSITIVE)
+    try:
+        out = cf.run_calculation("productivity_manpower_duration", {"quantity": 4800, key: value})
+    finally:
+        cf._CURRENT_ASK.reset(token)
+    assert out["status"] == "success", out
+    assert out["result"]["duration"] == 40.0
