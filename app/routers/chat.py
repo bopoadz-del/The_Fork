@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+
+from app.routers.identity_exit import redact_frames
 from pydantic import BaseModel, Field
 
 from app.blocks import BLOCK_REGISTRY
@@ -51,6 +53,20 @@ class ChatRequest(BaseModel):
     stream: bool = False
     project_id: Optional[str] = None
 
+
+
+async def _turn_identity(project_id):
+    """The project's identity rule for this turn's whole stream; None for no
+    project or the shared library (its documents keep their real titles).
+    Read off the event loop."""
+    from app.core import projects as projects_store
+
+    if not project_id or project_id == projects_store.MASTER_CORPUS_PROJECT_ID:
+        return None
+    from app.core import project_identity
+    from app.core.offload import off_loop
+
+    return await off_loop(project_identity.for_project, project_id)
 
 async def _classify_intent(prompt: str) -> tuple[Optional[str], float]:
     """Run the smart_orchestrator over the user's message and return the top
@@ -909,12 +925,13 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
     from app.core import turn_gate, turn_progress
     with turn_timing.stage("queue"):
         _release_turn = await turn_gate.acquire()
+    _identity = await _turn_identity(request.project_id)
     return StreamingResponse(
-        turn_gate.hold_until_done(turn_progress.opened(
+        turn_gate.hold_until_done(turn_progress.opened(redact_frames(
         guarantee_terminal(
             with_hat_signals(with_answer_exit(event_stream()), request.message),
             request_id=get_request_id(),
-        )), _release_turn),
+        ), _identity)), _release_turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1117,12 +1134,13 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     from app.core import turn_gate, turn_progress
     with turn_timing.stage("queue"):
         _release_turn = await turn_gate.acquire()
+    _identity = await _turn_identity(project_id)
     return StreamingResponse(
-        turn_gate.hold_until_done(turn_progress.opened(
+        turn_gate.hold_until_done(turn_progress.opened(redact_frames(
         guarantee_terminal(
             with_hat_signals(with_answer_exit(event_stream()), prompt),
             request_id=get_request_id(),
-        )), _release_turn),
+        ), _identity)), _release_turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
