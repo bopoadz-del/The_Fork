@@ -277,6 +277,9 @@ class Project(Base):
     # governing codes ...), filled in once by an admin. Driver mode gives it
     # to the model every turn. Nullable: no profile on record.
     profile: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The project's identity set (app.core.project_identity), JSON text:
+    # written when the record, profile or documents change; read per turn.
+    identity: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
     aconex_connected: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
