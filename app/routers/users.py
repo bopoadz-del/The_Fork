@@ -117,19 +117,32 @@ async def register(req: RegisterRequest):
             "configured, so the address could not be verified.",
         )
 
+    auto_verified = dev and not email_service.is_configured()
     try:
         user = users_store.create_user(
             str(req.email), req.password, display_name=req.display_name,
-            email_verified=dev and not email_service.is_configured(),
+            email_verified=auto_verified,
         )
-    except ValueError as e:
-        raise HTTPException(409, str(e))
+    except ValueError:
+        # An existing address gets the same reply as a new one: a
+        # registration never reveals whether an account exists (#978).
+        return _registration_received(str(req.email))
+    if not user.get("email_verified"):
+        await _send_verification(user)
+    # One reply for every registration -- new address or existing, mail
+    # configured or not, sent or not.
+    return _registration_received(str(req.email))
 
-    if user.get("email_verified"):
-        return {**user, "verification_email_sent": False}
 
-    sent = await _send_verification(user)
-    return {**user, "verification_email_sent": sent}
+#: What every registration answers -- new address or existing one, mail
+#: configured or not, sent or not -- so the reply tells a caller nothing about
+#: which accounts exist.
+_PENDING_MESSAGE = ("If this address can be registered, a confirmation link is on its way. "
+                    'If none arrives, use "Resend confirmation email" on the sign-in page.')
+
+
+def _registration_received(email: str) -> dict:
+    return {"email": email, "registration_received": True, "message": _PENDING_MESSAGE}
 
 
 @router.get("/v1/users/verify-email")
@@ -197,7 +210,7 @@ async def login(req: LoginRequest):
         raise HTTPException(
             403,
             "Email address not verified. Check your inbox for the confirmation "
-            "link, or request a new one at /v1/users/resend-verification.",
+            'link, or use "Resend confirmation email" on the sign-in page.',
         )
     return {
         "token": jwt_auth.create_token(user["id"]),
