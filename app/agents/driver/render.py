@@ -34,7 +34,9 @@ def _label_without_unit(key: str, unit: str) -> str:
         words.pop()
     # A currency amount's key ends in its currency code ("price_sar"): that
     # word repeats the unit, whatever the code.
-    if len(words) > 1 and flat.startswith("currency") and re.fullmatch(r"[a-z]{3}", words[-1].lower()):
+    tokens = {t for t in re.split(r"[^a-z0-9]+", str(unit or "").lower()) if t}
+    if len(words) > 1 and (flat.startswith("currency") and re.fullmatch(r"[a-z]{3}", words[-1].lower())
+                           or words[-1].lower() in tokens):
         words.pop()
         while len(words) > 1 and flat.endswith(words[-1].lower()):
             words.pop()
@@ -50,8 +52,8 @@ def headline(envelope: Dict[str, Any]) -> str:
     primary = result.get("primary_result")
     if main and isinstance(result.get(main), (int, float)) and not isinstance(result.get(main), bool):
         # The formula declares the output its answer leads with.
-        primary = {"value": result[main], "unit": dict(spec0.outputs).get(main, ""),
-                   "label": _label_without_unit(main, dict(spec0.outputs).get(main, ""))}
+        unit = currency_unit(main, dict(spec0.outputs).get(main, ""))
+        primary = {"value": result[main], "unit": unit, "label": _label_without_unit(main, unit)}
     if not isinstance(primary, dict) or primary.get("value") in (None, ""):
         # No primary figure named: the formula's first declared output the
         # result carries as a number.
@@ -67,7 +69,8 @@ def headline(envelope: Dict[str, Any]) -> str:
         key = next((k for k in figures if k not in inputs), figures[0] if figures else None)
         if key is None:
             return ""
-        primary = {"value": result[key], "unit": declared[key], "label": _label_without_unit(key, declared[key])}
+        unit = currency_unit(key, declared[key])
+        primary = {"value": result[key], "unit": unit, "label": _label_without_unit(key, unit)}
     label = str(primary.get("label") or "").strip() or "result"
     unit = str(primary.get("unit") or "").strip()
     # A unit is a compact token (m3, degC, N/mm2); a declared "unit" that is a
@@ -172,7 +175,23 @@ def _outputs(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]]):
         # results of their own.
         outputs = {k: v for k, v in outputs.items() if k not in _PRIMARY_MIRROR}
     labels = {k: p.label for k, p in params.items() if p.label}
-    return outputs, labels, (dict(spec.outputs) if spec else {})
+    units = {k: currency_unit(k, u) for k, u in (dict(spec.outputs) if spec else {}).items()}
+    return outputs, labels, units
+
+
+def currency_unit(key: str, unit: str) -> str:
+    """A declared money unit in the currency the output's own key names:
+    "currency/m3" on selling_price_sar_m3 reads "SAR/m3". The code comes from
+    the platform's currency table, never a fixed string; a key that names no
+    currency keeps "currency"."""
+    text = str(unit or "")
+    if not text.lower().startswith("currency"):
+        return text
+    from app.lib.construction_formulas import _CURRENCY_CODES
+
+    codes = {c.lower(): c for c in _CURRENCY_CODES}
+    named = [codes[part] for part in re.split(r"[^a-z]+", str(key).lower()) if part in codes]
+    return (named[0] + text[len("currency"):]) if len(set(named)) == 1 else text
 
 
 def _items(value: Any) -> List[str]:

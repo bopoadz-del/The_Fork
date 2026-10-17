@@ -38,9 +38,12 @@ def test_a_declared_main_output_is_the_headline():
     mobilisation. A formula now declares the output its answer leads with,
     and its rate outputs carry their real units."""
     cases = {
-        "cost_buildup_concrete": ({"quantity_m3": 100}, "Headline: Selling price is 308.83 currency/m3."),
-        "cost_buildup_rebar": ({"quantity_t": 20}, "Headline: Selling price is 4,856 currency/t."),
-        "mobilization_cost_estimate": ({"num_personnel": 50, "duration_months": 6}, "Headline: Grand total is 2,627,775 currency."),
+        "cost_buildup_concrete": ({"quantity_m3": 100}, "Headline: Selling price is 308.83 SAR/m3."),
+        # LANE3: the formula takes quantity_kg (20 t), not quantity_t.
+        "cost_buildup_rebar": ({"quantity_kg": 20000}, "Headline: Selling price is 4,856 SAR/t."),
+        # LANE3: formwork had no headline test.
+        "cost_buildup_formwork": ({"area_m2": 500}, "Headline: Selling price is 100.03 SAR/m2."),
+        "mobilization_cost_estimate": ({"num_personnel": 50, "duration_months": 6}, "Headline: Grand total is 2,627,775 SAR."),
     }
     for name, (params, expected) in cases.items():
         assert render.headline(cf.run_calculation(name, params)) == expected, name
@@ -52,3 +55,15 @@ def test_a_main_output_must_be_a_declared_output():
 
     with pytest.raises(ValueError):
         formula(owner="base", description="d", display_name="Qx", inputs={}, outputs={"a": "m"}, main_output="b")
+
+
+def test_a_money_unit_takes_the_currency_its_key_names():
+    """LANE3 on c9163dd: 'currency/m3' printed instead of the currency. The
+    code comes from the key and the platform's currency table, never a fixed
+    string; a key that names no currency keeps 'currency'."""
+    assert render.currency_unit("selling_price_sar_m3", "currency/m3") == "SAR/m3"
+    assert render.currency_unit("grand_total_usd", "currency") == "USD"
+    assert render.currency_unit("total_cost", "currency") == "currency"
+    assert render.currency_unit("rate_sar_usd", "currency") == "currency", "two currencies named: not guessed"
+    assert render.currency_unit("bank_volume_m3", "m3") == "m3"
+
