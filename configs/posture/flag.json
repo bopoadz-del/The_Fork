@@ -1,0 +1,6 @@
+{
+  "default": "off",
+  "projects": {
+    "master_corpus": "shadow"
+  }
+}
