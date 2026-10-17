@@ -356,6 +356,21 @@ def _seed_knowledge() -> None:
     logger.info("Knowledge seed complete (docs/knowledge/*.md)")
 
 
+def _warm_parse_libraries() -> None:
+    """Import the document parse stack after the port opens. Their first
+    import (numpy/pandas, pdfplumber) holds the GIL even in a worker thread
+    and froze every user up to 0.43 s during a first BOQ export (CI
+    test-timing); after this warm-up a live request never pays it. Kept out
+    of startup itself: the boot check forbids pandas at import."""
+    import importlib
+
+    for name in ("pandas", "pdfplumber", "openpyxl"):
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            logger.info("parse library %s not installed; the parse reports it when used", name)
+
+
 async def _warm_models() -> None:
     """Warm the heavy models — and seed the knowledge base — WITHOUT blocking startup.
 
@@ -380,7 +395,8 @@ async def _warm_models() -> None:
     # ordering it last means the seed never pays a second model load.
     for label, fn in (("safety detector", _warm_safety_detector),
                       ("RAG embedder", _warm_embedder),
-                      ("knowledge seed", _seed_knowledge)):
+                      ("knowledge seed", _seed_knowledge),
+                      ("parse libraries", _warm_parse_libraries)):
         try:
             await asyncio.to_thread(fn)
         except asyncio.CancelledError:
