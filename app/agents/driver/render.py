@@ -319,6 +319,63 @@ def carried(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]], answer: 
     return True
 
 
+def record_lists(result: Any) -> List[list]:
+    """Every list of records (rows of the same kind, each a mapping) directly
+    inside a tool's result."""
+    if not isinstance(result, dict):
+        return []
+    return [v for v in result.values() if isinstance(v, list) and v and all(isinstance(r, dict) for r in v)]
+
+
+def _row_figures(record: Dict[str, Any]) -> List[float]:
+    return [float(v) for v in record.values() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+
+
+def _near(a: float, b: float) -> bool:
+    return abs(a - b) <= max(abs(b) * 0.005, 0.005)
+
+
+def rows_presented(rows: list, text: str) -> bool:
+    """The answer shows this list: a figure of one of its rows is written."""
+    written = _numbers(text)
+    return any(any(_near(w, f) for w in written for f in _row_figures(r) if f) for r in rows[:_MAX_LIST])
+
+
+def rows_carried(rows: list, text: str) -> bool:
+    """Each shown row is a row of the answer: one line carries at least two of
+    its figures (or its one figure). A sideways table puts one field of many
+    rows on a line, and bullets put one figure on a line -- neither passes."""
+    lines = [_numbers(line) for line in (text or "").splitlines()]
+    for record in rows[:_MAX_LIST]:
+        figures = [f for f in _row_figures(record)]
+        need = min(2, len(figures))
+        if need == 0:
+            continue
+        if not any(_matched(figures, line) >= need for line in lines):
+            return False
+    return True
+
+
+def _matched(figures: List[float], written: List[float]) -> int:
+    """How many of ``figures`` a line writes, each written number counted for
+    one figure only (a month whose billing and cumulative are equal is not
+    two figures on a line that writes the number once)."""
+    left = list(written)
+    count = 0
+    for f in figures:
+        for i, w in enumerate(left):
+            if _near(w, f):
+                del left[i]
+                count += 1
+                break
+    return count
+
+
+def record_table(rows: list) -> List[str]:
+    """``rows`` as one table, one row per record (the renderer's own form)."""
+    return _record_table(rows)
+
+
 def _figures_written(value: Any, written: List[float], text: str) -> bool:
     """The rows a mapping or a list of records renders (the same capped rows
     the renderer shows) are all in the answer: every figure and name, and for
