@@ -2564,27 +2564,83 @@ def _restore_written_signs(params: Dict[str, Any], user_words: str) -> Dict[str,
     return out
 
 
-_WRITTEN_ZERO_RE = re.compile(r"(?<![\w.,])0+(?:\.0+)?(?![\d.,]*\d)|\b(?:zero|none|no|nil|without)\b", re.I)
+_ZERO_WORD_RE = re.compile(r"(?<![\w.,])0+(?:\.0+)?(?![\d.,]*\d)|\b(?:zero|none|no|nil|without)\b", re.I)
+_WORD_RE = re.compile(r"[a-z]+")
+#: How many words from a zero word an input's own word may sit to be the
+#: input that zero is written for ("0 cranes", "no riggers", "zero waste").
+_ZERO_REACH_WORDS = 3
 
 
-def _drop_unwritten_zeros(fn: Any, params: Dict[str, Any], user_words: str) -> Dict[str, Any]:
-    """A zero the caller sent that the user's own words never write is not the
-    user's input: it is left out, so the calculator asks for it (or uses its
-    declared default) instead of refusing "0 was given" (LANE2: a crane hire
-    cost refused a phantom crane count of 0 the user never gave). Switches
-    (inputs whose default is True/False) keep their value: 0 there is "off"."""
-    if not user_words or _WRITTEN_ZERO_RE.search(user_words):
+def _input_words(key: str, label: str) -> set:
+    """The words that name an input: its declared label and its key, as stems
+    (a trailing s dropped, so 'cranes' names num_cranes), ignoring words of
+    one or two letters."""
+    words = set(_WORD_RE.findall(f"{label} {key.replace('_', ' ')}".lower()))
+    return {w[:-1] if w.endswith("s") and len(w) > 3 else w for w in words if len(w) > 2}
+
+
+def _zero_written_for(key: str, label: str, user_words: str) -> bool:
+    """True when the user's words write a zero for this input: a zero word
+    that qualifies one of the input's own words -- before it in the same
+    phrase ("0 cranes", "no cranes needed"), or after it joined by a colon,
+    equals or "is" ("number of cranes: zero", "cranes = 0"). Punctuation
+    ends a phrase, so "No rush: crane hire" writes no zero for the cranes."""
+    names = _input_words(key, label)
+    tokens = [m.group(0).lower() for m in re.finditer(r"[A-Za-z]+|\d+(?:[.,]\d+)*|[^\sA-Za-z\d]", user_words)]
+
+    def stem(word: str) -> str:
+        return word[:-1] if word.endswith("s") and len(word) > 3 else word
+
+    def is_word(token: str) -> bool:
+        return bool(re.fullmatch(r"[a-z]+|\d+(?:[.,]\d+)*", token))
+
+    for i, token in enumerate(tokens):
+        if not _ZERO_WORD_RE.fullmatch(token):
+            continue
+        # Before the input: the next few words of the same phrase.
+        ahead = []
+        for nxt in tokens[i + 1:]:
+            if not is_word(nxt) or len(ahead) == _ZERO_REACH_WORDS:
+                break
+            ahead.append(stem(nxt))
+        if names.intersection(ahead):
+            return True
+        # After the input, joined by ':', '=' or 'is'/'are'.
+        j = i - 1
+        while j >= 0 and tokens[j] in (":", "=", "is", "are"):
+            j -= 1
+        if j < i - 1 and j >= 0 and stem(tokens[j]) in names:
+            return True
+    return False
+
+
+def _drop_unwritten_zeros(name: str, fn: Any, params: Dict[str, Any], user_words: str) -> Dict[str, Any]:
+    """A zero the caller sent for an input whose zero the user's own words
+    never write is not the user's input: it is left out, so the calculator
+    asks for it (or uses its declared default) instead of refusing "0 was
+    given" (LANE2: a crane hire cost refused a phantom crane count of 0).
+    Judged per input, by its own declared label: a zero written for one input
+    ("no riggers") never vouches for another (LANE4). Switches (inputs whose
+    default is True/False) keep their value: 0 there is "off"."""
+    if not user_words:
         return params
     try:
         signature = _inspect.signature(fn)
     except (TypeError, ValueError):
         return params
+    from app.lib import formula_registry
+
+    spec = formula_registry.get(name)
+    declared = formula_registry.parameters(spec) if spec is not None else {}
     out = dict(params)
     for key, val in params.items():
         p = signature.parameters.get(key)
         if p is None or isinstance(p.default, bool) or isinstance(val, bool):
             continue
-        if (isinstance(val, (int, float)) and val == 0) or (isinstance(val, str) and val.strip() in ("0", "0.0")):
+        if not ((isinstance(val, (int, float)) and val == 0) or (isinstance(val, str) and val.strip() in ("0", "0.0"))):
+            continue
+        label = getattr(declared.get(key), "label", "") or ""
+        if not _zero_written_for(key, label, user_words):
             out.pop(key)
     return out
 
@@ -2880,7 +2936,7 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             }
     from app.lib import formula_registry
     context = _pop_conversion_context(fn, params)
-    params = _drop_unwritten_zeros(fn, params, _CURRENT_ASK.get())
+    params = _drop_unwritten_zeros(str(name), fn, params, _CURRENT_ASK.get())
     params, unknown = _partition_bound_params(fn, params)
     # An argument read out of the ask's words that this calculator does not
     # take is dropped, not an error: only an argument the caller sent can be

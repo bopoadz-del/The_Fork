@@ -55,3 +55,30 @@ def test_a_switch_keeps_zero_as_off():
 def test_a_call_with_no_user_words_is_unchanged():
     out = cf.run_calculation("crane_cost_estimate", {"num_cranes": 0, **HIRE})
     assert out["status"] == "error" and "given (0)" in out["error"], out
+
+
+# LANE4 (#994 parked): the check was per ask, so any "no", "none", "without"
+# or "0" anywhere turned it off for every input. It is per input now, by the
+# input's own declared label: a zero word vouches only for the input it sits
+# beside.
+@pytest.mark.parametrize("ask", [
+    "Crane hire for 6 months, 50 t crane, without riggers -- what does it cost?",
+    "No rush: crane hire for 6 months, 50 t, how much?",
+    "Crane hire, 50 t, 6 months, 0% remote uplift, cost?",
+])
+def test_a_zero_word_for_another_input_does_not_vouch_for_the_crane_count(ask):
+    out = _run(ask, "crane_cost_estimate", {"num_cranes": 0, **HIRE})
+    assert "num_cranes" in (out.get("missing") or []), out
+    assert "given (0)" not in out.get("error", "")
+
+
+@pytest.mark.parametrize("ask", ["0 cranes, 50 t, 6 months", "no cranes needed, 50 t for 6 months",
+                                 "number of cranes: zero, 50 t, 6 months"])
+def test_a_zero_written_beside_the_input_is_kept(ask):
+    out = _run(ask, "crane_cost_estimate", {"num_cranes": 0, **HIRE})
+    assert out["status"] == "error" and "given (0)" in out["error"], out
+
+
+def test_the_input_words_come_from_its_declared_label():
+    assert cf._zero_written_for("num_cranes", "number of cranes", "we need 0 cranes")
+    assert not cf._zero_written_for("num_cranes", "number of cranes", "no riggers please, two cranes")
