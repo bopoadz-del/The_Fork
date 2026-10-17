@@ -310,6 +310,16 @@ def productivity_manpower_duration(
     crew_cost = _crew_cost_from_aliases(
         crew_cost_per_day, day_rate, gang_cost_per_day,
     )
+    # A zero or negative rate given under its alias is refused in its own
+    # words like every other input here -- never dropped as "not given",
+    # which turned -120 into a generic "needs paired inputs" (LANE2).
+    if productivity_rate not in (None, ""):
+        try:
+            alias_rate = float(productivity_rate)
+        except (TypeError, ValueError):
+            alias_rate = None
+        if alias_rate is not None and alias_rate <= 0:
+            return _must_be_positive("productivity_rate", alias_rate, ["quantity", "productivity_rate"])
     if daily_production is None:
         aliased_daily = _daily_production_from_rate_alias(
             productivity_rate=productivity_rate,

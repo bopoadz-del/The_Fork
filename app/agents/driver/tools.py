@@ -129,8 +129,11 @@ def _build_calculator_schema(hat: Optional[str]) -> Dict[str, Any]:
             "description": (
                 "Run one of the platform's deterministic calculators. Choose the calculation "
                 "that does what the user asks, then fill params from the user's own words: "
-                "match each figure to an input by its label and unit. Give every figure in the "
-                "unit the user stated; the calculator converts units it can. Leave out an input "
+                "match each figure to an input by its label and unit. Give each figure exactly as "
+                "the user wrote it, as a string with its sign and unit (\"-120 m2 per day\", "
+                "\"21,528 sq ft\"): never change its sign, never convert or normalise its unit. "
+                "The calculator reads the sign and unit from that text, converts what it can, and "
+                "decides whether a negative or zero figure can be used. Leave out an input "
                 "the user did not give: the calculator asks for it. Never invent a value. "
                 "In the answer, name inputs and the calculator by their labels and display "
                 "name, never by the identifiers below.\n" + "\n".join(lines)
@@ -141,7 +144,8 @@ def _build_calculator_schema(hat: Optional[str]) -> Dict[str, Any]:
                     "calculation": {"type": "string", "enum": [s.name for s in specs],
                                     "description": "Which calculator to run."},
                     "params": {"type": "object", "additionalProperties": True,
-                               "description": "The calculator's inputs, keyed as listed for it."},
+                               "description": ("The calculator's inputs, keyed as listed for it; each "
+                                               "figure as the user wrote it, sign and unit included.")},
                 },
                 "required": ["calculation", "params"],
             },
