@@ -20,6 +20,8 @@ _ALGORITHM = "HS256"
 # different ``typ`` is a single-purpose token and must never authenticate.
 SESSION_TYP = "session"
 EMAIL_VERIFY_TYP = "email_verify"
+#: A password-reset link: single purpose, never a session.
+PASSWORD_RESET_TYP = "password_reset"
 _lock = threading.Lock()
 _cached_secret: str | None = None
 

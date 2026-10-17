@@ -192,6 +192,65 @@ async def resend_verification(req: ResendVerificationRequest):
     return {"status": "accepted"}
 
 
+#: A reset link is short-lived: it sits in a mailbox and works once.
+_RESET_TTL_SECONDS = 60 * 60
+_RESET_INVALID = "This reset link is invalid or has expired. Ask for a new one from the sign-in page."
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8)
+
+
+@router.post("/v1/users/forgot-password", status_code=202)
+async def forgot_password(req: ForgotPasswordRequest):
+    """Mail a reset link. Always 202 with the same body, whether or not the
+    address has an account, so the endpoint is never an account oracle."""
+    from app.core.offload import off_loop
+
+    user = await off_loop(users_store.get_user_by_email, str(req.email))
+    base = os.getenv("FRONTEND_URL", "").rstrip("/") or _public_base_url()
+    if user and base:
+        token = jwt_auth.create_purpose_token(user["id"], jwt_auth.PASSWORD_RESET_TYP, _RESET_TTL_SECONDS)
+        # The link carries the current password's fingerprint: once the
+        # password changes, the link no longer works (single use).
+        url = f"{base}/?reset={token}.{users_store.password_fingerprint(user)}"
+        try:
+            await email_service.send_email(to=user["email"], subject="Reset your password",
+                                           html=email_service.password_reset_html(url))
+        except (email_service.EmailNotConfigured, email_service.EmailSendFailed):
+            logger.warning("password reset email was not sent", exc_info=True)
+    elif user and not base:
+        logger.warning("cannot send password reset email: no FRONTEND_URL/PUBLIC_BASE_URL")
+    return {"status": "accepted",
+            "message": "If this address has an account, a reset link is on its way."}
+
+
+@router.post("/v1/users/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    """Set a new password from a reset link. The link works once: it carries
+    the old password's fingerprint, which no longer matches after the reset."""
+    from app.core.offload import off_loop
+
+    token, _, fingerprint = (req.token or "").rpartition(".")
+    if not token or not fingerprint:
+        raise HTTPException(400, _RESET_INVALID)
+    try:
+        payload = jwt_auth.decode_purpose_token(token, jwt_auth.PASSWORD_RESET_TYP)
+    except jwt_auth.InvalidTokenError:
+        raise HTTPException(400, _RESET_INVALID)
+    user = await off_loop(users_store.get_user_by_id, str(payload.get("user_id") or ""))
+    if not user or not secrets.compare_digest(users_store.password_fingerprint(user), fingerprint):
+        raise HTTPException(400, _RESET_INVALID)
+    # PBKDF2 is CPU work: off the event loop.
+    await off_loop(users_store.set_password, user["id"], req.new_password)
+    return {"status": "reset", "message": "Your password has been changed. Sign in with the new one."}
+
+
 @router.post("/v1/users/login")
 async def login(req: LoginRequest):
     user = users_store.get_user_by_email(str(req.email))
