@@ -1,35 +1,29 @@
 """Every registry entry carries the full schema (F-CORE-ROUND-2 step 1/2).
 
 Formulas and tools: display_name; every parameter: display label, type,
-unit and range (numeric), required / optional. Existing gaps are listed in
-tests/fixtures/registry_schema_gaps.json, which may only shrink: a new or
-changed entry missing a field fails here, and a filled gap must leave the
-baseline (scripts/registry_schema_gaps.py --shrink).
+unit and range (numeric), required / optional. CI fails a change that adds a
+gap its base commit does not have (scripts/registry_schema_gaps.py --compare,
+workflow registry-schema.yml); existing gaps are left for their package's lane
+to fill. No gap list is committed, so no lane regenerates a shared file.
 """
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from app.lib import formula_registry as fr
 
-BASELINE = Path(__file__).parent / "fixtures" / "registry_schema_gaps.json"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import registry_schema_gaps as rsg  # noqa: E402
 
 
-def _baseline() -> set:
-    return set(json.loads(BASELINE.read_text(encoding="utf-8")))
-
-
-def test_no_registry_entry_is_missing_a_field_outside_the_baseline():
-    new = sorted(set(fr.schema_gaps()) - _baseline())
-    assert new == [], f"declare these fields (do not list them): {new[:20]}"
-
-
-def test_the_baseline_lists_only_gaps_that_still_exist():
-    filled = sorted(_baseline() - set(fr.schema_gaps()))
-    assert filled == [], f"run scripts/registry_schema_gaps.py --shrink; filled: {filled[:20]}"
+def test_only_gaps_the_head_adds_fail_the_check():
+    base = ["formula:a.x:label", "formula:b.y:unit"]
+    head = ["formula:b.y:unit", "formula:c.z:label"]  # a.x filled, c.z added
+    assert rsg.new_gaps(base, head) == ["formula:c.z:label"]
+    assert rsg.new_gaps(head, head) == []
 
 
 def _synthetic(**inputs):
@@ -54,7 +48,6 @@ def test_a_new_formula_missing_a_label_or_unit_is_a_gap():
     assert "formula:syn_schema_probe.width_m:label" in gaps
     assert "formula:syn_schema_probe.count:unit" in gaps
     assert "formula:syn_schema_probe.count:range" in gaps
-    assert sorted(set(gaps) - _baseline()) == gaps  # never covered by the baseline
 
 
 def test_a_complete_formula_has_no_gaps():

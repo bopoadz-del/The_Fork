@@ -1,0 +1,36 @@
+# Registry schema gate: a change may not add a gap its base commit does not
+# have (every new or changed formula / tool parameter declares label, type,
+# unit and range when numeric, required / optional). Existing gaps stay for
+# their package's lane to fill. Nothing is committed for lanes to regenerate:
+# the base's gap set is computed here, from the base commit itself.
+name: registry-schema
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  schema-gaps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Requirements
+        run: python -m pip install -q -r requirements.txt
+
+      - name: No new schema gaps against the base commit
+        env:
+          RAG_EMBEDDING_MODEL: fake
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: python scripts/registry_schema_gaps.py --compare "$BASE_SHA"
