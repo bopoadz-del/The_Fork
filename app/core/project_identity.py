@@ -298,6 +298,13 @@ def for_project(project_id: str | None) -> Redactor | None:
         with projects.SessionLocal() as session:
             raw = session.execute(select(Project.identity).where(Project.id == project_id)).scalar_one_or_none()
         stored = _parse(raw)
+        if not stored or stored.get("stale") or "derived" not in stored:
+            # Changed since it was last derived (or never derived): derive
+            # once now and store it; later turns only read.
+            refresh(project_id)
+            with projects.SessionLocal() as session:
+                raw = session.execute(select(Project.identity).where(Project.id == project_id)).scalar_one_or_none()
+            stored = _parse(raw)
         docs = projects.list_document_names(project_id) or []
         members = [str(m) for m in (stored.get("derived") or []) + (stored.get("added") or [])]
         return Redactor(project_id, members, docs)

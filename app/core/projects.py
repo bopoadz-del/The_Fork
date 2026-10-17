@@ -551,21 +551,28 @@ def _find_active_project_by_name(name: str) -> Optional[Dict[str, Any]]:
 
 
 def _identity_changed(project_id: Optional[str]) -> None:
-    """Re-derive and store the project's identity set (app.core.project_identity)
-    after its record, profile or documents changed: in a daemon thread, so no
-    write path waits on it; a failure is logged and the last stored set stays."""
+    """Mark the project's stored identity set (app.core.project_identity) stale
+    after its record, profile or documents changed: the next turn derives it
+    once and stores it. One small UPDATE in this thread -- no background
+    thread, which a forked ingest child could inherit mid-lock (CI: a child
+    process hung 120 s)."""
     if not project_id:
         return
-
-    def run() -> None:
-        try:
-            from app.core import project_identity
-
-            project_identity.refresh(project_id)
-        except Exception:  # noqa: BLE001 -- the stored set stays; logged
-            logger.warning("project %s: identity set not refreshed", project_id, exc_info=True)
-
-    threading.Thread(target=run, name="identity-refresh", daemon=True).start()
+    try:
+        with SessionLocal() as session:
+            row = session.get(Project, project_id)
+            if row is None:
+                return
+            try:
+                stored = json.loads(row.identity) if row.identity else {}
+            except (TypeError, ValueError):
+                stored = {}
+            added = stored.get("added") if isinstance(stored, dict) else None
+            # Admin-added members survive; the derived part is redone on read.
+            row.identity = json.dumps({"stale": True, "added": added or []})
+            session.commit()
+    except Exception:  # noqa: BLE001 -- logged; the next turn still derives a set
+        logger.warning("project %s: identity set not marked stale", project_id, exc_info=True)
 
 
 def create_project(

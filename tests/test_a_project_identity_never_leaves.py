@@ -174,3 +174,68 @@ def test_every_write_path_refreshes_the_stored_set():
     callers = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
                and any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "_identity_changed" for c in ast.walk(n))}
     assert {"create_project", "set_project_profile", "set_project_location", "add_document", "delete_document"} <= callers
+
+
+def test_a_change_marks_the_set_stale_in_its_own_thread_keeping_added_members(monkeypatch):
+    """CI (#1002 first head): a refresh thread started on add_document could
+    be mid-lock when an ingest child forked, and the child hung. A change now
+    only marks the stored set stale, in the writing thread."""
+    from app.core import projects
+
+    class _Row:
+        identity = json.dumps({"derived": ["Qalam Estates"], "added": ["Site X"]})
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, *_a):
+            return _Row
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(projects, "SessionLocal", _Session)
+    import threading
+
+    started = []
+    monkeypatch.setattr(threading.Thread, "start", lambda self: started.append(self.name))
+    projects._identity_changed("p1234567")
+    assert not started, "a write path started a thread"
+    assert json.loads(_Row.identity) == {"stale": True, "added": ["Site X"]}
+
+
+def test_a_stale_set_is_derived_once_on_the_next_read(monkeypatch):
+    from app.core import projects
+
+    state = {"identity": json.dumps({"stale": True, "added": []})}
+    derived = []
+
+    def fake_refresh(pid):
+        derived.append(pid)
+        state["identity"] = json.dumps({"derived": ["Qalam Estates"], "added": []})
+        return ["Qalam Estates"]
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, *_a, **_k):
+            class _R:
+                @staticmethod
+                def scalar_one_or_none():
+                    return state["identity"]
+            return _R()
+
+    monkeypatch.setattr(projects, "SessionLocal", _Session)
+    monkeypatch.setattr(projects, "list_document_names", lambda pid: DOCS)
+    monkeypatch.setattr(pi, "refresh", fake_refresh)
+    assert pi.for_project("p1234567").text("Qalam Estates") == "PRJ-p12345"
+    assert pi.for_project("p1234567").text("Qalam Estates") == "PRJ-p12345"
+    assert derived == ["p1234567"], "derived more than once after one change"
