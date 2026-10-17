@@ -27,6 +27,51 @@ _corpus_refresh_thread: Optional[threading.Thread] = None
 _corpus_refresh_error: Optional[str] = None
 
 
+_keep_warm_thread: Optional[threading.Thread] = None
+_keep_warm_stop = threading.Event()
+
+
+def _keep_warm_interval_s() -> float:
+    """DB_KEEP_WARM_S: seconds between keep-warm round-trips; 0 turns it off.
+    Default 240, inside the 300 s pool recycle window."""
+    raw = (os.getenv("DB_KEEP_WARM_S") or "").strip()
+    try:
+        value = float(raw) if raw else 240.0
+    except ValueError:
+        return 240.0
+    return value if math.isfinite(value) and value >= 0 else 240.0
+
+
+def _keep_warm_loop(interval_s: float) -> None:
+    while not _keep_warm_stop.wait(interval_s):
+        result = probe_database()
+        if not result.get("ok"):
+            logger.warning("DB keep-warm round-trip failed: %s", result.get("error"))
+
+
+def start_db_keep_warm(interval_s: Optional[float] = None) -> Optional[threading.Thread]:
+    """Keep one pooled database connection fresh: a SELECT 1 every interval,
+    in a daemon thread off the event loop. After an idle spell the first
+    request (and /health) otherwise paid a new connect + TLS (~0.6 s) because
+    every pooled connection had passed the recycle window. One thread per
+    process; returns it, or None when turned off."""
+    global _keep_warm_thread
+    interval = _keep_warm_interval_s() if interval_s is None else interval_s
+    if interval <= 0:
+        return None
+    if _keep_warm_thread is not None and _keep_warm_thread.is_alive():
+        return _keep_warm_thread
+    _keep_warm_stop.clear()
+    _keep_warm_thread = threading.Thread(target=_keep_warm_loop, args=(interval,),
+                                         name="db-keep-warm", daemon=True)
+    _keep_warm_thread.start()
+    return _keep_warm_thread
+
+
+def stop_db_keep_warm() -> None:
+    _keep_warm_stop.set()
+
+
 def probe_database(timeout_s: float = 2.0) -> Dict[str, Any]:
     """Real DB round-trip: ``SELECT 1`` via the app's session factory.
 

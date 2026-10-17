@@ -69,11 +69,17 @@ def _engine_kwargs(url: str) -> dict[str, Any]:
         # Override with DB_POOL_SIZE / DB_MAX_OVERFLOW on workers.
         pool_size = max(1, int(os.getenv("DB_POOL_SIZE", "10")))
         max_overflow = max(0, int(os.getenv("DB_MAX_OVERFLOW", "10")))
+        # A connection older than the recycle window is replaced at checkout
+        # (a new connect + TLS, ~0.6 s to the database). The pool hands out
+        # the most recently used connection first (LIFO), so the one the
+        # keep-warm timer (health_probes.start_db_keep_warm) touches is the
+        # one the next request gets, not the oldest idle one.
         return {
             "pool_size": pool_size,
             "max_overflow": max_overflow,
             "pool_pre_ping": True,
-            "pool_recycle": 300,
+            "pool_recycle": max(30, int(os.getenv("DB_POOL_RECYCLE_S", "300"))),
+            "pool_use_lifo": True,
         }
     if url.startswith("sqlite"):
         return {"connect_args": {"timeout": 30.0}}
