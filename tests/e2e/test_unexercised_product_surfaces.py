@@ -25,6 +25,7 @@ from PIL import Image
 from app.main import app
 from tests.conftest import is_extended_boot, requires_construction_kit
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import PW_03
 
 _RUN = uuid.uuid4().hex[:10]
 _FIXTURE_IFC = Path(__file__).resolve().parents[1] / "fixtures" / "sample_office.ifc"
@@ -52,7 +53,7 @@ def client():
 def session(client):
     """Register + login a unique user; create a blank project."""
     email = f"surfaces-{_RUN}@example.com"
-    password = "surfaces-pass-12"
+    password = PW_03
     r = client.post(
         "/v1/users/register",
         json={"email": email, "password": password, "display_name": "Surface Walker"},

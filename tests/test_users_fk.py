@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 import app.core.projects as projects_mod
+from tests._fixture_values import PW_08
 
 
 @pytest.fixture
@@ -30,7 +31,7 @@ def users_db(monkeypatch, tmp_path):
 def test_delete_user_with_projects_blocked(users_db):
     """projects.user_id FK must block deleting a user who owns projects."""
     users_mod, db_mod = users_db
-    owner = users_mod.create_user("owner@example.com", "secret-pw")
+    owner = users_mod.create_user("owner@example.com", PW_08)
     uid = owner["id"]
 
     with db_mod.SessionLocal() as session:
@@ -83,7 +84,7 @@ def test_delete_user_with_projects_blocked_unified_schema(users_db, monkeypatch,
     users_mod._initialized = False
     pm.init_db()
 
-    owner = users_mod.create_user("owner2@example.com", "secret-pw")
+    owner = users_mod.create_user("owner2@example.com", PW_08)
     pm.create_project("Owned project", user_id=owner["id"])
 
     with db_mod.SessionLocal() as session:

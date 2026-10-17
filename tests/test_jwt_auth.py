@@ -3,6 +3,7 @@ import importlib
 import time
 import pytest
 from app.core import jwt_auth as jwt_mod
+from tests._fixture_values import ENV_SECRET_07
 
 
 @pytest.fixture
@@ -27,7 +28,7 @@ def test_secret_key_persisted_to_disk(jwtmod, tmp_path):
 
 def test_explicit_secret_key_env_used(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SECRET_KEY", "explicit-test-secret")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_07)
     mod = importlib.reload(jwt_mod)
     assert mod.decode_token(mod.create_token("uX"))["user_id"] == "uX"
     assert not (tmp_path / ".secret_key").exists()

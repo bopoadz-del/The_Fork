@@ -11,13 +11,14 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._fixture_values import PW_06
 
 
 def _token(c: TestClient) -> str:
     email = f"agpd-{uuid.uuid4().hex[:8]}@x.com"
-    c.post("/v1/users/register", json={"email": email, "password": "password12"})
+    c.post("/v1/users/register", json={"email": email, "password": PW_06})
     return c.post("/v1/users/login",
-                  json={"email": email, "password": "password12"}).json()["token"]
+                  json={"email": email, "password": PW_06}).json()["token"]
 
 
 def test_agents_endpoint_routes_container_action_to_predefined(monkeypatch):

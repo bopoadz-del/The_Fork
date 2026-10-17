@@ -43,6 +43,7 @@ from app.core.rag.retriever import (
     query_asks_for_part_summary_total,
 )
 from app.core.rag.vector_store import Chunk
+from tests._fixture_values import STUB_TOKEN_02
 
 
 LIVE_PREFIX = "Answer only from the client project documents. "
@@ -288,7 +289,7 @@ def test_chunk_states_sparse_footer_and_s2_row():
 async def test_chat_short_circuits_b3_without_calling_llm(monkeypatch):
     """Live 0d9fd23 H3: provider hang / not-found must not empty the turn."""
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
     monkeypatch.setattr(
         "app.agents.runtime.project_is_rag_ready", lambda _pid: True,
     )

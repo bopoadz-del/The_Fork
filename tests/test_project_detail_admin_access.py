@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.dependencies import require_user
 from app.core import projects as store
+from tests._fixture_values import PW_05
 
 
 @pytest.fixture
@@ -23,7 +24,7 @@ def other_users_project():
     # a real second user owns the project, mirroring the eval-fixture rows.
     from app.core import users
     try:
-        seeder = users.create_user("seed@example.com", "pw-seed-123")
+        seeder = users.create_user("seed@example.com", PW_05)
     except ValueError:
         seeder = users.get_user_by_email("seed@example.com")
     p = store.create_project(

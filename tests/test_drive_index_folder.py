@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import pytest
+from tests._fixture_values import STUB_TOKEN_07
 
 
 @pytest.fixture
@@ -144,7 +145,7 @@ async def test_walk_drive_folder_into_project_recurses(isolated_data_dir, monkey
     result = await drive_router._walk_drive_folder_into_project(
         project_id=proj["id"],
         user_id="system",
-        access_token="fake-token",
+        access_token=STUB_TOKEN_07,
         folder_id="root",
         max_files=100,
         max_depth=4,
@@ -176,7 +177,7 @@ async def test_include_extensions_narrows_but_never_widens_the_text_rule(isolate
 
     async def walk(include):
         return await drive_router._walk_drive_folder_into_project(
-            project_id=proj["id"], user_id="system", access_token="fake-token",
+            project_id=proj["id"], user_id="system", access_token=STUB_TOKEN_07,
             folder_id="root", max_files=100, max_depth=4, role="other",
             include_extensions=include,
         )
@@ -211,7 +212,7 @@ async def test_walk_drive_folder_into_project_paginates(isolated_data_dir, monke
     result = await drive_router._walk_drive_folder_into_project(
         project_id=proj["id"],
         user_id="system",
-        access_token="fake-token",
+        access_token=STUB_TOKEN_07,
         folder_id="root",
         max_files=1000,
         max_depth=4,
@@ -237,7 +238,7 @@ async def test_run_drive_folder_import_uses_helper(isolated_data_dir, monkeypatc
     monkeypatch.setattr(drive_mod.doc_index, "maybe_eager_index", lambda *a, **kw: None)
 
     async def fake_token(_user_id):
-        return "fake-token"
+        return STUB_TOKEN_07
 
     monkeypatch.setattr(drive_auth, "get_access_token", fake_token)
 

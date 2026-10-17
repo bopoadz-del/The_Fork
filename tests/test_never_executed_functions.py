@@ -16,6 +16,7 @@ import pytest
 
 from app.core import panels
 from app.core.learning import model_registry
+from tests._fixture_values import ENV_SECRET_09
 
 # ── app/core/panels.py ────────────────────────────────────────────────────
 
@@ -222,7 +223,7 @@ async def test_non_allowlisted_command_is_blocked_without_spawning():
 async def test_the_sandbox_shell_cannot_echo_secrets_out(monkeypatch):
     """audit 6.1: the subprocess env is scrubbed, so a shell command must not
     be able to read SECRET_KEY / DATABASE_URL back out of the sandbox."""
-    monkeypatch.setenv("SECRET_KEY", "super-secret-value-do-not-leak")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_09)
     monkeypatch.setenv("DATABASE_URL", "postgres://leak:leak@host/db")
     from app.blocks.sandbox import SandboxBlock, SandboxPolicy
     block = SandboxBlock()
@@ -233,7 +234,7 @@ async def test_the_sandbox_shell_cannot_echo_secrets_out(monkeypatch):
         "echo MARKER-OK $SECRET_KEY $DATABASE_URL", SandboxPolicy())
     blob = f"{out.get('stdout', '')}{out.get('output', '')}{out.get('stderr', '')}"
     assert "MARKER-OK" in blob, f"the command never actually ran: {out}"
-    assert "super-secret-value-do-not-leak" not in blob, out
+    assert ENV_SECRET_09 not in blob, out
     assert "postgres://leak" not in blob, out
 
 

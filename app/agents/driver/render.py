@@ -20,7 +20,7 @@ from app.lib.source_labels import CALCULATOR_SUFFIX, input_phrase
 
 _LOG = logging.getLogger(__name__)
 _MAX_LIST = 8
-_NOT_OUTPUTS = frozenset({"note", "notes", "standard"})
+_NOT_OUTPUTS = frozenset({"note", "notes", "standard", "defaults_used", "needs_input", "not_computed"})
 
 
 def _spec(calculation: str):
@@ -118,19 +118,88 @@ def _items(value: Any) -> List[str]:
             if not isinstance(v, (dict, list, tuple, set)) and str(v).strip()]
 
 
+def _title(key: str, labels: Dict[str, str]) -> str:
+    return labels.get(key) or input_phrase(key, "").strip().capitalize() or str(key)
+
+
+def _mapping_rows(value: Any) -> List[str]:
+    """A mapping output as labelled rows, one per entry with a plain value."""
+    if not isinstance(value, dict):
+        return []
+    rows = []
+    for key, item in list(value.items())[:_MAX_LIST]:
+        shown = _value(item)
+        if shown is not None:
+            rows.append(f"- {_title(str(key), {})}: {shown}")
+    return rows + _more(len(value))
+
+
+def _record_table(value: Any) -> List[str]:
+    """A list of records as one table: the same columns, in the same order,
+    on every row (a field a record lacks is left blank)."""
+    if not isinstance(value, (list, tuple)) or not value or not all(isinstance(v, dict) for v in value):
+        return []
+    columns: List[str] = []
+    for record in value[:_MAX_LIST]:
+        for key, item in record.items():
+            if key not in columns and _value(item) is not None:
+                columns.append(key)
+    if not columns:
+        return []
+    out = ["| " + " | ".join(_title(c, {}) for c in columns) + " |",
+           "|" + "|".join(" --- " for _ in columns) + "|"]
+    for record in value[:_MAX_LIST]:
+        out.append("| " + " | ".join(_value(record.get(c)) or "" for c in columns) + " |")
+    return out + _more(len(value))
+
+
+def _more(count: int) -> List[str]:
+    """What a capped list left out, said rather than dropped."""
+    return [f"- and {count - _MAX_LIST} more"] if count > _MAX_LIST else []
+
+
+def _defaults_line(envelope: Dict[str, Any]) -> Optional[str]:
+    from app.lib import formula_registry
+
+    result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
+    rows = result.get("defaults_used") or envelope.get("defaults_used") or []
+    if isinstance(rows, dict):
+        rows = [{"parameter": k, "value": v} for k, v in rows.items()]
+    spec = _spec(str(envelope.get("calculation") or ""))
+    declared = formula_registry.parameters(spec) if spec else {}
+    parts = []
+    for row in rows if isinstance(rows, list) else []:
+        # Only an input the formula declares to its users: a switch or an
+        # internal option the formula keeps to itself is not "assumed".
+        if not isinstance(row, dict) or str(row.get("parameter")) not in declared:
+            continue
+        if isinstance(row.get("value"), bool):
+            continue
+        shown = _value(row.get("value"))
+        if shown is not None:
+            label = row.get("label") or input_phrase(str(row.get("parameter") or ""), "").strip()
+            parts.append(f"{label} {shown}")
+    return ("Assumed, not given: " + "; ".join(parts) + ".") if parts else None
+
+
 def result_lines(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> List[str]:
-    """A successful calculation's result: its figures, then each list output's
-    rows, one per line."""
+    """A successful calculation's result: its figures; then each list output
+    as rows, each mapping output as labelled rows, each list of records as a
+    table; then any optional input the run took from a default."""
     outputs, labels, units = _outputs(envelope, inputs)
     lines = []
     shown = _phrases(outputs, labels, units)
     if shown:
         lines.append("Result: " + "; ".join(shown) + ".")
     for key, value in outputs.items():
-        rows = _items(value)
+        rows = _items(value) and ([f"- {row}" for row in _items(value)] + _more(len(value)))
+        rows = rows or _mapping_rows(value) or _record_table(value)
         if rows:
-            lines.append(f"{labels.get(key) or input_phrase(key, '').strip().capitalize()}:")
-            lines += [f"- {row}" for row in rows]
+            lines.append(f"{_title(key, labels)}:")
+            lines += rows
+    defaults = _defaults_line(envelope)
+    if defaults:
+        lines.append(defaults)
     return lines
 
 
@@ -161,7 +230,43 @@ def carried(envelope: Dict[str, Any], inputs: Optional[Dict[str, Any]], answer: 
                 return False
         elif any(row.lower() not in text for row in _items(value)):
             return False
+        elif not _figures_written(value, written, text):
+            return False
     return True
+
+
+def _figures_written(value: Any, written: List[float], text: str) -> bool:
+    """The rows a mapping or a list of records renders (the same capped rows
+    the renderer shows) are all in the answer: every figure and name, and for
+    a mapping every row's label as well -- a table with the right total and
+    invented row names does not carry the result (LANE2)."""
+    if isinstance(value, dict):
+        rows = [(key, item) for key, item in list(value.items())[:_MAX_LIST] if _value(item) is not None]
+        for key, _item in rows:
+            if not _label_written(str(key), text):
+                return False
+        records = [dict(rows)]
+    elif isinstance(value, (list, tuple)) and value and all(isinstance(v, dict) for v in value):
+        records = list(value[:_MAX_LIST])
+    else:
+        records = []
+    for record in records:
+        for item in record.values():
+            if isinstance(item, bool) or isinstance(item, (dict, list, tuple, set)):
+                continue
+            if isinstance(item, (int, float)):
+                if not any(abs(w - item) <= max(abs(item) * 0.005, 0.005) for w in written):
+                    return False
+            elif isinstance(item, str) and item.strip() and item.strip().lower() not in text:
+                return False
+    return True
+
+
+def _label_written(key: str, text: str) -> bool:
+    """A mapping row's label is in the answer: as the renderer titles it, or
+    as the key itself written in words."""
+    forms = {_title(key, {}).lower(), key.lower(), key.replace("_", " ").lower()}
+    return any(form and form in text for form in forms)
 
 
 def _identifier_map() -> Dict[str, str]:

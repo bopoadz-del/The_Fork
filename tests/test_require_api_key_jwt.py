@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.dependencies import require_api_key
 from app.core import jwt_auth, users as users_store
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import GARBAGE_TOKEN, PW_04
 
 
 @pytest.fixture
@@ -44,7 +45,7 @@ def app_client(isolated_users):
 def test_valid_jwt_is_accepted_and_returns_superset_dict(app_client, isolated_users):
     """A valid JWT must be accepted and return all required keys."""
     u_mod, jwt_mod = isolated_users
-    user = u_mod.create_user("apikey-jwt@example.com", "password123")
+    user = u_mod.create_user("apikey-jwt@example.com", PW_04)
     token = jwt_mod.create_token(user["id"])
 
     r = app_client.get("/protected", headers={"Authorization": f"Bearer {token}"})
@@ -82,7 +83,7 @@ def test_the_dev_key_still_works(app_client):
 
 def test_garbage_bearer_token_returns_401(app_client):
     """A garbage bearer token that's neither a valid JWT nor a known API key → 401."""
-    r = app_client.get("/protected", headers={"Authorization": "Bearer garbage.token.value"})
+    r = app_client.get("/protected", headers={"Authorization": "Bearer " + GARBAGE_TOKEN})
     assert r.status_code == 401
 
 

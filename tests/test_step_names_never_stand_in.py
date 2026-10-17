@@ -33,6 +33,7 @@ from app.agents import runtime
 from app.lib.construction_formulas import run_calculation
 from app.lib.formula_registry import all_specs, parameters
 from app.lib.source_labels import _registry_maps
+from tests._fixture_values import ENV_SECRET_01
 
 FACT = "The slab is 250 mm thick."
 TOTAL = "the BOQ total is 1,250,000 AED."
@@ -259,7 +260,7 @@ def _agent(name="project-assistant", blocks=("construction",)):
 
 
 def _stream(monkeypatch, ask, replies, agent=None):
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", ENV_SECRET_01)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("SYNTHESIS_STREAMING", "0")
     told: list[str] = []

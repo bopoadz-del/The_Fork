@@ -2,6 +2,7 @@
 import importlib
 import pytest
 from app.core import users as users_mod
+from tests._fixture_values import PW_07, PW_11, PW_12, PW_13
 
 
 @pytest.fixture
@@ -104,24 +105,24 @@ def test_ensure_system_user_concurrent_calls_do_not_raise(users):
 
 def test_create_user_and_password_round_trip(users):
     users.init_db()
-    u = users.create_user("alice@example.com", "s3cret-pw", display_name="Alice")
+    u = users.create_user("alice@example.com", PW_07, display_name="Alice")
     assert u["email"] == "alice@example.com"
     assert u["role"] == "user"
     assert u["id"] != "system"
     assert "password_hash" not in u
     stored = users.get_user_by_email("alice@example.com")
-    assert users.verify_password("s3cret-pw", stored["password_hash"], stored["salt"]) is True
+    assert users.verify_password(PW_07, stored["password_hash"], stored["salt"]) is True
     assert users.verify_password("wrong-pw", stored["password_hash"], stored["salt"]) is False
 
 
 def test_create_user_rejects_duplicate_email(users):
     users.init_db()
-    users.create_user("dup@example.com", "pw1")
+    users.create_user("dup@example.com", PW_11)
     with pytest.raises(ValueError):
-        users.create_user("DUP@example.com", "pw2")  # case-insensitive
+        users.create_user("DUP@example.com", PW_12)  # case-insensitive
 
 
 def test_create_user_normalizes_email_lowercase(users):
     users.init_db()
-    u = users.create_user("MixedCase@Example.com", "pw")
+    u = users.create_user("MixedCase@Example.com", PW_13)
     assert u["email"] == "mixedcase@example.com"
