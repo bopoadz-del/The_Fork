@@ -43,6 +43,7 @@ from app.core.rag.retriever import (
     priced_boq_compose_enabled,
 )
 from app.core.rag.vector_store import Chunk
+from tests._fixture_values import STUB_TOKEN_02
 
 
 LIVE_PREFIX = "Answer only from the client project documents. "
@@ -397,7 +398,7 @@ async def test_chat_short_circuits_b4_without_calling_llm(monkeypatch):
     stay 49/49 while OpenRouter is owner-gated — compose from excerpts.
     """
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
     monkeypatch.setattr(
         "app.agents.runtime.project_is_rag_ready", lambda _pid: True,
     )
@@ -446,7 +447,7 @@ async def test_chat_short_circuits_b4_without_calling_llm(monkeypatch):
 @pytest.mark.asyncio
 async def test_chat_stream_short_circuits_b4_without_calling_llm(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
     monkeypatch.setattr(
         "app.agents.runtime.project_is_rag_ready", lambda _pid: True,
     )
@@ -533,7 +534,7 @@ def test_short_circuit_b5_kill_switch_restores_provider_hop(monkeypatch):
 async def test_chat_short_circuits_b5_without_calling_llm(monkeypatch):
     """Same provider-unavailable fix as #547 B4, for D549.2."""
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
     monkeypatch.setattr(
         "app.agents.runtime.project_is_rag_ready", lambda _pid: True,
     )

@@ -354,7 +354,7 @@ def gen_tender() -> Iterator[Dict[str, str]]:
         (
             "two-bidder local-content tiebreaker",
             [
-                {"name": "Riyadh Bldrs", "technical_score": 78, "commercial_score": 82, "hse_score": 80, "local_content_score": 95},
+                {"name": "Bidder A", "technical_score": 78, "commercial_score": 82, "hse_score": 80, "local_content_score": 95},
                 {"name": "Dubai Civils", "technical_score": 80, "commercial_score": 82, "hse_score": 80, "local_content_score": 40},
             ],
         ),

@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core import drive_auth
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import ENV_SECRET_05
 
 H = {"Authorization": "Bearer " + DEV_KEY}
 
@@ -12,7 +13,7 @@ H = {"Authorization": "Bearer " + DEV_KEY}
 def tmp_data(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", ENV_SECRET_05)
     monkeypatch.setenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/v1/drive/callback")
     yield
 

@@ -16,6 +16,7 @@ import json
 import pytest
 
 from app.core.loop_watchdog import LagMonitor
+from tests._fixture_values import STUB_TOKEN_06
 
 # Measures the event loop under its own simulated load: CI runs it alone, not
 # beside xdist workers competing for the runner's cores (pytest.ini: serial).
@@ -38,7 +39,7 @@ def seeded(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_06)
     from app.core.rag import embeddings as emb, vector_store as vs
     emb.reset_embedder_cache()
     vs.reset_store_cache()

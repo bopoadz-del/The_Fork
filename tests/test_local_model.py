@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._fixture_values import STUB_TOKEN_05
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -190,7 +191,7 @@ async def test_chat_falls_back_to_cloud_when_local_unavailable(
     from app.blocks.chat import ChatBlock
 
     monkeypatch.setenv("LOCAL_MODEL_UNAVAILABLE", "1")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_05)
 
     captured = {}
     async def fake_call(self, message, model, max_tokens, temperature, stream, key, cfg=None, **kwargs):
@@ -223,7 +224,7 @@ async def test_chat_uses_local_model_when_available(isolated_data_dir, monkeypat
         cloud_called["yes"] = True
         return {"status": "success", "response": "cloud"}
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_05)
 
     cb = ChatBlock()
     result = await cb.process({"text": "hello"}, {"use_local_model": True})
@@ -250,7 +251,7 @@ async def test_chat_falls_back_when_generate_returns_none(
         cloud_called["yes"] = True
         return {"status": "success", "response": "cloud rescue", "provider": "deepseek"}
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_05)
 
     cb = ChatBlock()
     result = await cb.process({"text": "hello"}, {"use_local_model": True})
@@ -276,7 +277,7 @@ async def test_chat_without_use_local_model_unchanged(isolated_data_dir, monkeyp
     async def fake_call(self, *a, **kw):
         return {"status": "success", "response": "cloud", "provider": "deepseek"}
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_05)
 
     cb = ChatBlock()
     result = await cb.process({"text": "hello"})  # no use_local_model param

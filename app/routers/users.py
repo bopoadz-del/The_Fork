@@ -1,6 +1,7 @@
 """User account API — register, login, me, email verification. Stream A."""
 import logging
 import os
+import secrets
 import sys
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,8 +9,8 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.core import email as email_service
-from app.core import users as users_store
 from app.core import jwt_auth
+from app.core import users as users_store
 from app.dependencies import require_user
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,9 @@ _VERIFY_TTL_SECONDS = 24 * 60 * 60
 
 # Dummy credentials for constant-time login (prevents email enumeration via
 # timing side-channel). Computed once at import so no PBKDF2 is run per request.
-_DUMMY_CREDS = users_store.hash_password("dummy-password-for-timing")
+# The dummy is a random value drawn at startup: it is never written in the
+# source and never matches any account's password.
+_DUMMY_CREDS = users_store.hash_password(secrets.token_urlsafe(24))
 _DUMMY_HASH = _DUMMY_CREDS["hash"]
 _DUMMY_SALT = _DUMMY_CREDS["salt"]
 

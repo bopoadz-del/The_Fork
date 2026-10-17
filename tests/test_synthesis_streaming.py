@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from app.agents.runtime import Agent, _SYNTH_CUTOFF_NOTICE, _SynthStreamError
+from tests._fixture_values import STUB_TOKEN_04
 
 
 # ── DeepSeek config so the streaming gate (provider in the allowlist) opens ──
@@ -43,7 +44,7 @@ def deepseek_streaming(monkeypatch):
     """Enable the streaming path deterministically: deepseek provider, flag on,
     an api key present."""
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
 
 
@@ -224,7 +225,7 @@ def test_empty_stream_triggers_forced_retry(deepseek_streaming):
 
 def test_flag_off_never_streams(monkeypatch):
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
     monkeypatch.delenv("SYNTHESIS_STREAMING", raising=False)  # OFF
     call_llm = _tool_then_final()
 
@@ -275,7 +276,7 @@ def test_deepseek_the_production_primary_reaches_the_streaming_path(monkeypatch)
         "env_key": "DEEPSEEK_API_KEY",
         "default_model": "deepseek-chat",
     })
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
     call_llm = _tool_then_final()
 

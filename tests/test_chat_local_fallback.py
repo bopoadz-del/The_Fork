@@ -19,6 +19,7 @@ import inspect
 import pytest
 
 from app.blocks.chat import ChatBlock
+from tests._fixture_values import STUB_KEY_08, STUB_KEY_09, STUB_KEY_12
 
 
 @pytest.mark.asyncio
@@ -54,9 +55,9 @@ async def test_deepseek_402_does_not_serve_offline_when_fallback_is_ready(monkey
     from app.core.health_probes import probe_llm
 
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-secret")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_KEY_08)
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-secret")
+    monkeypatch.setenv("OPENROUTER_API_KEY", STUB_KEY_09)
     monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
     monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
 
@@ -116,7 +117,7 @@ async def test_cloud_path_routes_through_llm_config_provider(monkeypatch):
     provider's key, URL and default model to _call_cloud."""
 
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-secret")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_KEY_08)
     monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
 
     calls: list[dict] = []
@@ -135,7 +136,7 @@ async def test_cloud_path_routes_through_llm_config_provider(monkeypatch):
     assert result["status"] == "success"
     assert result["text"] == "hi from deepseek"
     assert len(calls) == 1
-    assert calls[0]["api_key"] == "ds-secret"
+    assert calls[0]["api_key"] == STUB_KEY_08
     assert calls[0]["url"] == "https://api.deepseek.com/v1/chat/completions"
     # Unpinned model uses the active provider default.
     assert calls[0]["model"] == "deepseek-chat"
@@ -241,11 +242,11 @@ async def test_call_cloud_includes_bearer_when_api_key_set(monkeypatch):
         max_tokens=64,
         temperature=0.2,
         stream=False,
-        api_key="sk-xxx",
+        api_key=STUB_KEY_12,
         cfg={"provider": "deepseek", "url": "https://api.deepseek.com/v1/chat/completions"},
     )
 
-    assert captured["headers"].get("Authorization") == "Bearer sk-xxx"
+    assert captured["headers"].get("Authorization") == "Bearer " + STUB_KEY_12
 
 
 def test_chat_block_source_has_no_forbidden_provider_names():
@@ -330,7 +331,7 @@ async def test_call_cloud_posts_a_provider_fixed_temperature(monkeypatch):
         max_tokens=64,
         temperature=0.7,
         stream=False,
-        api_key="sk-xxx",
+        api_key=STUB_KEY_12,
         cfg={
             "provider": "deepseek",
             "url": "https://api.deepseek.com/v1/chat/completions",

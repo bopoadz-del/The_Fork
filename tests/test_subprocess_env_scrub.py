@@ -15,6 +15,7 @@ import os
 import pytest
 
 from app.core.subprocess_env import is_secret_env_name, scrubbed_env
+from tests._fixture_values import ENV_SECRET_11, ENV_SECRET_12, ENV_SECRET_13
 
 
 # ── unit: the denylist ───────────────────────────────────────────────────────
@@ -55,9 +56,9 @@ def test_harmless_overstrip_of_nonsecret_config_is_acceptable():
 
 
 def test_scrubbed_env_strips_secrets_keeps_functional(monkeypatch):
-    monkeypatch.setenv("SECRET_KEY", "top-secret")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_11)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:pw@h/db")
-    monkeypatch.setenv("GROQ_API_KEY", "gsk_live")
+    monkeypatch.setenv("GROQ_API_KEY", ENV_SECRET_12)
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("FRONTEND_URL", "https://theshovel.ai")
     env = scrubbed_env()
@@ -79,7 +80,7 @@ def test_scrubbed_env_extra_overrides_win(monkeypatch):
 def test_python_code_block_subprocess_cannot_read_secret(monkeypatch):
     from app.blocks import code as code_mod
 
-    monkeypatch.setenv("SECRET_KEY", "PLANTED-SECRET-VALUE")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_13)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:PLANTED_PW@h/db")
     snippet = (
         "import os\n"
