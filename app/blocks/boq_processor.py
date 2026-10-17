@@ -5,6 +5,14 @@ import logging
 import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
+# The app's own database and crypto modules load with the block (the server
+# imports both at startup anyway). Their first import -- SQLAlchemy and the
+# cryptography extension -- holds the GIL even in a worker thread, and in a
+# cold process froze the event loop up to 0.41 s during the first parse (CI
+# test-timing). The parse libraries (pandas, pdfplumber) stay lazy: the boot
+# check keeps them out of startup.
+from app.core import doc_index as _doc_index  # noqa: F401
+from app.core import file_crypto as _file_crypto  # noqa: F401
 from app.core.universal_base import UniversalBlock
 from app.lib.boq_units import reconcile_unit
 
