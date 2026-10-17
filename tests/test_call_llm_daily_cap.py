@@ -21,6 +21,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 import pytest
 
 from app.agents.runtime import Agent
+from tests._fixture_values import ENV_SECRET_02
 
 
 def _make_agent():
@@ -91,7 +92,7 @@ def _seed_usage(user_id: str, cost_usd: float):
 
 def test_call_llm_short_circuits_when_over_cap(fresh_usage_db, monkeypatch):
     monkeypatch.setenv("USAGE_DAILY_CAP_USD", "1.00")
-    monkeypatch.setenv("GROQ_API_KEY", "x")  # force groq path
+    monkeypatch.setenv("GROQ_API_KEY", ENV_SECRET_02)  # force groq path
     _seed_usage("user-A", 1.50)
 
     agent = _make_agent()
@@ -109,7 +110,7 @@ def test_call_llm_short_circuits_when_over_cap(fresh_usage_db, monkeypatch):
 
 def test_call_llm_passes_through_when_under_cap(fresh_usage_db, monkeypatch):
     monkeypatch.setenv("USAGE_DAILY_CAP_USD", "10.00")
-    monkeypatch.setenv("GROQ_API_KEY", "x")
+    monkeypatch.setenv("GROQ_API_KEY", ENV_SECRET_02)
     _seed_usage("user-B", 0.10)
 
     agent = _make_agent()
@@ -132,7 +133,7 @@ def test_call_llm_passes_through_when_under_cap(fresh_usage_db, monkeypatch):
 
 def test_call_llm_ignores_cap_when_no_user_id(fresh_usage_db, monkeypatch):
     monkeypatch.setenv("USAGE_DAILY_CAP_USD", "0.01")
-    monkeypatch.setenv("GROQ_API_KEY", "x")
+    monkeypatch.setenv("GROQ_API_KEY", ENV_SECRET_02)
     _seed_usage("", 99.0)  # anonymous bucket already way over
 
     agent = _make_agent()
@@ -157,7 +158,7 @@ def test_call_llm_ignores_invalid_cap(fresh_usage_db, monkeypatch, cap_env):
         monkeypatch.delenv("USAGE_DAILY_CAP_USD", raising=False)
     else:
         monkeypatch.setenv("USAGE_DAILY_CAP_USD", cap_env)
-    monkeypatch.setenv("GROQ_API_KEY", "x")
+    monkeypatch.setenv("GROQ_API_KEY", ENV_SECRET_02)
     _seed_usage("user-C", 100.0)
 
     agent = _make_agent()
@@ -177,7 +178,7 @@ def test_call_llm_ignores_invalid_cap(fresh_usage_db, monkeypatch, cap_env):
 
 def test_call_llm_fails_open_when_tracker_raises(fresh_usage_db, monkeypatch):
     monkeypatch.setenv("USAGE_DAILY_CAP_USD", "1.00")
-    monkeypatch.setenv("GROQ_API_KEY", "x")
+    monkeypatch.setenv("GROQ_API_KEY", ENV_SECRET_02)
 
     agent = _make_agent()
     fake = MagicMock()

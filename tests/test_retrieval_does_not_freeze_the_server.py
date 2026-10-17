@@ -13,6 +13,7 @@ import time
 import pytest
 
 from app.agents import runtime as rt
+from tests._fixture_values import STUB_TOKEN_06
 
 # Measures the event loop under its own simulated load: CI runs it alone, not
 # beside xdist workers competing for the runner's cores (pytest.ini: serial).
@@ -58,7 +59,7 @@ async def _longest_gap_while(coro_factory):
 def agent(monkeypatch):
     rt.load_agents()
     monkeypatch.setattr(rt, "rag_inject", _slow_rag_inject)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_06)
     # Past the "project has no documents" guard, so the turn reaches retrieval.
     monkeypatch.setattr(rt, "project_is_rag_ready", lambda pid: True)
     a = rt.AGENT_REGISTRY["project-assistant"]

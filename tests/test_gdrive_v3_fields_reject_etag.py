@@ -14,6 +14,7 @@ from app.core.gdrive_service import (
     list_folder_files,
 )
 from app.core.ingest_reconcile import resume_source_changed, source_content_token
+from tests._fixture_values import STUB_TOKEN_15
 
 _FOLDER = "synthFolder0001"
 _FILE_ID = "synthFileId01"
@@ -95,7 +96,7 @@ def drive(monkeypatch):
 
     monkeypatch.setattr(
         "app.core.gdrive_service._mint_access_token",
-        lambda: "synthetic-token",
+        lambda: STUB_TOKEN_15,
     )
     monkeypatch.setattr("httpx.Client", _client)
     return calls

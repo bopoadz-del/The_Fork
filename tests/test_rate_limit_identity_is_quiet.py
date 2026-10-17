@@ -18,6 +18,7 @@ through the entire incident.
 """
 
 from app import main as app_main
+from tests._fixture_values import API_KEY_A, API_KEY_B, API_KEY_C, GARBAGE_TOKEN
 
 
 class _Req:
@@ -74,7 +75,7 @@ def _identity(req, _unused=None):
 
 def test_api_key_caller_is_identified_without_logging():
     """The regression: a non-JWT bearer token must not produce a warning."""
-    ident = _identity(_Req("Bearer cb_live_not_a_jwt_at_all"))
+    ident = _identity(_Req("Bearer " + API_KEY_A))
     assert ident.startswith("key:"), ident
     assert not _identity.records, (
         "an API key is not a JWT - that is the normal path and must be silent; "
@@ -103,7 +104,7 @@ def test_unexpected_failure_is_still_loud(monkeypatch):
         raise RuntimeError("signing secret unavailable")
 
     monkeypatch.setattr(app_main._jwt_auth, "decode_token", _boom)
-    ident = _identity(_Req("Bearer whatever"))
+    ident = _identity(_Req("Bearer " + GARBAGE_TOKEN))
     assert ident.startswith("key:")
     # Diagnostic, not decoration: an earlier CI-only failure here was
     # indistinguishable between "the warning was not emitted" and "the patched
@@ -125,7 +126,7 @@ def test_anonymous_caller_falls_back_to_ip():
 
 def test_same_key_yields_a_stable_identity():
     """Rate limiting is meaningless if the identity churns per request."""
-    a = _identity(_Req("Bearer cb_live_same_key"))
-    b = _identity(_Req("Bearer cb_live_same_key"))
-    c = _identity(_Req("Bearer cb_live_other_key"))
+    a = _identity(_Req("Bearer " + API_KEY_B))
+    b = _identity(_Req("Bearer " + API_KEY_B))
+    c = _identity(_Req("Bearer " + API_KEY_C))
     assert a == b and a != c

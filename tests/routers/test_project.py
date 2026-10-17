@@ -12,8 +12,9 @@ from app.dependencies import require_user
 from app.routers import project as project_router
 from app.core.session_store import InMemorySessionStore
 from app.schemas.project_session import ProjectSession
+from tests._fixture_values import STUB_KEY_07
 
-_HEADERS = {"Authorization": "Bearer test-token"}
+_HEADERS = {"Authorization": "Bearer " + STUB_KEY_07}
 
 
 class _MockReasoner:

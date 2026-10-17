@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core.doc_index import _load_index
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import PW_06
 
 # Run-unique suffix so parallel test runs don't collide on user emails.
 _RUN = uuid.uuid4().hex[:8]
@@ -32,9 +33,9 @@ def client():
 def _user_token(client, email):
     """Register + login a user; return the JWT token string."""
     client.post("/v1/users/register",
-                json={"email": email, "password": "password12"})
+                json={"email": email, "password": PW_06})
     r = client.post("/v1/users/login",
-                    json={"email": email, "password": "password12"})
+                    json={"email": email, "password": PW_06})
     return r.json()["token"]
 
 

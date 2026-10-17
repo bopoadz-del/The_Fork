@@ -33,6 +33,7 @@ from unittest.mock import patch
 import pytest
 
 from app.agents.runtime import _EMPTY_RESPONSE_FALLBACK, Agent
+from tests._fixture_values import STUB_TOKEN_04
 
 _DEEPSEEK_CFG = {
     "provider": "deepseek",
@@ -47,7 +48,7 @@ LIVE_D1 = (
     "specifically for that appointment."
 )
 LIVE_E1 = "I'm searching the executed contract volume for the Delay Damages figure."
-REAL_ANSWER = "The Engineer's Representative is Barry Muir (AB-2023-101, Vol 1)."
+REAL_ANSWER = "The Engineer's Representative is Project Signatory (AB-2023-101, Vol 1)."
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +59,7 @@ def _no_predispatch(monkeypatch):
 @pytest.fixture
 def deepseek_streaming(monkeypatch):
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
     monkeypatch.setenv("CHAT_STREAM_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("CHAT_STREAM_HEARTBEAT_SECONDS", "20")
@@ -137,7 +138,7 @@ def test_the_promise_is_never_flushed_to_the_client(deepseek_streaming):
 
 def test_the_retry_answer_is_what_the_user_sees(deepseek_streaming):
     events, state = _run(_pa_agent(), LIVE_D1, REAL_ANSWER)
-    assert "Barry Muir" in _tokens(events)
+    assert "Project Signatory" in _tokens(events)
     assert state["n"] >= 2, "the forced retry never ran"
     assert False in state["with_tools"], "the retry must disable tools"
 
@@ -165,21 +166,21 @@ def test_a_real_streamed_answer_is_untouched(deepseek_streaming):
     """No retry, no held tokens, for an answer that answers."""
     events, state = _run(_pa_agent(), REAL_ANSWER, "SHOULD NOT BE USED")
     shown = _tokens(events)
-    assert "Barry Muir" in shown
+    assert "Project Signatory" in shown
     assert "SHOULD NOT BE USED" not in shown
     assert state["n"] == 1, "synthesis should not have gone through _call_llm"
 
 
 def test_an_answer_that_merely_mentions_searching_is_not_a_promise(deepseek_streaming):
     """'Search results show...' is a finding, not a dead end."""
-    answer = "Search results show the Engineer's Representative is Barry Muir."
+    answer = "Search results show the Engineer's Representative is Project Signatory."
     events, state = _run(_pa_agent(), answer, "SHOULD NOT BE USED")
-    assert "Barry Muir" in _tokens(events)
+    assert "Project Signatory" in _tokens(events)
     assert state["n"] == 1
 
 
 def test_an_empty_stream_still_retries(deepseek_streaming):
     """The behaviour this branch already had must survive."""
     events, state = _run(_pa_agent(), "", REAL_ANSWER)
-    assert "Barry Muir" in _tokens(events)
+    assert "Project Signatory" in _tokens(events)
     assert state["n"] >= 2

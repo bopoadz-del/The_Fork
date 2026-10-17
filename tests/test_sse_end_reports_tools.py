@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from app.agents.runtime import Agent
+from tests._fixture_values import STUB_TOKEN_02
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +29,7 @@ def _stub_llm_key(monkeypatch):
     a key we control regardless of the developer's LLM_PROVIDER."""
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
 
 
 def _agent():

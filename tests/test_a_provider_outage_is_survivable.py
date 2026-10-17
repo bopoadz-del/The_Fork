@@ -26,9 +26,10 @@ import httpx
 import pytest
 
 from app.agents.runtime import DEEPSEEK_API_URL, OPENROUTER_API_URL
+from tests._fixture_values import PW_06, STUB_TOKEN_12, STUB_TOKEN_14
 
-DS_KEY = "ds-TESTKEY-1111"
-OR_KEY = "or-TESTKEY-2222"
+DS_KEY = STUB_TOKEN_12
+OR_KEY = STUB_TOKEN_14
 PRIMARY = "PRIMARY says: a programme sequences the works in time."
 FALLBACK = "FALLBACK says: a programme sequences the works in time."
 UPSTREAM = '{"error":{"message":"upstream exploded on node gpu-7 req=zz9","type":"server_error"}}'
@@ -165,9 +166,9 @@ def _ask(message="Explain in one sentence what a construction programme is."):
 
     with TestClient(app) as c:
         email = f"llm-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post("/v1/users/login",
-                       json={"email": email, "password": "password12"}).json()["token"]
+                       json={"email": email, "password": PW_06}).json()["token"]
         r = c.post("/v1/chat/stream", headers={"Authorization": f"Bearer {token}"},
                    json={"message": message, "history": [],
                          "conversation_id": f"llm-{uuid.uuid4().hex[:8]}"})

@@ -23,6 +23,7 @@ from app.core.cde.aconex import AconexCdeClient
 from app.core.cde.types import CdeMailDraft
 from app.main import app
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import ENV_SECRET_03, ENV_SECRET_04
 
 H = {"Authorization": "Bearer " + DEV_KEY}
 
@@ -102,7 +103,7 @@ async def test_unconfigured_client_fails_closed(monkeypatch):
 
 def test_aconex_constructor_fails_closed_when_flag_off(monkeypatch):
     monkeypatch.setenv("ACONEX_ENABLED", "false")
-    monkeypatch.setenv("ACONEX_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("ACONEX_ACCESS_TOKEN", ENV_SECRET_03)
     with pytest.raises(CdeNotConfiguredError):
         AconexCdeClient(access_token="tok")
 
@@ -304,7 +305,7 @@ def test_connectors_mode_flag_when_connected_without_oauth(client, monkeypatch):
 
 def test_connectors_mode_oauth_when_enabled_and_flagged(client, monkeypatch):
     monkeypatch.setenv("ACONEX_ENABLED", "true")
-    monkeypatch.setenv("ACONEX_ACCESS_TOKEN", "live-token")
+    monkeypatch.setenv("ACONEX_ACCESS_TOKEN", ENV_SECRET_04)
     proj = _new_project(client, "OAuth Mode")
     client.post(
         f"/v1/projects/{proj['id']}/connectors/aconex",

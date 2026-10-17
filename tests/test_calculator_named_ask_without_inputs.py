@@ -38,6 +38,7 @@ from app.lib.construction_formulas import (
 )
 from app.lib.formula_registry import all_specs, parameters
 from app.lib.source_labels import plain_registry_text
+from tests._fixture_values import ENV_SECRET_01
 
 _FRAMES = (
     "What is the {d}?",
@@ -178,7 +179,7 @@ def test_dispatch_in_site_text_is_left_as_written(text):
 @pytest.mark.parametrize("name,ask", _NAMED_WITHOUT_INPUTS[::2])
 def test_a_turn_with_no_figures_ends_on_the_question(monkeypatch, name, ask):
     """The whole stream, with a model that repeats what the platform told it."""
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", ENV_SECRET_01)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("SYNTHESIS_STREAMING", "0")
     question = run_calculation(name, {})["question"]

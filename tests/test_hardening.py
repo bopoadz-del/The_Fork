@@ -2,6 +2,7 @@
 
 import pytest
 from tests._dev_key import DEV_KEY
+from tests._fixture_values import ENV_SECRET_05, ENV_SECRET_06, PW_06, STUB_TOKEN_16
 
 
 # ── file_crypto: decrypt fails loud on a key mismatch ───────────────────────────
@@ -47,7 +48,7 @@ def test_production_startup_requires_secret_key(monkeypatch):
 
     # With SECRET_KEY and DATABASE_URL set, the next required prod secret is
     # DATA_ENCRYPTION_KEY — encryption at rest is not optional in production.
-    monkeypatch.setenv("SECRET_KEY", "a-real-secret")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_06)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/test")
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     with pytest.raises(RuntimeError, match="DATA_ENCRYPTION_KEY"):
@@ -59,7 +60,7 @@ def test_production_startup_requires_data_encryption_key(monkeypatch):
     from app.main import _validate_startup_env
 
     monkeypatch.setenv("ENV", "production")
-    monkeypatch.setenv("SECRET_KEY", "a-real-secret")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_06)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/test")
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     with pytest.raises(RuntimeError, match="DATA_ENCRYPTION_KEY"):
@@ -69,9 +70,9 @@ def test_production_startup_requires_data_encryption_key(monkeypatch):
 def _prod_env_complete(monkeypatch):
     """Minimum env for production startup validation to succeed."""
     monkeypatch.setenv("ENV", "production")
-    monkeypatch.setenv("SECRET_KEY", "a-real-secret")
+    monkeypatch.setenv("SECRET_KEY", ENV_SECRET_06)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/test")
-    monkeypatch.setenv("DATA_ENCRYPTION_KEY", "test-fernet-key-not-used")
+    monkeypatch.setenv("DATA_ENCRYPTION_KEY", STUB_TOKEN_16)
     monkeypatch.setenv("CEREBRUM_VIRGIN", "false")
     monkeypatch.setenv("CEREBRUM_DOMAIN_KITS", "construction")
 
@@ -131,9 +132,9 @@ def test_doc_types_mutation_is_admin_only():
 
     with TestClient(app) as c:
         email = f"dt-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post(
-            "/v1/users/login", json={"email": email, "password": "password12"}
+            "/v1/users/login", json={"email": email, "password": PW_06}
         ).json()["token"]
         user = {"Authorization": f"Bearer {token}"}
 
@@ -160,9 +161,9 @@ def test_code_blocks_are_admin_only_via_execute():
 
     with TestClient(app) as c:
         email = f"ex-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post(
-            "/v1/users/login", json={"email": email, "password": "password12"}
+            "/v1/users/login", json={"email": email, "password": PW_06}
         ).json()["token"]
         user = {"Authorization": f"Bearer {token}"}
 
@@ -189,9 +190,9 @@ def test_code_blocks_are_admin_only_via_chain():
 
     with TestClient(app) as c:
         email = f"ch-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post(
-            "/v1/users/login", json={"email": email, "password": "password12"}
+            "/v1/users/login", json={"email": email, "password": PW_06}
         ).json()["token"]
         user = {"Authorization": f"Bearer {token}"}
 
@@ -346,16 +347,16 @@ def test_drive_token_is_per_user(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", ENV_SECRET_05)
 
     from app.main import app
     from app.core import drive_auth
 
     with TestClient(app) as c:
         email = f"drv-{uuid.uuid4().hex[:8]}@x.com"
-        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        c.post("/v1/users/register", json={"email": email, "password": PW_06})
         token = c.post(
-            "/v1/users/login", json={"email": email, "password": "password12"}
+            "/v1/users/login", json={"email": email, "password": PW_06}
         ).json()["token"]
         user_b = {"Authorization": f"Bearer {token}"}
 
