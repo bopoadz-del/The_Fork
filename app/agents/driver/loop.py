@@ -240,6 +240,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
     used: List[str] = []
     ran: List[tuple] = []  # (tool, arguments) of every tool run, for the credit lines
     computed: List[tuple] = []  # (envelope, inputs) of every calculation that succeeded
+    tabled: List[list] = []  # every list of per-period / per-item rows another tool returned
     model_answered = False
     failed: List[tuple] = []  # (tool, its own error) of every run that failed
     succeeded = False  # any tool run this turn came back ok
@@ -434,6 +435,8 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                     questions.append(str(envelope["question"]).strip())
             else:
                 shown = json.dumps(_without_missing_pages(result_of_call), default=str)[:_TOOL_RESULT_CHARS]
+                if isinstance(envelope, dict) and envelope.get("status") == "success":
+                    tabled.extend(render.record_lists(envelope))
             msgs.append({**tool_msg, "content": shown})
             evidence.append({**tool_msg, "content": full})
         # A calculator that rejected or lacks an input ends the turn with its
@@ -520,6 +523,20 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             event = await off_loop(_release, piece, model_text=False)
             if event:
                 yield event
+    if model_answered:
+        # Rows a tool returned per period or per item reach the user as one
+        # row each (Lane 1: a cash flow turned sideways, or Month 1 as
+        # bullets): when the answer shows a list but not row by row, the
+        # list is added as a table in that orientation.
+        for rows in tabled:
+            written = "".join(sent)
+            if not render.rows_presented(rows, written) or render.rows_carried(rows, written):
+                continue
+            block = "\n".join(render.record_table(rows))
+            if block:
+                event = _release("\n\n" + block + "\n", model_text=False)
+                if event:
+                    yield event
     from app.agents import citation_provenance as cp
 
     # Once, at the end: the calculator credit the answer does not carry, and
