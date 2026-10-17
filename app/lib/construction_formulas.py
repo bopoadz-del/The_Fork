@@ -2537,6 +2537,33 @@ def _bare_figure(value: Any) -> Optional[float]:
     return None
 
 
+_LEADING_FIGURE_RE = re.compile(r"^\s*(\d+(?:,\d{3})*(?:\.\d+)?)(?=\s|[A-Za-z%/]|$)")
+
+
+def _restore_written_signs(params: Dict[str, Any], user_words: str) -> Dict[str, Any]:
+    """Every figure the caller sent -- a number, or a string that starts with
+    one ("120 m2/day") -- keeps the sign the user wrote: when the user's own
+    words write that figure only with a minus, the minus goes back, so the
+    formula sees the user's input and refuses or uses it as written. The
+    user's words are this turn's ask, never a paraphrase of it: a model that
+    writes "120 m2/day" in its own text has not shown the user wrote 120."""
+    if not user_words:
+        return params
+    out = dict(params)
+    for key, val in params.items():
+        if _is_junk_key(key) or isinstance(val, bool):
+            continue
+        if isinstance(val, (int, float)):
+            if val > 0 and _written_only_negative(float(val), user_words):
+                out[key] = -val
+        elif isinstance(val, str):
+            m = _LEADING_FIGURE_RE.match(val)
+            figure = _ask_float(m.group(1)) if m else None
+            if figure and figure > 0 and _written_only_negative(figure, user_words):
+                out[key] = val[:m.start(1)] + "-" + val[m.start(1):]
+    return out
+
+
 def _call_unit(params: Dict[str, Any]) -> Optional[str]:
     """The one unit a call states for its figures (``"unit": "ft"``)."""
     for source in [params] + [coerce_calc_params(params.get(k)) for k in _FLATTEN_NEST_KEYS]:
@@ -2712,6 +2739,10 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         positional = _pop_positional(params)
     else:
         params.pop(_POSITIONAL_KEY, None)
+    # A minus sign the user wrote survives the call, by any key and in any
+    # form the caller chose (LANE2 -120: the model sent productivity=120,
+    # or "120 m2/day", or wrote its own positive paraphrase in ``text``).
+    params = _restore_written_signs(params, _CURRENT_ASK.get() or _ask_blob(params))
     caller_figures = {key: figure for key, val in params.items()
                       if not _is_junk_key(key) and (figure := _bare_figure(val)) is not None}
     # The keys the caller sent, before the ask's words are read for more: an

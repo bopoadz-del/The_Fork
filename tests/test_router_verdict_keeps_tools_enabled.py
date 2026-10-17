@@ -27,6 +27,7 @@ import json
 import pytest
 
 import app.agents.runtime as rt
+from tests._fixture_values import STUB_KEY_11
 
 
 def _router_tool_call():
@@ -68,7 +69,7 @@ async def test_the_iteration_after_a_router_verdict_still_offers_tools(monkeypat
     the second call ran with_tools=False -- dispatch was impossible."""
     calls = []
     agent = _wire(monkeypatch, calls, matched_actions=[])
-    res = await agent.chat("concrete volume for a slab 12 x 8 x 0.25", api_key="test-key")
+    res = await agent.chat("concrete volume for a slab 12 x 8 x 0.25", api_key=STUB_KEY_11)
     assert res["status"] == "success"
     assert len(calls) >= 2
     assert calls[1]["with_tools"] is True, "router verdict disabled tools"
@@ -78,7 +79,7 @@ async def test_the_iteration_after_a_router_verdict_still_offers_tools(monkeypat
 async def test_an_empty_router_match_injects_the_dispatch_correction(monkeypatch):
     calls = []
     agent = _wire(monkeypatch, calls, matched_actions=[])
-    await agent.chat("concrete volume for a slab 12 x 8 x 0.25", api_key="test-key")
+    await agent.chat("concrete volume for a slab 12 x 8 x 0.25", api_key=STUB_KEY_11)
     joined = " ".join(str(m.get("content") or "") for m in calls[1]["messages"])
     assert "router matched NO action" in joined
     assert "have not actually called" in joined
@@ -125,7 +126,7 @@ async def test_a_mid_batch_nudge_does_not_split_tool_results(monkeypatch):
     monkeypatch.delenv("AGENT_FORCE_SYNTHESIS", raising=False)
     agent = rt.Agent(name="smart-orchestrator", description="", system_prompt="route",
                     allowed_blocks=["smart_orchestrator"])
-    await agent.chat("issue the payment certificate", api_key="test-key")
+    await agent.chat("issue the payment certificate", api_key=STUB_KEY_11)
     roles = [(m.get("role"), m.get("tool_call_id")) for m in calls[1]["messages"]]
     # After the assistant tool-call message: four tools, THEN the nudge.
     assistant_idx = next(i for i, r in enumerate(roles) if r[0] == "assistant")
@@ -141,7 +142,7 @@ async def test_a_matched_router_verdict_injects_no_correction(monkeypatch):
     calls = []
     agent = _wire(monkeypatch, calls,
                   matched_actions=[{"action": "drawing_qto_extract"}])
-    await agent.chat("do QTO on this drawing", api_key="test-key")
+    await agent.chat("do QTO on this drawing", api_key=STUB_KEY_11)
     joined = " ".join(str(m.get("content") or "") for m in calls[1]["messages"])
     assert "router matched NO action" not in joined
 
@@ -174,7 +175,7 @@ async def test_a_deliverable_tool_still_forces_synthesis(monkeypatch):
     monkeypatch.delenv("AGENT_FORCE_SYNTHESIS", raising=False)
     agent = rt.Agent(name="qs", description="", system_prompt="qs",
                      allowed_blocks=["boq_processor"])
-    await agent.chat("parse the boq", api_key="test-key")
+    await agent.chat("parse the boq", api_key=STUB_KEY_11)
     assert calls[1]["with_tools"] is False
 
 

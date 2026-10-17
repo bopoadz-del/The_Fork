@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from tests._fixture_values import STUB_KEY_04
 
 from tests.lane5_core_support import (
     Param, answer_text, call, construction_agent, drive, no_retrieval,
@@ -70,7 +71,7 @@ def test_a_chunk_marker_is_not_visible_in_the_stream(monkeypatch):
 
 @pytest.mark.xfail(strict=True, reason="CORE: 32 tool signature dump in the answer; the answer names the tool")
 def test_empty_model_recovery_does_not_name_the_tool_or_dump_a_signature(monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_KEY_04)
     monkeypatch.setenv("DRIVER_MODE", "")
     name = "lane5_render_area"
 
@@ -173,7 +174,7 @@ def test_a_credit_line_uses_the_plain_name(monkeypatch):
 def _stream(probe, user):
     async def go():
         return [event async for event in probe.chat_stream(
-            user_message=user, api_key="synthetic-test-key",
+            user_message=user, api_key=STUB_KEY_04,
         )]
 
     import asyncio

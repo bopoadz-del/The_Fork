@@ -2,11 +2,12 @@
 so the conversation history never silently drops the question."""
 
 from app.agents.runtime import Agent, AGENT_REGISTRY, load_agents
+from tests._fixture_values import STUB_TOKEN_04
 
 
 async def test_user_turn_persisted_when_llm_errors(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
 
     from app.core import agent_memory
     agent_memory.init_db()
@@ -31,7 +32,7 @@ async def test_user_turn_persisted_once_on_success(tmp_path, monkeypatch):
     """On a normal turn the user message is stored exactly once (no double
     write now that persistence moved up front)."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
 
     from app.core import agent_memory
     agent_memory.init_db()

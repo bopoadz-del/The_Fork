@@ -14,6 +14,7 @@ from app.main import app
 from app.core import projects as projects_mod
 from app.core import users as users_mod
 from app.dependencies import require_user
+from tests._fixture_values import PW_09
 
 
 def _ensure_schema():
@@ -363,7 +364,7 @@ def test_normal_project_document_search_uses_original_id(client, monkeypatch):
     # Create a real user so project ownership FK succeeds and the search
     # endpoint can resolve ownership for a non-alias project.
     user = users_mod.create_user(
-        "normal-owner@local", "password", role="user"
+        "normal-owner@local", PW_09, role="user"
     )
 
     def fake_owner():

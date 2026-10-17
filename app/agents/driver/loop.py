@@ -314,7 +314,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                     break
                 sentence, buffer = buffer[:cut.end()], buffer[cut.end():]
                 if held is not None:
-                    event = _release(held)
+                    event = await off_loop(_release, held)
                     if event:
                         yield event
                 held = sentence
@@ -335,7 +335,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
             # the workflow, so the turn asks for what the workflow needs
             # instead of showing a hand-written one.
             for request in dict.fromkeys(routes.input_request(w, r) for w, r in refused.items()):
-                event = _release(request + "\n", model_text=False)
+                event = await off_loop(_release, request + "\n", model_text=False)
                 if event:
                     yield event
             answer_done = True
@@ -343,7 +343,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         if not calls:
             for piece in (held, buffer):
                 if piece:
-                    event = _release(piece)
+                    event = await off_loop(_release, piece)
                     if event:
                         yield event
             answer_done = model_answered = True
@@ -441,7 +441,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         # figure the calculator refused (lane 2: it did).
         if questions:
             for question in dict.fromkeys(questions):
-                event = _release(question + "\n", model_text=False)
+                event = await off_loop(_release, question + "\n", model_text=False)
                 if event:
                     yield event
             answer_done = True
@@ -450,7 +450,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
         # Out of steps with a workflow still refusing: its deliverable comes
         # from the workflow, so the turn asks for what it needs.
         for request in dict.fromkeys(routes.input_request(w, r) for w, r in refused.items()):
-            event = _release(request + "\n", model_text=False)
+            event = await off_loop(_release, request + "\n", model_text=False)
             if event:
                 yield event
         answer_done = True
@@ -469,18 +469,18 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 if cut is None:
                     break
                 sentence, buffer = buffer[:cut.end()], buffer[cut.end():]
-                event = _release(sentence)
+                event = await off_loop(_release, sentence)
                 if event:
                     finished = True
                     yield event
         if buffer:
-            event = _release(buffer)
+            event = await off_loop(_release, buffer)
             if event:
                 finished = True
                 yield event
         model_answered = finished
         if not finished or not "".join(sent).strip():
-            event = _release(_STOP)
+            event = await off_loop(_release, _STOP)
             if event:
                 yield event
     if model_answered and failed and not succeeded:
@@ -517,7 +517,7 @@ async def stream(agent: Any, user_message: str, history: Optional[list] = None,
                 piece = ("" if written.endswith("\n") else "\n") + block + "\n"
             else:
                 piece = "\n\n" + block + "\n"
-            event = _release(piece, model_text=False)
+            event = await off_loop(_release, piece, model_text=False)
             if event:
                 yield event
     from app.agents import citation_provenance as cp

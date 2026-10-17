@@ -370,3 +370,26 @@ def dev_key_is_admin(monkeypatch):
         return principal
 
     monkeypatch.setattr(auth_manager, "validate_key", _validate)
+
+
+_CREDENTIAL_ROLES: dict = {}
+
+
+def pytest_make_parametrize_id(config, val, argname):
+    """A generated test credential appears in a test id by its role -- the
+    fixture constant's name -- never by its value: values are random per
+    process, and pytest-xdist needs every worker to collect the same ids."""
+    # Only a value long enough to be told from an ordinary string: a short
+    # generated value (kept at the length of the literal it replaced) can
+    # equal a real parameter such as the unit "m" and must not rename it.
+    if not isinstance(val, str) or len(val) < 8:
+        return None
+    if not _CREDENTIAL_ROLES:
+        from tests import _fixture_values
+
+        for name, value in vars(_fixture_values).items():
+            if name.isupper() and isinstance(value, str):
+                _CREDENTIAL_ROLES.setdefault(value, name)
+        _CREDENTIAL_ROLES.setdefault(DEV_KEY, "DEV_KEY")
+    return _CREDENTIAL_ROLES.get(val)
+

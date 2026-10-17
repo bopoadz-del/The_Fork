@@ -8,6 +8,7 @@ import builtins
 import io
 import sys
 import types
+from tests._fixture_values import STUB_TOKEN_06
 
 
 def _proc_status(monkeypatch, text):
@@ -64,7 +65,7 @@ def test_a_timed_chat_turn_logs_rss_on_every_timing_line(monkeypatch):
     from app.agents import runtime as rt
 
     monkeypatch.setenv("AGENT_TIMING_LOG", "1")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_06)
     rt.load_agents()
     agent = rt.AGENT_REGISTRY["project-assistant"]
 

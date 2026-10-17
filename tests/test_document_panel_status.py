@@ -17,9 +17,10 @@ from app.core import projects as store
 from app.core.ingest_status import EXTRACT_FAILED, ZERO_CHUNK
 from app.dependencies import require_api_key, require_user
 from app.main import app
+from tests._fixture_values import STUB_KEY_01
 
 USER = {"user_id": "panel-status-user", "role": "user"}
-NO_KEY = {"Authorization": "Bearer unused-dependency-is-overridden"}
+NO_KEY = {"Authorization": "Bearer " + STUB_KEY_01}
 _INVENTED_EXTRACT_FAILURE = "Extraction returned no usable text"
 _PANEL = Path("frontend/src/pages/ProjectWorkspace.tsx")
 

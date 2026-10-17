@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from app.core import drive_auth
+from tests._fixture_values import ENV_SECRET_05, PW_06
 
 
 @pytest.fixture(autouse=True)
@@ -177,8 +178,8 @@ def _user(c):
     import uuid
 
     email = f"drv-{uuid.uuid4().hex[:8]}@x.com"
-    c.post("/v1/users/register", json={"email": email, "password": "password12"})
-    body = c.post("/v1/users/login", json={"email": email, "password": "password12"}).json()
+    c.post("/v1/users/register", json={"email": email, "password": PW_06})
+    body = c.post("/v1/users/login", json={"email": email, "password": PW_06}).json()
     me = c.get("/v1/users/me", headers={"Authorization": f"Bearer {body['token']}"}).json()
     return {"Authorization": f"Bearer {body['token']}"}, (me.get("user_id") or me.get("id"))
 
@@ -189,7 +190,7 @@ def test_user_y_cannot_list_or_import_through_user_xs_connection(monkeypatch):
     from app.main import app
 
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", ENV_SECRET_05)
     with TestClient(app) as c:
         x, x_id = _user(c)
         y, _ = _user(c)

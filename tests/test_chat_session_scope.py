@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.agents.runtime import Agent
 from app.main import app
+from tests._fixture_values import PW_06, STUB_TOKEN_02
 
 _RUN = uuid.uuid4().hex[:8]
 
@@ -29,11 +30,11 @@ def client():
 def _register(client, suffix: str) -> dict:
     email = f"sess-{suffix}-{_RUN}@x.com"
     reg = client.post(
-        "/v1/users/register", json={"email": email, "password": "password12"}
+        "/v1/users/register", json={"email": email, "password": PW_06}
     )
     assert reg.status_code in (200, 201, 409), reg.text
     token = client.post(
-        "/v1/users/login", json={"email": email, "password": "password12"}
+        "/v1/users/login", json={"email": email, "password": PW_06}
     ).json()["token"]
     return {"Authorization": f"Bearer {token}"}
 
@@ -95,7 +96,7 @@ def _llm(monkeypatch):
         "app.agents.runtime.project_is_rag_ready", lambda _pid: True
     )
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
 
 
 def test_a_new_conversation_does_not_contain_an_older_thread(client, _llm):

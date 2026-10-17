@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.agents.runtime import Agent, load_agents, AGENT_REGISTRY
+from tests._fixture_values import PW_06, STUB_TOKEN_02
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,13 +38,13 @@ def _stub_llm_key(monkeypatch):
     collection time) and make them run against the real API with a fake key.
     """
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_02)
 
 
 def _register_and_login(client, suffix):
     email = f"c6-{suffix}-{_RUN}@x.com"
-    client.post("/v1/users/register", json={"email": email, "password": "password12"})
-    token = client.post("/v1/users/login", json={"email": email, "password": "password12"}).json()["token"]
+    client.post("/v1/users/register", json={"email": email, "password": PW_06})
+    token = client.post("/v1/users/login", json={"email": email, "password": PW_06}).json()["token"]
     return {"Authorization": f"Bearer {token}"}
 
 
