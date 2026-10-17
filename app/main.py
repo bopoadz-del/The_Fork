@@ -191,6 +191,8 @@ async def lifespan(app: FastAPI):
     rss_watchdog.start()
     from app.core import loop_watchdog
     loop_watchdog.start()
+    from app.core import health_probes as _health_probes
+    _health_probes.start_db_keep_warm()
     from app.blocks.learning_engine import assert_learning_engine_hard_off
     assert_learning_engine_hard_off()
     await init_blocks()
