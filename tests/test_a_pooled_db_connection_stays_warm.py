@@ -31,13 +31,21 @@ def test_the_pool_reuses_its_newest_connection_and_recycle_is_configurable(monke
 
 @pytest.fixture
 def probes(monkeypatch):
-    calls: list = []
+    class _Calls(list):
+        pass
+    calls = _Calls()
 
     def fake_probe(timeout_s: float = 2.0):
         calls.append(threading.current_thread().name)
         return {"ok": len(calls) % 2 == 0, "latency_ms": 1, "error": None if len(calls) % 2 == 0 else "down"}
 
     monkeypatch.setattr(health_probes, "probe_database", fake_probe)
+    # The tick also refreshes the corpus cache; stub it so the test makes no
+    # real DB call, and record that each tick touched it.
+    corpus_calls: list = []
+    monkeypatch.setattr(health_probes, "probe_corpus_chunks",
+                        lambda *a, **k: corpus_calls.append(1) or {"chunks": 1})
+    calls.corpus = corpus_calls
     monkeypatch.setattr(health_probes, "_keep_warm_thread", None)
     yield calls
     health_probes.stop_db_keep_warm()
@@ -76,3 +84,21 @@ def test_the_app_starts_the_keep_warm_at_startup():
     lifespan = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan")
     calls = {getattr(c.func, "attr", "") for c in ast.walk(lifespan) if isinstance(c, ast.Call)}
     assert "start_db_keep_warm" in calls
+
+
+def test_the_keep_warm_tick_also_refreshes_the_corpus_cache(probes):
+    """ORDERS_0125Z cold-start: the first ask after idle rebuilt the corpus
+    chunk-count cache (TTL 300 s). The keep-warm tick now refreshes it too, so
+    an idle box keeps it warm."""
+    health_probes._keep_warm_once()
+    assert len(probes) == 1 and probes.corpus == [1], (list(probes), probes.corpus)
+
+
+def test_a_corpus_refresh_failure_does_not_stop_the_tick(monkeypatch, probes):
+    def boom(*a, **k):
+        raise RuntimeError("corpus down")
+
+    monkeypatch.setattr(health_probes, "probe_corpus_chunks", boom)
+    health_probes._keep_warm_once()  # must not raise
+    assert len(probes) == 1, "the DB warm still ran"
+
