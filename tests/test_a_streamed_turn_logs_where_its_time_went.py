@@ -55,6 +55,19 @@ def test_the_timing_line_has_every_mark_in_order(loop_log):
     assert data["conversation"] == "conv-1"
     assert data["first_event"] == 500 and data["first_token"] == 1000 and data["end_event"] == 3000
     assert "closed" in data
+    # No steps arg: the step/before-first-token fields are omitted (back-compat).
+    assert "tool_calls" not in data and "before_first_token_ms" not in data
+
+
+def test_the_timing_line_carries_tool_step_counts(loop_log):
+    """ORDERS_0410Z long-ask tail: how many tool steps ran, and the wait
+    before the first token -- numbers only."""
+    marks = {"received": 100.0, "first_event": 100.2, "first_token": 108.0, "end_event": 110.0}
+    loop._log_turn_timing(marks, "conv-2", {"tool_calls": 4, "tool_results": 4})
+    line = next(m for m in loop_log.messages if m.startswith("TURN_TIMING "))
+    data = json.loads(line.split("TURN_TIMING ", 1)[1])
+    assert data["tool_calls"] == 4 and data["tool_results"] == 4
+    assert data["before_first_token_ms"] == 8000
 
 
 def test_a_timing_failure_never_breaks_a_turn():

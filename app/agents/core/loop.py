@@ -12,8 +12,11 @@ import asyncio  # noqa: F401 -- annotations
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 
-def _log_turn_timing(marks: dict, conversation_id: str | None) -> None:
-    """One line per streamed turn: milliseconds from receipt to each mark."""
+def _log_turn_timing(marks: dict, conversation_id: str | None, steps: dict | None = None) -> None:
+    """One line per streamed turn: milliseconds from receipt to each mark, and
+    the tool-step counts (tool_call / tool_result frames before the first
+    token). Numbers only -- no payloads, no names (ORDERS_0410Z long-ask
+    tail)."""
     import json as _json
     import logging as _logging
     import time as _time
@@ -25,6 +28,13 @@ def _log_turn_timing(marks: dict, conversation_id: str | None) -> None:
             return
         out = {k: round((v - start) * 1000) for k, v in marks.items() if k != "received"}
         out["closed"] = round((_time.monotonic() - start) * 1000)
+        if steps is not None:
+            # ms from receipt to the first token = the user's wait before any
+            # answer text; paired with how many tool steps ran before it.
+            first_token = marks.get("first_token")
+            out["before_first_token_ms"] = round((first_token - start) * 1000) if first_token else None
+            out["tool_calls"] = steps.get("tool_calls", 0)
+            out["tool_results"] = steps.get("tool_results", 0)
         log.info("TURN_TIMING %s", _json.dumps({"conversation": conversation_id or "", **out}))
     except Exception:  # noqa: BLE001 -- timing is evidence, never a failure
         log.debug("turn timing not logged", exc_info=True)
@@ -990,12 +1000,20 @@ async def chat_stream(
     # per turn with the offsets of its first event, first token, end event
     # and close -- no content, the conversation id only.
     _marks: dict[str, float] = {"received": _time.monotonic()}
+    _steps: dict[str, int] = {"tool_calls": 0, "tool_results": 0, "tool_calls_before_first_token": 0}
     try:
         async for event in _inner():
             _marks.setdefault("first_event", _time.monotonic())
             event = _leak_guard.check(event)
             if event is None:
                 continue
+            _etype = event.get("type") if isinstance(event, dict) else None
+            if _etype == "tool_call":
+                _steps["tool_calls"] += 1
+                if "first_token" not in _marks:
+                    _steps["tool_calls_before_first_token"] = _steps["tool_calls"]
+            elif _etype == "tool_result":
+                _steps["tool_results"] += 1
             if isinstance(event, dict) and event.get("type") == "token" and isinstance(event.get("content"), str):
                 _marks.setdefault("first_token", _time.monotonic())
                 _streamed.append(event["content"])
@@ -1027,7 +1045,7 @@ async def chat_stream(
         terminal_emitted = True
         return
     finally:
-        _log_turn_timing(_marks, conversation_id)
+        _log_turn_timing(_marks, conversation_id, _steps)
 
     # Inner generator completed without exception but emitted no terminal
     # event — synthesise one so the SSE consumer sees a clean close.
