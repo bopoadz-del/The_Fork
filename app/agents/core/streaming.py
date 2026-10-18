@@ -603,14 +603,18 @@ async def _chat_stream_impl(
     error_nudges = 0
     _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
     # True token streaming for the FINAL synthesis call only. Gated to:
-    #   * SYNTHESIS_STREAMING=1  (instant prod kill-switch; default off)
+    #   * SYNTHESIS_STREAMING != "0"  (default ON; "0" is the instant prod
+    #     kill-switch) -- ORDERS_0305Z: the non-streaming path computed the
+    #     whole answer then re-chunked it, so first_token ~= total end to end;
+    #     this built, guarded streaming path was parked off and is now on.
     #   * provider in (openrouter, deepseek)  (the verified streaming paths)
     # When enabled, the force_synthesis iteration streams provider deltas as
-    # token events instead of computing the whole answer then re-chunking it
-    # (which made first_token ~= total). Any pre-first-token failure falls
-    # back to the untouched non-streaming path below.
+    # token events instead of computing the whole answer then re-chunking it.
+    # Any pre-first-token failure falls back to the untouched non-streaming
+    # path below; every per-segment sanitise / name-withhold / tool-leak guard
+    # is unchanged.
     _synth_stream_enabled = (
-        os.getenv("SYNTHESIS_STREAMING") == "1"
+        os.getenv("SYNTHESIS_STREAMING", "1") != "0"
         # DeepSeek and OpenRouter both stream the OpenAI SSE shape. Keep
         # this list in step with the allowlist in _stream_synthesis.
         and cfg["provider"] in ("openrouter", "deepseek")
