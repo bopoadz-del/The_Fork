@@ -133,6 +133,33 @@ def _resolve_via_project(project_id: str, raw: str) -> str:
     return raw
 
 
+def _parse_pdf_in_child(file_path: str, params: Dict) -> Dict:
+    return BOQProcessorBlock()._parse_pdf_sync(file_path, params)
+
+
+def _parse_pdf_isolated(file_path: str, params: Dict) -> Dict:
+    """The PDF table parse in the platform's isolated child process
+    (app.core.extract_isolated), in-process where fork is unavailable.
+
+    Its parse libraries' first import (numpy / pandas, pdfplumber) holds the
+    GIL even in a worker thread; in the child it holds the child's GIL, so the
+    server's event loop is never frozen by it (CI test-timing: 0.41 s after
+    #1001). The child also caps the parse's memory. Its wall-clock limit is the
+    parse's own budget plus a margin, so the budget -- not the kill -- ends a
+    long parse; a child that fails is a named error, never partial totals."""
+    from app.core import extract_isolated
+
+    fallback = {"status": "error",
+                "error": "The PDF could not be parsed on the server. Upload the .xlsx or .csv version of this BOQ."}
+    result, diag = extract_isolated.run_isolated(
+        _parse_pdf_in_child, (file_path, params), fallback=fallback, label="boq pdf parse",
+        timeout_s=_boq_pdf_parse_seconds() + 30.0)
+    if diag:
+        _logger.warning("boq pdf parse in the isolated child failed: %s", diag)
+        return {**fallback, "parse_diag": diag}
+    return result
+
+
 class BOQProcessorBlock(UniversalBlock):
     name = "boq_processor"
     version = "1.1.0"
@@ -318,7 +345,7 @@ class BOQProcessorBlock(UniversalBlock):
                 return self._parse_excel_sync(plain_path, params)
             if ext == ".pdf":
                 return (self._pdf_too_large(plain_path, source_name)
-                        or self._parse_pdf_sync(plain_path, params))
+                        or _parse_pdf_isolated(plain_path, params))
             return {
                 "status": "error",
                 "error": f"Unsupported format: {ext}. Use .xlsx, .csv, or .pdf",
