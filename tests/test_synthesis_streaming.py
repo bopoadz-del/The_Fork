@@ -11,6 +11,7 @@ _stream_synthesis SSE parser + sanitiser chokepoint.
 from __future__ import annotations
 
 import asyncio
+import time
 import json
 from unittest.mock import patch
 
@@ -149,6 +150,68 @@ def test_streamed_synthesis_emits_progressive_tokens(deepseek_streaming):
     assert "NON-STREAMED" not in text
 
 
+def test_streaming_is_on_by_default(monkeypatch):
+    """ORDERS_0305Z: the built streaming path is ON unless SYNTHESIS_STREAMING=0.
+    With the flag UNSET, the forced synthesis streams (does not fall to the
+    non-streaming _call_llm synthesis)."""
+    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
+    monkeypatch.delenv("SYNTHESIS_STREAMING", raising=False)  # default
+    call_llm = _tool_then_final()
+    with patch.object(Agent, "_call_llm", call_llm), patch.object(Agent, "_run_tool_call", _tool_ok), patch.object(Agent, "_stream_synthesis", _mk_stream(["One sentence.\n", "Two.\n"])):
+        events = _run_turn(_pa_agent())
+    assert call_llm.state["n"] == 1, "synthesis streamed, so no second _call_llm"
+    assert "One sentence." in _tokens(events)
+
+
+def _mk_delayed_stream(deltas, gap=0.05):
+    """A provider that emits deltas with a real delay between them, and records
+    when its LAST delta was produced, so a test can prove a token left the
+    server before the completion finished."""
+    marks = {"last_delta": None}
+
+    async def fake_stream(self, messages, api_key, **kwargs):
+        for i, d in enumerate(deltas):
+            if i:
+                await asyncio.sleep(gap)
+            if i == len(deltas) - 1:
+                marks["last_delta"] = time.monotonic()
+            yield d
+    return fake_stream, marks
+
+
+def test_a_token_leaves_before_the_completion_finishes(deepseek_streaming):
+    """ORDERS_0305Z acceptance shape: the first token frame is yielded BEFORE
+    the provider has produced its last delta, and token frames span a real
+    part of the turn -- not all at the end (the TTFT~=total signature)."""
+    deltas = [f"Sentence number {i} of the streamed answer.\n" for i in range(6)]
+    stream, marks = _mk_delayed_stream(deltas, gap=0.05)
+
+    async def go():
+        first_token_at = None
+        last_token_at = None
+        start = time.monotonic()
+        with patch.object(Agent, "_call_llm", _tool_then_final()), patch.object(Agent, "_run_tool_call", _tool_ok), patch.object(Agent, "_stream_synthesis", stream):
+            async for ev in _pa_agent().chat_stream(
+                user_message="Generate a commissioning checklist for electrical.",
+                history=[], project_id=None, conversation_id=None, user_id=None,
+            ):
+                if ev.get("type") == "token" and ev.get("content", "").strip():
+                    now = time.monotonic()
+                    if first_token_at is None:
+                        first_token_at = now
+                    last_token_at = now
+        return start, first_token_at, last_token_at, marks["last_delta"]
+
+    start, first_token_at, last_token_at, last_delta_at = asyncio.run(go())
+    assert first_token_at is not None, "no token was emitted"
+    assert last_delta_at is not None
+    assert first_token_at < last_delta_at, "first token only after the provider finished (TTFT~=total)"
+    # Token frames span a real part of the turn, not a burst at the end.
+    total = last_token_at - start
+    assert total > 0 and (last_token_at - first_token_at) >= 0.5 * total
+
+
 # ── pre-first-token fallback ──────────────────────────────────────────────────
 
 def test_pretoken_stream_error_falls_back_to_non_streaming(deepseek_streaming):
@@ -224,9 +287,13 @@ def test_empty_stream_triggers_forced_retry(deepseek_streaming):
 # ── default off: streaming never engaged ──────────────────────────────────────
 
 def test_flag_off_never_streams(monkeypatch):
+    # ORDERS_0305Z: streaming is default ON now, so the OFF case sets the
+    # kill-switch explicitly (SYNTHESIS_STREAMING=0) rather than relying on
+    # the default. Same intent: with it off, the forced synthesis goes
+    # through the non-streaming _call_llm path.
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
     monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
-    monkeypatch.delenv("SYNTHESIS_STREAMING", raising=False)  # OFF
+    monkeypatch.setenv("SYNTHESIS_STREAMING", "0")  # kill-switch OFF
     call_llm = _tool_then_final()
 
     async def _boom_stream(self, *a, **k):
