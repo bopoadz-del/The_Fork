@@ -42,11 +42,26 @@ def _keep_warm_interval_s() -> float:
     return value if math.isfinite(value) and value >= 0 else 240.0
 
 
+def _keep_warm_once() -> None:
+    """One keep-warm pass: touch every structure the first request after idle
+    would otherwise rebuild. The DB pool (a recycled connection reconnects),
+    and the corpus chunk-count cache (TTL 300 s, so on an idle box it expires
+    between requests and the first ask pays the count query). Each warmer is
+    best-effort and never raises -- a warm-up must not crash the thread."""
+    result = probe_database()
+    if not result.get("ok"):
+        logger.warning("keep-warm: DB round-trip failed: %s", result.get("error"))
+    try:
+        # Refreshes the corpus cache when it is within the TTL; the tick runs
+        # inside the TTL window, so the cache never goes cold on an idle box.
+        probe_corpus_chunks()
+    except Exception:  # noqa: BLE001 -- probe_corpus_chunks is non-raising, but the loop must survive anything
+        logger.warning("keep-warm: corpus cache refresh failed", exc_info=True)
+
+
 def _keep_warm_loop(interval_s: float) -> None:
     while not _keep_warm_stop.wait(interval_s):
-        result = probe_database()
-        if not result.get("ok"):
-            logger.warning("DB keep-warm round-trip failed: %s", result.get("error"))
+        _keep_warm_once()
 
 
 def start_db_keep_warm(interval_s: Optional[float] = None) -> Optional[threading.Thread]:
