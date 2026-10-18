@@ -4,6 +4,7 @@ import ProtectedRoute from './auth/ProtectedRoute'
 import AdminRoute from './auth/AdminRoute'
 import ErrorBoundary from './components/ErrorBoundary'
 import Login from './pages/Login'
+import Landing from './pages/Landing'
 import Projects from './pages/Projects'
 import ProjectWorkspace from './pages/ProjectWorkspace'
 import AdminPage from './pages/AdminPage'
@@ -17,6 +18,7 @@ export default function App() {
           <ErrorBoundary>
             <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/welcome" element={<Landing />} />
             <Route
               path="/"
               element={
