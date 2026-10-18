@@ -53,6 +53,7 @@ def _evaluate_health() -> dict:
             "database": db,
             "embedder": emb,
             "llm": probe_llm(),
+            "workflows": _probe_workflows(),
         },
         # Cached estimate of the active chunk table, not the stale
         # documents.chunk_count column. A probe error does not fail liveness.
@@ -167,3 +168,13 @@ async def full_health():
         return await health_v1()
     block = get_monitoring_block()
     return await block.execute({"action": "health_report"})
+
+
+def _probe_workflows() -> dict:
+    """How many predefined workflows the model can reach. A drop shows here,
+    not only as a missing answer (lanes 2 and 5: workflows no longer called)."""
+    try:
+        from app.core.predefined_reasoning import workflows_reachable
+        return {"reachable": workflows_reachable()}
+    except Exception as exc:  # noqa: BLE001 -- a probe never breaks /health
+        return {"reachable": 0, "error": type(exc).__name__}
