@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
+# One shared label for the pre-first-token tool phase, so the bubble is
+# never blank while the predispatch probes and retrieval run. Defined here
+# rather than inline so the wording lives in one place.
+_TOOL_PHASE_STATUS = "Working through your request…"
+
 
 async def _chat_stream_impl(
     self,
@@ -228,6 +233,14 @@ async def _chat_stream_impl(
     # Tool results accumulated this turn — feeds the schedule download offer
     # (a generate_wbs call becomes a 'Schedule (Excel)' export descriptor).
     stream_tool_results: list[dict[str, Any]] = []
+    # Fill the bubble the instant the tool phase begins. The predispatch
+    # probes below run before the first token, and in the common case they
+    # return None -- emitting no tool_call -- so without this the bubble sits
+    # blank for the whole pre-first-token phase (TESTER's long-ask stall).
+    # The frontend shows a `status` label only until content arrives and
+    # clears it on the first token, so a brief label before a fast answer is
+    # harmless. One emit, deterministic, changes no computed result.
+    yield {"type": "status", "label": _TOOL_PHASE_STATUS}
     # Deterministic file pre-dispatch BEFORE the RAG-miss short-circuit
     # (leftover L1 timestamped .docx looks like an identifier).
     _locked = (await _off_loop(_message_wants_locked_deliverable, user_message))

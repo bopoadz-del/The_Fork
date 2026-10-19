@@ -549,3 +549,51 @@ def test_stream_synthesis_parses_sse_and_sanitises_outbound(monkeypatch):
         for tc in m.get("tool_calls", []) or []:
             assert set(tc.keys()) <= {"id", "type", "function"}
             assert set(tc.get("function", {}).keys()) <= {"name", "arguments"}
+
+
+# ── tool-phase status line (long-ask stall fix) ─────────────────────────────
+
+def _status_labels(events):
+    return [e.get("label") for e in events if e.get("type") == "status"]
+
+
+def test_tool_phase_status_precedes_first_token(deepseek_streaming):
+    """The bubble must not sit blank through the pre-first-token tool phase:
+    a `status` label is emitted at tool-phase entry, before any token."""
+    from app.agents.core.streaming import _TOOL_PHASE_STATUS
+
+    call_llm = _tool_then_final()
+    deltas = ["Here ", "is ", "the ", "answer."]
+    with patch.object(Agent, "_call_llm", call_llm), \
+         patch.object(Agent, "_run_tool_call", _tool_ok), \
+         patch.object(Agent, "_stream_synthesis", _mk_stream(deltas)):
+        events = _run_turn(_pa_agent())
+
+    types = [e.get("type") for e in events]
+    assert "status" in types, "no status event emitted during the tool phase"
+    assert _TOOL_PHASE_STATUS in _status_labels(events), "status carried no label"
+    first_status = types.index("status")
+    assert "token" in types, "turn produced no tokens"
+    first_token = types.index("token")
+    assert first_status < first_token, "status must precede the first token"
+
+
+def test_tool_phase_status_also_on_nonstreamed_path(monkeypatch):
+    """Even with streaming off (answer computed then chunked), the status still
+    leads the turn -- the fix is on the tool phase, not the synthesis call."""
+    from app.agents.core.streaming import _TOOL_PHASE_STATUS
+
+    # Configure a provider so the turn reaches the tool phase, but keep
+    # SYNTHESIS_STREAMING off so the answer is chunked, not delta-streamed.
+    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
+    monkeypatch.setenv("SYNTHESIS_STREAMING", "0")
+
+    call_llm = _tool_then_final()
+    with patch.object(Agent, "_call_llm", call_llm), \
+         patch.object(Agent, "_run_tool_call", _tool_ok):
+        events = _run_turn(_pa_agent())
+
+    assert _TOOL_PHASE_STATUS in _status_labels(events)
+    types = [e.get("type") for e in events]
+    assert types.index("status") < types.index("token")
