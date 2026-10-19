@@ -597,3 +597,53 @@ def test_tool_phase_status_also_on_nonstreamed_path(monkeypatch):
     assert _TOOL_PHASE_STATUS in _status_labels(events)
     types = [e.get("type") for e in events]
     assert types.index("status") < types.index("token")
+
+
+# ── tool-phase budget / cap (long-ask sub-fix 2) ────────────────────────────
+
+def test_tool_phase_budget_default_is_inert():
+    """No env set -> every probe is allowed, nothing skipped."""
+    from app.agents.core.streaming import _make_tool_phase_budget, _TOOL_PHASE_PRIORITY
+    b = _make_tool_phase_budget(lambda: 0.0)
+    assert all(b.allow(k) for k in _TOOL_PHASE_PRIORITY)
+    assert b.skipped == []
+
+
+def test_tool_phase_count_cap_is_deterministic(monkeypatch):
+    """A count cap keeps the top-N priority probes and skips the rest, the same
+    regardless of timing (clock never advances here)."""
+    from app.agents.core.streaming import _make_tool_phase_budget, _TOOL_PHASE_PRIORITY
+    monkeypatch.setenv("TOOL_PHASE_MAX_PROBES", "2")
+    b = _make_tool_phase_budget(lambda: 0.0)
+    verdicts = {k: b.allow(k) for k in _TOOL_PHASE_PRIORITY}
+    allowed = [k for k, v in verdicts.items() if v]
+    assert allowed == list(_TOOL_PHASE_PRIORITY[:2])
+    assert b.skipped == list(_TOOL_PHASE_PRIORITY[2:])
+
+
+def test_tool_phase_time_backstop_trips_when_deadline_passed(monkeypatch):
+    """The wall-time arm refuses once the clock is past the deadline; it is a
+    backstop, off by default (0 = disabled)."""
+    from app.agents.core.streaming import _ToolPhaseBudget
+    now = {"t": 0.0}
+    b = _ToolPhaseBudget(max_probes=99, time_budget_ms=10.0, clock=lambda: now["t"])
+    assert b.allow("file")           # within budget
+    now["t"] = 1.0                   # 1s > 10ms deadline
+    assert not b.allow("wbs_duration")
+    assert "wbs_duration" in b.skipped
+
+
+def test_tight_cap_skips_all_probes_but_turn_still_answers(deepseek_streaming, monkeypatch):
+    """With the cap at 0, no predispatch probe runs, yet the turn still streams
+    a status then an answer (the cap never breaks the turn)."""
+    monkeypatch.setenv("TOOL_PHASE_MAX_PROBES", "0")
+    from app.agents.core.streaming import _TOOL_PHASE_STATUS
+    call_llm = _tool_then_final()
+    deltas = ["All ", "good."]
+    with patch.object(Agent, "_call_llm", call_llm), \
+         patch.object(Agent, "_run_tool_call", _tool_ok), \
+         patch.object(Agent, "_stream_synthesis", _mk_stream(deltas)):
+        events = _run_turn(_pa_agent())
+    types = [e.get("type") for e in events]
+    assert _TOOL_PHASE_STATUS in _status_labels(events)
+    assert "token" in types and types.index("status") < types.index("token")
