@@ -36,8 +36,10 @@ _LAST_SERVED_AT: float = 0.0
 def record_provider_result(
     provider: str, status: str, http_status: Optional[int] = None,
 ) -> None:
-    """Record one real provider outcome. ``status`` is 'ok', 'exhausted'
-    (402/429) or 'error'. Never raises — telemetry must not break a turn."""
+    """Record one real provider outcome. ``provider`` is a ROLE label
+    ('primary' / 'fallback'), never the provider NAME — /health is public and
+    names nothing. ``status`` is 'ok', 'exhausted' (402/429) or 'error'. Never
+    raises — telemetry must not break a turn."""
     global _LAST_SERVED_AT
     try:
         now = time.time()
@@ -51,8 +53,8 @@ def record_provider_result(
                 _PROVIDER_COUNTS["billing_402"] += 1
             elif http_status == 429:
                 _PROVIDER_COUNTS["rate_429"] += 1
-    except Exception:  # noqa: BLE001 — telemetry never breaks a turn
-        pass
+    except Exception as exc:  # noqa: BLE001 — telemetry never breaks a turn
+        logger.debug("record_provider_result swallowed %r", exc)
 
 
 def provider_snapshot() -> Dict[str, Any]:
