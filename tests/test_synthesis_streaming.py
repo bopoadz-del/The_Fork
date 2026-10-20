@@ -647,3 +647,54 @@ def test_tight_cap_skips_all_probes_but_turn_still_answers(deepseek_streaming, m
     types = [e.get("type") for e in events]
     assert _TOOL_PHASE_STATUS in _status_labels(events)
     assert "token" in types and types.index("status") < types.index("token")
+
+
+# ── PORT: the no-tool final answer streams (ORDERS_0110Z PR-A) ───────────────
+
+def _final_no_tools(text):
+    """Fake _call_llm: a final answer with NO tool_calls (the tool-deciding
+    call that decides the turn needs no tools)."""
+    async def fake(_self, messages, api_key, **kwargs):
+        return {"status": "success", "choice": {"message": {
+            "role": "assistant", "content": text}}}
+    return fake
+
+
+def _stream_must_not_run():
+    async def fake(self, *a, **k):
+        raise AssertionError("streaming path taken while SYNTHESIS_STREAMING=0")
+        yield ""  # pragma: no cover
+    return fake
+
+
+def test_no_tool_final_answer_streams_not_chunked(deepseek_streaming):
+    """A turn the model answers with no tool call must stream the answer via
+    _stream_synthesis (deltas reach the user), not chunk a completed lump."""
+    lump = "The non streamed lump answer is here and complete."
+    # Newlines so the line-buffered stream flushes more than one token event
+    # (proves incremental delivery, not a single post-completion flush).
+    deltas = ["The streamed answer\n", "arrives in several\n", "pieces as produced.\n"]
+    with patch.object(Agent, "_call_llm", _final_no_tools(lump)), \
+         patch.object(Agent, "_stream_synthesis", _mk_stream(deltas)):
+        events = _run_turn(_pa_agent())
+    text = _tokens(events)
+    # the streamed deltas reached the user; the non-streamed lump did not
+    assert "streamed answer" in text and "as produced" in text
+    assert "lump" not in text
+    types = [e.get("type") for e in events]
+    assert types.count("token") >= 2, "answer did not arrive as multiple token events"
+    assert "end" in types and types.index("token") < types.index("end")
+
+
+def test_kill_switch_keeps_the_non_streamed_path(monkeypatch):
+    """SYNTHESIS_STREAMING=0 restores old behaviour: the no-tool answer is
+    chunked from _call_llm and _stream_synthesis is never entered."""
+    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_DEEPSEEK_CFG))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", STUB_TOKEN_04)
+    monkeypatch.setenv("SYNTHESIS_STREAMING", "0")
+    lump = "The whole answer computed up front and then chunked."
+    with patch.object(Agent, "_call_llm", _final_no_tools(lump)), \
+         patch.object(Agent, "_stream_synthesis", _stream_must_not_run()):
+        events = _run_turn(_pa_agent())
+    text = _tokens(events)
+    assert "whole answer computed up front" in text

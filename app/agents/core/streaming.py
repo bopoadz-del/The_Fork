@@ -1152,10 +1152,33 @@ async def _chat_stream_impl(
                 final_text = _sanitize_final_text(
                     raw_content, messages=messages, tool_results=stream_tool_results,
                 )
+                _needs_forced_retry = (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message))
+                # PORT (ORDERS_0110Z): the tool-deciding call above stays
+                # non-streamed; now that the model asked for no tools, re-issue
+                # the real answer as ONE stream=True synthesis call -- the
+                # force_synthesis branch at the top of the loop -- so tokens
+                # reach the user as they are produced instead of a completed
+                # answer chunked after the fact (the "lump"). Fires at most
+                # once: only when no streaming attempt has run yet
+                # (not force_synthesis), the SYNTHESIS_STREAMING kill-switch is
+                # on, the answer is real (not empty / forced-retry), and a loop
+                # iteration remains for the re-entry. The streaming block's own
+                # pre-first-byte fallback lands back here with force_synthesis
+                # already True, so it chunks -- no re-trigger, no lost answer.
+                if (
+                    not force_synthesis
+                    and _synth_stream_enabled
+                    and not _needs_forced_retry
+                    and final_text.strip()
+                    and iteration < MAX_TOOL_ITERATIONS - 1
+                ):
+                    force_synthesis = True
+                    _set_phase("stream-final re-enter")
+                    continue
                 # If sanitization left nothing usable (empty or raw tool JSON
                 # fallback), force one no-tools call so the model must produce
                 # a plain-text answer instead of an empty bubble or leak.
-                if (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message)):
+                if _needs_forced_retry:
                     priced = _compose_excerpt_boq_instead_of_retry(
                         final_text, _rag_sys_msg, messages,
                     )
