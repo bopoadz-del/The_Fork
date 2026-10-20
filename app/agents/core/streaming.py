@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
+from app.lib.source_labels import DisplayNameStreamer
+
 # One shared label for the pre-first-token tool phase, so the bubble is
 # never blank while the predispatch probes and retrieval run. Defined here
 # rather than inline so the wording lives in one place.
@@ -780,6 +782,11 @@ async def _chat_stream_impl(
             tool_leak = False
             acc: list[str] = []
             pending = ""
+            # Convert registry ids to display names on the STREAMED segments,
+            # with a tail buffer so an id split across deltas never reaches the
+            # user raw (PR-A0 DisplayNameStreamer). Applies to this force_synthesis
+            # path for every turn routed here, old and new.
+            _dns = DisplayNameStreamer()
             try:
                 async for _delta in self._stream_synthesis(
                     messages, api_key, project_id=project_id, user_id=user_id,
@@ -808,7 +815,9 @@ async def _chat_stream_impl(
                         seg = _withhold_names_in_streamed_segment(seg, _rag_sys_msg)
                         seg = _strip_answer_routing_preamble(seg)
                         if seg and not (await _off_loop(_looks_like_internal_tool_json, seg)):
-                            yield {"type": "token", "content": seg}
+                            seg = _dns.feed(seg)
+                            if seg:
+                                yield {"type": "token", "content": seg}
             except _SynthStreamError as _se:
                 if streamed_any:
                     # Tokens already left the provider. Do not restart
@@ -910,7 +919,15 @@ async def _chat_stream_impl(
                     seg = _withhold_names_in_streamed_segment(seg, _rag_sys_msg)
                     seg = _strip_answer_routing_preamble(seg)
                     if seg and not (await _off_loop(_looks_like_internal_tool_json, seg)):
-                        yield {"type": "token", "content": seg}
+                        seg = _dns.feed(seg)
+                        if seg:
+                            yield {"type": "token", "content": seg}
+                # Flush the display-name tail buffer (a held partial id) once the
+                # answer is being delivered -- not on a suppressed leak/promise.
+                if not tool_leak and not promise_hold:
+                    _dns_rem = _dns.flush()
+                    if _dns_rem:
+                        yield {"type": "token", "content": _dns_rem}
                 # Recover-from-tools lives in _postprocess_answer. Do not
                 # run it before the empty-stream check — a successful
                 # commissioning/WIR/IPC tool (or predispatch draft) would
@@ -1152,10 +1169,46 @@ async def _chat_stream_impl(
                 final_text = _sanitize_final_text(
                     raw_content, messages=messages, tool_results=stream_tool_results,
                 )
+                _needs_forced_retry = (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message))
+                # PORT (ORDERS_0110Z/0150Z): the tool-deciding call above stays
+                # non-streamed; now that the model asked for no tools, re-issue
+                # the real answer as ONE stream=True synthesis call -- the
+                # force_synthesis branch at the top of the loop -- so tokens
+                # reach the user as produced instead of a chunked lump. The
+                # streamed path now applies DisplayNameStreamer, so no raw id
+                # leaks. Fires at most once: only when no streaming attempt has
+                # run yet (not force_synthesis), the kill-switch is on, the
+                # answer is real (not empty / forced-retry), and an iteration
+                # remains. The streaming block's pre-first-byte fallback lands
+                # back here with force_synthesis True and chunks -- no
+                # re-trigger, no lost answer.
+                # A turn where a tool ERRORED is a recovery: its answer goes
+                # through the full non-streamed post-processing (grafts,
+                # recover-from-tools), not the streamed path -- so a failed
+                # tool is never treated as the deliverable.
+                _tool_errored = any(
+                    isinstance(r, dict) and (
+                        r.get("ok") is False
+                        or (isinstance(r.get("result"), dict)
+                            and str(r["result"].get("status", "")).lower() == "error")
+                    )
+                    for r in stream_tool_results
+                )
+                if (
+                    not force_synthesis
+                    and _synth_stream_enabled
+                    and not _needs_forced_retry
+                    and not _tool_errored
+                    and final_text.strip()
+                    and iteration < MAX_TOOL_ITERATIONS - 1
+                ):
+                    force_synthesis = True
+                    _set_phase("stream-final re-enter")
+                    continue
                 # If sanitization left nothing usable (empty or raw tool JSON
                 # fallback), force one no-tools call so the model must produce
                 # a plain-text answer instead of an empty bubble or leak.
-                if (await _off_loop(_final_text_needs_forced_retry, final_text, user_message=user_message)):
+                if _needs_forced_retry:
                     priced = _compose_excerpt_boq_instead_of_retry(
                         final_text, _rag_sys_msg, messages,
                     )
