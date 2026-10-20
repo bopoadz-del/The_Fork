@@ -348,6 +348,17 @@ async def _call_llm(
                         f"{body[:300]}"
                     ),
                 }
+            # Record the real outcome so /health can tell "serving" from
+            # "configured" (402 billing / 429 rate are counted distinctly).
+            try:
+                from app.core.health_probes import record_provider_result
+                record_provider_result(
+                    a_cfg.get("provider"),
+                    "exhausted" if r.status_code in (402, 429) else "error",
+                    r.status_code,
+                )
+            except Exception:  # noqa: BLE001 — telemetry never breaks a call
+                pass
             shape_400 = r.status_code == 400 and _http_400_is_retryable(body)
             if shape_400:
                 skip_providers.add(str(a_cfg.get("provider") or ""))
@@ -452,6 +463,11 @@ async def _call_llm(
                     len(msg.get("content") or ""),
                 )
                 msg["content"] = _end_cut_answer(msg["content"])
+            try:
+                from app.core.health_probes import record_provider_result
+                record_provider_result(active_cfg.get("provider"), "ok")
+            except Exception:  # noqa: BLE001 — telemetry never breaks a call
+                pass
             return {"status": "success", "choice": choice, "raw": data}
         except Exception as e:  # noqa: BLE001 — response parse / rewrite
             last_error = {"status": "error", "error": f"{a_cfg['provider']} response error: {e}"}
