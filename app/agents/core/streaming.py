@@ -1182,24 +1182,23 @@ async def _chat_stream_impl(
                 # remains. The streaming block's pre-first-byte fallback lands
                 # back here with force_synthesis True and chunks -- no
                 # re-trigger, no lost answer.
-                # A turn where a tool ERRORED is a recovery: its answer goes
-                # through the full non-streamed post-processing (grafts,
-                # recover-from-tools), not the streamed path -- so a failed
-                # tool is never treated as the deliverable.
-                _tool_errored = any(
-                    isinstance(r, dict) and (
-                        r.get("ok") is False
-                        or (isinstance(r.get("result"), dict)
-                            and str(r["result"].get("status", "")).lower() == "error")
-                    )
-                    for r in stream_tool_results
-                )
+                #
+                # Scope: ONLY a pure no-tool turn (no tool ran this turn ->
+                # stream_tool_results empty). That is the pre-injection answer
+                # the model writes directly from RAG context -- the lump TESTER
+                # measured. Turns where tools ran keep the existing logic
+                # untouched: a successful deliverable tool already sets
+                # force_synthesis above; an exploratory SEARCH deliberately does
+                # not (so the model may keep working); a failed-tool recovery
+                # stays on the full non-streamed post-processing path. So this
+                # port never fires after any tool, and every force_synthesis
+                # guard (search, kill-switch, failed-tool) holds unchanged.
                 if (
                     not force_synthesis
                     and _force_synth_enabled
                     and _synth_stream_enabled
                     and not _needs_forced_retry
-                    and not _tool_errored
+                    and not stream_tool_results
                     and final_text.strip()
                     and iteration < MAX_TOOL_ITERATIONS - 1
                 ):
