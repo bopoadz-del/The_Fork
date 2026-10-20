@@ -118,8 +118,17 @@ def test_empty_sympy_metadata_does_not_force_synthesis():
 
 
 def test_search_result_does_not_force_synthesis(monkeypatch):
-    """A search result is exploratory — it must NOT force synthesis, so the
-    model can keep working (2nd call still has tools)."""
+    """A search result is exploratory — it must NOT disarm the model's
+    TOOL-DECIDING calls, so the model can keep working: every call up to and
+    including the one that produces the final answer still has tools.
+
+    PR-A (ORDERS_0110Z/0150Z) streams that final answer: once the model has
+    answered with no tool call, the answer is re-issued as ONE tool-free
+    stream=True call (force_synthesis) so tokens reach the user as produced.
+    That trailing call is NOT a tool-deciding call — the model already chose to
+    answer with tools still on the table — so the guarantee this test protects
+    (search never disarms a decision) holds: the deciding calls keep tools.
+    """
     agent = _pa_agent()
     seen: list = []
     with patch.object(Agent, "_call_llm", _script_two_calls(seen)), \
@@ -128,7 +137,10 @@ def test_search_result_does_not_force_synthesis(monkeypatch):
             user_message="What does the spec say about concrete cover?",
             history=[], project_id=None, conversation_id=None, user_id=None,
         ))
-    assert seen == [True, True], seen  # search does not disable tools
+    # The two tool-DECIDING calls both kept tools (search did not disarm). A
+    # trailing tool-free streaming call for the final answer may follow.
+    assert seen[:2] == [True, True], seen
+    assert all(v is True for v in seen[:-1]) or seen == [True, True], seen
 
 
 def test_force_synthesis_env_disable(monkeypatch):

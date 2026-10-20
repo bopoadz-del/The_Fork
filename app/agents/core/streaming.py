@@ -1196,6 +1196,7 @@ async def _chat_stream_impl(
                 )
                 if (
                     not force_synthesis
+                    and _force_synth_enabled
                     and _synth_stream_enabled
                     and not _needs_forced_retry
                     and not _tool_errored
