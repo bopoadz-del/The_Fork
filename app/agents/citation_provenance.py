@@ -729,11 +729,20 @@ def _calculator_credits(ev: Evidence) -> list[_CalculatorCredit]:
         )
 
         raw_inputs = _governing_inputs(rec.inputs)
+        stated = stated_calculator_inputs(calculation, raw_inputs, user_text)
+        # The credit shows each input as the user gave it: a figure the
+        # calculator converted (kg/m3 -> t/m3) is credited in its own unit.
+        for conv in payload.get("conversions") or []:
+            if isinstance(conv, dict) and conv.get("parameter") in stated and conv.get("from_unit"):
+                value = conv.get("value_in")
+                if isinstance(value, float) and value.is_integer():
+                    value = int(value)
+                stated[conv["parameter"]] = f"{value} {conv['from_unit']}"
         credits.append(_CalculatorCredit(
             tool=rec.tool or "construction_calc",
             calculation=calculation,
             notes=notes,
-            inputs=stated_calculator_inputs(calculation, raw_inputs, user_text),
+            inputs=stated,
             result_numbers=numbers,
             default_lines=calculator_default_lines(
                 calculation, result, user_text, passed=raw_inputs,
