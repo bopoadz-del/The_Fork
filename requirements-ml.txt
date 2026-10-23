@@ -252,5 +252,5 @@ urllib3==2.8.0
     # via requests
 xxhash==3.7.0
     # via datasets
-yarl==1.24.2
+yarl==1.25.1
     # via aiohttp

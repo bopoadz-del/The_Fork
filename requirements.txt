@@ -444,5 +444,5 @@ websockets==16.0
     # via uvicorn
 xlsxwriter==3.2.9
     # via python-pptx
-yarl==1.24.2
+yarl==1.25.1
     # via aiohttp
