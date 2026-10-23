@@ -40,9 +40,9 @@ attrs==26.1.0
     #   referencing
 beautifulsoup4==4.15.0
     # via -r requirements.in
-brotli==1.2.0
+brotli==1.2.1
     # via httpx
-certifi==2026.5.20
+certifi==2026.10.19
     # via
     #   httpcore
     #   httpx
@@ -223,7 +223,7 @@ pdfplumber==0.11.9
     # via -r requirements.in
 pgvector==0.4.2
     # via -r requirements.in
-pillow==12.3.0
+pillow==13.0.0
     # via
     #   -r requirements.in
     #   pdfplumber
